@@ -1,0 +1,10 @@
+{
+  "id": "html-viewer",
+  "name": "HTML Viewer",
+  "type": "viewer",
+  "color": "#E91E63",
+  "fileTypes": ["html", "htm"],
+  "entryPoint": "index.html",
+  "enabled": true,
+  "isDefault": true
+}

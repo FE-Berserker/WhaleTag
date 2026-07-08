@@ -1,0 +1,24 @@
+cad-viewer — STEP / IGES / BREP support
+========================================
+
+This extension bundles `occt-import-js` — an emscripten interface to
+OpenCASCADE — which parses STEP / IGES / BREP files into a Three.js-compatible
+mesh, entirely in the browser via WebAssembly.
+
+  occt-import-js:  https://github.com/kovacsv/occt-import-js
+  OpenCASCADE:     https://www.opencascade.com
+
+Licensing (LGPL-2.1)
+--------------------
+Both occt-import-js and OpenCASCADE are distributed under the terms of the
+GNU Lesser General Public License v2.1 (LGPL-2.1-or-later; OCCT's "OCCT
+Public License" is LGPL-2.1-compatible).
+
+Whale as a whole is MIT-licensed. It uses occt-import-js as an **unmodified,
+dynamically-loaded WebAssembly module** (the `.wasm` is copied verbatim into
+this extension's dist folder and loaded at runtime via the
+`whale-extension://` protocol). This is a permitted use of LGPL-2.1 software
+by an MIT-licensed application. The corresponding source code for
+occt-import-js and OpenCASCADE is available at the URLs above.
+
+This file satisfies the LGPL-2.1 attribution / notice requirement.

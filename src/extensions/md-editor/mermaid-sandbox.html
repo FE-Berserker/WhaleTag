@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      Mermaid runs in a SEPARATE iframe (sandbox="allow-scripts", NO
+      allow-same-origin — see md-sandbox.ts). The main md-editor CSP
+      is therefore UNTOUCHED: it stays strict (no unsafe-eval) for
+      the editor + preview code. Mermaid's `new Function(...)` /
+      `eval(...)` based code generation is allowed here because
+      this iframe has a unique origin and is locked down by the
+      `sandbox` attribute on the parent <iframe> wrapper.
+
+      'self' here = the iframe's own origin (whale-extension://md-editor/).
+      'unsafe-inline' for style is needed by mermaid's runtime CSS
+      injection (it sets inline styles on the SVG container).
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self' whale-extension://*; 
+         script-src 'self' 'unsafe-eval' 'unsafe-inline' whale-extension://*; 
+         style-src 'self' 'unsafe-inline'; 
+         img-src 'self' data: blob: whale-extension://*;"
+    />
+    <title>Mermaid Sandbox</title>
+  </head>
+  <body>
+    <div id="error-log" style="position: fixed; top: 0; right: 0; left: 0; max-height: 200px; overflow: auto; background: red; color: white; padding: 4px; font-family: monospace; font-size: 11px; z-index: 99999; display: none;"></div>
+    <script src="./mermaid.min.js"></script>
+    <script>
+      (function () {
+        var logEl = document.getElementById('error-log');
+        function showError(msg) {
+          if (logEl) {
+            logEl.style.display = 'block';
+            var line = document.createElement('div');
+            line.textContent = '[mermaid-sandbox] ' + msg;
+            logEl.appendChild(line);
+          }
+        }
+        // Catch synchronous and async errors from the mermaid bundle
+        // so we can see WHY a render is failing (or hanging).
+        window.addEventListener('error', function (e) {
+          showError('window.error: ' + (e.message || String(e.error || e)));
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+          showError('unhandledrejection: ' + (e.reason && e.reason.message || String(e.reason)));
+        });
+
+        // §18.3.3 fix — defense-in-depth against the postMessage race.
+        //
+        // The parent's `renderMermaid` posts `{type:'render', id, source}`
+        // to this iframe as soon as it's created — long before our
+        // `message` listener is attached (the listener lives inside
+        // `ready()`, AFTER the ~3.4MB mermaid.min.js finishes loading
+        // and `window.mermaid` is defined). Messages that arrive at the
+        // iframe's window BEFORE a listener is attached are dispatched
+        // to nobody and silently lost (DOM `message` events don't replay).
+        //
+        // The parent-side fix in md-sandbox.ts waits for our `{type:'ready'}`
+        // message before posting, so the race is already covered. THIS
+        // buffer is the second line of defense: if a future regression
+        // makes the parent race ahead, queued render messages still get
+        // processed once our listener attaches.
+        //
+        // We only buffer messages of OUR shape (`{type:'render', id, source}`)
+        // so unrelated postMessages on the iframe's window don't pile up.
+        // The buffer is drained synchronously after `window.mermaid` is
+        // ready — order is preserved.
+        var earlyMessages = [];
+        var listenerAttached = false;
+        window.addEventListener('message', function earlyBridge(e) {
+          if (listenerAttached) return; // main listener takes over
+          var data = e.data || {};
+          if (
+            data.type === 'render' &&
+            typeof data.id === 'string' &&
+            typeof data.source === 'string'
+          ) {
+            earlyMessages.push(data);
+          }
+        });
+
+        function ready() {
+          if (typeof window.mermaid === 'undefined') {
+            return setTimeout(ready, 10);
+          }
+          var mermaid = window.mermaid;
+          try {
+            mermaid.initialize({
+              startOnLoad: false,
+              securityLevel: 'loose',
+              theme: 'default',
+            });
+          } catch (initErr) {
+            showError('initialize failed: ' + (initErr.message || String(initErr)));
+          }
+
+          window.addEventListener('message', function (e) {
+            var data = e.data || {};
+            if (data.type !== 'render' || !data.id || typeof data.source !== 'string') {
+              return;
+            }
+            var id = data.id;
+            var source = data.source;
+            // Hard timeout: if mermaid.render() doesn't resolve in
+            // 8s, surface a timeout error instead of letting the
+            // preview hang forever.
+            var timeoutHandle = setTimeout(function () {
+              showError('render timeout (8s) for id=' + id);
+              parent.postMessage({
+                type: 'error',
+                id: id,
+                message: 'mermaid render timeout (8s)',
+              }, '*');
+            }, 8000);
+
+            // mermaid.render() in v11 wants a unique id + source.
+            // It creates a hidden DOM element internally and returns
+            // {svg, bindFunctions}. We don't need a host <div> in
+            // v11 (the v10 compat shim was wrong).
+            try {
+              mermaid
+                .render(id, source)
+                .then(function (res) {
+                  clearTimeout(timeoutHandle);
+                  var svg = (res && res.svg) || '';
+                  if (!svg) {
+                    throw new Error('mermaid.render returned empty svg');
+                  }
+                  parent.postMessage({ type: 'rendered', id: id, svg: svg }, '*');
+                })
+                .catch(function (err) {
+                  clearTimeout(timeoutHandle);
+                  var msg = (err && err.message) || String(err);
+                  showError('render error for id=' + id + ': ' + msg);
+                  parent.postMessage({ type: 'error', id: id, message: msg }, '*');
+                });
+            } catch (syncErr) {
+              clearTimeout(timeoutHandle);
+              var m = (syncErr && syncErr.message) || String(syncErr);
+              showError('sync render throw for id=' + id + ': ' + m);
+              parent.postMessage({ type: 'error', id: id, message: m }, '*');
+            }
+          });
+
+          // §18.3.3 fix — hand off from the early-bridge listener to
+          // the real handler. Any `{type:'render', id, source}`
+          // messages the parent posted before this script finished
+          // loading are sitting in `earlyMessages`; re-dispatch them
+          // synchronously so the parent's RPCs resolve.
+          listenerAttached = true;
+          if (earlyMessages.length > 0) {
+            showError('replaying ' + earlyMessages.length + ' early render msg(s)');
+            var queued = earlyMessages;
+            earlyMessages = null;
+            for (var i = 0; i < queued.length; i++) {
+              window.dispatchEvent(
+                new MessageEvent('message', { data: queued[i] })
+              );
+            }
+          }
+
+          parent.postMessage({ type: 'ready' }, '*');
+        }
+        ready();
+      })();
+    </script>
+  </body>
+</html>

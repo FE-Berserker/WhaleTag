@@ -1,0 +1,10 @@
+{
+  "id": "md-editor",
+  "name": "Markdown Editor",
+  "type": "editor",
+  "color": "#00BCD4",
+  "fileTypes": ["md", "markdown"],
+  "entryPoint": "index.html",
+  "enabled": true,
+  "isDefault": true
+}

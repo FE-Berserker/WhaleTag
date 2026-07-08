@@ -1,0 +1,798 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu,
+    Cantarell, sans-serif;
+}
+
+body {
+  background-color: #ffffff;
+  color: #1f2328;
+}
+
+body[data-theme='dark'] {
+  background-color: #0d1117;
+  color: #c9d1d9;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+}
+
+/* Top row contains the editor, splitter, and preview; status bar sits below
+ * this. Keeping the editor/splitter/preview in a row flex container means
+ * the splitter's getBoundingClientRect still measures the horizontal axis
+ * correctly (see md-splitter.ts setupSplitter({container})). */
+#main-row {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#editor-pane {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+#splitter {
+  width: 4px;
+  flex-shrink: 0;
+  background-color: #d0d7de;
+  cursor: col-resize;
+}
+
+body[data-theme='dark'] #splitter {
+  background-color: #30363d;
+}
+
+#preview-pane {
+  flex: 1;
+  min-width: 0;
+  /* overflow hidden — the editor pane (`.cm-scroller`) is the sole scroll
+   * source. `index.ts` mirrors its scrollTop proportionally so the preview
+   * follows. We keep `overflow: hidden` (not `auto`) to suppress the
+   * preview's own scrollbar + wheel-scroll so only the editor scrolls. */
+  overflow: hidden;
+  padding: 24px 32px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+#preview-pane h1,
+#preview-pane h2,
+#preview-pane h3,
+#preview-pane h4,
+#preview-pane h5,
+#preview-pane h6 {
+  margin-top: 24px;
+  margin-bottom: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+#preview-pane h1 {
+  font-size: 2em;
+  border-bottom: 1px solid #d0d7de;
+  padding-bottom: 8px;
+}
+
+body[data-theme='dark'] #preview-pane h1 {
+  border-bottom-color: #30363d;
+}
+
+#preview-pane h2 {
+  font-size: 1.5em;
+  border-bottom: 1px solid #d0d7de;
+  padding-bottom: 6px;
+}
+
+body[data-theme='dark'] #preview-pane h2 {
+  border-bottom-color: #30363d;
+}
+
+#preview-pane p {
+  margin: 0 0 12px;
+}
+
+#preview-pane ul,
+#preview-pane ol {
+  margin: 0 0 12px;
+  padding-left: 24px;
+}
+
+#preview-pane li {
+  margin-bottom: 4px;
+}
+
+#preview-pane blockquote {
+  margin: 0 0 12px;
+  padding: 4px 16px;
+  color: #57606a;
+  border-left: 4px solid #d0d7de;
+}
+
+body[data-theme='dark'] #preview-pane blockquote {
+  color: #8b949e;
+  border-left-color: #30363d;
+}
+
+#preview-pane pre {
+  background-color: #f6f8fa;
+  border-radius: 6px;
+  padding: 12px;
+  overflow: auto;
+  margin: 0 0 12px;
+}
+
+body[data-theme='dark'] #preview-pane pre {
+  background-color: #161b22;
+}
+
+#preview-pane code {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Consolas, monospace;
+  font-size: 0.9em;
+  background-color: rgba(175, 184, 193, 0.2);
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+#preview-pane pre code {
+  background-color: transparent;
+  padding: 0;
+}
+
+#preview-pane table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+#preview-pane th,
+#preview-pane td {
+  border: 1px solid #d0d7de;
+  padding: 6px 12px;
+}
+
+body[data-theme='dark'] #preview-pane th,
+body[data-theme='dark'] #preview-pane td {
+  border-color: #30363d;
+}
+
+#preview-pane th {
+  background-color: #f6f8fa;
+  font-weight: 600;
+}
+
+body[data-theme='dark'] #preview-pane th {
+  background-color: #161b22;
+}
+
+#preview-pane a {
+  color: #0969da;
+  text-decoration: none;
+}
+
+body[data-theme='dark'] #preview-pane a {
+  color: #58a6ff;
+}
+
+#preview-pane a:hover {
+  text-decoration: underline;
+}
+
+#preview-pane img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* CodeMirror overrides to fill the pane. */
+.cm-editor {
+  height: 100%;
+}
+
+.cm-scroller {
+  overflow: auto;
+}
+
+/* highlight.js — GitHub (light) + GitHub-Dark (dark) themes.
+ * Compact subset of the upstream themes inlined here so the extension
+ * bundle has them built-in (no extra CSS import in production). Source:
+ * node_modules/highlight.js/styles/{github,github-dark}.css. See §18.1.4.
+ *
+ * Only the most common token classes are covered (comments, keywords,
+ * strings, numbers, functions, types, builtins, regex). Languages with
+ * additional token classes (e.g. JSX, Rust attribute spans) inherit
+ * hljs's default colors. The themes are deliberately compatible with
+ * our existing <pre> background / border / padding in #preview-pane pre
+ * above. */
+.hljs {
+  color: #24292e;
+  background: transparent;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: #6a737d;
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-section,
+.hljs-link,
+.hljs-doctag,
+.hljs-strong {
+  color: #d73a49;
+  font-weight: bold;
+}
+
+.hljs-function .hljs-keyword {
+  color: #d73a49;
+}
+
+.hljs-subst {
+  color: #24292e;
+  font-weight: normal;
+}
+
+.hljs-string,
+.hljs-attr,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition,
+.hljs-meta-string {
+  color: #032f62;
+}
+
+.hljs-title,
+.hljs-name,
+.hljs-type,
+.hljs-attribute,
+.hljs-built_in,
+.hljs-class .hljs-title,
+.hljs-tag {
+  color: #6f42c1;
+}
+
+.hljs-number,
+.hljs-regexp,
+.hljs-template-variable,
+.hljs-variable,
+.hljs-selector-attr,
+.hljs-selector-pseudo {
+  color: #005cc5;
+}
+
+.hljs-deletion {
+  color: #b31d28;
+  background-color: #ffeef0;
+}
+
+.hljs-addition {
+  color: #22863a;
+  background-color: #f0fff4;
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-params {
+  color: #24292e;
+}
+
+/* --- Dark theme: GitHub-Dark palette ------------------------------- */
+body[data-theme='dark'] .hljs {
+  color: #c9d1d9;
+}
+
+body[data-theme='dark'] .hljs-comment,
+body[data-theme='dark'] .hljs-quote {
+  color: #8b949e;
+}
+
+body[data-theme='dark'] .hljs-keyword,
+body[data-theme='dark'] .hljs-selector-tag,
+body[data-theme='dark'] .hljs-literal,
+body[data-theme='dark'] .hljs-section,
+body[data-theme='dark'] .hljs-link,
+body[data-theme='dark'] .hljs-doctag {
+  color: #ff7b72;
+}
+
+body[data-theme='dark'] .hljs-string,
+body[data-theme='dark'] .hljs-attr,
+body[data-theme='dark'] .hljs-symbol,
+body[data-theme='dark'] .hljs-bullet,
+body[data-theme='dark'] .hljs-meta-string {
+  color: #a5d6ff;
+}
+
+body[data-theme='dark'] .hljs-title,
+body[data-theme='dark'] .hljs-name,
+body[data-theme='dark'] .hljs-type,
+body[data-theme='dark'] .hljs-attribute,
+body[data-theme='dark'] .hljs-built_in,
+body[data-theme='dark'] .hljs-class .hljs-title,
+body[data-theme='dark'] .hljs-tag {
+  color: #d2a8ff;
+}
+
+body[data-theme='dark'] .hljs-number,
+body[data-theme='dark'] .hljs-regexp,
+body[data-theme='dark'] .hljs-template-variable,
+body[data-theme='dark'] .hljs-variable {
+  color: #79c0ff;
+}
+
+body[data-theme='dark'] .hljs-deletion {
+  color: #ffdcd7;
+  background-color: #67060c;
+}
+
+body[data-theme='dark'] .hljs-addition {
+  color: #aff5b4;
+  background-color: #033a16;
+}
+
+body[data-theme='dark'] .hljs-params {
+  color: #c9d1d9;
+}
+
+/* Splitter hover / drag affordance (a11y + visual feedback). The base
+ * cursor: col-resize + 4px width are in the splitter rules above; this
+ * adds a subtle hover tint and a stronger color while dragging. The
+ * drag state is set on document.body by md-splitter.ts. */
+#splitter:hover {
+  background-color: #b1b6c0;
+}
+
+body[data-theme='dark'] #splitter:hover {
+  background-color: #484f58;
+}
+
+body[data-editor-dragging='true'] #splitter {
+  background-color: #0969da;
+}
+
+body[data-theme='dark'][data-editor-dragging='true'] #splitter {
+  background-color: #58a6ff;
+}
+
+#splitter:focus-visible {
+  outline: 2px solid #0969da;
+  outline-offset: -2px;
+}
+
+body[data-theme='dark'] #splitter:focus-visible {
+  outline-color: #58a6ff;
+}
+
+/* Status bar — mirrors text-editor's layout (left: cursor/len/sel;
+ * right: read-only badge + encoding). 22px tall, fixed to the bottom of
+ * the editor iframe; doesn't scroll with the editor. */
+#status {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+  height: 22px;
+  padding: 0 12px;
+  border-top: 1px solid #d0d7de;
+  background-color: #f6f8fa;
+  color: #57606a;
+  font-family:
+    ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono',
+    Menlo, monospace;
+  font-size: 11px;
+  line-height: 22px;
+  user-select: none;
+  gap: 16px;
+}
+
+body[data-theme='dark'] #status {
+  border-top-color: #30363d;
+  background-color: #161b22;
+  color: #8b949e;
+}
+
+.status-left,
+.status-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.status-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.status-label {
+  color: #6a737d;
+}
+
+body[data-theme='dark'] .status-label {
+  color: #6e7681;
+}
+
+.status-sep {
+  margin: 0 2px;
+}
+
+#status-readonly {
+  color: #bf8700;
+  font-weight: 600;
+}
+
+body[data-theme='dark'] #status-readonly {
+  color: #d29922;
+}
+
+/* §18.3.5 — modified indicator. Orange dot + "Modified" text, only
+ * visible when the host hasn't acknowledged the latest contentChangedInEditor
+ * (i.e. file has unsaved changes). */
+#status-dirty {
+  color: #bf8700;
+  font-weight: 600;
+  cursor: default;
+}
+
+#status-dirty::before {
+  content: '●';
+  margin-right: 4px;
+  font-size: 10px;
+  vertical-align: middle;
+}
+
+body[data-theme='dark'] #status-dirty {
+  color: #d29922;
+}
+
+/* §18.3.5 — undo/redo availability dots. Mirrors #status-dirty's
+ * color palette (amber/orange) so the three "history" indicators
+ * read as one family. `hidden` attribute is toggled from index.ts
+ * based on `historyField.undoStack` / `redoStack` length. The
+ * `.status-flash` class is added briefly by `flashUndoIndicator` /
+ * `flashRedoIndicator` on the matching keypress — a 250ms color
+ * shift gives visual confirmation that the keystroke fired. */
+#status-undo,
+#status-redo {
+  color: #57606a;
+  font-weight: 500;
+  cursor: default;
+}
+
+#status-undo::before,
+#status-redo::before {
+  font-size: 13px;
+  margin-right: 4px;
+  vertical-align: middle;
+  display: inline-block;
+}
+
+#status-undo::before {
+  content: '↶';
+}
+
+#status-redo::before {
+  content: '↷';
+}
+
+#status-undo.status-flash,
+#status-redo.status-flash {
+  color: #bf8700;
+  font-weight: 700;
+}
+
+body[data-theme='dark'] #status-undo,
+body[data-theme='dark'] #status-redo {
+  color: #8b949e;
+}
+
+body[data-theme='dark'] #status-undo.status-flash,
+body[data-theme='dark'] #status-redo.status-flash {
+  color: #d29922;
+}
+
+/* Toolbar (see §18.2.1) — sits between #app and #main-row. Mirrors
+ * text-editor's #toolbar layout: left-aligned buttons separated by
+ * thin dividers, with a right-aligned state indicator (current wrap
+ * mode). Same border-top + background palette as the status bar so
+ * the two chrome strips frame the editor cleanly. */
+#toolbar {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 32px;
+  padding: 0 8px;
+  background-color: #f6f8fa;
+  border-bottom: 1px solid #d0d7de;
+  color: #57606a;
+  font-size: 12px;
+  gap: 4px;
+  user-select: none;
+}
+
+body[data-theme='dark'] #toolbar {
+  background-color: #161b22;
+  border-bottom-color: #30363d;
+  color: #8b949e;
+}
+
+#toolbar button {
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  color: inherit;
+  font: inherit;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  line-height: 1;
+  transition: background-color 0.1s;
+}
+
+#toolbar button:hover {
+  background-color: rgba(175, 184, 193, 0.2);
+}
+
+#toolbar button:active,
+#toolbar button.active {
+  background-color: rgba(175, 184, 193, 0.4);
+}
+
+body[data-theme='dark'] #toolbar button:hover {
+  background-color: rgba(110, 118, 129, 0.2);
+}
+
+body[data-theme='dark'] #toolbar button:active,
+body[data-theme='dark'] #toolbar button.active {
+  background-color: rgba(110, 118, 129, 0.4);
+}
+
+#toolbar button:focus-visible {
+  outline: 2px solid #0969da;
+  outline-offset: -2px;
+}
+
+body[data-theme='dark'] #toolbar button:focus-visible {
+  outline-color: #58a6ff;
+}
+
+.toolbar-separator {
+  display: inline-block;
+  width: 1px;
+  height: 16px;
+  background-color: #d0d7de;
+  margin: 0 4px;
+}
+
+body[data-theme='dark'] .toolbar-separator {
+  background-color: #30363d;
+}
+
+.toolbar-spacer {
+  /* Push subsequent elements (e.g. #wrap-state) to the right edge. */
+  flex: 1;
+  background: transparent;
+  margin: 0;
+}
+
+#wrap-state {
+  font-family:
+    ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono',
+    Menlo, monospace;
+  font-size: 11px;
+  color: #6a737d;
+  padding: 0 4px;
+}
+
+body[data-theme='dark'] #wrap-state {
+  color: #6e7681;
+}
+
+/* TOC / Outline sidebar (see §18.3.1). Hidden by default via the
+ * `[hidden]` attribute; the toolbar's "≡ TOC" button toggles it.
+ * 240px wide, vertical scroll if the doc has many headings. Indentation
+ * per heading level comes from `--toc-indent` on each `.toc-h{1..6}`
+ * rule below.
+ *
+ * The `:not([hidden])` guard is needed because `[hidden]` is a default
+ * `display: none` rule from the user-agent stylesheet, but a plain
+ * `#toc-sidebar { display: flex }` would override it. We want flex
+ * ONLY when the attribute is absent. */
+#toc-sidebar {
+  flex-shrink: 0;
+  width: 240px;
+  background-color: #f6f8fa;
+  border-left: 1px solid #d0d7de;
+  overflow-y: auto;
+  user-select: none;
+  display: none;
+  flex-direction: column;
+}
+
+#toc-sidebar:not([hidden]) {
+  display: flex;
+}
+
+body[data-theme='dark'] #toc-sidebar {
+  background-color: #161b22;
+  border-left-color: #30363d;
+}
+
+.toc-header {
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6a737d;
+  border-bottom: 1px solid #d0d7de;
+  position: sticky;
+  top: 0;
+  background-color: inherit;
+}
+
+body[data-theme='dark'] .toc-header {
+  color: #6e7681;
+  border-bottom-color: #30363d;
+}
+
+#toc-list {
+  padding: 4px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.toc-empty {
+  padding: 12px;
+  color: #6a737d;
+  font-size: 12px;
+  font-style: italic;
+}
+
+body[data-theme='dark'] .toc-empty {
+  color: #6e7681;
+}
+
+a.toc-entry {
+  display: block;
+  padding: 4px 12px;
+  color: #57606a;
+  text-decoration: none;
+  font-size: 13px;
+  line-height: 1.4;
+  border-left: 2px solid transparent;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+a.toc-entry:hover {
+  background-color: rgba(175, 184, 193, 0.15);
+  color: #0969da;
+}
+
+/* §18.3.1 — active heading highlight. Applied to the entry whose
+ * source line matches the heading at the top of the editor viewport
+ * (computed in `syncPreviewScroll`, set via `setActiveTocLine` in
+ * index.ts). The active entry gets a stronger color + a left border
+ * accent matching the editor cursor / selection accent. */
+a.toc-entry.toc-active {
+  color: #0969da;
+  font-weight: 600;
+  border-left-color: #0969da;
+}
+
+body[data-theme='dark'] a.toc-entry {
+  color: #8b949e;
+}
+
+body[data-theme='dark'] a.toc-entry:hover {
+  background-color: rgba(110, 118, 129, 0.2);
+  color: #58a6ff;
+}
+
+body[data-theme='dark'] a.toc-entry.toc-active {
+  color: #58a6ff;
+  border-left-color: #58a6ff;
+}
+
+a.toc-h1 {
+  --toc-indent: 0px;
+  font-weight: 600;
+  padding-left: calc(12px + var(--toc-indent));
+}
+a.toc-h2 {
+  --toc-indent: 12px;
+  padding-left: calc(12px + var(--toc-indent));
+}
+a.toc-h3 {
+  --toc-indent: 24px;
+  padding-left: calc(12px + var(--toc-indent));
+  font-size: 12px;
+}
+a.toc-h4 {
+  --toc-indent: 36px;
+  padding-left: calc(12px + var(--toc-indent));
+  font-size: 12px;
+  color: #6a737d;
+}
+a.toc-h5 {
+  --toc-indent: 48px;
+  padding-left: calc(12px + var(--toc-indent));
+  font-size: 12px;
+  color: #6a737d;
+}
+a.toc-h6 {
+  --toc-indent: 60px;
+  padding-left: calc(12px + var(--toc-indent));
+  font-size: 12px;
+  color: #6a737d;
+}
+
+/* Mermaid diagrams (see §18.3.3). The pending state is a slightly
+ * muted code block that gives the user feedback that a diagram is
+ * rendering. Once mermaid.run() completes, the placeholder is
+ * replaced by an inline <svg>. The error state shows the raw source
+ * with a red border so the user can see what they typed. */
+#preview-pane .mermaid {
+  text-align: center;
+  margin: 0 0 12px;
+  padding: 16px;
+  background-color: #f6f8fa;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+#preview-pane .mermaid-pending {
+  color: #6a737d;
+  font-family:
+    ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono',
+    Menlo, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  font-style: italic;
+}
+
+#preview-pane .mermaid-error {
+  color: #cf222e;
+  background-color: #ffebe9;
+  border: 1px solid #ff8182;
+}
+
+body[data-theme='dark'] #preview-pane .mermaid {
+  background-color: #161b22;
+}
+
+body[data-theme='dark'] #preview-pane .mermaid-pending {
+  color: #8b949e;
+}
+
+body[data-theme='dark'] #preview-pane .mermaid-error {
+  color: #ff7b72;
+  background-color: #67060c;
+  border-color: #ff8182;
+}
+
+#preview-pane .mermaid svg {
+  max-width: 100%;
+  height: auto;
+}

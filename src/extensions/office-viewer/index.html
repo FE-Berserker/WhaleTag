@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' whale-extension://*; style-src 'self' 'unsafe-inline' whale-extension://*; img-src 'self' data: whale-extension://*; object-src 'none'; connect-src 'self' whale-extension:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Office Viewer</title>
+    <script src="./extension-api.js"></script>
+  </head>
+  <body>
+    <div id="toolbar">
+      <button id="zoom-out" type="button" title="Zoom out">&minus;</button>
+      <span id="zoom-level">100%</span>
+      <button id="zoom-in" type="button" title="Zoom in">+</button>
+      <span id="page-info"></span>
+    </div>
+    <div id="pages"></div>
+    <div id="status">Loading…</div>
+  </body>
+</html>

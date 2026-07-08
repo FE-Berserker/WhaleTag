@@ -1,0 +1,23 @@
+{
+  "id": "cad-viewer",
+  "name": "CAD Viewer",
+  "type": "viewer",
+  "color": "#009688",
+  "fileTypes": [
+    "stl",
+    "obj",
+    "glb",
+    "gltf",
+    "ply",
+    "dxf",
+    "step",
+    "stp",
+    "iges",
+    "igs",
+    "brep",
+    "dwg"
+  ],
+  "entryPoint": "index.html",
+  "enabled": true,
+  "isDefault": true
+}

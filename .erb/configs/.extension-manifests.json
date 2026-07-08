@@ -1,0 +1,273 @@
+{
+  "archive-viewer": {
+    "id": "archive-viewer",
+    "name": "Archive Viewer",
+    "type": "viewer",
+    "color": "#1565C0",
+    "fileTypes": [
+      "zip",
+      "tar",
+      "tgz",
+      "tbz2",
+      "txz",
+      "gz",
+      "bz2",
+      "xz",
+      "7z"
+    ],
+    "entryPoint": "index.html",
+    "enabled": true,
+    "isDefault": true
+  },
+  "cad-viewer": {
+    "id": "cad-viewer",
+    "name": "CAD Viewer",
+    "type": "viewer",
+    "color": "#009688",
+    "fileTypes": [
+      "stl",
+      "obj",
+      "glb",
+      "gltf",
+      "ply",
+      "dxf",
+      "step",
+      "stp",
+      "iges",
+      "igs",
+      "brep",
+      "dwg"
+    ],
+    "entryPoint": "index.html",
+    "enabled": true,
+    "isDefault": true
+  },
+  "drawio-editor": {
+    "id": "drawio-editor",
+    "name": "Draw.io",
+    "type": "editor",
+    "color": "#f08705",
+    "fileTypes": [
+      "drawio",
+      "dio"
+    ],
+    "entryPoint": "index.html",
+    "enabled": true,
+    "isDefault": true
+  },
+  "ebook-viewer": {
+    "id": "ebook-viewer",
+    "name": "Ebook Viewer",
+    "type": "viewer",
+    "color": "#8D6E63",
+    "fileTypes": [
+      "epub",
+      "fb2",
+      "cbz",
+      "mobi",
+      "azw",
+      "azw3",
+      "lit",
+      "pdb",
+      "rb",
+      "snb",
+      "tcr",
+      "htmlz"
+    ],
+    "entryPoint": "index.html",
+    "enabled": true,
+    "isDefault": true
+  },
+  "excalidraw-editor": {
+    "id": "excalidraw-editor",
+    "name": "Excalidraw",
+    "type": "editor",
+    "color": "#6965DB",
+    "fileTypes": [
+      "excalidraw"
+    ],
+    "entryPoint": "index.html",
+    "enabled": true,
+    "isDefault": true
+  },
+  "font-viewer": {
+    "id": "font-viewer",
+    "name": "Font Viewer",
+    "type": "viewer",
+    "color": "#7E57C2",
+    "fileTypes": [
+      "ttf",
+      "otf",
+      "woff",
+      "woff2"
+    ],
+    "entryPoint": "index.html",
+    "enabled": true,
+    "isDefault": true
+  },
+  "heic-viewer": {
+    "id": "heic-viewer",
+    "name": "HEIC Viewer",
+    "type": "viewer",
+    "color": "#34A853",
+    "fileTypes": [
+      "heic",
+      "heif"
+    ],
+    "entryPoint": "index.html",
+    "enabled": true,
+    "isDefault": true
+  },
+  "html-viewer": {
+    "id": "html-viewer",
+    "name": "HTML Viewer",
+    "type": "viewer",
+    "color": "#E91E63",
+    "fileTypes": [
+      "html",
+      "htm"
+    ],
+    "entryPoint": "index.html",
+    "enabled": true,
+    "isDefault": true
+  },
+  "image-viewer": {
+    "id": "image-viewer",
+    "name": "Image Viewer",
+    "type": "viewer",
+    "color": "#9C27B0",
+    "fileTypes": [
+      "jpg",
+      "jpeg",
+      "png",
+      "gif",
+      "webp",
+      "bmp",
+      "avif",
+      "tiff",
+      "tif",
+      "ico",
+      "svg"
+    ],
+    "entryPoint": "index.html",
+    "enabled": true,
+    "isDefault": true
+  },
+  "json-viewer": {
+    "id": "json-viewer",
+    "name": "JSON Viewer",
+    "type": "viewer",
+    "color": "#FF9800",
+    "fileTypes": [
+      "json"
+    ],
+    "entryPoint": "index.html",
+    "enabled": true,
+    "isDefault": true
+  },
+  "md-editor": {
+    "id": "md-editor",
+    "name": "Markdown Editor",
+    "type": "editor",
+    "color": "#00BCD4",
+    "fileTypes": [
+      "md",
+      "markdown"
+    ],
+    "entryPoint": "index.html",
+    "enabled": true,
+    "isDefault": true
+  },
+  "media-player": {
+    "id": "media-player",
+    "name": "Media Player",
+    "type": "viewer",
+    "color": "#FF9800",
+    "fileTypes": [
+      "mp4",
+      "mov",
+      "mkv",
+      "webm",
+      "m4v",
+      "avi",
+      "3gp",
+      "ogv",
+      "wmv",
+      "flv",
+      "mp3",
+      "ogg",
+      "wav",
+      "flac",
+      "aac",
+      "m4a",
+      "opus",
+      "ape",
+      "wma",
+      "aiff",
+      "amr",
+      "ac3",
+      "dts",
+      "mpc",
+      "wv",
+      "dsf"
+    ],
+    "entryPoint": "index.html",
+    "enabled": true,
+    "isDefault": true
+  },
+  "office-viewer": {
+    "id": "office-viewer",
+    "name": "Office Viewer",
+    "type": "viewer",
+    "color": "#2B579A",
+    "fileTypes": [
+      "doc",
+      "docx",
+      "xls",
+      "xlsx",
+      "ppt",
+      "pptx",
+      "odt",
+      "ods",
+      "odp"
+    ],
+    "entryPoint": "index.html",
+    "enabled": true,
+    "isDefault": true
+  },
+  "pdf-viewer": {
+    "id": "pdf-viewer",
+    "name": "PDF Viewer",
+    "type": "viewer",
+    "color": "#F44336",
+    "fileTypes": [
+      "pdf"
+    ],
+    "entryPoint": "index.html",
+    "enabled": true,
+    "isDefault": true
+  },
+  "text-editor": {
+    "id": "text-editor",
+    "name": "Text Editor",
+    "type": "editor",
+    "color": "#4CAF50",
+    "fileTypes": [
+      "txt",
+      "log",
+      "csv",
+      "tsv",
+      "json",
+      "js",
+      "ts",
+      "css",
+      "html",
+      "xml",
+      "yaml",
+      "yml"
+    ],
+    "entryPoint": "index.html",
+    "enabled": true,
+    "isDefault": true
+  }
+}

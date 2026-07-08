@@ -1,0 +1,655 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
+    Ubuntu, Cantarell, sans-serif;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+body[data-theme='light'] {
+  --bg: #f5f5f5;
+  --fg: #212121;
+  --panel: #ffffff;
+  --border: #e0e0e0;
+  --accent: #8d6e63;
+  --muted: #757575;
+  --hover: #eeeeee;
+  --reader-bg: #ffffff;
+  --reader-fg: #212121;
+}
+
+body[data-theme='dark'] {
+  --bg: #1e1e1e;
+  --fg: #e0e0e0;
+  --panel: #2a2a2a;
+  --border: #424242;
+  --accent: #a1887f;
+  --muted: #9e9e9e;
+  --hover: #333333;
+  --reader-bg: #1a1a1a;
+  --reader-fg: #e0e0e0;
+}
+
+body[data-theme='sepia'] {
+  --bg: #f1e8d3;
+  --fg: #4a3a1f;
+  --panel: #f7efdb;
+  --border: #d9c89f;
+  --accent: #8b6f3e;
+  --muted: #8a7958;
+  --hover: #ebdfbe;
+  --reader-bg: #f7efdb;
+  --reader-fg: #4a3a1f;
+}
+
+/* Initial theme flash guard — avoid white flash on dark hosts before
+ * setTheme arrives. Same trick used by text-viewer / pdf-viewer. */
+html,
+body[data-theme='light'] {
+  background: var(--bg);
+}
+
+#toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  min-height: 36px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+#toolbar::-webkit-scrollbar {
+  height: 4px;
+}
+
+#toolbar::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+#toolbar button,
+#toolbar select,
+#toolbar input {
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 13px;
+  line-height: 1;
+  padding: 4px 8px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+#toolbar button:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+#toolbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+#toolbar select {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 3px 6px;
+}
+
+#toolbar input[type='number'] {
+  width: 48px;
+  text-align: center;
+  font-size: 12px;
+  padding: 3px 4px;
+}
+
+#toolbar input[type='range'] {
+  width: 70px;
+  vertical-align: middle;
+}
+
+#toolbar .sep {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+#toolbar .sep-thin {
+  height: 14px;
+  margin: 0 2px;
+}
+
+#toolbar .slider {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+#toolbar .slider-label {
+  font-size: 11px;
+  color: var(--muted);
+  width: 18px;
+  text-align: right;
+}
+
+#title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-left: 8px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+#status {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+
+#search-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+#search-bar.hidden {
+  display: none;
+}
+
+#search-bar input {
+  flex: 1;
+  font-size: 13px;
+  padding: 4px 8px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+
+#search-count {
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 70px;
+  text-align: right;
+}
+
+#search-bar button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  border-radius: 3px;
+  padding: 3px 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+#content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+  background: var(--bg);
+}
+
+#content img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+
+#drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 300px;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  transform: translateX(-100%);
+  transition: transform 180ms ease;
+  display: flex;
+  flex-direction: column;
+  z-index: 10;
+}
+
+#drawer.open {
+  transform: translateX(0);
+}
+
+#drawer-header {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  padding: 0;
+  min-height: 36px;
+}
+
+#drawer-tabs {
+  display: flex;
+  flex: 1;
+}
+
+.tab-btn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 8px 4px;
+  font-size: 12px;
+  border-bottom: 2px solid transparent;
+}
+
+.tab-btn:hover {
+  background: var(--hover);
+}
+
+.tab-btn.active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+
+#btn-close-drawer {
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 18px;
+  padding: 0 12px;
+}
+
+.tab-pane {
+  display: none;
+  flex: 1;
+  overflow: auto;
+  padding: 8px 0;
+}
+
+.tab-pane.active {
+  display: block;
+}
+
+#toc .toc-item {
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 13px;
+  border-left: 3px solid transparent;
+  user-select: none;
+}
+
+#toc .toc-item:hover {
+  background: var(--hover);
+}
+
+#toc .toc-item.active {
+  border-left-color: var(--accent);
+  background: var(--hover);
+  font-weight: 600;
+}
+
+#toc .toc-item.level-1 {
+  padding-left: 16px;
+}
+#toc .toc-item.level-2 {
+  padding-left: 28px;
+}
+#toc .toc-item.level-3 {
+  padding-left: 40px;
+}
+
+#bookmarks-list .empty,
+#highlights-list .empty {
+  padding: 20px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  font-style: italic;
+}
+
+#bookmarks-list .list-item,
+#highlights-list .list-item {
+  padding: 8px 16px;
+  font-size: 13px;
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  user-select: none;
+}
+
+#bookmarks-list .list-item:hover,
+#highlights-list .list-item:hover {
+  background: var(--hover);
+}
+
+#bookmarks-list .list-item .item-meta,
+#highlights-list .list-item .item-meta {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+#highlights-list .list-item .item-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+#highlights-list .list-item.hl-yellow {
+  border-left-color: #fdd835;
+}
+#highlights-list .list-item.hl-green {
+  border-left-color: #66bb6a;
+}
+#highlights-list .list-item.hl-pink {
+  border-left-color: #ec407a;
+}
+#highlights-list .list-item.hl-blue {
+  border-left-color: #42a5f5;
+}
+
+#meta-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 340px;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  transform: translateX(100%);
+  transition: transform 180ms ease;
+  display: flex;
+  flex-direction: column;
+  z-index: 10;
+}
+
+#meta-panel.open {
+  transform: translateX(0);
+}
+
+#meta-panel.hidden {
+  /* keeps transition working — translate fully off-screen */
+}
+
+#meta-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+#meta-title-text {
+  flex: 1;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+#btn-meta-close {
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 18px;
+  padding: 0 8px;
+}
+
+#meta-body {
+  flex: 1;
+  overflow: auto;
+  padding: 12px 16px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+#meta-body dl {
+  margin: 0;
+}
+
+#meta-body dt {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  margin-top: 12px;
+  letter-spacing: 0.04em;
+}
+
+#meta-body dt:first-child {
+  margin-top: 0;
+}
+
+#meta-body dd {
+  margin: 4px 0 0 0;
+  color: var(--fg);
+  word-wrap: break-word;
+}
+
+#meta-body dd.empty {
+  color: var(--muted);
+  font-style: italic;
+}
+
+#error {
+  position: fixed;
+  inset: 36px 0 0 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: var(--bg);
+  color: var(--fg);
+  z-index: 20;
+  padding: 24px;
+  text-align: center;
+}
+
+#error.hidden {
+  display: none;
+}
+
+#error-message {
+  max-width: 480px;
+  margin: 0;
+  font-size: 15px;
+}
+
+#btn-open-native {
+  background: var(--accent);
+  border: none;
+  border-radius: 4px;
+  color: #fff;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 8px 16px;
+}
+
+#highlight-popover {
+  position: fixed;
+  z-index: 30;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+  max-width: 320px;
+}
+
+#highlight-popover.hidden {
+  display: none;
+}
+
+#highlight-text {
+  margin-bottom: 6px;
+  font-style: italic;
+  color: var(--muted);
+  word-wrap: break-word;
+  max-width: 280px;
+}
+
+#highlight-actions {
+  display: flex;
+  gap: 6px;
+}
+
+#highlight-actions button {
+  flex: 1;
+  background: var(--hover);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.reader-page {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: var(--whale-margin, 24px) 20px;
+  background: var(--reader-bg);
+  color: var(--reader-fg);
+  min-height: 100%;
+  line-height: var(--whale-line-height, 1.7);
+  font-size: var(--whale-font-size, 16px);
+  font-family: var(--whale-font-family, 'Georgia, "Times New Roman", serif');
+}
+
+/* Single-chapter "page" view: turn the reader page into a flex column so the
+ * chapter <iframe> can fill the content area instead of collapsing to its
+ * intrinsic 150px height. The previous `min-height: 100%` left the parent's
+ * main size "indefinite" from the iframe's perspective, so the iframe's
+ * `height: 100%` did not resolve and the chapter viewport shrank to the top
+ * of the page. Excluding `.continuous` keeps the multi-chapter wrapper
+ * (`renderEpubContinuous`) growing naturally with its children. */
+.reader-page:not(.continuous) {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.reader-page:not(.continuous) iframe {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  border: none;
+  display: block;
+  align-self: stretch;
+}
+
+.reader-page.continuous {
+  max-width: 800px;
+  margin: 0 auto;
+  border-bottom: 1px dashed var(--border);
+}
+
+.reader-page.continuous:last-child {
+  border-bottom: none;
+}
+
+.chapter-divider {
+  text-align: center;
+  padding: 12px 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: italic;
+  user-select: none;
+}
+
+.cbz-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  padding: 12px;
+}
+
+.cbz-page img {
+  max-width: 100%;
+  max-height: calc(100vh - 100px);
+  object-fit: contain;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.cbz-page.spread {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+}
+
+.cbz-page.spread img {
+  max-width: calc(50% - 4px);
+  max-height: calc(100vh - 100px);
+}
+
+.cbz-page.spread.right-to-left {
+  flex-direction: row-reverse;
+}
+
+/* Highlight marks injected into chapter HTML */
+mark.whale-highlight {
+  background: var(--whale-hl-bg, #fdd83566);
+  color: inherit;
+  padding: 0 1px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+mark.whale-highlight.hl-yellow {
+  --whale-hl-bg: #fdd83566;
+}
+mark.whale-highlight.hl-green {
+  --whale-hl-bg: #66bb6a66;
+}
+mark.whale-highlight.hl-pink {
+  --whale-hl-bg: #ec407a66;
+}
+mark.whale-highlight.hl-blue {
+  --whale-hl-bg: #42a5f566;
+}
+
+mark.whale-search-hit {
+  background: var(--accent);
+  color: #fff;
+  padding: 0 1px;
+  border-radius: 2px;
+}
+
+mark.whale-search-hit.active {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.hidden {
+  display: none !important;
+}

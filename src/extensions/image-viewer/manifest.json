@@ -1,0 +1,10 @@
+{
+  "id": "image-viewer",
+  "name": "Image Viewer",
+  "type": "viewer",
+  "color": "#9C27B0",
+  "fileTypes": ["jpg", "jpeg", "png", "gif", "webp", "bmp", "avif", "tiff", "tif", "ico", "svg"],
+  "entryPoint": "index.html",
+  "enabled": true,
+  "isDefault": true
+}

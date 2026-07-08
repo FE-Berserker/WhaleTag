@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+
+# Build output (webpack / electron-builder)
+dist/
+release/app/dist/
+release/build/
+build-cache/
+.exe/
+
+# ERB dll cache
+.erb/dll/
+
+# Build tooling & runtime installers (downloaded locally, not committed)
+tools/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test fixture data (large, local-only)
+Test/
+
+# Local working dir for other agents
+LightWork/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+
+# Env
+.env
+.env.local
+
+# Claude Code 本机设置（含 API key / token，绝不能提交）
+**/.claude/settings.local.json
+
+# Scratch / temp files
+test_string.txt
+doc_20260705.zip

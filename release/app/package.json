@@ -1,0 +1,11 @@
+{
+  "name": "whale-app",
+  "productName": "WhaleTag",
+  "version": "0.0.1",
+  "description": "Whale - a local-first, offline file manager",
+  "main": "./dist/main/main.js",
+  "author": {
+    "name": "Whale"
+  },
+  "license": "MIT"
+}

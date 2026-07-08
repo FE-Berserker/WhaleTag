@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' whale-extension://*; style-src 'self' 'unsafe-inline' whale-extension://*; font-src 'self' blob:; img-src 'self' data:; object-src 'none'; connect-src 'self' whale-extension:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Font Viewer</title>
+    <script src="./extension-api.js"></script>
+  </head>
+  <body data-theme="light" data-contrast="auto">
+    <!--
+      Toolbar layout (Batch 1, 2026-07-02):
+      Row 1 controls (size / tracking / leading / weight / width / bold / italic
+      / background / drawer + close).
+
+      IDs stable — index.ts queries each by id (no inline listeners).
+    -->
+    <header id="toolbar">
+      <span id="family-name"></span>
+      <span class="toolbar-sep"></span>
+
+      <!-- Size + tracking + leading -->
+      <label class="toolbar-row">
+        <span class="toolbar-label" id="size-lbl">Size</span>
+        <input id="size" class="toolbar-slider" type="range" min="14" max="96" step="1" value="40" />
+        <span id="size-value" class="toolbar-readout">40px</span>
+      </label>
+      <label class="toolbar-row">
+        <span class="toolbar-label" id="tracking-lbl">Tracking</span>
+        <input id="tracking" class="toolbar-slider" type="range" min="-5" max="20" step="0.5" value="0" />
+        <span id="tracking-value" class="toolbar-readout">0px</span>
+      </label>
+      <label class="toolbar-row">
+        <span class="toolbar-label" id="leading-lbl">Leading</span>
+        <input id="leading" class="toolbar-slider" type="range" min="0.8" max="2.5" step="0.05" value="1.35" />
+        <span id="leading-value" class="toolbar-readout">1.35</span>
+      </label>
+      <span class="toolbar-sep"></span>
+
+      <!-- Variable-axis style selectors + static fallback toggles -->
+      <label class="toolbar-row">
+        <span class="toolbar-label" id="weight-lbl">Weight</span>
+        <input id="weight" class="toolbar-slider" type="range" min="100" max="900" step="10" value="400" />
+        <span id="weight-value" class="toolbar-readout">400</span>
+      </label>
+      <label class="toolbar-row">
+        <span class="toolbar-label" id="width-lbl">Width</span>
+        <input id="width" class="toolbar-slider" type="range" min="50" max="200" step="1" value="100" />
+        <span id="width-value" class="toolbar-readout">100%</span>
+      </label>
+      <button id="bold-btn" class="toolbar-btn" type="button" aria-pressed="false">B</button>
+      <button id="italic-btn" class="toolbar-btn" type="button" aria-pressed="false"><em>I</em></button>
+
+      <span class="toolbar-spacer"></span>
+
+      <!-- Background contrast (batch-1 #6) -->
+      <button id="bg-btn" class="toolbar-btn" type="button" title="Background">Auto</button>
+
+      <!-- Drawer toggles -->
+      <button id="info-btn" class="toolbar-btn" type="button" title="Show metadata">Info</button>
+      <button id="glyphs-btn" class="toolbar-btn" type="button" title="Show glyph grid">Glyphs</button>
+    </header>
+
+    <!--
+      Preview area. Custom input row on top (Batch-1 #2). The six fixed
+      sample rows below mirror the legacy viewer exactly so users with old
+      tests/expectations see the same content.
+    -->
+    <main id="samples">
+      <label class="custom-input-wrap">
+        <span class="toolbar-label" id="custom-lbl">Your text</span>
+        <input id="custom-text" class="custom-input" type="text" maxlength="240" />
+      </label>
+      <p id="s-pangram" class="sample spaced"></p>
+      <p id="s-zh" class="sample spaced"></p>
+      <p id="s-upper" class="sample spaced"></p>
+      <p id="s-lower" class="sample spaced"></p>
+      <p id="s-digits" class="sample spaced"></p>
+      <p id="s-paragraph" class="sample"></p>
+    </main>
+
+    <!-- Status bar mirrors text-viewer's three-column layout. -->
+    <footer id="status">
+      <div class="status-left">
+        <span class="status-item">
+          <span class="status-label" id="status-size-lbl">Size</span>
+          <span id="status-size" class="status-value">—</span>
+        </span>
+        <span class="status-item">
+          <span class="status-label" id="status-glyphs-lbl">Glyphs</span>
+          <span id="status-glyphs" class="status-value">—</span>
+        </span>
+      </div>
+      <div class="status-right">
+        <span class="status-item">
+          <span class="status-label" id="status-family-lbl">Family</span>
+          <span id="status-family" class="status-value">—</span>
+        </span>
+      </div>
+    </footer>
+
+    <!--
+      Drawer (slide-in from the right). Toggled by Info/Glyphs buttons or by
+      Esc. Two tabs share one drawer; active tab is marked with .active and
+      data-tab.
+    -->
+    <aside id="drawer" aria-hidden="true">
+      <header class="drawer-header">
+        <div class="drawer-tabs" role="tablist">
+          <button id="tab-meta" class="drawer-tab active" type="button" role="tab" data-tab="meta">Metadata</button>
+          <button id="tab-glyphs" class="drawer-tab" type="button" role="tab" data-tab="glyphs">Glyphs</button>
+        </div>
+        <button id="drawer-close" class="drawer-close" type="button" aria-label="Close">×</button>
+      </header>
+
+      <!-- Metadata panel. Each row is a label+value pair; an empty value
+           falls back to the localized "noValue" placeholder. -->
+      <section id="panel-meta" class="drawer-panel active" role="tabpanel">
+        <div class="meta-row"><span class="meta-label" id="meta-l-family">Family</span><span id="meta-family" class="meta-value">—</span></div>
+        <div class="meta-row"><span class="meta-label" id="meta-l-subfamily">Style</span><span id="meta-subfamily" class="meta-value">—</span></div>
+        <div class="meta-row"><span class="meta-label" id="meta-l-fullname">Full name</span><span id="meta-fullname" class="meta-value">—</span></div>
+        <div class="meta-row"><span class="meta-label" id="meta-l-version">Version</span><span id="meta-version" class="meta-value">—</span></div>
+        <div class="meta-row"><span class="meta-label" id="meta-l-copyright">Copyright</span><span id="meta-copyright" class="meta-value">—</span></div>
+        <div class="meta-row"><span class="meta-label" id="meta-l-designer">Designer</span><span id="meta-designer" class="meta-value">—</span></div>
+        <div class="meta-row"><span class="meta-label" id="meta-l-manufacturer">Manufacturer</span><span id="meta-manufacturer" class="meta-value">—</span></div>
+        <div class="meta-row"><span class="meta-label" id="meta-l-license">License</span><span id="meta-license" class="meta-value">—</span></div>
+        <div class="meta-row"><span class="meta-label" id="meta-l-units">Units per em</span><span id="meta-units" class="meta-value">—</span></div>
+        <div class="meta-row"><span class="meta-label" id="meta-l-num">Glyph count</span><span id="meta-num" class="meta-value">—</span></div>
+        <div class="meta-row"><span class="meta-label" id="meta-l-ps">PostScript name</span><span id="meta-ps" class="meta-value">—</span></div>
+      </section>
+
+      <!-- Glyph grid panel. Rendered lazily by index.ts on first switch. -->
+      <section id="panel-glyphs" class="drawer-panel" role="tabpanel">
+        <div id="glyph-grid" class="glyph-grid"></div>
+        <div id="glyph-truncated" class="glyph-truncated" hidden></div>
+      </section>
+    </aside>
+  </body>
+</html>

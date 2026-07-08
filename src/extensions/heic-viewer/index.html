@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval' whale-extension://*; style-src 'self' 'unsafe-inline' whale-extension://*; img-src 'self' data: blob: whale-extension://*; object-src 'none'; connect-src 'self' blob: whale-extension:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HEIC Viewer</title>
+    <script src="./extension-api.js"></script>
+  </head>
+  <body data-theme="light">
+    <header id="toolbar">
+      <span id="file-name"></span>
+      <span id="status"></span>
+      <span class="toolbar-sep"></span>
+      <button id="zoom-out" type="button" disabled aria-label="Zoom out">−</button>
+      <button id="zoom-reset" type="button" disabled aria-label="Fit to window">Fit</button>
+      <button id="zoom-in" type="button" disabled aria-label="Zoom in">+</button>
+      <span id="zoom-pct" class="zoom-pct"></span>
+      <div class="spacer"></div>
+      <button id="open-system" type="button" hidden></button>
+    </header>
+    <main id="container">
+      <img id="image" alt="" />
+    </main>
+    <div id="error" class="hidden">
+      <p id="error-message"></p>
+      <button id="btn-open-native" type="button"></button>
+    </div>
+  </body>
+</html>

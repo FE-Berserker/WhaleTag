@@ -1,0 +1,195 @@
+/* Image viewer — lightbox-style surface with a floating bottom toolbar. */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background-color: #ffffff;
+  color: #1a1a1a;
+  font: 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+body[data-theme='dark'] {
+  background-color: #0d1117;
+  color: #e6e6e6;
+}
+
+/* ── stage (pan/zoom viewport) ───────────────────────────────────────── */
+
+#stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  outline: none;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  /* Don't let the browser interpret pinch / two-finger pan as page zoom. */
+  touch-action: none;
+  cursor: grab;
+}
+
+#stage.dragging {
+  cursor: grabbing;
+}
+
+#image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  transform-origin: center center;
+  /* The transition softens programmatic zoom/pan; dragging suppresses it so
+     the image follows the pointer 1:1. */
+  transition: transform 120ms ease-out;
+  will-change: transform;
+  /* No native drag — the image is decorative inside the viewer. */
+  -webkit-user-drag: none;
+  pointer-events: none;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.18);
+}
+
+#stage.dragging #image {
+  transition: none;
+}
+
+/* ── status / error overlay ──────────────────────────────────────────── */
+
+#loading,
+#error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  font-size: 14px;
+  text-align: center;
+  padding: 16px;
+}
+
+#loading {
+  color: #666;
+}
+
+body[data-theme='dark'] #loading {
+  color: #aaa;
+}
+
+#error {
+  color: #c62828;
+  font-weight: 500;
+  flex-direction: column;
+  gap: 8px;
+}
+
+body[data-theme='dark'] #error {
+  color: #ff7a7a;
+}
+
+#loading[hidden],
+#error[hidden] {
+  display: none;
+}
+
+/* ── toolbar ─────────────────────────────────────────────────────────── */
+
+#toolbar {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  background: rgba(30, 32, 38, 0.82);
+  color: #f5f5f5;
+  border-radius: 10px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
+  /* Auto-hide: opaque on hover / focus, faded otherwise. The transition is
+     short enough that the user can flash the toolbar by moving the mouse
+     anywhere near the bottom. */
+  opacity: 0.32;
+  transition: opacity 220ms ease-out;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+body[data-theme='light'] #toolbar {
+  background: rgba(255, 255, 255, 0.88);
+  color: #222;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
+}
+
+#toolbar:hover,
+#toolbar:focus-within {
+  opacity: 1;
+}
+
+#toolbar button {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0;
+}
+
+#toolbar button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+body[data-theme='light'] #toolbar button:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+#toolbar button:focus-visible {
+  outline: 2px solid #4d90fe;
+  outline-offset: 1px;
+}
+
+#toolbar button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+#toolbar .sep {
+  width: 1px;
+  height: 20px;
+  background: rgba(255, 255, 255, 0.18);
+  margin: 0 4px;
+}
+
+body[data-theme='light'] #toolbar .sep {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+#toolbar #counter,
+#toolbar #zoom-readout {
+  min-width: 56px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}

@@ -1,0 +1,10 @@
+{
+  "id": "json-viewer",
+  "name": "JSON Viewer",
+  "type": "viewer",
+  "color": "#FF9800",
+  "fileTypes": ["json"],
+  "entryPoint": "index.html",
+  "enabled": true,
+  "isDefault": true
+}

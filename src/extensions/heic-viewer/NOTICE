@@ -1,0 +1,27 @@
+heic-viewer — HEIC / HEIF support
+=================================
+
+This extension bundles `libheif-js` — an emscripten port of libheif — which
+decodes HEIC/HEIF images (Apple's default photo format, HEVC/H.265-coded)
+into RGBA pixels entirely in the browser via WebAssembly.
+
+  libheif-js:   https://github.com/catdad-experiments/libheif-js
+  libheif:      https://github.com/strukturag/libheif
+  libde265:     https://github.com/strukturag/libde265  (the HEVC decoder)
+
+Licensing (LGPL-3.0)
+--------------------
+libheif-js, libheif, and the libde265 *library* (the HEVC decoder compiled
+into the wasm) are distributed under the terms of the GNU Lesser General
+Public License v3.0 (LGPL-3.0-or-later). The GPL-licensed portion of
+libde265 covers only its standalone `dec265` sample application, which is
+NOT compiled into the wasm used here.
+
+Whale as a whole is MIT-licensed. It uses libheif-js as an **unmodified,
+dynamically-loaded WebAssembly module** (the `.wasm` is copied verbatim into
+this extension's dist folder and loaded at runtime via host-supplied bytes
+passed to emscripten as `wasmBinary`). This is a permitted use of LGPL-3.0
+software by an MIT-licensed application. The corresponding source code for
+libheif-js, libheif, and libde265 is available at the URLs above.
+
+This file satisfies the LGPL-3.0 attribution / notice requirement.

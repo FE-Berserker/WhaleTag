@@ -1,0 +1,10 @@
+{
+  "id": "archive-viewer",
+  "name": "Archive Viewer",
+  "type": "viewer",
+  "color": "#1565C0",
+  "fileTypes": ["zip", "tar", "tgz", "tbz2", "txz", "gz", "bz2", "xz", "7z"],
+  "entryPoint": "index.html",
+  "enabled": true,
+  "isDefault": true
+}

@@ -1,0 +1,10 @@
+{
+  "id": "excalidraw-editor",
+  "name": "Excalidraw",
+  "type": "editor",
+  "color": "#6965DB",
+  "fileTypes": ["excalidraw"],
+  "entryPoint": "index.html",
+  "enabled": true,
+  "isDefault": true
+}

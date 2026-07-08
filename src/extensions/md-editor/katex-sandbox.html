@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      KaTeX runs in a SEPARATE iframe (sandbox="allow-scripts", NO
+      allow-same-origin — see katex-sandbox.ts). The main md-editor CSP
+      is therefore UNTOUCHED: it stays strict (no unsafe-eval). KaTeX
+      itself is pure JS (no `new Function` / no `eval`), so we don't
+      need `unsafe-eval` here either.
+
+      'unsafe-inline' for style IS still required: KaTeX ships with a
+      `katex.min.css` that uses class-based styling (`.katex` /
+      `.katex-mathml` / etc.). The CSS file itself is class-only
+      (no inline `style=`), but the sandbox also injects the mathml
+      output with inline `<style>` rules for accessibility / a11y.
+      Keeping `unsafe-inline` here lets the rendered output look
+      correct without leaking that relaxation to the main iframe.
+
+      The main iframe loads `katex.min.css` from this directory as
+      well, so the rendered HTML — once copied back to the parent —
+      picks up the same styling. (The main CSP allows stylesheets
+      from `whale-extension://`.)
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self' whale-extension://*;
+         script-src 'self' whale-extension://*;
+         style-src 'self' 'unsafe-inline' whale-extension://*;
+         img-src 'self' data: blob: whale-extension://*;
+         font-src 'self' data: whale-extension://*;"
+    />
+    <title>KaTeX Sandbox</title>
+  </head>
+  <body>
+    <div id="error-log" style="position: fixed; top: 0; right: 0; left: 0; max-height: 200px; overflow: auto; background: red; color: white; padding: 4px; font-family: monospace; font-size: 11px; z-index: 99999; display: none;"></div>
+    <script src="./katex.min.js"></script>
+    <script>
+      (function () {
+        var logEl = document.getElementById('error-log');
+        function showError(msg) {
+          if (logEl) {
+            logEl.style.display = 'block';
+            var line = document.createElement('div');
+            line.textContent = '[katex-sandbox] ' + msg;
+            logEl.appendChild(line);
+          }
+        }
+        window.addEventListener('error', function (e) {
+          showError('window.error: ' + (e.message || String(e.error || e)));
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+          showError('unhandledrejection: ' + (e.reason && e.reason.message || String(e.reason)));
+        });
+
+        function ready() {
+          if (typeof window.katex === 'undefined') {
+            return setTimeout(ready, 10);
+          }
+          var katex = window.katex;
+          try {
+            katex.renderToString('1+1', { displayMode: false, throwOnError: false });
+          } catch (initErr) {
+            showError('initialize probe failed: ' + (initErr.message || String(initErr)));
+          }
+
+          window.addEventListener('message', function (e) {
+            var data = e.data || {};
+            if (data.type !== 'render' || !data.id || typeof data.source !== 'string') {
+              return;
+            }
+            var id = data.id;
+            var source = data.source;
+            var displayMode = !!data.displayMode;
+
+            // KaTeX can throw on malformed LaTeX. With `throwOnError:
+            // false`, it returns a `.katex-error` span instead — we
+            // treat that as success (the user's source is what it is,
+            // we render the error inline). With `throwOnError: true`,
+            // we catch the exception and post back the error message.
+            //
+            // We use `throwOnError: true` so the parent can decide
+            // whether to keep the raw LaTeX visible (graceful
+            // degradation, matches the mermaid error path).
+            try {
+              var html = katex.renderToString(source, {
+                displayMode: displayMode,
+                throwOnError: true,
+                strict: 'ignore',
+                output: 'html',
+              });
+              parent.postMessage(
+                { type: 'rendered', id: id, html: html },
+                '*'
+              );
+            } catch (err) {
+              var msg = (err && err.message) || String(err);
+              showError('render error for id=' + id + ': ' + msg);
+              parent.postMessage(
+                { type: 'error', id: id, message: msg },
+                '*'
+              );
+            }
+          });
+
+          parent.postMessage({ type: 'ready' }, '*');
+        }
+        ready();
+      })();
+    </script>
+  </body>
+</html>

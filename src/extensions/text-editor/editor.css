@@ -1,0 +1,333 @@
+/* text-editor.css
+ *
+ * Layout: html/body form a flex column.
+ *   #toolbar — 32px strip at the top (Find / Wrap / Zoom buttons)
+ *   #editor  — flex 1, hosts the CodeMirror view
+ *   #status  — 24px strip pinned to the bottom (Ln/Col/Length/Sel/Encoding)
+ *
+ * Theme-flash fix: the background is set on `html, body[data-theme='light']`
+ * (not on body alone with body[data-theme] later), so the very first paint
+ * already has the correct color and there's no white flash when the host is
+ * dark. The host's setTheme flips data-theme; the selectors below then swap
+ * fg/bg for the toolbar / status / CodeMirror.
+ *
+ * CodeMirror's own `&light` / `&dark` selectors detect `prefers-color-scheme`
+ * by default. We override the search-match colors with body[data-theme]
+ * selectors so the highlight follows our host theme, not the OS preference.
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+    'Liberation Mono', 'Noto Sans Mono CJK SC', 'Microsoft YaHei', 'PingFang SC',
+    'WenQuanYi Micro Hei', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* Light theme — defaults. The body[data-theme='light'] rule below is the
+ * single source of truth for light-mode colors, set BEFORE the JS runs so the
+ * first paint is already correct. */
+html,
+body[data-theme='light'] {
+  background: #ffffff;
+  color: #1e293b;
+}
+
+body[data-theme='dark'] {
+  background: #0b1220;
+  color: #e2e8f0;
+}
+
+/* --- Toolbar ------------------------------------------------------------ */
+
+#toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 8px;
+  font-size: 12px;
+  user-select: none;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+body[data-theme='light'] #toolbar {
+  background: #f8fafc;
+  color: #475569;
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+body[data-theme='dark'] #toolbar {
+  background: #0f172a;
+  color: #94a3b8;
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+#toolbar button {
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  line-height: 1.6;
+}
+
+#toolbar button:hover:not(:disabled) {
+  background: rgba(127, 127, 127, 0.12);
+}
+
+#toolbar button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+#toolbar button.active {
+  border-color: #22c55e;
+  color: inherit;
+}
+
+#toolbar .toolbar-separator {
+  width: 1px;
+  height: 16px;
+  background: currentColor;
+  opacity: 0.2;
+  margin: 0 4px;
+}
+
+#wrap-state {
+  font-size: 11px;
+  opacity: 0.6;
+  margin-left: auto;
+  padding: 0 4px;
+}
+
+/* --- Editor container --------------------------------------------------- */
+
+#editor {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* --- Status bar (24px) -------------------------------------------------- */
+
+#status {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 24px;
+  padding: 0 12px;
+  font-size: 12px;
+  user-select: none;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+body[data-theme='light'] #status {
+  background: #f8fafc;
+  color: #475569;
+  border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+body[data-theme='dark'] #status {
+  background: #0f172a;
+  color: #94a3b8;
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+
+.status-left,
+.status-right {
+  display: flex;
+  align-items: center;
+}
+
+.status-item {
+  display: inline-flex;
+  align-items: baseline;
+  margin-right: 16px;
+}
+
+.status-item:last-child {
+  margin-right: 0;
+}
+
+.status-label {
+  margin-right: 4px;
+  opacity: 0.6;
+}
+
+.status-sep {
+  margin: 0 4px;
+  opacity: 0.6;
+}
+
+/* --- CodeMirror overrides ---------------------------------------------- */
+
+.cm-editor {
+  height: 100%;
+  /* font-size is set dynamically via EditorView.theme() so it can be
+   * reconfigured at runtime by the zoom buttons. */
+}
+
+body[data-theme='dark'] .cm-editor {
+  background: #0b1220;
+}
+
+body[data-theme='light'] .cm-editor {
+  background: #ffffff;
+}
+
+body[data-theme='dark'] .cm-gutters {
+  background: #0b1220;
+  color: #475569;
+  border-right-color: rgba(255, 255, 255, 0.06);
+}
+
+body[data-theme='light'] .cm-gutters {
+  background: #f8fafc;
+  color: #64748b;
+  border-right-color: rgba(0, 0, 0, 0.06);
+}
+
+body[data-theme='dark'] .cm-activeLine {
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+body[data-theme='light'] .cm-activeLine {
+  background-color: rgba(0, 0, 0, 0.03);
+}
+
+body[data-theme='dark'] .cm-activeLineGutter {
+  background-color: rgba(255, 255, 255, 0.06);
+}
+
+body[data-theme='light'] .cm-activeLineGutter {
+  background-color: rgba(0, 0, 0, 0.06);
+}
+
+/* --- CodeMirror search panel ------------------------------------------ */
+
+body[data-theme='dark'] .cm-panels {
+  background: #0f172a;
+  color: #e2e8f0;
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+body[data-theme='light'] .cm-panels {
+  background: #f8fafc;
+  color: #1e293b;
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+.cm-panel.cm-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.cm-panel.cm-search input,
+.cm-panel.cm-search button {
+  font: inherit;
+  background: transparent;
+  color: inherit;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  padding: 2px 6px;
+}
+
+.cm-panel.cm-search input {
+  min-width: 180px;
+}
+
+.cm-panel.cm-search label {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0.7;
+  font-size: 11px;
+}
+
+/* Search-match highlights — override CM's default light/dark ones so they
+ * follow our host theme (not the OS prefers-color-scheme). */
+body[data-theme='light'] .cm-searchMatch {
+  background-color: rgba(255, 235, 59, 0.45);
+}
+
+body[data-theme='dark'] .cm-searchMatch {
+  background-color: rgba(0, 200, 220, 0.35);
+}
+
+body[data-theme='light'] .cm-searchMatch-selected {
+  background-color: rgba(255, 152, 0, 0.45);
+}
+
+body[data-theme='dark'] .cm-searchMatch-selected {
+  background-color: rgba(255, 0, 200, 0.4);
+}
+
+body[data-theme='light'] .cm-selectionMatch {
+  background-color: rgba(255, 235, 59, 0.35);
+}
+
+body[data-theme='dark'] .cm-selectionMatch {
+  background-color: rgba(0, 200, 220, 0.25);
+}
+
+/* --- Fold gutter ------------------------------------------------------- */
+
+.cm-foldGutter .cm-gutterElement {
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.6;
+}
+
+.cm-foldGutter .cm-gutterElement:hover {
+  opacity: 1;
+}
+
+/* --- Toast (replace feedback) ------------------------------------------ */
+
+#toast {
+  position: absolute;
+  bottom: 36px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #f8fafc;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+}
+
+#toast[hidden] {
+  display: none;
+}
+
+/* oneDark theme is applied via EditorView.theme() on the dark branch; on the
+ * light branch the CM default light theme is fine. The .cm-tok-* classes
+ * oneDark defines are scoped to its own EditorView.theme() call and don't
+ * leak. */

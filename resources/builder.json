@@ -1,0 +1,41 @@
+{
+  "appId": "org.whaletag.app",
+  "productName": "WhaleTag",
+  "copyright": "Copyright © WhaleTag",
+  "directories": {
+    "app": "release/app",
+    "output": "release/build",
+    "buildResources": "resources"
+  },
+  "icon": "resources/logo.png",
+  "files": [
+    "dist/**/*",
+    "package.json"
+  ],
+  "asar": true,
+  "asarUnpack": [
+    "**/node_modules/sharp/**/*",
+    "**/node_modules/@img/**/*",
+    "**/node_modules/better-sqlite3/**/*",
+    "**/node_modules/ffmpeg-static/**/*",
+    "**/node_modules/@napi-rs/**/*",
+    "**/node_modules/pdfjs-dist/cmaps/**/*",
+    "**/node_modules/pdfjs-dist/standard_fonts/**/*",
+    "**/node_modules/pdfjs-dist/wasm/**/*",
+    "**/node_modules/7zip-bin/**/*",
+    "**/node_modules/@anthropic-ai/claude-code/**/*"
+  ],
+  "mac": {
+    "category": "public.app-category.utilities",
+    "target": ["dmg"]
+  },
+  "win": {
+    "target": ["nsis"],
+    "signAndEditExecutable": false
+  },
+  "electronDist": "node_modules/electron/dist",
+  "linux": {
+    "target": ["AppImage"],
+    "category": "Utility"
+  }
+}

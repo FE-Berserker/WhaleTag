@@ -1,0 +1,147 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background-color: #525659;
+  color: #e0e0e0;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+body[data-theme='dark'] {
+  background-color: #2b2b2e;
+}
+
+#toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background-color: rgba(0, 0, 0, 0.35);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 13px;
+  user-select: none;
+}
+
+#toolbar button {
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background-color: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+#toolbar button:hover {
+  background-color: rgba(255, 255, 255, 0.18);
+}
+
+#zoom-level {
+  min-width: 44px;
+  text-align: center;
+}
+
+#page-info {
+  margin-left: auto;
+  opacity: 0.8;
+}
+
+#pages {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 16px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+#pages canvas {
+  display: block;
+  max-width: 100%;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+  background-color: #fff;
+}
+
+/* §office-viewer — text-layer styling (shared with pdf-viewer).
+   The shared `pdfjs-in-iframe.ts` module adds a `.textLayer` div on
+   top of each page's canvas so the user can select + copy text.
+   Without these rules the text spans render as opaque black glyphs
+   ON TOP of the canvas image — the user sees the same text twice
+   (once from the canvas, once from the textLayer). The pdf-viewer
+   CSS has had these rules since Phase 2; this is the matching copy
+   for office-viewer (same shared renderer, same requirements).
+   The `.textLayer` baseline opacity 0.2 + transparent spans + ::selection
+   highlight is the canonical pdf.js pattern. */
+.textLayer {
+  position: absolute;
+  text-align: initial;
+  inset: 0;
+  overflow: clip;
+  opacity: 0.2;
+  line-height: 1;
+  -webkit-text-size-adjust: none;
+  -moz-text-size-adjust: none;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: transparent;
+  z-index: 0;
+}
+
+.textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0 0;
+}
+
+.textLayer ::selection {
+  background: rgba(0, 0, 255, 0.3);
+}
+
+.textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  user-select: none;
+}
+
+.textLayer .highlight {
+  margin: -1px;
+  padding: 1px;
+  background-color: rgb(180 0 170 / 0.25);
+  border-radius: 4px;
+}
+.textLayer .highlight.selected {
+  background-color: rgb(0 100 0 / 0.25);
+}
+
+#status {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  font-size: 12px;
+  opacity: 0.7;
+  text-align: center;
+}
+
+#status:empty {
+  display: none;
+}

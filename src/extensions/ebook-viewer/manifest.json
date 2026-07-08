@@ -1,0 +1,23 @@
+{
+  "id": "ebook-viewer",
+  "name": "Ebook Viewer",
+  "type": "viewer",
+  "color": "#8D6E63",
+  "fileTypes": [
+    "epub",
+    "fb2",
+    "cbz",
+    "mobi",
+    "azw",
+    "azw3",
+    "lit",
+    "pdb",
+    "rb",
+    "snb",
+    "tcr",
+    "htmlz"
+  ],
+  "entryPoint": "index.html",
+  "enabled": true,
+  "isDefault": true
+}

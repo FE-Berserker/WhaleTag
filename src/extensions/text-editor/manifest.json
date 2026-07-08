@@ -1,0 +1,23 @@
+{
+  "id": "text-editor",
+  "name": "Text Editor",
+  "type": "editor",
+  "color": "#4CAF50",
+  "fileTypes": [
+    "txt",
+    "log",
+    "csv",
+    "tsv",
+    "json",
+    "js",
+    "ts",
+    "css",
+    "html",
+    "xml",
+    "yaml",
+    "yml"
+  ],
+  "entryPoint": "index.html",
+  "enabled": true,
+  "isDefault": true
+}

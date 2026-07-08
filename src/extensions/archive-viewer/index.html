@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' whale-extension://*; style-src 'self' 'unsafe-inline' blob: whale-extension://*; font-src 'self' data: blob: whale-extension://*; img-src 'self' data: blob: whale-extension://*; object-src 'none'; connect-src 'self' whale-extension:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Archive Viewer</title>
+    <script src="./extension-api.js"></script>
+  </head>
+  <body data-theme="light">
+    <header id="toolbar">
+      <span id="archive-name"></span>
+      <span id="status"></span>
+      <div class="spacer"></div>
+      <button id="extract-folder" type="button" hidden>Extract to folder…</button>
+      <button id="open-system" type="button" hidden>Open with system app</button>
+    </header>
+    <main id="main">
+      <aside id="tree" role="tree" aria-label="Archive contents"></aside>
+      <section id="preview" aria-label="Entry preview"></section>
+    </main>
+    <div id="error" class="hidden">
+      <p id="error-message"></p>
+      <button id="btn-open-native" type="button">Open with system app</button>
+    </div>
+    <div id="dialog" class="hidden">
+      <div class="dialog-card">
+        <p id="dialog-title"></p>
+        <input id="dialog-input" type="password" />
+        <div class="dialog-actions">
+          <button id="dialog-cancel" type="button">Cancel</button>
+          <button id="dialog-ok" type="button" class="primary">OK</button>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

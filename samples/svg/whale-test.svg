@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0b1f3a"/>
+      <stop offset="55%" stop-color="#1d4e89"/>
+      <stop offset="100%" stop-color="#5fb3d4"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fff6c8"/>
+      <stop offset="60%" stop-color="#ffd166"/>
+      <stop offset="100%" stop-color="#ff8c42"/>
+    </radialGradient>
+    <linearGradient id="wave" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2bd4c8" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#0a6e8c" stop-opacity="0.9"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="400" height="300" fill="url(#sky)"/>
+  <circle cx="315" cy="85" r="48" fill="url(#sun)"/>
+  <polygon points="60,40 66,58 85,58 70,70 76,90 60,78 44,90 50,70 35,58 54,58"
+           fill="#ffd166" stroke="#fff3c4" stroke-width="1"/>
+
+  <!-- stylized whale -->
+  <path d="M70 210 Q150 160 260 185 Q330 200 340 215 Q330 235 250 240 Q150 245 90 235 Q60 228 70 210 Z"
+        fill="#dfe7ef"/>
+  <path d="M95 232 Q160 250 250 240 Q300 233 330 222"
+        fill="none" stroke="#9fb2c8" stroke-width="2"/>
+  <circle cx="295" cy="205" r="4" fill="#0b1f3a"/>
+  <path d="M150 160 q-6 -22 2 -34 M150 160 q8 -24 18 -30 M150 160 q2 -28 -8 -40"
+        fill="none" stroke="#bfe9ee" stroke-width="3" stroke-linecap="round" opacity="0.8"/>
+
+  <path d="M0 258 Q50 248 100 258 T200 258 T300 258 T400 258 V300 H0 Z" fill="url(#wave)"/>
+  <path d="M0 272 Q60 262 120 272 T240 272 T360 272 T400 272 V300 H0 Z" fill="#0a6e8c" opacity="0.6"/>
+
+  <text x="20" y="280" font-family="Segoe UI, Arial, sans-serif" font-size="14"
+        font-weight="700" fill="#ffffff">Whale · SVG render test</text>
+  <text x="20" y="34" font-family="Segoe UI, Arial, sans-serif" font-size="13"
+        fill="#cfe8ff">鲸鱼 · 矢量图缩略图测试</text>
+</svg>

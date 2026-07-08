@@ -1,0 +1,10 @@
+{
+  "id": "office-viewer",
+  "name": "Office Viewer",
+  "type": "viewer",
+  "color": "#2B579A",
+  "fileTypes": ["doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp"],
+  "entryPoint": "index.html",
+  "enabled": true,
+  "isDefault": true
+}

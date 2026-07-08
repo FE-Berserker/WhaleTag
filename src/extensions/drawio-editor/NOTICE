@@ -1,0 +1,17 @@
+Draw.io (diagrams.net) Offline Assets
+=====================================
+
+This extension includes offline assets from Draw.io (diagrams.net),
+originally obtained from the `drawio-offline` npm package:
+
+  Package: drawio-offline
+  Version: 14.6.12
+  Author:  JGraph
+  License: Apache-2.0
+  Source:  https://github.com/jgraph/drawio
+
+The full Apache-2.0 license text can be found at:
+https://www.apache.org/licenses/LICENSE-2.0
+
+No modifications have been made to the Draw.io runtime assets beyond
+selectively copying them for offline distribution within this extension.

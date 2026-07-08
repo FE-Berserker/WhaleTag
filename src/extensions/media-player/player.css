@@ -1,0 +1,565 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+html,
+body[data-theme='light'] {
+  /* Background is set on `html, body` (not just `body`) so the first paint is
+     already correct — avoids a one-frame white flash before the host's
+     setTheme envelope lands. Mirrors text-viewer Batch 1. */
+  background-color: #f5f5f5;
+}
+
+body[data-theme='dark'],
+html {
+  background-color: #0d1117;
+}
+
+/* Base text color per theme. Without this the dark background (#0d1117) was
+ * applied but text/icons stayed browser-default black — the bar-mode dock
+ * icons (and the fullscreen toolbar glyphs) were invisible in dark mode,
+ * since .bar-btn / .tb-btn use `color: inherit`. Tokens mirror .tb-menu. */
+body[data-theme='light'] {
+  color: #1f2328;
+}
+
+body[data-theme='dark'] {
+  color: #e6edf3;
+}
+
+body {
+  position: relative;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* ---------- Root layout (column flex) ---------- */
+
+#root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+/* ---------- Toolbar ---------- */
+
+#toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background-color: rgba(255, 255, 255, 0.85);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+body[data-theme='dark'] #toolbar {
+  background-color: rgba(13, 17, 23, 0.85);
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.tb-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 16px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background-color 0.12s ease, border-color 0.12s ease,
+    opacity 0.12s ease;
+}
+
+.tb-btn:hover:not(:disabled) {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+body[data-theme='dark'] .tb-btn:hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.07);
+}
+
+.tb-btn:active:not(:disabled) {
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+body[data-theme='dark'] .tb-btn:active:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+.tb-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.tb-btn[aria-pressed='true'] {
+  background-color: rgba(33, 150, 243, 0.15);
+  border-color: rgba(33, 150, 243, 0.5);
+}
+
+.tb-counter {
+  display: inline-block;
+  min-width: 60px;
+  text-align: center;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+.tb-sep {
+  flex: 1 1 auto;
+}
+
+.tb-mode-label {
+  font-size: 11px;
+  text-transform: lowercase;
+  opacity: 0.7;
+  letter-spacing: 0.02em;
+}
+
+/* ---------- Dropdown (speed picker) ---------- */
+
+.tb-dropdown {
+  position: relative;
+  display: inline-flex;
+}
+
+.tb-caret {
+  font-size: 9px;
+  margin-left: 2px;
+  opacity: 0.7;
+}
+
+.tb-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 10;
+  min-width: 100px;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background-color: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  font-size: 13px;
+  color: #1f2328;
+}
+
+/* ---------- Volume panel (slider + mute) ----------
+ *
+ * Removed 2026-07-05: <video> / <audio> native controls already provide a
+ * volume slider + mute button, so the custom React toolbar entry is
+ * redundant. Kept this comment block as a breadcrumb.
+ */
+
+.tb-menu[hidden] {
+  display: none;
+}
+
+body[data-theme='dark'] .tb-menu {
+  background-color: #1c2128;
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  color: #e6edf3;
+}
+
+.tb-menu li {
+  padding: 6px 14px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tb-menu li:hover {
+  background-color: rgba(33, 150, 243, 0.1);
+}
+
+body[data-theme='dark'] .tb-menu li:hover {
+  background-color: rgba(33, 150, 243, 0.2);
+}
+
+.tb-menu li[aria-checked='true'] {
+  font-weight: 600;
+  background-color: rgba(33, 150, 243, 0.15);
+}
+
+body[data-theme='dark'] .tb-menu li[aria-checked='true'] {
+  background-color: rgba(33, 150, 243, 0.25);
+}
+
+.tb-menu li .menu-check {
+  opacity: 0.6;
+}
+
+/* ---------- Stage (player + status) ---------- */
+
+#stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  overflow: hidden;
+}
+
+#container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+audio {
+  width: 100%;
+  max-width: 600px;
+}
+
+#status {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #666;
+  font-size: 14px;
+  text-align: center;
+  pointer-events: none;
+  /* Don't overlay the player; sit above it when there's room. */
+  z-index: 1;
+}
+
+body[data-theme='dark'] #status {
+  color: #9da5b3;
+}
+
+/* ---------- PiP mode overrides (removed 2026-07-05; PiP feature withdrew) ---------- */
+
+
+#playlist {
+  flex: 0 0 auto;
+  max-height: 30%;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  background-color: rgba(255, 255, 255, 0.6);
+}
+
+#playlist[hidden] {
+  display: none;
+}
+
+body[data-theme='dark'] #playlist {
+  border-top-color: rgba(255, 255, 255, 0.08);
+  background-color: rgba(13, 17, 23, 0.7);
+}
+
+#playlist-header {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.7;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+body[data-theme='dark'] #playlist-header {
+  border-bottom-color: rgba(255, 255, 255, 0.05);
+}
+
+#playlist-list {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+#playlist-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+body[data-theme='dark'] #playlist-list li {
+  border-bottom-color: rgba(255, 255, 255, 0.04);
+}
+
+#playlist-list li:hover {
+  background-color: rgba(0, 0, 0, 0.04);
+}
+
+body[data-theme='dark'] #playlist-list li:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+#playlist-list li[aria-selected='true'] {
+  background-color: rgba(33, 150, 243, 0.15);
+  font-weight: 600;
+}
+
+#playlist-list li .pl-index {
+  flex: 0 0 auto;
+  min-width: 28px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.55;
+}
+
+#playlist-list li .pl-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#playlist-list li .pl-size {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.55;
+  font-size: 11px;
+}
+
+#playlist-list:empty::before {
+  content: attr(data-empty);
+  display: block;
+  padding: 16px 12px;
+  text-align: center;
+  opacity: 0.5;
+  font-size: 13px;
+}
+
+/* Dark scrollbar (Chromium). */
+#playlist-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+#playlist-list::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+
+body[data-theme='dark'] #playlist-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* ---------- Bar mode (?mode=bar) ----------
+ *
+ * BackgroundPlayerDock hosts media-player in a slim 64px-tall iframe at the
+ * bottom of the main window. Hide the fullscreen chrome and surface a
+ * compact single-row toolbar with: cover, title, time, prev/play/next,
+ * scrub, vol, mute, maximize. All playback state stays the same — only
+ * the DOM shape changes.
+ */
+body[data-mode='bar'] {
+  overflow: hidden;
+}
+
+body[data-mode='bar'] #toolbar,
+body[data-mode='bar'] #stage,
+body[data-mode='bar'] #playlist {
+  display: none !important;
+}
+
+/* Belt-and-suspenders against Chromium's native control bar leaking into the
+ * dock. playBytes / playStreamingUrl both call `removeAttribute('controls')`
+ * for bar mode, but the audio / video element itself could still take up
+ * visual space (Chromium quirk where re-toggling `controls` after append can
+ * leave a residual bar). Position it offscreen at zero size — playback still
+ * works (the audio element runs from off-DOM), but no native chrome ever
+ * reaches the dock strip. */
+body[data-mode='bar'] audio,
+body[data-mode='bar'] video {
+  position: absolute !important;
+  width: 0 !important;
+  height: 0 !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  left: -9999px !important;
+  top: -9999px !important;
+}
+
+body[data-mode='bar'] #root {
+  flex-direction: row;
+  align-items: stretch;
+}
+
+#bar {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  height: 100%;
+  width: 100%;
+  background-color: rgba(255, 255, 255, 0.6);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+body[data-theme='dark'] #bar {
+  background-color: rgba(13, 17, 23, 0.7);
+}
+
+#bar[hidden] {
+  display: none !important;
+}
+
+.bar-cover {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 4px;
+  background: linear-gradient(
+    135deg,
+    rgba(33, 150, 243, 0.5),
+    rgba(156, 39, 176, 0.5)
+  );
+  /* Centered music-note glyph as a fallback (no cover art extraction in v1). */
+  position: relative;
+}
+
+.bar-cover::after {
+  content: '\266B'; /* ♪ */
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.bar-meta {
+  flex: 0 1 240px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+
+.bar-title {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bar-sub {
+  font-size: 11px;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+
+.bar-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 16px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.12s ease;
+}
+
+.bar-btn:hover {
+  background-color: rgba(0, 0, 0, 0.06);
+}
+
+body[data-theme='dark'] .bar-btn:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+.bar-btn[aria-pressed='true'] {
+  background-color: rgba(33, 150, 243, 0.15);
+  border-color: rgba(33, 150, 243, 0.5);
+}
+
+body[data-theme='dark'] .bar-btn[aria-pressed='true'] {
+  background-color: rgba(33, 150, 243, 0.25);
+  border-color: rgba(100, 181, 246, 0.5);
+}
+
+.bar-btn-play {
+  font-size: 20px;
+  padding: 4px 10px;
+}
+
+.bar-progress {
+  flex: 1 1 auto;
+  min-width: 80px;
+  height: 6px;
+  border-radius: 3px;
+  background-color: rgba(0, 0, 0, 0.12);
+  position: relative;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+body[data-theme='dark'] .bar-progress {
+  background-color: rgba(255, 255, 255, 0.15);
+}
+
+.bar-progress-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 0;
+  background-color: rgba(33, 150, 243, 0.85);
+  border-radius: 3px;
+  transition: width 0.12s linear;
+}
+
+body[data-theme='dark'] .bar-progress-fill {
+  background-color: rgba(100, 181, 246, 0.95);
+}
+
+#bar-mute,
+#bar-max {
+  font-size: 14px;
+  padding: 4px 6px;
+}
+
+#bar-max {
+  font-size: 16px;
+}

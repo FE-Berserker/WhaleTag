@@ -1,0 +1,38 @@
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+#root {
+  position: relative;
+}
+
+.drawio-wrapper {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.drawio-iframe {
+  flex: 1;
+  border: none;
+  width: 100%;
+  height: 100%;
+}
+
+/* Hard-hide rule for the drop overlay when the React state flips to false.
+   We've seen cases where the inline `style.display` from React wasn't
+   applied (race between useEffect cleanup and the next render commit, or
+   stale DOM snapshot), so this CSS rule with `!important` is the
+   authoritative "you are NOT dragging, this box is GONE" signal — it
+   overrides any inline style React might leave behind. */
+.drawio-drop-overlay[aria-hidden="true"] {
+  display: none !important;
+  pointer-events: none !important;
+}

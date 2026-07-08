@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' whale-extension://*; style-src 'self' 'unsafe-inline' blob: whale-extension://*; font-src 'self' data: blob: whale-extension://*; img-src 'self' data: blob: whale-extension://*; object-src 'none'; connect-src 'self' whale-extension:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ebook Viewer</title>
+    <script src="./extension-api.js"></script>
+  </head>
+  <body data-theme="light">
+    <div id="toolbar">
+      <button id="btn-prev" type="button" title="Previous">←</button>
+      <button id="btn-next" type="button" title="Next">→</button>
+      <button id="btn-toc" type="button" title="Contents / Bookmarks / Highlights">≡</button>
+      <span class="sep"></span>
+      <button id="btn-bookmark" type="button" title="Bookmark this position">★</button>
+      <button id="btn-highlight" type="button" title="Highlight current selection">✎</button>
+      <button id="btn-search" type="button" title="Search (Ctrl+F)">⌕</button>
+      <span class="sep"></span>
+      <select id="sel-theme" title="Theme">
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+        <option value="sepia">Sepia</option>
+      </select>
+      <select id="sel-scroll" title="Scroll mode (EPUB / FB2)">
+        <option value="page">Page</option>
+        <option value="continuous">Continuous</option>
+      </select>
+      <select id="sel-spread" title="CBZ spread">
+        <option value="single">Single</option>
+        <option value="double-ltr">Double L→R</option>
+        <option value="double-rtl">Double R→L</option>
+      </select>
+      <span class="sep"></span>
+      <select id="sel-font-family" title="Font family">
+        <option value='Georgia, "Times New Roman", serif'>Serif</option>
+        <option value='-apple-system, "Segoe UI", Roboto, sans-serif'>Sans</option>
+        <option value='Menlo, Consolas, "Courier New", monospace'>Mono</option>
+      </select>
+      <button id="btn-smaller" type="button" title="Smaller font">A−</button>
+      <input
+        id="inp-font-size"
+        type="number"
+        min="10"
+        max="32"
+        step="1"
+        value="16"
+        title="Font size (px)"
+      />
+      <button id="btn-larger" type="button" title="Larger font">A+</button>
+      <span class="sep sep-thin"></span>
+      <label class="slider" title="Line height">
+        <span class="slider-label">Lh</span>
+        <input id="rng-line-height" type="range" min="1.0" max="2.4" step="0.1" value="1.7" />
+      </label>
+      <label class="slider" title="Page margin">
+        <span class="slider-label">Mg</span>
+        <input id="rng-margin" type="range" min="0" max="96" step="8" value="24" />
+      </label>
+      <span class="sep"></span>
+      <button id="btn-meta" type="button" title="Book info">ℹ</button>
+      <span id="title"></span>
+      <span id="status"></span>
+    </div>
+
+    <div id="search-bar" class="hidden">
+      <input id="search-input" type="search" placeholder="Search in book…" autocomplete="off" />
+      <span id="search-count"></span>
+      <button id="btn-search-prev" type="button" title="Previous match">↑</button>
+      <button id="btn-search-next" type="button" title="Next match">↓</button>
+      <button id="btn-search-close" type="button" title="Close (Esc)">×</button>
+    </div>
+
+    <div id="drawer">
+      <div id="drawer-header">
+        <div id="drawer-tabs">
+          <button class="tab-btn active" data-tab="toc" type="button">Contents</button>
+          <button class="tab-btn" data-tab="bookmarks" type="button">Bookmarks</button>
+          <button class="tab-btn" data-tab="highlights" type="button">Highlights</button>
+        </div>
+        <button id="btn-close-drawer" type="button">×</button>
+      </div>
+      <div id="toc" class="tab-pane active"></div>
+      <div id="bookmarks-list" class="tab-pane"></div>
+      <div id="highlights-list" class="tab-pane"></div>
+    </div>
+
+    <aside id="meta-panel" class="hidden">
+      <div id="meta-header">
+        <span id="meta-title-text">Book info</span>
+        <button id="btn-meta-close" type="button">×</button>
+      </div>
+      <div id="meta-body"></div>
+    </aside>
+
+    <div id="content"></div>
+
+    <div id="error" class="hidden">
+      <p id="error-message"></p>
+      <button id="btn-open-native" type="button">Open with system app</button>
+    </div>
+
+    <div id="highlight-popover" class="hidden">
+      <div id="highlight-text"></div>
+      <div id="highlight-actions">
+        <button id="btn-hl-delete" type="button">Delete</button>
+        <button id="btn-hl-color" type="button" title="Cycle color">🎨</button>
+      </div>
+    </div>
+  </body>
+</html>

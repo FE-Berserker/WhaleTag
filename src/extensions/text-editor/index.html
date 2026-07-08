@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' whale-extension://*; style-src 'self' 'unsafe-inline' whale-extension://*; img-src 'self' data: blob: whale-extension://*; connect-src 'self' whale-extension:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Text Editor</title>
+    <script src="./extension-api.js"></script>
+  </head>
+  <body>
+    <div id="toolbar">
+      <button id="btn-find" title="Find / Replace (Ctrl+F)">⌕ Find</button>
+      <button id="btn-replace-all" title="Replace All">Replace All</button>
+      <span class="toolbar-separator"></span>
+      <button id="btn-goto-line" title="Goto Line (Ctrl+Alt+G)">↪ Goto</button>
+      <span class="toolbar-separator"></span>
+      <button id="btn-toggle-wrap" title="Toggle Word Wrap (Ctrl+Shift+P)">↩ Wrap</button>
+      <button id="btn-fold-all" title="Fold All (Ctrl+Alt+[)">⊟ Fold All</button>
+      <button id="btn-unfold-all" title="Unfold All (Ctrl+Alt+])">⊞ Unfold All</button>
+      <span class="toolbar-separator"></span>
+      <button id="btn-zoom-out" title="Zoom Out (Ctrl+-)">A−</button>
+      <button id="btn-zoom-reset" title="Actual Size (Ctrl+0)">A</button>
+      <button id="btn-zoom-in" title="Zoom In (Ctrl++)">A+</button>
+      <span id="wrap-state">No Wrap</span>
+    </div>
+    <div id="editor"></div>
+    <div id="toast" hidden></div>
+    <div id="status">
+      <span class="status-left">
+        <span class="status-item">
+          <span id="ln-lbl" class="status-label">Ln</span>
+          <span id="status-ln">1</span>
+          <span class="status-sep">,</span>
+          <span id="col-lbl" class="status-label">Col</span>
+          <span id="status-col">1</span>
+        </span>
+        <span class="status-item">
+          <span id="length-lbl" class="status-label">Length</span>
+          <span id="status-length">0</span>
+        </span>
+        <span class="status-item">
+          <span id="sel-lbl" class="status-label">Sel</span>
+          <span id="status-sel">0</span>
+        </span>
+        <span class="status-item">
+          <span id="matches-lbl" class="status-label">Matches</span>
+          <span id="status-matches">—</span>
+        </span>
+      </span>
+      <span class="status-right">
+        <span class="status-item">
+          <span id="encoding-lbl" class="status-label">Encoding</span>
+          <span id="status-encoding">UTF-8</span>
+        </span>
+      </span>
+    </div>
+  </body>
+</html>

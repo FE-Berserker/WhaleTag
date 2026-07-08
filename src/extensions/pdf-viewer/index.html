@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' whale-extension://*; style-src 'self' 'unsafe-inline' whale-extension://*; img-src 'self' data: whale-extension://*; object-src 'none'; connect-src 'self' whale-extension:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PDF Viewer</title>
+    <script src="./extension-api.js"></script>
+  </head>
+  <body>
+    <div id="toolbar">
+      <button id="prev-page" type="button" title="Previous page" aria-label="Previous page">&#8249;</button>
+      <span class="page-nav">
+        <input id="page-input" type="text" inputmode="numeric" value="1" aria-label="Page number" />
+        <span class="page-sep">/</span>
+        <span id="page-count">—</span>
+      </span>
+      <button id="next-page" type="button" title="Next page" aria-label="Next page">&#8250;</button>
+      <span class="separator"></span>
+      <button id="fit-width" type="button" title="Fit width" aria-label="Fit width">Fit&nbsp;W</button>
+      <button id="fit-page" type="button" title="Fit page" aria-label="Fit page">Fit&nbsp;P</button>
+      <span class="separator"></span>
+      <button id="zoom-out" type="button" title="Zoom out" aria-label="Zoom out">&minus;</button>
+      <span id="zoom-level">100%</span>
+      <button id="zoom-in" type="button" title="Zoom in" aria-label="Zoom in">+</button>
+      <span class="separator"></span>
+      <button id="rotate-left" type="button" title="Rotate left" aria-label="Rotate left">&#8630;</button>
+      <button id="rotate-right" type="button" title="Rotate right" aria-label="Rotate right">&#8631;</button>
+    </div>
+    <div id="pages"></div>
+    <div id="loading-bar"></div>
+    <div id="status">
+      <span class="status-left">
+        <span class="status-item">
+          <span id="size-lbl" class="status-label">Size</span>
+          <span id="status-size">&mdash;</span>
+        </span>
+      </span>
+      <span class="status-right">
+        <span class="status-item">
+          <span id="pages-lbl" class="status-label">Pages</span>
+          <span id="status-pages">&mdash;</span>
+        </span>
+      </span>
+    </div>
+  </body>
+</html>

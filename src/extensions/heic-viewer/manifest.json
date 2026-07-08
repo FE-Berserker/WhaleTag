@@ -1,0 +1,10 @@
+{
+  "id": "heic-viewer",
+  "name": "HEIC Viewer",
+  "type": "viewer",
+  "color": "#34A853",
+  "fileTypes": ["heic", "heif"],
+  "entryPoint": "index.html",
+  "enabled": true,
+  "isDefault": true
+}

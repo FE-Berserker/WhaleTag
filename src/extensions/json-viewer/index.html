@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' whale-extension://*; style-src 'self' 'unsafe-inline' whale-extension://*; img-src 'self' data: blob: whale-extension://*; connect-src 'self' whale-extension:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>JSON Viewer</title>
+    <script src="./extension-api.js"></script>
+  </head>
+  <body>
+    <div id="toolbar">
+      <button id="expand-all" type="button" title="Expand all" aria-label="Expand all">Expand</button>
+      <button id="collapse-all" type="button" title="Collapse all" aria-label="Collapse all">Collapse</button>
+      <span class="separator"></span>
+      <button id="toggle-search" type="button" title="Search (Ctrl+F)" aria-label="Search">Find</button>
+      <span class="separator"></span>
+      <button id="toggle-view" type="button" title="Toggle tree / raw" aria-label="Toggle tree / raw">Raw</button>
+      <span class="separator"></span>
+      <button id="copy-pretty" type="button" title="Copy formatted JSON" aria-label="Copy formatted JSON">Copy</button>
+      <button id="copy-min" type="button" title="Copy minified JSON" aria-label="Copy minified JSON">Copy&nbsp;Min</button>
+    </div>
+
+    <div id="search-bar" hidden>
+      <input id="search-input" type="text" placeholder="Search keys & values…" aria-label="Search" />
+      <span id="search-count">0/0</span>
+      <button id="search-prev" type="button" title="Previous match" aria-label="Previous match">&#8249;</button>
+      <button id="search-next" type="button" title="Next match" aria-label="Next match">&#8250;</button>
+      <button id="search-close" type="button" title="Close search" aria-label="Close search">&times;</button>
+    </div>
+
+    <div id="content"></div>
+
+    <div id="toast" hidden></div>
+
+    <div id="status">
+      <span class="status-left">
+        <span class="status-item">
+          <span id="size-lbl" class="status-label">Size</span>
+          <span id="status-size">&mdash;</span>
+        </span>
+        <span class="status-item">
+          <span id="nodes-lbl" class="status-label">Nodes</span>
+          <span id="status-nodes">&mdash;</span>
+        </span>
+        <span class="status-item">
+          <span id="depth-lbl" class="status-label">Depth</span>
+          <span id="status-depth">&mdash;</span>
+        </span>
+      </span>
+      <span class="status-right">
+        <span class="status-item">
+          <span id="encoding-lbl" class="status-label">Encoding</span>
+          <span id="status-encoding">UTF-8</span>
+        </span>
+      </span>
+    </div>
+  </body>
+</html>

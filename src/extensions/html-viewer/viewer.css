@@ -1,0 +1,251 @@
+/* =========================================================================
+ * html-viewer — viewer.css
+ *
+ * Single CSS file. Layout (top-down flex column):
+ *   #toolbar   — zoom (out / level / in) | view | print | images (36px)
+ *   #content   — sanitized HTML preview OR <pre class="html-source">
+ *   #status    — Size / Tags / Lines  |  Encoding (24px footer)
+ *
+ * Theme-flash fix: `html, body[data-theme='light']` shares the light
+ * background rule so the very first CSS paint is already correct — no
+ * white flash on dark hosts. Same scheme as text-editor / pdf-viewer.
+ *
+ * The `#content a` color rules retain the `:where()` zero-specificity trick
+ * used by the previous version so user-authored `a { color: ... }` CSS
+ * inside the rendered HTML still wins.
+ * ========================================================================= */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu,
+    Cantarell, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Light theme — defaults. Background is on `html, body[data-theme='light']`
+ * (not just body) so the first frame is correct regardless of whether
+ * `applyTheme()` has run yet. */
+html,
+body[data-theme='light'] {
+  background: #ffffff;
+  color: #1e293b;
+}
+
+body[data-theme='dark'] {
+  background: #0b1220;
+  color: #e2e8f0;
+}
+
+/* =========================================================================
+ * Toolbar
+ * ========================================================================= */
+#toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 12px;
+  user-select: none;
+}
+
+body[data-theme='light'] #toolbar {
+  background: #f8fafc;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+body[data-theme='dark'] #toolbar {
+  background: #0f172a;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.toolbar-btn {
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s ease, border-color 0.1s ease;
+}
+
+#toolbar .toolbar-btn:hover {
+  background: rgba(127, 127, 127, 0.1);
+}
+
+#toolbar .toolbar-btn:focus-visible {
+  outline: 2px solid #0969da;
+  outline-offset: 1px;
+}
+
+body[data-theme='dark'] #toolbar .toolbar-btn:focus-visible {
+  outline-color: #58a6ff;
+}
+
+/* Zoom-level button — fixed width so it doesn't jiggle when text switches
+ * between "100%" and "Fit". */
+#toolbar .zoom-level {
+  min-width: 56px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* When the zoom-level button is in "Fit" mode, give it a subtle active
+ * state (matches the .active pattern used by json-viewer for tree/raw and
+ * pdf-viewer for fit-width/fit-page buttons). */
+#toolbar .zoom-level.active {
+  background: rgba(76, 175, 80, 0.15);
+  border-color: rgba(76, 175, 80, 0.6);
+  color: #16a34a;
+}
+
+body[data-theme='dark'] #toolbar .zoom-level.active {
+  color: #86efac;
+}
+
+/* Active state for the images-toggle button when images are disabled. */
+#toolbar .toolbar-btn.active {
+  background: rgba(76, 175, 80, 0.15);
+  border-color: rgba(76, 175, 80, 0.6);
+  color: #16a34a;
+}
+
+body[data-theme='dark'] #toolbar .toolbar-btn.active {
+  color: #86efac;
+}
+
+.toolbar-sep {
+  width: 1px;
+  height: 18px;
+  background: rgba(127, 127, 127, 0.3);
+  margin: 0 2px;
+}
+
+/* =========================================================================
+ * Content area
+ * ========================================================================= */
+#content {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 16px 16px 8px 16px;
+  overflow: auto;
+  /* Reserve room for the status bar so the last line isn't covered. */
+  padding-bottom: calc(24px + 8px);
+  /* CSS `zoom` property is applied via inline style. Chromium-only but
+   * perfect for HTML content (preserves scrollbar math). */
+}
+
+/* Anchor color rules use `:where()` so user-authored `a { color: ... }` CSS
+ * inside the rendered HTML wins (preserves the previous version's behavior). */
+:where(#content a) {
+  color: #0ea5e9;
+  text-decoration: underline;
+}
+
+:where(body[data-theme='dark']) :where(#content a) {
+  color: #7dd3fc;
+}
+
+/* Source-mode rendering. textContent escape — see index.ts renderSource(). */
+.html-source {
+  margin: 0;
+  padding: 12px;
+  background: rgba(127, 127, 127, 0.06);
+  border-radius: 4px;
+  font-family:
+    ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+    'Liberation Mono', 'Noto Sans Mono CJK SC', 'Microsoft YaHei',
+    'PingFang SC', 'WenQuanYi Micro Hei', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* Tab indentation — align with 2 spaces so the source view is scannable
+   * even when the original HTML uses tabs. */
+  tab-size: 2;
+}
+
+body[data-theme='dark'] .html-source {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* =========================================================================
+ * Status bar
+ * ========================================================================= */
+#status {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 24px;
+  padding: 0 12px;
+  font-size: 12px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  user-select: none;
+}
+
+body[data-theme='light'] #status {
+  background: #f8fafc;
+  color: #475569;
+  border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+body[data-theme='dark'] #status {
+  background: #0f172a;
+  color: #94a3b8;
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+
+.status-left,
+.status-right {
+  display: flex;
+  align-items: center;
+}
+
+.status-item {
+  display: inline-flex;
+  align-items: baseline;
+  margin-right: 16px;
+}
+
+.status-item:last-child {
+  margin-right: 0;
+}
+
+.status-label {
+  margin-right: 4px;
+  opacity: 0.6;
+}
+
+/* =========================================================================
+ * Print — toolbar/status hidden, content takes full page.
+ * ========================================================================= */
+@media print {
+  #toolbar,
+  #status {
+    display: none !important;
+  }
+  #content {
+    overflow: visible !important;
+    height: auto !important;
+    padding: 0 !important;
+  }
+}

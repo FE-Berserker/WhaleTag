@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' whale-extension://*; style-src 'self' 'unsafe-inline' whale-extension://*; img-src 'self' data: blob: whale-extension://*; connect-src 'self' whale-extension:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Image Viewer</title>
+    <script src="./extension-api.js"></script>
+  </head>
+  <body>
+    <div id="stage" tabindex="0">
+      <img id="image" alt="" draggable="false" />
+    </div>
+    <div id="loading" data-bind="loading" hidden>…</div>
+    <div id="error" data-bind="error" hidden role="alert"></div>
+    <div id="toolbar" data-bind="toolbar" role="toolbar" aria-label="Image viewer controls">
+      <button id="prev" data-bind="prev" data-i18n-title="prev" aria-label="Previous" disabled>‹</button>
+      <span id="counter" data-bind="counter" aria-live="polite">—</span>
+      <button id="next" data-bind="next" data-i18n-title="next" aria-label="Next" disabled>›</button>
+      <span class="sep" aria-hidden="true"></span>
+      <button id="zoom-out" data-bind="zoom-out" data-i18n-title="zoomOut" aria-label="Zoom out" disabled>−</button>
+      <span id="zoom-readout" data-bind="zoom-readout">100%</span>
+      <button id="zoom-in" data-bind="zoom-in" data-i18n-title="zoomIn" aria-label="Zoom in" disabled>+</button>
+      <button id="reset" data-bind="reset" data-i18n-title="reset" aria-label="Reset to fit">⤢</button>
+      <span class="sep" aria-hidden="true"></span>
+      <button id="rotate" data-bind="rotate" data-i18n-title="rotate" aria-label="Rotate 90°" disabled>⟳</button>
+      <button id="flip-h" data-bind="flip-h" data-i18n-title="flipH" aria-label="Flip horizontal" disabled>⇋</button>
+      <button id="flip-v" data-bind="flip-v" data-i18n-title="flipV" aria-label="Flip vertical" disabled>⇅</button>
+      <span class="sep" aria-hidden="true"></span>
+      <button id="fullscreen" data-bind="fullscreen" data-i18n-title="fullscreen" aria-label="Toggle fullscreen" disabled>⛶</button>
+    </div>
+  </body>
+</html>

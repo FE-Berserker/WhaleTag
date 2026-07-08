@@ -1,0 +1,10 @@
+{
+  "id": "drawio-editor",
+  "name": "Draw.io",
+  "type": "editor",
+  "color": "#f08705",
+  "fileTypes": ["drawio", "dio"],
+  "entryPoint": "index.html",
+  "enabled": true,
+  "isDefault": true
+}

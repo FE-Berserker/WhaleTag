@@ -1,0 +1,10 @@
+{
+  "id": "pdf-viewer",
+  "name": "PDF Viewer",
+  "type": "viewer",
+  "color": "#F44336",
+  "fileTypes": ["pdf"],
+  "entryPoint": "index.html",
+  "enabled": true,
+  "isDefault": true
+}

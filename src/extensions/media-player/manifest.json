@@ -1,0 +1,10 @@
+{
+  "id": "media-player",
+  "name": "Media Player",
+  "type": "viewer",
+  "color": "#FF9800",
+  "fileTypes": ["mp4", "mov", "mkv", "webm", "m4v", "avi", "3gp", "ogv", "wmv", "flv", "mp3", "ogg", "wav", "flac", "aac", "m4a", "opus", "ape", "wma", "aiff", "amr", "ac3", "dts", "mpc", "wv", "dsf"],
+  "entryPoint": "index.html",
+  "enabled": true,
+  "isDefault": true
+}

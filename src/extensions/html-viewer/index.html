@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' whale-extension://*; style-src 'self' 'unsafe-inline' whale-extension://*; img-src 'self' data: blob: https: http: whale-extension://*; connect-src 'self' whale-extension:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HTML Viewer</title>
+    <script src="./extension-api.js"></script>
+  </head>
+  <body>
+    <!--
+      Layout (top-down, flex column):
+        #toolbar  — zoom (out / level / in) | view toggle | print | images toggle
+        #content  — sanitized HTML preview OR <pre class="html-source"> raw text
+        #status   — Size / Tags / Lines  |  Encoding: UTF-8 (24px footer)
+
+      Toolbar button text is set from the i18n catalog at runtime
+      (window.whaleExt.t(I18N)). Initial markup intentionally empty so
+      applyLocale() is the single source of truth.
+
+      CSP unchanged from the previous version — covers DOMPurify, user
+      styles, and image loads from `https:` / `http:` / `whale-extension://`.
+    -->
+    <div id="toolbar">
+      <button id="zoom-out" type="button" class="toolbar-btn" aria-label="Zoom out">−</button>
+      <button id="zoom-level" type="button" class="toolbar-btn zoom-level">100%</button>
+      <button id="zoom-in" type="button" class="toolbar-btn" aria-label="Zoom in">+</button>
+      <span class="toolbar-sep"></span>
+      <button id="view-toggle" type="button" class="toolbar-btn">Source</button>
+      <span class="toolbar-sep"></span>
+      <button id="print" type="button" class="toolbar-btn">Print</button>
+      <button id="images-toggle" type="button" class="toolbar-btn">Images: On</button>
+    </div>
+
+    <div id="content"></div>
+
+    <div id="status">
+      <span class="status-left">
+        <span class="status-item">
+          <span id="size-lbl" class="status-label">Size</span>
+          <span id="status-size">—</span>
+        </span>
+        <span class="status-item">
+          <span id="tags-lbl" class="status-label">Tags</span>
+          <span id="status-tags">—</span>
+        </span>
+        <span class="status-item">
+          <span id="lines-lbl" class="status-label">Lines</span>
+          <span id="status-lines">—</span>
+        </span>
+      </span>
+      <span class="status-right">
+        <span class="status-item">
+          <span id="encoding-lbl" class="status-label">Encoding</span>
+          <span id="status-encoding">UTF-8</span>
+        </span>
+      </span>
+    </div>
+  </body>
+</html>
