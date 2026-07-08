@@ -49,9 +49,8 @@
 ## English
 
 **WhaleTag** is a local-first, offline, privacy-respecting file manager and tagging
-tool. It is built from scratch with the same architecture pattern as TagSpaces
-(Electron React Boilerplate) — an independent, clean scaffold with **no code shared
-with TagSpaces**.
+tool. It is built from scratch on the **Electron React Boilerplate (ERB)** three-process
+model — an independent, clean scaffold designed specifically for this project.
 
 All data lives on your machine: no backend, no telemetry, no forced cloud. Metadata
 (tags, perspectives, colors) is stored in a portable `.whale/` sidecar folder
@@ -185,8 +184,8 @@ MIT. Third-party notices (e.g. bundled FFmpeg under GPL-3.0) live in [LICENSES/]
 
 ## 🐳 中文
 
-**WhaleTag** 是一个本地优先、离线、隐私安全的文件管理与打标签桌面应用。采用与
-TagSpaces 相同的架构模式(Electron React Boilerplate)从零自建,**与 TagSpaces 无任何代码共用**。
+**WhaleTag** 是一个本地优先、离线、隐私安全的文件管理与打标签桌面应用。基于
+**Electron React Boilerplate(ERB)** 的三进程模型从零自建,是专为该项目独立设计的干净脚手架。
 
 所有数据都在本地:无后端、无遥测、无强制云。元数据(标签、视角、颜色)以可移植的
 `.whale/` sidecar 目录形式与文件放在一起——**不改动文件名、不改变文件夹结构**,整个库
