@@ -101,8 +101,14 @@ export function buildClaudeOptions(input: BuildOptionsInput): Options {
     model: settings.model,
     systemPrompt,
     env,
-    // Take over permission entirely (no SDK-built-in UI); our canUseTool decides.
-    allowDangerouslySkipPermissions: true,
+    // canUseTool is the gate for normal/plan (our approval modal). For 'yolo' we
+    // use bypassPermissions (full autonomy). allowDangerouslySkipPermissions is
+    // REQUIRED to enable bypassPermissions — and it MUST stay OFF in normal/plan,
+    // or the SDK forces bypassPermissions and shadows canUseTool entirely (it
+    // warns CLAUDE_SDK_CAN_USE_TOOL_SHADOWED): the approval modal never shows,
+    // and tools fall through to the CLI's own permission path, which returns a
+    // malformed deny for un-allowed MCP tools → the SDK validator throws.
+    allowDangerouslySkipPermissions: settings.permissionMode === 'yolo',
     canUseTool: createCanUseTool(approvalCallback, guardCtx, settings.permissionMode),
     // 'yolo' = full autonomy: bypass claude.exe's OWN permission checks too
     // (it otherwise blocks high-risk Bash like `python -c` / redirections at the

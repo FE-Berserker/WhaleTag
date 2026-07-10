@@ -7,7 +7,6 @@ import ffmpegStatic from 'ffmpeg-static';
 import { createCanvas } from '@napi-rs/canvas';
 import { pathToFileURL } from 'url';
 import { createRequire } from 'module';
-import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import {
   META_DIR,
   THUMBS_DIR,
@@ -18,6 +17,7 @@ import {
 } from '../shared/whale-meta';
 import type { GenerateThumbnailOptions } from '../shared/ipc-types';
 import { atomicWriteBytes } from './atomic-write';
+import { sofficeSemaphore } from './concurrency';
 import { extractEbookCover } from './ebook-cover';
 import { renderFontToPng } from './font-thumb';
 
@@ -53,10 +53,8 @@ const THUMB_SIZE = 256;
 /** JPEG quality for the stored thumbnail. */
 const THUMB_QUALITY = 80;
 
-/** pdfjs-dist worker setup (mirrors fulltext.ts). */
 const nodeRequire = createRequire(__filename);
 const pdfWorkerPath = nodeRequire.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs');
-pdfjsLib.GlobalWorkerOptions.workerSrc = pathToFileURL(pdfWorkerPath).href;
 // pdfjs in the Electron main process loads cmap / font data via fs.readFile, so
 // these must be plain filesystem paths with a trailing "/" (forward slash; pdfjs
 // validates it and Windows fs accepts forward separators), NOT file:// URLs — a
@@ -65,6 +63,20 @@ const pdfRootDir = path.join(path.dirname(pdfWorkerPath), '..', '..');
 const pdfStandardFontDataUrl = path.join(pdfRootDir, 'standard_fonts') + '/';
 // Predefined CMaps for decoding non-embedded CID-keyed CJK fonts.
 const pdfCMapUrl = path.join(pdfRootDir, 'cmaps') + '/';
+
+type PdfjsLib = typeof import('pdfjs-dist/legacy/build/pdf.mjs');
+let _pdfjs: PdfjsLib | undefined;
+/** Lazy-load pdfjs on first PDF thumbnail (not at app startup). The pdfjs
+ *  module (~1MB+) and worker setup are deferred via nodeRequire (createRequire),
+ *  which webpack leaves as a runtime require — bundling the .mjs would
+ *  hard-code its import.meta.url and crash the main process at load. */
+function getPdfjs(): PdfjsLib {
+  if (_pdfjs) return _pdfjs;
+  const lib = nodeRequire('pdfjs-dist/legacy/build/pdf.mjs') as PdfjsLib;
+  lib.GlobalWorkerOptions.workerSrc = pathToFileURL(pdfWorkerPath).href;
+  _pdfjs = lib;
+  return lib;
+}
 
 /** `<dir>/.whale/thumbs/<basename>.jpg` for a given source file. */
 export function thumbPathFor(filePath: string): string {
@@ -85,6 +97,12 @@ export function ffmpegPath(): string | null {
   if (!ffmpegStatic) return null;
   return ffmpegStatic.replace('app.asar', 'app.asar.unpacked');
 }
+
+// Memoized PATH-probe result for the bare `soffice` command (spawns a child,
+// up to 3s — LibreOffice's bootstrap can be slow on a cold Windows install).
+// Cached so office thumbnails / PDF conversions don't re-probe on every call;
+// the candidate-path checks below stay per-call (cheap existsSync).
+let _sofficeOnPath: boolean | undefined;
 
 /**
  * Tries to locate the LibreOffice `soffice` binary. Honours an explicit
@@ -113,16 +131,19 @@ export function sofficeBinary(override: string | null | undefined): string | nul
     if (existsSync(c)) return c;
   }
 
-  // Final fallback: let PATH resolve it.
-  try {
-    execFileSync('soffice', ['--version'], {
-      timeout: 3000,
-      stdio: 'ignore',
-    });
-    return 'soffice';
-  } catch {
-    return null;
+  // Final fallback: let PATH resolve it. Memoized (see _sofficeOnPath).
+  if (_sofficeOnPath === undefined) {
+    try {
+      execFileSync('soffice', ['--version'], {
+        timeout: 3000,
+        stdio: 'ignore',
+      });
+      _sofficeOnPath = true;
+    } catch {
+      _sofficeOnPath = false;
+    }
   }
+  return _sofficeOnPath ? 'soffice' : null;
 }
 
 /** Returns true when a LibreOffice `soffice` binary can be located. */
@@ -171,29 +192,35 @@ async function encodeOfficeThumb(
   const expectedPdf = path.join(tmpDir, `${baseName}.pdf`);
 
   try {
-    await new Promise<void>((resolve, reject) => {
-      const isCmd = process.platform === 'win32' && /\.(cmd|bat|ps1)$/i.test(bin);
-      execFile(
-        bin,
-        sofficeConvertArgs(tmpDir, srcPath),
-        {
-          timeout: 120000,
-          stdio: ['ignore', 'pipe', 'pipe'] as const,
-          shell: isCmd,
-        } as import('child_process').ExecFileOptions,
-        (err, stdout, stderr) => {
-          if (err) {
-            reject(
-              new Error(
-                `soffice failed: ${err.message}\n${stderr || stdout || ''}`
-              )
-            );
-            return;
-          }
-          resolve();
-        }
-      );
-    });
+    // Serialize soffice with the office-viewer path (profile-lock contention —
+    // see office-convert.ts). Hold the permit only for the soffice subprocess,
+    // not the subsequent pdfjs/sharp thumbnail render.
+    await sofficeSemaphore.run(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          const isCmd = process.platform === 'win32' && /\.(cmd|bat|ps1)$/i.test(bin);
+          execFile(
+            bin,
+            sofficeConvertArgs(tmpDir, srcPath),
+            {
+              timeout: 120000,
+              stdio: ['ignore', 'pipe', 'pipe'] as const,
+              shell: isCmd,
+            } as import('child_process').ExecFileOptions,
+            (err, stdout, stderr) => {
+              if (err) {
+                reject(
+                  new Error(
+                    `soffice failed: ${err.message}\n${stderr || stdout || ''}`
+                  )
+                );
+                return;
+              }
+              resolve();
+            }
+          );
+        })
+    );
     if (!existsSync(expectedPdf)) {
       throw new Error('LibreOffice did not produce a PDF');
     }
@@ -314,7 +341,7 @@ async function encodeVideoThumb(srcPath: string): Promise<Buffer> {
 async function encodePdfThumb(srcPath: string): Promise<Buffer> {
   const data = new Uint8Array(await fsp.readFile(srcPath));
 
-  const loadingTask = pdfjsLib.getDocument({
+  const loadingTask = getPdfjs().getDocument({
     data,
     useSystemFonts: true,
     cMapUrl: pdfCMapUrl,

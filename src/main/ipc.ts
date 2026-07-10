@@ -18,6 +18,7 @@ import {
   removeLegacyWsi,
   loadExifProcessed,
   markExifProcessed,
+  markExifProcessedMany,
   clearExifProcessed,
 } from './index-db';
 import type { SearchQuery } from '../shared/search-query';
@@ -225,7 +226,13 @@ async function readTextFile(filePath: string): Promise<string> {
   }
 
   const utf8 = buf.toString('utf8');
-  const detected = chardet.detect(buf);
+  // chardet only needs a small byte sample to identify an encoding; running
+  // it over a multi-MB buffer is wasted main-thread CPU. subarray is a
+  // zero-copy view, so this is cheap.
+  const CHARDET_SAMPLE = 256 * 1024;
+  const detected = chardet.detect(
+    buf.length > CHARDET_SAMPLE ? buf.subarray(0, CHARDET_SAMPLE) : buf
+  );
   const encoding = detected?.encoding?.toLowerCase() ?? 'utf8';
   const confidence = detected?.confidence ?? 0;
 
@@ -251,7 +258,18 @@ async function readTextFile(filePath: string): Promise<string> {
   // corrupted download or mixed-encoding ebook). Forcing UTF-8 in that case
   // produces *millions* of replacement characters, so we pick whichever
   // decoding yields fewer replacements.
-  const countReplacements = (s: string) => (s.match(/�/g) || []).length;
+  // Count U+FFFD WITHOUT `s.match(/�/g)` — that builds a giant array
+  // (millions of entries) when a legacy/mixed-encoding file has many invalid
+  // bytes. indexOf walks the string with no allocation.
+  const countReplacements = (s: string): number => {
+    let count = 0;
+    let idx = s.indexOf('�');
+    while (idx !== -1) {
+      count++;
+      idx = s.indexOf('�', idx + 1);
+    }
+    return count;
+  };
   const utf8Bad = countReplacements(utf8);
   const decodedBad = countReplacements(decoded);
 
@@ -797,6 +815,19 @@ export function registerIpcHandlers(): void {
       markExifProcessed(rootPath, record);
     }
   );
+  // Batched variant — one IPC + one transaction (fsync) per batch instead of
+  // per image. Used by the Mapique EXIF extractor for a whole folder at once.
+  ipcMain.handle(
+    'exif:mark-processed-many',
+    (
+      _event,
+      rootPath: string,
+      records: { path: string; status: 'ok' | 'none'; lat: number | null; lng: number | null; triedAt: number }[]
+    ) => {
+      assertWithinAllowedRoot(rootPath);
+      markExifProcessedMany(rootPath, records);
+    }
+  );
   ipcMain.handle('exif:clear-processed', (_event, rootPath: string) => {
     assertWithinAllowedRoot(rootPath);
     clearExifProcessed(rootPath);
@@ -832,8 +863,9 @@ export function registerIpcHandlers(): void {
   );
 
   // ---- Full-text index (SQLite FTS5, plan §6.6 P2) ----
-  // buildFulltextIndex ingests a full replace, so there's no stale-incremental
-  // state to clear first (the old wsft.jsonl delete is gone with the file).
+  // buildFulltextIndex applies an incremental delta (insert changed/new, delete
+  // removed, leave unchanged rows untouched), so there's no stale-incremental
+  // state to clear first.
   ipcMain.handle('fulltext:build', (_event, rootPath: string) => {
     assertWithinAllowedRoot(rootPath);
     return buildFulltextIndex(rootPath);

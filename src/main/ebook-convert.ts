@@ -2,6 +2,7 @@ import path from 'path';
 import os from 'os';
 import { existsSync, promises as fsp } from 'fs';
 import { execFile, execFileSync } from 'child_process';
+import { mediaConvertSemaphore } from './concurrency';
 
 export interface ConvertEbookOptions {
   /** Explicit path to the Calibre `ebook-convert` binary. */
@@ -9,6 +10,10 @@ export interface ConvertEbookOptions {
   /** Maximum time to wait for conversion, in milliseconds. */
   timeout?: number;
 }
+
+// Memoized PATH-probe result for the bare `ebook-convert` command (spawns a
+// child, up to 3s). Cached so repeated ebook conversions don't re-probe.
+let _ebookOnPath: boolean | undefined;
 
 /**
  * Locates the Calibre `ebook-convert` binary.
@@ -35,15 +40,18 @@ export function ebookConvertBinary(override?: string | null): string | null {
     if (existsSync(c)) return c;
   }
 
-  try {
-    execFileSync('ebook-convert', ['--version'], {
-      timeout: 3000,
-      stdio: 'ignore',
-    });
-    return 'ebook-convert';
-  } catch {
-    return null;
+  if (_ebookOnPath === undefined) {
+    try {
+      execFileSync('ebook-convert', ['--version'], {
+        timeout: 3000,
+        stdio: 'ignore',
+      });
+      _ebookOnPath = true;
+    } catch {
+      _ebookOnPath = false;
+    }
   }
+  return _ebookOnPath ? 'ebook-convert' : null;
 }
 
 /** Returns true when a Calibre `ebook-convert` binary can be located. */
@@ -72,15 +80,18 @@ export async function convertEbookToEpub(
   const expectedEpub = path.join(tmpDir, `${baseName}.epub`);
 
   try {
-    await new Promise<void>((resolve, reject) => {
-      const isCmd = process.platform === 'win32' && /\.(cmd|bat|ps1)$/i.test(bin);
-      execFile(
-        bin,
-        [srcPath, expectedEpub],
-        { timeout: options.timeout ?? 120000, shell: isCmd },
-        (err) => (err ? reject(err) : resolve())
-      );
-    });
+    await mediaConvertSemaphore.run(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          const isCmd = process.platform === 'win32' && /\.(cmd|bat|ps1)$/i.test(bin);
+          execFile(
+            bin,
+            [srcPath, expectedEpub],
+            { timeout: options.timeout ?? 120000, shell: isCmd },
+            (err) => (err ? reject(err) : resolve())
+          );
+        })
+    );
 
     if (!existsSync(expectedEpub)) {
       throw new Error('Calibre did not produce an EPUB');

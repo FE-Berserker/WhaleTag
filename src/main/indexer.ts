@@ -103,9 +103,13 @@ export async function buildIndex(rootPath: string): Promise<IndexEntry[]> {
       }
     }
 
-    for (const { full } of dirs) {
-      await walk(full);
-    }
+    // Recurse into subdirs with bounded concurrency (was a serial
+    // `for ... await`), so a wide location (many top-level subdirs) doesn't
+    // walk depth-first with zero parallelism. `entries.push` is synchronous,
+    // so concurrent walks share it safely — JS async only interleaves at await
+    // boundaries, never mid-statement. Insertion order becomes non-deterministic,
+    // which is fine: the SQLite index is order-independent and queries re-sort.
+    await mapWithConcurrency(dirs, 8, ({ full }) => walk(full));
   }
 
   await walk(rootPath);

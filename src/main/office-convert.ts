@@ -3,6 +3,7 @@ import os from 'os';
 import { existsSync, promises as fsp } from 'fs';
 import { execFile } from 'child_process';
 import { sofficeBinary, sofficeConvertArgs } from './thumbnail';
+import { sofficeSemaphore } from './concurrency';
 
 export interface ConvertOfficeOptions {
   /** Explicit path to the LibreOffice `soffice` binary. */
@@ -34,29 +35,36 @@ export async function convertOfficeToPdf(
   const expectedPdf = path.join(tmpDir, `${baseName}.pdf`);
 
   try {
-    await new Promise<void>((resolve, reject) => {
-      const isCmd = process.platform === 'win32' && /\.(cmd|bat|ps1)$/i.test(bin);
-      execFile(
-        bin,
-        sofficeConvertArgs(tmpDir, srcPath),
-        {
-          timeout: options.timeout ?? 120000,
-          stdio: ['ignore', 'pipe', 'pipe'] as const,
-          shell: isCmd,
-        } as import('child_process').ExecFileOptions,
-        (err, stdout, stderr) => {
-          if (err) {
-            reject(
-              new Error(
-                `soffice failed: ${err.message}\n${stderr || stdout || ''}`
-              )
-            );
-            return;
-          }
-          resolve();
-        }
-      );
-    });
+    // Serialize soffice: concurrent LibreOffice processes share the user
+    // profile and contend on its lock (sofficeConvertArgs sets no
+    // -env:UserInstallation), so they must not overlap. Holds the permit only
+    // for the subprocess, not the surrounding tmpdir / file IO.
+    await sofficeSemaphore.run(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          const isCmd = process.platform === 'win32' && /\.(cmd|bat|ps1)$/i.test(bin);
+          execFile(
+            bin,
+            sofficeConvertArgs(tmpDir, srcPath),
+            {
+              timeout: options.timeout ?? 120000,
+              stdio: ['ignore', 'pipe', 'pipe'] as const,
+              shell: isCmd,
+            } as import('child_process').ExecFileOptions,
+            (err, stdout, stderr) => {
+              if (err) {
+                reject(
+                  new Error(
+                    `soffice failed: ${err.message}\n${stderr || stdout || ''}`
+                  )
+                );
+                return;
+              }
+              resolve();
+            }
+          );
+        })
+    );
 
     if (!existsSync(expectedPdf)) {
       throw new Error('LibreOffice did not produce a PDF');

@@ -195,6 +195,12 @@ export interface WhaleApi {
     rootPath: string,
     record: ExifProcessedRecord
   ) => Promise<void>;
+  /** Batched variant — one IPC + one SQLite transaction per batch instead of
+   *  per image (used by the Mapique folder EXIF extractor). */
+  markExifProcessedMany: (
+    rootPath: string,
+    records: ExifProcessedRecord[]
+  ) => Promise<void>;
   clearExifProcessed: (rootPath: string) => Promise<void>;
 
   // Index (Phase 2)

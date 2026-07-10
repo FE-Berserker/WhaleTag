@@ -11,7 +11,7 @@ export interface SystemPromptContext {
   customInstructions?: string;
   /** Effective perspective the user is looking at. Omitted when the folder's
    *  viewMode is unrecognized / legacy-migrated → Perspectives section skipped. */
-  viewMode?: import('../../../shared/whale-meta').ViewMode;
+  viewMode?: import('../../shared/whale-meta').ViewMode;
   /** Active Task sub-view (only meaningful when `viewMode === 'task'`). */
   subview?: 'kanban' | 'matrix' | 'gantt';
   /** Global recursive depth the user set (1–5). */
@@ -52,7 +52,7 @@ export function buildSystemPrompt(ctx: SystemPromptContext): string {
 
 /** Render the Perspectives section for the current view. Pure. */
 function buildPerspectivesSection(
-  viewMode: import('../../../shared/whale-meta').ViewMode,
+  viewMode: import('../../shared/whale-meta').ViewMode,
   subview: 'kanban' | 'matrix' | 'gantt' | undefined,
   viewDepth: number | undefined
 ): string {

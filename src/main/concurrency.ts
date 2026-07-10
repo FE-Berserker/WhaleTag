@@ -27,3 +27,68 @@ export async function mapWithConcurrency<T, R>(
   await Promise.all(Array.from({ length: width }, () => worker()));
   return results;
 }
+
+/**
+ * Async counting semaphore — bounds how many async operations run concurrently.
+ *
+ * Prefer `run(fn)`, which acquires a slot, awaits `fn`, and releases the slot
+ * in a `finally` (so a throw can't leak a permit). The hand-off in `release`
+ * passes the freed slot directly to the next waiter WITHOUT touching `permits`,
+ * which avoids the microtask race where a fresh `acquire()` sneaks in between
+ * decrement and the waiter resuming.
+ */
+export class Semaphore {
+  private permits: number;
+  private readonly waiters: Array<() => void> = [];
+
+  constructor(limit: number) {
+    this.permits = Math.max(1, Math.floor(limit));
+  }
+
+  async acquire(): Promise<void> {
+    if (this.permits > 0) {
+      this.permits -= 1;
+      return;
+    }
+    await new Promise<void>((resolve) => this.waiters.push(resolve));
+  }
+
+  release(): void {
+    if (this.waiters.length > 0) {
+      // Hand the freed slot directly to the next waiter — do NOT increment
+      // `permits` (one out, one in keeps the count correct, race-free).
+      this.waiters.shift()?.();
+    } else {
+      this.permits += 1;
+    }
+  }
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    await this.acquire();
+    try {
+      return await fn();
+    } finally {
+      this.release();
+    }
+  }
+}
+
+/**
+ * Serialize LibreOffice (`soffice`) conversions. `sofficeConvertArgs` does NOT
+ * pass `-env:UserInstallation`, so concurrent soffice processes share the
+ * default user profile and contend on LibreOffice's profile lock — concurrent
+ * runs can fail or corrupt the profile. Covers BOTH soffice spawn sites:
+ * office-viewer's `convertOfficeToPdf` (office-convert.ts) AND the office
+ * thumbnail path (`encodeOfficeThumb` in thumbnail.ts).
+ */
+export const sofficeSemaphore = new Semaphore(1);
+
+/**
+ * Shared budget for the other heavyweight external-binary conversions: ffmpeg
+ * audio transcode, Calibre `ebook-convert`, and `dwg2dxf` / ODA File Converter.
+ * Each saturates a core and does real disk IO; without a cap, opening several
+ * heavy files at once spawned many child processes and pressured the main
+ * process. Capped at 2 (not os.cpus()) because these are user-initiated,
+ * one-at-a-time conversions rather than bulk pipelines.
+ */
+export const mediaConvertSemaphore = new Semaphore(2);

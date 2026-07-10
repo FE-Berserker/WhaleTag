@@ -5,27 +5,40 @@ import { createRequire } from 'module';
 import { META_DIR } from '../shared/whale-meta';
 import type { FulltextHit } from '../shared/ipc-types';
 import {
-  ingestFulltext,
   queryFulltext,
   hasFulltext,
   fulltextPrior,
+  insertFulltext,
+  deleteFulltextPaths,
 } from './index-db';
+import { mapWithConcurrency } from './concurrency';
 
 // pdfjs-dist (Mozilla's official PDF library). We use the legacy build because
 // it runs in Node/Electron-main without DOM APIs. The library is kept as a
 // webpack external so Node resolves it at runtime; the worker script must also
 // be resolved from the installed package (dev vs production paths differ).
-import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
-
 const nodeRequire = createRequire(__filename);
 const workerPath = nodeRequire.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs');
-pdfjsLib.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
 
 // Point pdfjs at the bundled standard font files so text extraction for
 // PDFs that reference standard fonts doesn't fall back with warnings.
 const standardFontDataUrl =
   pathToFileURL(path.join(path.dirname(workerPath), '..', '..', 'standard_fonts'))
     .href + '/';
+
+type PdfjsLib = typeof import('pdfjs-dist/legacy/build/pdf.mjs');
+let _pdfjs: PdfjsLib | undefined;
+/** Lazy-load pdfjs on first PDF text extraction (not at app startup). The
+ *  pdfjs module (~1MB+) + worker setup are deferred via nodeRequire
+ *  (createRequire), which webpack leaves as a runtime require — bundling the
+ *  .mjs would hard-code its import.meta.url and crash the main process. */
+function getPdfjs(): PdfjsLib {
+  if (_pdfjs) return _pdfjs;
+  const lib = nodeRequire('pdfjs-dist/legacy/build/pdf.mjs') as PdfjsLib;
+  lib.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
+  _pdfjs = lib;
+  return lib;
+}
 
 /**
  * Full-text indexing for Whale. Keyed by an arbitrary directory root P (a
@@ -113,7 +126,7 @@ function readCapped(fullPath: string, cap: number): Promise<string> {
  */
 async function extractPdfText(filePath: string): Promise<string | null> {
   const data = new Uint8Array(await fsp.readFile(filePath));
-  let loadingTask: pdfjsLib.PDFDocumentLoadingTask | null = null;
+  let loadingTask: import('pdfjs-dist/legacy/build/pdf.mjs').PDFDocumentLoadingTask | null = null;
   let settled = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -131,7 +144,7 @@ async function extractPdfText(filePath: string): Promise<string | null> {
       done(null);
     }, 10000);
 
-    loadingTask = pdfjsLib.getDocument({
+    loadingTask = getPdfjs().getDocument({
       data,
       useSystemFonts: true,
       standardFontDataUrl,
@@ -187,15 +200,21 @@ async function extractText(
 /**
  * Incrementally (re)builds the fulltext index in SQLite. Files whose mtime is
  * unchanged since the last build reuse their extracted text (no re-read);
- * new/modified files are re-extracted; deleted files drop out (ingestFulltext
- * does a full replace). Returns how many files are indexed.
+ * new/modified files are re-extracted; deleted files drop out (incremental:
+ * changed/new rows are inserted, removed paths are deleted, unchanged rows are
+ * left untouched). Returns how many files are indexed.
  */
 export async function buildFulltextIndex(
   rootPath: string
 ): Promise<{ count: number }> {
   await fsp.mkdir(path.join(rootPath, META_DIR), { recursive: true });
+  // prior is path → mtime ONLY (no content). Unchanged files' content stays in
+  // the DB and is never loaded into JS memory — that is the win over the old
+  // DELETE-all + re-INSERT-all strategy, which had to carry every document body.
   const prior = fulltextPrior(rootPath);
-  const records: FulltextRecord[] = [];
+  const upserts: FulltextRecord[] = []; // changed + new files (with content)
+  const changedPaths: string[] = []; // existed in prior → delete stale row first
+  const seen = new Set<string>(); // every path that should remain indexed
   let count = 0;
 
   async function walk(dir: string): Promise<void> {
@@ -205,40 +224,64 @@ export async function buildFulltextIndex(
     } catch {
       return; // unreadable subdir — skip silently
     }
-    for (const name of names) {
+    // Process a directory's entries with bounded concurrency (was a serial
+    // `for` loop), so subdir recursion AND text extraction overlap instead of
+    // running one entry at a time. The shared accumulators (seen / count /
+    // upserts / changedPaths) are only ever mutated synchronously between
+    // awaits, so concurrent workers share them safely — JS async only
+    // interleaves at await boundaries, never mid-statement (so `count += 1`
+    // can't lose an increment). Insertion order is non-deterministic, which is
+    // fine: the FTS5 delta (delete changed → insert upserts → delete removed)
+    // is order-independent.
+    await mapWithConcurrency(names, 8, async (name) => {
       const full = path.join(dir, name);
       let stat;
       try {
         stat = await fsp.stat(full);
       } catch {
-        continue;
+        return;
       }
       if (stat.isDirectory()) {
-        if (IGNORE_DIRS.has(name)) continue;
+        if (IGNORE_DIRS.has(name)) return;
         await walk(full);
       } else if (stat.isFile()) {
         const ext = extOf(name);
-        if (!SUPPORTED_TEXT_EXT.has(ext)) continue;
+        if (!SUPPORTED_TEXT_EXT.has(ext)) return;
         const rel = toRel(rootPath, full);
 
-        // Reuse the prior record if the file hasn't changed (skip content read).
-        const prev = prior.get(rel);
-        if (prev && prev.mtime === stat.mtimeMs) {
-          records.push({ path: rel, name, mtime: prev.mtime, content: prev.content });
+        // Unchanged: leave its DB row untouched (skip content read + re-insert).
+        const prevMtime = prior.get(rel);
+        if (prevMtime !== undefined && prevMtime === stat.mtimeMs) {
+          seen.add(rel);
           count += 1;
-          continue;
+          return;
         }
 
         const text = await extractText(full, ext, stat.size);
-        if (!text) continue;
-        records.push({ path: rel, name, mtime: stat.mtimeMs, content: text });
+        if (!text) return; // no extractable text → not indexed (matches old behavior)
+        if (prevMtime !== undefined) changedPaths.push(rel);
+        upserts.push({ path: rel, name, mtime: stat.mtimeMs, content: text });
+        seen.add(rel);
         count += 1;
       }
-    }
+    });
   }
 
   await walk(rootPath);
-  await ingestFulltext(rootPath, records);
+
+  // Files indexed before but not seen this walk (deleted from disk, or now in
+  // an unreadable subdir) drop out — same outcome as the old full replace,
+  // which only re-inserted walked files.
+  const removed: string[] = [];
+  for (const p of prior.keys()) if (!seen.has(p)) removed.push(p);
+
+  // Incremental apply: clear stale rows for changed files, insert changed + new,
+  // drop removed. Unchanged rows (the common case on re-index) are never
+  // touched and their content is never loaded into memory.
+  await deleteFulltextPaths(rootPath, changedPaths);
+  await insertFulltext(rootPath, upserts);
+  await deleteFulltextPaths(rootPath, removed);
+
   return { count };
 }
 

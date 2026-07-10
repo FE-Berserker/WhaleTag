@@ -310,36 +310,38 @@ export function distinctTags(rootPath: string): string[] {
   return [...set].sort((a, b) => a.localeCompare(b));
 }
 
-/** Prior fulltext records (path → {mtime, content}) for incremental rebuild. */
-export function fulltextPrior(
-  rootPath: string
-): Map<string, { mtime: number; content: string }> {
+/** Prior fulltext mtimes (path → mtime) for incremental rebuild.
+ *  Only the mtime is needed to detect unchanged files; their content stays in
+ *  the DB untouched and is NEVER loaded into JS memory. (Previously this
+ *  selected `content` too, pulling every indexed document body — up to
+ *  MAX_TEXT_PER_FILE each — into one synchronous Map, which froze the main
+ *  process on large corpora.) */
+export function fulltextPrior(rootPath: string): Map<string, number> {
   if (!existsSync(dbPath(rootPath))) return new Map();
   const db = getDb(rootPath);
   const rows = db
-    .prepare('SELECT path, mtime, content FROM fulltext_fts')
-    .all() as { path: string; mtime: number; content: string }[];
-  const m = new Map<string, { mtime: number; content: string }>();
-  for (const r of rows) m.set(r.path, { mtime: r.mtime, content: r.content });
+    .prepare('SELECT path, mtime FROM fulltext_fts')
+    .all() as { path: string; mtime: number }[];
+  const m = new Map<string, number>();
+  for (const r of rows) m.set(r.path, r.mtime);
   return m;
 }
 
 /**
- * Replaces the full-text index with `records` (full rebuild). The DELETE runs
- * once; inserts are committed in `INGEST_BATCH`-sized transactions with an
- * event-loop yield between each, so a large corpus doesn't freeze the main
- * process. The fulltext index is a rebuildable cache, so dropping the single-
- * transaction atomicity is acceptable.
+ * Batched INSERT of fulltext records (no delete). Split out of ingestFulltext
+ * so the incremental rebuild can insert only changed/new records without
+ * touching unchanged rows. Yields to the event loop between batches so a large
+ * corpus doesn't freeze the main process.
  */
-export async function ingestFulltext(
+export async function insertFulltext(
   rootPath: string,
   records: FulltextRecord[]
 ): Promise<void> {
+  if (records.length === 0) return;
   const db = getDb(rootPath);
   const ins = db.prepare(
     'INSERT INTO fulltext_fts(path, name, mtime, content) VALUES (?, ?, ?, ?)'
   );
-  db.exec('DELETE FROM fulltext_fts');
   const insBatch = db.transaction((recs: FulltextRecord[]) => {
     for (const r of recs) ins.run(r.path, r.name, r.mtime, r.content);
   });
@@ -347,6 +349,42 @@ export async function ingestFulltext(
     insBatch(records.slice(i, i + INGEST_BATCH));
     await yieldToEventLoop();
   }
+}
+
+/**
+ * Batched DELETE of fulltext rows by path. Used by the incremental rebuild to
+ * drop files removed from disk and stale rows for changed files. FTS5 supports
+ * DELETE on a non-rowid column (verified empirically against better-sqlite3).
+ */
+export async function deleteFulltextPaths(
+  rootPath: string,
+  paths: string[]
+): Promise<void> {
+  if (paths.length === 0) return;
+  const db = getDb(rootPath);
+  const del = db.prepare('DELETE FROM fulltext_fts WHERE path = ?');
+  const delBatch = db.transaction((ps: string[]) => {
+    for (const p of ps) del.run(p);
+  });
+  for (let i = 0; i < paths.length; i += INGEST_BATCH) {
+    delBatch(paths.slice(i, i + INGEST_BATCH));
+    await yieldToEventLoop();
+  }
+}
+
+/**
+ * Replaces the full-text index with `records` (full rebuild): DELETE all, then
+ * batched INSERT. Retained for tests / standalone full-replace; the live
+ * rebuild path (buildFulltextIndex) now uses insertFulltext +
+ * deleteFulltextPaths so unchanged rows are never re-loaded into memory.
+ */
+export async function ingestFulltext(
+  rootPath: string,
+  records: FulltextRecord[]
+): Promise<void> {
+  const db = getDb(rootPath);
+  db.exec('DELETE FROM fulltext_fts');
+  await insertFulltext(rootPath, records);
 }
 
 /**
@@ -468,6 +506,39 @@ export function markExifProcessed(
     lng: record.lng,
     tried_at: record.triedAt,
   });
+}
+
+/** Upsert MANY EXIF results in ONE transaction (one WAL fsync) instead of one
+ *  per row. The Mapique batch extractor processes a folder of N photos; without
+ *  this it fired N separate IPCs → N autocommit transactions → N fsyncs on the
+ *  main thread. Empty input is a no-op. */
+export function markExifProcessedMany(
+  rootPath: string,
+  records: readonly ExifProcessedRecord[]
+): void {
+  if (records.length === 0) return;
+  const db = getDb(rootPath);
+  const stmt = db.prepare(
+    `INSERT INTO exif_processed (path, status, lat, lng, tried_at)
+     VALUES (@path, @status, @lat, @lng, @tried_at)
+     ON CONFLICT(path) DO UPDATE SET
+       status=excluded.status,
+       lat=excluded.lat,
+       lng=excluded.lng,
+       tried_at=excluded.tried_at`
+  );
+  const insertMany = db.transaction((recs: readonly ExifProcessedRecord[]) => {
+    for (const r of recs) {
+      stmt.run({
+        path: r.path,
+        status: r.status,
+        lat: r.lat,
+        lng: r.lng,
+        tried_at: r.triedAt,
+      });
+    }
+  });
+  insertMany(records);
 }
 
 /** Wipe the EXIF cache for `rootPath`. Used by the "Refresh EXIF" button to

@@ -3,6 +3,7 @@ import os from 'os';
 import { existsSync, promises as fsp } from 'fs';
 import { execFile } from 'child_process';
 import { ffmpegPath } from './thumbnail';
+import { mediaConvertSemaphore } from './concurrency';
 
 export interface ConvertAudioOptions {
   /** Maximum time to wait for the transcode, in milliseconds. */
@@ -35,37 +36,41 @@ export async function convertAudioToOpus(
   const expectedOut = path.join(tmpDir, 'out.opus');
 
   try {
-    await new Promise<void>((resolve, reject) => {
-      execFile(
-        bin,
-        [
-          '-hide_banner',
-          '-loglevel',
-          'error',
-          '-i',
-          srcPath,
-          // First audio stream only; drop video (e.g. cover-art), subtitle,
-          // and data tracks some containers (m4a/mov) carry alongside audio.
-          '-map',
-          '0:a:0',
-          '-vn',
-          '-sn',
-          '-dn',
-          '-c:a',
-          'libopus',
-          '-b:a',
-          '128k',
-          '-vbr',
-          'on',
-          '-application',
-          'audio',
-          '-y',
-          expectedOut,
-        ],
-        { timeout: options.timeout ?? 300000 },
-        (err) => (err ? reject(err) : resolve())
-      );
-    });
+    // Bound concurrent heavyweight child processes (ffmpeg / calibre / cad).
+    await mediaConvertSemaphore.run(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          execFile(
+            bin,
+            [
+              '-hide_banner',
+              '-loglevel',
+              'error',
+              '-i',
+              srcPath,
+              // First audio stream only; drop video (e.g. cover-art), subtitle,
+              // and data tracks some containers (m4a/mov) carry alongside audio.
+              '-map',
+              '0:a:0',
+              '-vn',
+              '-sn',
+              '-dn',
+              '-c:a',
+              'libopus',
+              '-b:a',
+              '128k',
+              '-vbr',
+              'on',
+              '-application',
+              'audio',
+              '-y',
+              expectedOut,
+            ],
+            { timeout: options.timeout ?? 300000 },
+            (err) => (err ? reject(err) : resolve())
+          );
+        })
+    );
 
     if (!existsSync(expectedOut)) {
       throw new Error('ffmpeg did not produce audio');

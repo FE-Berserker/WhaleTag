@@ -90,6 +90,8 @@ const whaleApi: WhaleApi = {
     ipcRenderer.invoke('exif:load-processed', rootPath),
   markExifProcessed: (rootPath: string, record: unknown) =>
     ipcRenderer.invoke('exif:mark-processed', rootPath, record),
+  markExifProcessedMany: (rootPath: string, records: unknown) =>
+    ipcRenderer.invoke('exif:mark-processed-many', rootPath, records),
   clearExifProcessed: (rootPath: string) =>
     ipcRenderer.invoke('exif:clear-processed', rootPath),
 

@@ -2,6 +2,7 @@ import path from 'path';
 import os from 'os';
 import { existsSync, readdirSync, promises as fsp } from 'fs';
 import { execFile, execFileSync } from 'child_process';
+import { mediaConvertSemaphore } from './concurrency';
 
 export interface ConvertDwgOptions {
   /** Explicit path to a LibreDWG `dwg2dxf` binary (skips auto-detection). */
@@ -12,6 +13,10 @@ export interface ConvertDwgOptions {
   timeout?: number;
 }
 
+// Memoized PATH-probe result for the bare `dwg2dxf` command (spawns a child,
+// up to 3s). Cached so opening multiple .dwg files doesn't re-probe each time.
+let _dwg2dxfOnPath: boolean | undefined;
+
 /**
  * Locate a LibreDWG `dwg2dxf` binary. It has no standard install path on
  * Windows, so detection relies on PATH (`dwg2dxf --version`). macOS brew and
@@ -19,12 +24,15 @@ export interface ConvertDwgOptions {
  */
 export function dwg2dxfBinary(override?: string | null): string | null {
   if (override) return override;
-  try {
-    execFileSync('dwg2dxf', ['--version'], { timeout: 3000, stdio: 'ignore' });
-    return 'dwg2dxf';
-  } catch {
-    return null;
+  if (_dwg2dxfOnPath === undefined) {
+    try {
+      execFileSync('dwg2dxf', ['--version'], { timeout: 3000, stdio: 'ignore' });
+      _dwg2dxfOnPath = true;
+    } catch {
+      _dwg2dxfOnPath = false;
+    }
   }
+  return _dwg2dxfOnPath ? 'dwg2dxf' : null;
 }
 
 /**
@@ -76,14 +84,17 @@ async function convertWithDwg2dxf(
   outDxf: string,
   timeout: number
 ): Promise<Buffer> {
-  await new Promise<void>((resolve, reject) => {
-    execFile(
-      bin,
-      ['-y', '-o', outDxf, srcPath],
-      { timeout },
-      (err) => (err ? reject(err) : resolve())
-    );
-  });
+  await mediaConvertSemaphore.run(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        execFile(
+          bin,
+          ['-y', '-o', outDxf, srcPath],
+          { timeout },
+          (err) => (err ? reject(err) : resolve())
+        );
+      })
+  );
   if (!existsSync(outDxf)) {
     throw new Error('dwg2dxf did not produce a DXF');
   }
@@ -105,14 +116,17 @@ async function convertWithOda(
   timeout: number
 ): Promise<Buffer> {
   await fsp.copyFile(srcPath, path.join(inDir, path.basename(srcPath)));
-  await new Promise<void>((resolve, reject) => {
-    execFile(
-      bin,
-      [inDir, outDir, 'ACAD2018', 'DXF', '0', '0'],
-      { timeout },
-      (err) => (err ? reject(err) : resolve())
-    );
-  });
+  await mediaConvertSemaphore.run(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        execFile(
+          bin,
+          [inDir, outDir, 'ACAD2018', 'DXF', '0', '0'],
+          { timeout },
+          (err) => (err ? reject(err) : resolve())
+        );
+      })
+  );
   const baseName = path.basename(srcPath, path.extname(srcPath));
   const outDxf = path.join(outDir, `${baseName}.dxf`);
   if (!existsSync(outDxf)) {

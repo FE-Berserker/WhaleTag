@@ -5,7 +5,6 @@ import os from 'os';
 // Mapique map tiles require remote img-src in CSP (see index.html + below).
 import { app, BrowserWindow, ipcMain, Menu, protocol, session, shell } from 'electron';
 import windowStateKeeper from 'electron-window-state';
-import ffmpegStatic from 'ffmpeg-static';
 import { registerIpcHandlers } from './ipc';
 import { registerAiHandlers } from './ai/ipc-ai';
 import { buildMenu } from './menu';
@@ -240,14 +239,22 @@ function bootstrap(): void {
   registerWhaleFileProtocol();
   createWindow();
 
-  // ABI/availability probe for the bundled ffmpeg (video thumbnails). Logs once
-  // so a missing/locked binary is visible instead of silently degrading to icons.
-  // eslint-disable-next-line no-console
-  console.log(
-    ffmpegStatic
-      ? `FFMPEG_ELECTRON_OK ${ffmpegStatic}`
-      : 'FFMPEG_ELECTRON_MISSING (video thumbnails disabled)'
-  );
+  // ABI/availability probe for the bundled ffmpeg (video thumbnails). Logged
+  // once so a missing/locked binary is visible. Lazy-imported so ffmpeg-static
+  // isn't pulled into the startup critical path — it backs only this diagnostic.
+  void import('ffmpeg-static')
+    .then(({ default: p }) => {
+      // eslint-disable-next-line no-console
+      console.log(
+        p
+          ? `FFMPEG_ELECTRON_OK ${p}`
+          : 'FFMPEG_ELECTRON_MISSING (video thumbnails disabled)'
+      );
+    })
+    .catch(() => {
+      // eslint-disable-next-line no-console
+      console.log('FFMPEG_ELECTRON_MISSING (video thumbnails disabled)');
+    });
 
   // macOS: re-create a window when the dock icon is clicked with no windows open.
   // macOS: re-create a window when the dock icon is clicked with no windows open.

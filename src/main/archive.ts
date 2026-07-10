@@ -19,6 +19,11 @@ import {
 // 7zip-bin detection
 // ---------------------------------------------------------------------------
 
+// Memoized PATH-probe result for the bare `7za` command (spawns a child,
+// up to 3s). Cached so repeated archive operations don't re-probe PATH; the
+// override / env / bundled checks above still run per-call (cheap existsSync).
+let _sevenZipOnPath: boolean | undefined;
+
 /**
  * Locates the 7za binary. Priority:
  *  1. explicit override
@@ -42,12 +47,15 @@ export function sevenZipBinary(override?: string | null): string | null {
     // bundled binary unavailable
   }
 
-  try {
-    execFileSync('7za', ['--version'], { timeout: 3000, stdio: 'ignore' });
-    return '7za';
-  } catch {
-    return null;
+  if (_sevenZipOnPath === undefined) {
+    try {
+      execFileSync('7za', ['--version'], { timeout: 3000, stdio: 'ignore' });
+      _sevenZipOnPath = true;
+    } catch {
+      _sevenZipOnPath = false;
+    }
   }
+  return _sevenZipOnPath ? '7za' : null;
 }
 
 export function isSevenZipAvailable(): boolean {
@@ -375,9 +383,18 @@ function sevenZipPasswordArg(password?: string): string {
   return password != null ? `-p${password}` : '-p""';
 }
 
-function runSevenZipList(bin: string, srcPath: string, password?: string): ArchiveEntry[] {
+async function runSevenZipList(bin: string, srcPath: string, password?: string): Promise<ArchiveEntry[]> {
   const args = ['l', '-slt', '-bb0', '-bse0', sevenZipPasswordArg(password), '--', srcPath];
-  const output = execFileSync(bin, args, { timeout: 60000, encoding: 'utf8' });
+  // Async execFile (was execFileSync) so a slow/large archive can no longer
+  // freeze the whole main process for up to 60s. maxBuffer raised well above
+  // execFile's 1MB default so big listings (up to the 100k-entry cap) aren't
+  // truncated — execFileSync buffered without that limit.
+  const output = await new Promise<string>((resolve, reject) => {
+    execFile(bin, args, { timeout: 60000, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => {
+      if (err) reject(err);
+      else resolve(stdout);
+    });
+  });
   return parseSevenZipList(output, path.basename(srcPath));
 }
 
@@ -413,14 +430,24 @@ export function parseSevenZipList(output: string, srcName: string): ArchiveEntry
   return entries;
 }
 
-function runSevenZipReadEntry(
+async function runSevenZipReadEntry(
   bin: string,
   srcPath: string,
   entryPath: string,
   password?: string
-): Buffer {
+): Promise<Buffer> {
   const args = ['x', '-so', sevenZipPasswordArg(password), '--', srcPath, entryPath];
-  return execFileSync(bin, args, { timeout: 60000 });
+  // Async execFile (was execFileSync) — see runSevenZipList. stdout is a Buffer
+  // because no `encoding` is set; cast escapes execFile's string-typed callback.
+  return new Promise<Buffer>((resolve, reject) => {
+    // `encoding: 'buffer'` is required: execFile defaults to 'utf8', which
+    // would hand us a *string* and `new Uint8Array(string)` then yields an
+    // empty array (string coerces to NaN length).
+    execFile(bin, args, { timeout: 60000, maxBuffer: 64 * 1024 * 1024, encoding: 'buffer' }, (err, stdout) => {
+      if (err) reject(err);
+      else resolve(stdout as unknown as Buffer);
+    });
+  });
 }
 
 async function runSevenZipExtract(
@@ -553,7 +580,7 @@ export async function listArchive(
   } else {
     const bin = sevenZipBinary(null);
     if (!bin) throw new Error('7za not found');
-    entries = runSevenZipList(bin, srcPath, options.password);
+    entries = await runSevenZipList(bin, srcPath, options.password);
   }
 
   entries = entries.filter((e) => isSafeArchivePath(e.path));
@@ -589,7 +616,7 @@ export async function readArchiveEntry(
   } else {
     const bin = sevenZipBinary(null);
     if (!bin) throw new Error('7za not found');
-    bytes = new Uint8Array(runSevenZipReadEntry(bin, srcPath, entryPath, options.password));
+    bytes = new Uint8Array(await runSevenZipReadEntry(bin, srcPath, entryPath, options.password));
   }
 
   return { base64: bufferToBase64(bytes), size: bytes.byteLength };

@@ -9,12 +9,16 @@ import {
   advancedQuery,
   distinctTags,
   ingestFulltext,
+  insertFulltext,
+  deleteFulltextPaths,
+  fulltextPrior,
   queryFulltext,
   hasFulltext,
   indexStatus,
   closeDb,
   loadExifProcessed,
   markExifProcessed,
+  markExifProcessedMany,
   clearExifProcessed,
 } from './index-db';
 import type { IndexEntry } from '../shared/ipc-types';
@@ -146,6 +150,40 @@ describe('index-db (SQLite + FTS5 trigram)', () => {
     }
   });
 
+  it('incremental fulltext: insert / delete-by-path / prior-mtime-only (unchanged rows survive)', async () => {
+    const root = await tmpRoot();
+    try {
+      await setup(root);
+      // Seed via the full-replace path.
+      await ingestFulltext(root, [
+        { path: 'a.md', name: 'a.md', mtime: 10, content: 'alpha bravo' },
+        { path: 'b.md', name: 'b.md', mtime: 20, content: 'bravo charlie' },
+        { path: 'c.md', name: 'c.md', mtime: 30, content: 'charlie delta' },
+      ]);
+
+      // fulltextPrior returns mtime ONLY (no document bodies in memory).
+      const prior = fulltextPrior(root);
+      assert.equal(prior.size, 3);
+      assert.equal(prior.get('b.md'), 20);
+      assert.equal(typeof prior.get('a.md'), 'number');
+
+      // insertFulltext adds WITHOUT wiping existing rows.
+      await insertFulltext(root, [
+        { path: 'd.md', name: 'd.md', mtime: 40, content: 'delta echo' },
+      ]);
+      assert.equal(queryFulltext(root, 'bravo').length, 2); // a.md + b.md still there
+
+      // deleteFulltextPaths removes only the named paths (missing is a no-op).
+      await deleteFulltextPaths(root, ['b.md', 'missing.md']);
+      assert.equal(queryFulltext(root, 'bravo').length, 1); // only a.md
+      assert.equal(queryFulltext(root, 'charlie').length, 1); // c.md survived
+      assert.equal(fulltextPrior(root).get('b.md'), undefined);
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('indexStatus reports count and readiness', async () => {
     const root = await tmpRoot();
     try {
@@ -201,6 +239,37 @@ describe('index-db (SQLite + FTS5 trigram)', () => {
       assert.equal(byPath['/abs/img1.jpg'].triedAt, 1);
       assert.equal(byPath['/abs/img2.jpg'].status, 'none');
       assert.equal(byPath['/abs/img2.jpg'].lat, null);
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('markExifProcessedMany upserts many rows in one batch (and is a no-op when empty)', async () => {
+    const root = await tmpRoot();
+    try {
+      await setup(root);
+      markExifProcessedMany(root, [
+        { path: '/abs/a.jpg', status: 'ok', lat: 1, lng: 2, triedAt: 100 },
+        { path: '/abs/b.jpg', status: 'none', lat: null, lng: null, triedAt: 101 },
+        { path: '/abs/c.jpg', status: 'ok', lat: 3, lng: 4, triedAt: 102 },
+      ]);
+      let got = loadExifProcessed(root);
+      assert.equal(got.length, 3);
+
+      // Upsert within a batch overwrites in place (same ON CONFLICT path).
+      markExifProcessedMany(root, [
+        { path: '/abs/a.jpg', status: 'none', lat: null, lng: null, triedAt: 200 },
+      ]);
+      got = loadExifProcessed(root);
+      assert.equal(got.length, 3);
+      const a = got.find((r) => r.path === '/abs/a.jpg');
+      assert.equal(a?.status, 'none');
+      assert.equal(a?.triedAt, 200);
+
+      // Empty input is a no-op.
+      markExifProcessedMany(root, []);
+      assert.equal(loadExifProcessed(root).length, 3);
     } finally {
       closeDb(root);
       await fsp.rm(root, { recursive: true, force: true });
