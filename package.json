@@ -1,7 +1,7 @@
 {
   "name": "whaletag",
   "productName": "WhaleTag",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "WhaleTag - a local-first, offline file manager and tagging tool (Electron + React + TypeScript)",
   "keywords": [
     "electron",
