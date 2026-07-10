@@ -1,12 +1,12 @@
 import path from 'path';
 import { merge } from 'webpack-merge';
-import base from './webpack.config.base';
+import { createBase } from './webpack.config.base';
 import { MAIN_DIST, SRC_PATH } from './webpack.paths';
 
 /**
  * Production build for the Electron MAIN process (main.js + preload.js).
  */
-export default merge(base, {
+export default merge(createBase(), {
   mode: 'production',
   devtool: false,
   target: 'electron-main',

@@ -2,14 +2,14 @@ import path from 'path';
 import { merge } from 'webpack-merge';
 import HtmlWebpackPlugin from 'html-webpack-plugin';
 import MiniCssExtractPlugin from 'mini-css-extract-plugin';
-import base from './webpack.config.base';
+import { createBase } from './webpack.config.base';
 import { RENDERER_DIST, RENDERER_SRC, ROOT_PATH } from './webpack.paths';
 
 /**
  * Production build for the RENDERER process.
  * Output is loaded via file:// in the packaged app, so publicPath is relative ('./').
  */
-export default merge(base, {
+export default merge(createBase({ esnext: true }), {
   mode: 'production',
   devtool: false,
   target: 'web',
@@ -20,6 +20,9 @@ export default merge(base, {
     path: RENDERER_DIST,
     filename: '[name].[contenthash].js',
     publicPath: './',
+    // Remove orphaned content-hashed chunks from previous builds so they don't
+    // accumulate in the packaged app (webpack 5 defaults `clean` to false).
+    clean: true,
   },
   resolve: {
     fallback: {

@@ -1,6 +1,6 @@
 import path from 'path';
 import { merge } from 'webpack-merge';
-import base from './webpack.config.base';
+import { createBase } from './webpack.config.base';
 import { MAIN_DIST, SRC_PATH } from './webpack.paths';
 
 /**
@@ -8,7 +8,7 @@ import { MAIN_DIST, SRC_PATH } from './webpack.paths';
  * Emits both main.js and preload.js in one pass (two entries, electron-main target).
  * `process.env.NODE_ENV` is replaced at build time so main.ts can detect dev mode.
  */
-export default merge(base, {
+export default merge(createBase(), {
   mode: 'development',
   devtool: 'inline-source-map',
   target: 'electron-main',

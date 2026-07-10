@@ -3,7 +3,7 @@ import fs from 'fs';
 import { merge } from 'webpack-merge';
 import HtmlWebpackPlugin from 'html-webpack-plugin';
 import MiniCssExtractPlugin from 'mini-css-extract-plugin';
-import base from './webpack.config.base';
+import { createBase } from './webpack.config.base';
 import { EXTENSIONS_SRC, EXTENSIONS_DIST, ROOT_PATH } from './webpack.paths';
 
 function discoverExtensions(): {
@@ -66,7 +66,7 @@ fs.writeFileSync(manifestDumpPath, JSON.stringify(manifests, null, 2));
 
 export { manifests };
 
-export default merge(base, {
+export default merge(createBase(), {
   mode: 'production',
   devtool: false,
   target: 'web',

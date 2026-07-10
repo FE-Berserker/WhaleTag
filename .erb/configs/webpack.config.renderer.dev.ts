@@ -1,7 +1,7 @@
 import path from 'path';
 import { merge } from 'webpack-merge';
 import HtmlWebpackPlugin from 'html-webpack-plugin';
-import base from './webpack.config.base';
+import { createBase } from './webpack.config.base';
 import { RENDERER_SRC, DEV_SERVER_PORT, ROOT_PATH } from './webpack.paths';
 
 /**
@@ -9,10 +9,19 @@ import { RENDERER_SRC, DEV_SERVER_PORT, ROOT_PATH } from './webpack.paths';
  * Served by webpack-dev-server on http://localhost:<DEV_SERVER_PORT>;
  * main.ts loads that URL when NODE_ENV === 'development'.
  */
-export default merge(base, {
+export default merge(createBase({ esnext: true }), {
   mode: 'development',
   devtool: 'inline-source-map',
   target: 'web',
+  // Mirror prod's `splitChunks: { chunks: 'all' }`. Without it, dev's default
+  // (async-only) bundles a SECOND copy of React into each React.lazy view
+  // chunk, and react-dom's dev runtime then throws "Expected static flag was
+  // missing" when a lazy component's JSX (built with its own jsx-runtime
+  // instance) is rendered by the entry's React. Deduping React into one shared
+  // vendor chunk fixes it.
+  optimization: {
+    splitChunks: { chunks: 'all' },
+  },
   entry: {
     main: path.resolve(RENDERER_SRC, 'index.tsx'),
   },
