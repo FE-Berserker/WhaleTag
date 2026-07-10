@@ -7,7 +7,7 @@
     "output": "release/build",
     "buildResources": "resources"
   },
-  "icon": "resources/logo.png",
+  "icon": "resources/icon.ico",
   "files": [
     "dist/**/*",
     "package.json"
@@ -30,8 +30,14 @@
     "target": ["dmg"]
   },
   "win": {
-    "target": ["nsis"],
-    "signAndEditExecutable": false
+    "target": ["nsis"]
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "perMachine": false,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true
   },
   "electronDist": "node_modules/electron/dist",
   "linux": {
