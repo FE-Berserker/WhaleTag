@@ -3,7 +3,7 @@ import type { DirEntry } from '../../shared/ipc-types';
 import { nextAvailableName } from '../../shared/dedupe-name';
 import { joinPath } from '-/services/path-util';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
-import { useDirectoryContentContext } from '-/hooks/DirectoryContentContextProvider';
+import { useDirectoryContent } from '-/hooks/DirectoryContentContextProvider';
 import { useIOActionsContext } from '-/hooks/IOActionsContextProvider';
 import { useExtensionContext } from '-/hooks/ExtensionContextProvider';
 
@@ -44,7 +44,7 @@ const EMPTY_DRAWIO =
  */
 export function useNewDrawio() {
   const { currentDirectoryPath, currentLocation } = useCurrentLocationContext();
-  const { entries } = useDirectoryContentContext();
+  const { entries } = useDirectoryContent();
   const { createFile } = useIOActionsContext();
   const { openWithExtension, registry } = useExtensionContext();
 

@@ -34,7 +34,9 @@ import i18next from 'i18next';
 import TaskView from './TaskView';
 import type { FileCellData } from './file-cell';
 import { CurrentLocationContext } from '../hooks/CurrentLocationContextProvider';
-import { DirectoryContentContext } from '../hooks/DirectoryContentContextProvider';
+import { DirectoryContentContext, DirectoryUIContext } from '../hooks/DirectoryContentContextProvider';
+import { DirectoryTreeRefreshContextProvider } from '../hooks/DirectoryTreeRefreshContextProvider';
+import { IOActionsContextProvider } from '../hooks/IOActionsContextProvider';
 import { PeriodTagDialogProvider } from './PeriodTagDialog';
 import type { DirEntry } from '../../shared/ipc-types';
 import type { WorkflowStage } from '../../shared/workflow';
@@ -164,8 +166,14 @@ function renderTask(
           <PeriodTagDialogProvider>
             <CurrentLocationContext.Provider value={LOCATION_CTX_STUB}>
               <DirectoryContentContext.Provider value={DIR_CONTENT_STUB}>
-                <TaskView data={data} stages={stages} onMoveToColumn={data.onMoveToColumn ?? (() => {})} />
-              </DirectoryContentContext.Provider>
+            <DirectoryUIContext.Provider value={DIR_CONTENT_STUB}>
+                <DirectoryTreeRefreshContextProvider>
+                  <IOActionsContextProvider>
+                    <TaskView data={data} stages={stages} onMoveToColumn={data.onMoveToColumn ?? (() => {})} />
+                  </IOActionsContextProvider>
+                </DirectoryTreeRefreshContextProvider>
+              </DirectoryUIContext.Provider>
+          </DirectoryContentContext.Provider>
             </CurrentLocationContext.Provider>
           </PeriodTagDialogProvider>
         </DndProvider>

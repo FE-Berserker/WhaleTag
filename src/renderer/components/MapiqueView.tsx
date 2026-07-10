@@ -618,18 +618,27 @@ export default function MapiqueView({
     // The try/catch is intentionally broad: a SQLite write failure must
     // never block the in-memory processedRef (which already short-circuits
     // the re-attempt within this session).
+    // Batch EXIF results into one IPC (one transaction + fsync per batch)
+    // instead of one IPC per image — a folder of N photos used to fire N
+    // fsyncs on the main thread. Flushed when the batch fills and on completion.
+    const EXIF_BATCH = 25;
+    const pending: ExifProcessedRecord[] = [];
+    const flushExif = (): void => {
+      if (!rootPath || pending.length === 0) return;
+      const batch = pending.splice(0, pending.length);
+      ipcApi.markExifProcessedMany(rootPath, batch).catch(() => {
+        // best-effort: swallow — in-memory processedRef is still correct.
+      });
+    };
     const persistExif = (path: string, gps: { lat: number; lng: number } | null) => {
-      if (!rootPath) return;
-      const record: ExifProcessedRecord = {
+      pending.push({
         path,
         status: gps ? 'ok' : 'none',
         lat: gps ? gps.lat : null,
         lng: gps ? gps.lng : null,
         triedAt: Date.now(),
-      };
-      ipcApi.markExifProcessed(rootPath, record).catch(() => {
-        // best-effort: swallow, in-memory state still correct
       });
+      if (pending.length >= EXIF_BATCH) flushExif();
     };
 
     let cancelled = false;
@@ -661,6 +670,9 @@ export default function MapiqueView({
     // `.finally` always runs — even when this batch was cancelled by a
     // dependency change — so the active-batch counter never gets stuck.
     void Promise.all(Array.from({ length: CONCURRENCY }, worker)).finally(() => {
+      // Flush records collected since the last size-triggered flush (also runs
+      // on cancel, so completed extractions aren't lost on a dep change).
+      flushExif();
       activeBatchesRef.current = Math.max(0, activeBatchesRef.current - 1);
       if (activeBatchesRef.current === 0) setExtractingActive(false);
     });

@@ -46,7 +46,7 @@ import {
 } from '../../shared/perspective-prefs';
 import { getTagColor } from '../../shared/tag-colors';
 import { tagDisplayLabel } from '-/services/tag-display';
-import { useDirectoryContentContext } from '-/hooks/DirectoryContentContextProvider';
+import { useDirectoryUI } from '-/hooks/DirectoryContentContextProvider';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { useImageExport } from '-/hooks/useImageExport';
 import { ipcApi } from '-/services/ipc-api';
@@ -240,7 +240,7 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   // H.24 R4: depth + loading come from the global directory content context
   // (single source); the recursive-scan truncation banner is at FileList level.
-  const { loading } = useDirectoryContentContext();
+  const { loading } = useDirectoryUI();
 
   // P2-2: keep a live ref to the latest prefs so the unmount cleanup can flush
   // them immediately. This prevents losing a just-toggled filter when the user

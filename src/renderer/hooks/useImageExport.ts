@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { useCurrentLocationContext } from './CurrentLocationContextProvider';
-import { useDirectoryContentContext } from './DirectoryContentContextProvider';
+import { useDirectoryUI } from './DirectoryContentContextProvider';
 import { ipcApi } from '-/services/ipc-api';
 import { joinPath } from '-/services/path-util';
 
@@ -49,7 +49,7 @@ export function useImageExport({
   prefix,
 }: UseImageExportOptions): UseImageExportReturn {
   const { currentDirectoryPath } = useCurrentLocationContext();
-  const { refresh } = useDirectoryContentContext();
+  const { refresh } = useDirectoryUI();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

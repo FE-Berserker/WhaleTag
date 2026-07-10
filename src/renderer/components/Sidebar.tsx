@@ -57,6 +57,10 @@ import TagLibrary from '-/components/TagLibrary';
 
 interface SidebarProps {
   onAddLocation: () => void;
+  /** Embedded (narrow-window tab mode): drop the title / add-button header
+   *  and fill the parent panel (width 100%, no right border) — MainLayout's
+   *  tab bar replaces this component's own header. */
+  embedded?: boolean;
 }
 
 /**
@@ -197,7 +201,7 @@ function LocationRow({
 }
 
 /** Left rail: list of configured locations, switch + remove, plus "add". */
-export default function Sidebar({ onAddLocation }: SidebarProps) {
+export default function Sidebar({ onAddLocation, embedded = false }: SidebarProps) {
   const { t } = useTranslation();
   const dispatch = useDispatch();
   const { items } = useSelector((s: RootState) => s.locations);
@@ -279,36 +283,39 @@ export default function Sidebar({ onAddLocation }: SidebarProps) {
     <Box
       ref={rootRef}
       sx={{
-        width: 260,
+        width: embedded ? '100%' : 260,
         flexShrink: 0,
-        borderRight: 1,
+        borderRight: embedded ? 0 : 1,
         borderColor: 'divider',
         display: 'flex',
         flexDirection: 'column',
+        ...(embedded ? { height: '100%' } : {}),
       }}
     >
-      <Box
-        sx={{
-          minHeight: COLUMN_HEADER_HEIGHT,
-          px: 1.5,
-          py: 0,
-          flexShrink: 0,
-          borderBottom: 1,
-          borderColor: 'divider',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-        }}
-      >
-        <Typography variant="overline" color="text.secondary">
-          {t('locations')}
-        </Typography>
-        <Tooltip title={t('addLocation')}>
-          <IconButton size="small" onClick={onAddLocation}>
-            <CreateNewFolderIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-      </Box>
+      {embedded ? null : (
+        <Box
+          sx={{
+            minHeight: COLUMN_HEADER_HEIGHT,
+            px: 1.5,
+            py: 0,
+            flexShrink: 0,
+            borderBottom: 1,
+            borderColor: 'divider',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
+          <Typography variant="overline" color="text.secondary">
+            {t('locations')}
+          </Typography>
+          <Tooltip title={t('addLocation')}>
+            <IconButton size="small" onClick={onAddLocation}>
+              <CreateNewFolderIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        </Box>
+      )}
       <Box
         sx={{ flex: 1, minHeight: 160, overflowY: 'auto' }}
         onContextMenu={(e) => {

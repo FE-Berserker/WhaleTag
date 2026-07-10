@@ -21,7 +21,7 @@ import i18next from 'i18next';
 import * as React from 'react';
 
 import { CurrentLocationContext } from '../hooks/CurrentLocationContextProvider';
-import { DirectoryContentContext } from '../hooks/DirectoryContentContextProvider';
+import { DirectoryContentContext, DirectoryUIContext } from '../hooks/DirectoryContentContextProvider';
 import type { DirEntry } from '../../shared/ipc-types';
 import type { MapiqueViewProps } from './MapiqueView';
 
@@ -107,8 +107,10 @@ function renderMapique(props: MapiqueViewProps) {
         <DndProvider backend={HTML5Backend}>
           <CurrentLocationContext.Provider value={LOCATION_CTX_STUB}>
             <DirectoryContentContext.Provider value={DIR_CONTENT_STUB}>
+            <DirectoryUIContext.Provider value={DIR_CONTENT_STUB}>
               <MapiqueView {...props} />
-            </DirectoryContentContext.Provider>
+            </DirectoryUIContext.Provider>
+          </DirectoryContentContext.Provider>
           </CurrentLocationContext.Provider>
         </DndProvider>
       </Provider>

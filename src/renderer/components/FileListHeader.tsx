@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type ElementType } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Box,
@@ -37,6 +37,7 @@ import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import MapIcon from '@mui/icons-material/Map';
 import CloudIcon from '@mui/icons-material/Cloud';
 import HubIcon from '@mui/icons-material/Hub';
+import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
 import DensitySmall from '@mui/icons-material/DensitySmall';
 import DensityMedium from '@mui/icons-material/DensityMedium';
 import DensityLarge from '@mui/icons-material/DensityLarge';
@@ -123,7 +124,7 @@ export interface FileListHeaderProps {
  * piece of UI state (`sortAnchor`) for the menu's anchor element; selection /
  * sort / view / zoom all live in the parent.
  */
-export default function FileListHeader(props: FileListHeaderProps) {
+function FileListHeader(props: FileListHeaderProps) {
   const {
     sort,
     setSort,
@@ -148,6 +149,43 @@ export default function FileListHeader(props: FileListHeaderProps) {
   } = props;
   const { t } = useTranslation();
   const [sortAnchor, setSortAnchor] = useState<HTMLElement | null>(null);
+  const [viewMenuAnchor, setViewMenuAnchor] = useState<HTMLElement | null>(null);
+
+  // The 6 specialized perspectives fold into an overflow menu so the view
+  // switcher never overflows the header at narrow window widths — list / grid
+  // / gallery stay inline (the common file-browsing views). When a specialized
+  // view is active, its icon shows on the overflow trigger (highlighted) so the
+  // active perspective is always visible instead of buried in the menu.
+  const specializedViews: { value: ViewMode; Icon: ElementType; label: string }[] = [
+    { value: 'task', Icon: AssignmentIcon, label: t('viewTask') },
+    { value: 'calendar', Icon: CalendarMonthIcon, label: t('viewCalendar') },
+    { value: 'folderviz', Icon: AccountTreeIcon, label: t('viewFolderViz') },
+    { value: 'mapique', Icon: MapIcon, label: t('viewMapique') },
+    { value: 'tagcloud', Icon: CloudIcon, label: t('viewTagCloud') },
+    { value: 'knowledge-graph', Icon: HubIcon, label: t('viewKnowledgeGraph') },
+  ];
+  const activeSpecialized = specializedViews.find((v) => v.value === viewMode);
+  const ActiveSpecializedIcon = activeSpecialized?.Icon;
+
+  // Measure the header (= workspace column) width so the view switcher shows
+  // all 9 perspectives inline when there's room and folds the 6 specialized
+  // ones into the overflow menu when narrow. Start at Infinity so the first
+  // paint shows everything (no flash of folded items). Mirrors FileToolbar.
+  const headerRef = useRef<HTMLDivElement | null>(null);
+  const [headerWidth, setHeaderWidth] = useState(Infinity);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) setHeaderWidth(entry.contentRect.width);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  // Wide (≥720): all 9 inline. Narrow: list / grid / gallery inline + the rest
+  // in the overflow menu. 720 ≈ where the 9 icons + the list column headers
+  // stop fitting comfortably.
+  const foldViews = headerWidth < 720;
 
   const closeSortMenu = useCallback(() => {
     setSortAnchor(null);
@@ -167,6 +205,7 @@ export default function FileListHeader(props: FileListHeaderProps) {
 
   return (
     <Stack
+      ref={headerRef}
       direction="row"
       sx={{
         px: 2,
@@ -371,7 +410,9 @@ export default function FileListHeader(props: FileListHeaderProps) {
         </Tooltip>
       ) : null}
 
-      {/* View toggle: list vs grid. */}
+      {/* View toggle. Wide (workspace ≥720): all 9 perspectives inline.
+          Narrow: list / grid / gallery inline + the 6 specialized ones in the
+          overflow menu so the switcher never overflows the header. */}
       <ToggleButtonGroup
         size="small"
         exclusive
@@ -395,37 +436,65 @@ export default function FileListHeader(props: FileListHeaderProps) {
             <PhotoLibraryIcon fontSize="small" />
           </Tooltip>
         </ToggleButton>
-        <ToggleButton value="task" sx={{ px: 1, py: 0.25 }}>
-          <Tooltip title={t('viewTask')}>
-            <AssignmentIcon fontSize="small" />
-          </Tooltip>
-        </ToggleButton>
-        <ToggleButton value="calendar" sx={{ px: 1, py: 0.25 }}>
-          <Tooltip title={t('viewCalendar')}>
-            <CalendarMonthIcon fontSize="small" />
-          </Tooltip>
-        </ToggleButton>
-        <ToggleButton value="folderviz" sx={{ px: 1, py: 0.25 }}>
-          <Tooltip title={t('viewFolderViz')}>
-            <AccountTreeIcon fontSize="small" />
-          </Tooltip>
-        </ToggleButton>
-        <ToggleButton value="mapique" sx={{ px: 1, py: 0.25 }}>
-          <Tooltip title={t('viewMapique')}>
-            <MapIcon fontSize="small" />
-          </Tooltip>
-        </ToggleButton>
-        <ToggleButton value="tagcloud" sx={{ px: 1, py: 0.25 }}>
-          <Tooltip title={t('viewTagCloud')}>
-            <CloudIcon fontSize="small" />
-          </Tooltip>
-        </ToggleButton>
-        <ToggleButton value="knowledge-graph" sx={{ px: 1, py: 0.25 }}>
-          <Tooltip title={t('viewKnowledgeGraph')}>
-            <HubIcon fontSize="small" />
-          </Tooltip>
-        </ToggleButton>
+        {!foldViews
+          ? specializedViews.map((v) => {
+              const Icon = v.Icon;
+              return (
+                <ToggleButton key={v.value} value={v.value} sx={{ px: 1, py: 0.25 }}>
+                  <Tooltip title={v.label}>
+                    <Icon fontSize="small" />
+                  </Tooltip>
+                </ToggleButton>
+              );
+            })
+          : null}
       </ToggleButtonGroup>
+      {foldViews ? (
+        <>
+          {/* Overflow for the specialized perspectives. Shows the active one's
+              icon (highlighted) so it's never hidden, else a "more" glyph. */}
+          <Tooltip title={activeSpecialized ? activeSpecialized.label : t('more')}>
+            <IconButton
+              size="small"
+              color={activeSpecialized ? 'primary' : 'default'}
+              aria-label={activeSpecialized ? activeSpecialized.label : t('more')}
+              aria-haspopup="menu"
+              onClick={(e) => setViewMenuAnchor(e.currentTarget)}
+            >
+              {ActiveSpecializedIcon ? (
+                <ActiveSpecializedIcon fontSize="small" />
+              ) : (
+                <MoreHorizIcon fontSize="small" />
+              )}
+            </IconButton>
+          </Tooltip>
+          <Menu
+            open={Boolean(viewMenuAnchor)}
+            anchorEl={viewMenuAnchor}
+            onClose={() => setViewMenuAnchor(null)}
+            slotProps={{ list: { dense: true } }}
+          >
+            {specializedViews.map((v) => {
+              const Icon = v.Icon;
+              return (
+                <MenuItem
+                  key={v.value}
+                  selected={viewMode === v.value}
+                  onClick={() => {
+                    setViewMode(v.value);
+                    setViewMenuAnchor(null);
+                  }}
+                >
+                  <ListItemIcon>
+                    <Icon fontSize="small" />
+                  </ListItemIcon>
+                  <ListItemText>{v.label}</ListItemText>
+                </MenuItem>
+              );
+            })}
+          </Menu>
+        </>
+      ) : null}
 
       {selectedCount > 0 ? (
         <Box sx={{ minWidth: 132, display: 'flex', justifyContent: 'flex-end' }}>
@@ -441,6 +510,13 @@ export default function FileListHeader(props: FileListHeaderProps) {
     </Stack>
   );
 }
+
+// Memoized: the parent (FileList) re-renders on every selection / scroll tick,
+// but FileListHeader only depends on sort/view/density/column state. As long as
+// FileList passes stable callbacks (handleColumnWidth / handleToggleColumn /
+// handleChangeListRowDensity / setSort — see FileList.tsx) the header skips
+// re-render when those haven't changed.
+export default memo(FileListHeader);
 
 /**
  * List-view column header: tri-state select-all checkbox + 5 column captions.

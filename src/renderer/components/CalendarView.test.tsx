@@ -27,7 +27,7 @@ import i18next from 'i18next';
 import CalendarView from './CalendarView';
 import type { FileCellData } from './file-cell';
 import { CurrentLocationContext } from '../hooks/CurrentLocationContextProvider';
-import { DirectoryContentContext } from '../hooks/DirectoryContentContextProvider';
+import { DirectoryContentContext, DirectoryUIContext } from '../hooks/DirectoryContentContextProvider';
 import { DirectoryTreeRefreshContextProvider } from '../hooks/DirectoryTreeRefreshContextProvider';
 import { IOActionsContextProvider } from '../hooks/IOActionsContextProvider';
 import type { DirEntry } from '../../shared/ipc-types';
@@ -158,12 +158,14 @@ function renderCalendar(data: FileCellData, _lng = 'en') {
         <DndProvider backend={HTML5Backend}>
           <CurrentLocationContext.Provider value={LOCATION_CTX_STUB}>
             <DirectoryContentContext.Provider value={DIR_CONTENT_STUB}>
+            <DirectoryUIContext.Provider value={DIR_CONTENT_STUB}>
               <DirectoryTreeRefreshContextProvider>
                 <IOActionsContextProvider>
                   <CalendarView data={data} />
                 </IOActionsContextProvider>
               </DirectoryTreeRefreshContextProvider>
-            </DirectoryContentContext.Provider>
+            </DirectoryUIContext.Provider>
+          </DirectoryContentContext.Provider>
           </CurrentLocationContext.Provider>
         </DndProvider>
       </Provider>
@@ -480,12 +482,14 @@ describe('CalendarView PA-3: viewMode + grouping persistence', () => {
           <DndProvider backend={HTML5Backend}>
             <CurrentLocationContext.Provider value={ctxValue}>
               <DirectoryContentContext.Provider value={DIR_CONTENT_STUB}>
+            <DirectoryUIContext.Provider value={DIR_CONTENT_STUB}>
                 <DirectoryTreeRefreshContextProvider>
                   <IOActionsContextProvider>
                     <CalendarView data={data} />
                   </IOActionsContextProvider>
                 </DirectoryTreeRefreshContextProvider>
-              </DirectoryContentContext.Provider>
+              </DirectoryUIContext.Provider>
+          </DirectoryContentContext.Provider>
             </CurrentLocationContext.Provider>
           </DndProvider>
         </Provider>

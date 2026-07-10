@@ -1,29 +1,68 @@
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 
 /**
- * Returns a `Date` that refreshes periodically so the freshness checks in
- * `smartFunctionalityOfTag(tag, now)` / `tagDisplayLabel(tag, t, now)` see the
- * wall-clock crossing over minute / day / month / year boundaries.
+ * Returns a `Date` that refreshes once a minute so freshness checks
+ * (`smartFunctionalityOfTag(tag, now)` / `tagDisplayLabel(tag, t, now)`) see
+ * the wall-clock cross over minute / day / month / year boundaries.
  *
- * Granularity is one minute (default) — long enough to be cheap, short enough
- * that an open app sees the day roll over within 60 s of midnight. Tests that
- * need deterministic behavior should pass an explicit `now` argument to
- * `smartFunctionalityOfTag` / `tagDisplayLabel` instead of relying on this hook.
+ * ALL consumers share ONE module-level `setInterval` (started when the first
+ * consumer mounts, cleared when the last unmounts) via a tiny external store
+ * + `useSyncExternalStore`. Previously each consumer owned its own timer, so
+ * the minute tick fired N times and re-rendered the tag library / file list /
+ * properties tray N separate times each minute. Now it's one tick → one batch
+ * re-render of every consumer, and they share the same `Date` snapshot in
+ * between (the snapshot is cached and only swapped on each tick —
+ * `useSyncExternalStore` requires `getSnapshot` to return a stable reference
+ * between notifications).
  *
- * Multiple subscribers in the same React tree share a single `setInterval`
- * only at the React rendering level — each component instance owns its own
- * timer. The interval is cleared on unmount.
+ * Tests that need deterministic behavior should pass an explicit `now`
+ * argument to `smartFunctionalityOfTag` / `tagDisplayLabel` instead of this
+ * hook.
  *
  * Usage:
  *   const now = useNow();
  *   <Chip label={tagDisplayLabel(tag, t, now)} />
  */
-export function useNow(intervalMs: number = 60_000): Date {
-  const [now, setNow] = useState<Date>(() => new Date());
-  useEffect(() => {
-    if (intervalMs <= 0) return;
-    const id = setInterval(() => setNow(new Date()), intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
-  return now;
+
+const INTERVAL_MS = 60_000;
+
+// Module-level shared store.
+let snapshot: Date = new Date();
+const listeners = new Set<() => void>();
+let timer: ReturnType<typeof setInterval> | null = null;
+
+function tick(): void {
+  snapshot = new Date();
+  for (const l of listeners) l();
+}
+
+function startTimer(): void {
+  if (timer !== null) return;
+  // Refresh immediately on (re)start so a consumer that mounts after the timer
+  // was idle doesn't read a stale snapshot from the last active period.
+  snapshot = new Date();
+  timer = setInterval(tick, INTERVAL_MS);
+}
+
+function stopTimer(): void {
+  if (timer === null) return;
+  clearInterval(timer);
+  timer = null;
+}
+
+function subscribe(cb: () => void): () => void {
+  listeners.add(cb);
+  if (listeners.size === 1) startTimer();
+  return () => {
+    listeners.delete(cb);
+    if (listeners.size === 0) stopTimer();
+  };
+}
+
+function getSnapshot(): Date {
+  return snapshot;
+}
+
+export function useNow(): Date {
+  return useSyncExternalStore(subscribe, getSnapshot);
 }

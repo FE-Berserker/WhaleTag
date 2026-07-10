@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDispatch, useSelector } from 'react-redux';
 import { useShallowEqualSelector } from '-/hooks/useShallowEqualSelector';
@@ -34,6 +34,7 @@ import {
   setListZebra,
   setListDateFormat,
   setGalleryShowTags,
+  type ListRowDensity,
 } from '-/reducers/settings';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import {
@@ -51,14 +52,34 @@ import GridCell, {
   GRID_CELL_GAP,
 } from '-/components/GridCell';
 import Row from '-/components/Row';
-import GalleryView from '-/components/GalleryView';
 import MediaLightbox from '-/components/MediaLightbox';
-import TaskView from '-/components/TaskView';
-import CalendarView from '-/components/CalendarView';
-import FolderVizView from '-/components/FolderVizView';
-import TagCloudView from '-/components/TagCloudView';
-import KnowledgeGraphView from '-/components/KnowledgeGraphView';
-import MapiqueView from '-/components/MapiqueView';
+// Perspective views are lazy-loaded so the heavy viz libs they transitively
+// pull in (echarts via Calendar/TagCloud/FolderViz, leaflet via Mapique,
+// @xyflow/react via KnowledgeGraph) load on demand when the user switches to
+// that view — not on first paint. Each is rendered behind exactly one
+// `viewMode` branch in the switch below (wrapped in <Suspense>).
+const GalleryView = lazy(() => import('./GalleryView'));
+const TaskView = lazy(() => import('./TaskView'));
+const CalendarView = lazy(() => import('./CalendarView'));
+const FolderVizView = lazy(() => import('./FolderVizView'));
+const TagCloudView = lazy(() => import('./TagCloudView'));
+const KnowledgeGraphView = lazy(() => import('./KnowledgeGraphView'));
+const MapiqueView = lazy(() => import('./MapiqueView'));
+
+/** Suspense fallback shown while a lazy perspective view's chunk loads. */
+const PerspectiveFallback = (
+  <Box
+    sx={{
+      flex: 1,
+      minHeight: 0,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+    }}
+  >
+    <CircularProgress />
+  </Box>
+);
 import PropertiesTray from '-/components/PropertiesTray';
 import FileListHeader, { RowColumnLabels } from '-/components/FileListHeader';
 import EntryContextMenu, { TagChipContextMenu } from '-/components/EntryContextMenu';
@@ -273,6 +294,34 @@ export default function FileList() {
   const onToggleGalleryShowTags = useCallback(
     () => dispatch(setGalleryShowTags(!galleryShowTags)),
     [dispatch, galleryShowTags]
+  );
+  // Stable column/density handlers shared by the FileListHeader render. Were
+  // inline closures — a fresh identity every FileList render, which defeated
+  // React.memo on FileListHeader (the whole header re-rendered on every
+  // selection / scroll tick).
+  const handleColumnWidth = useCallback(
+    (id: string, px: number) => {
+      const bounds = LIST_COLUMN_BOUNDS[id];
+      const clamped = Math.max(
+        bounds.min,
+        Math.min(bounds.max, Math.round(px))
+      );
+      dispatch(setListColumnWidths({ [id]: clamped } as Record<string, number>));
+    },
+    [dispatch]
+  );
+  const handleToggleColumn = useCallback(
+    (columnId: string) => {
+      const next = hiddenColumns.includes(columnId)
+        ? hiddenColumns.filter((id) => id !== columnId)
+        : [...hiddenColumns, columnId];
+      dispatch(setListHiddenColumns(next));
+    },
+    [dispatch, hiddenColumns]
+  );
+  const handleChangeListRowDensity = useCallback(
+    (d: ListRowDensity) => dispatch(setListRowDensity(d)),
+    [dispatch]
   );
 
   const groups = useShallowEqualSelector(
@@ -1384,7 +1433,7 @@ export default function FileList() {
       ) : null}
       <FileListHeader
         sort={sort}
-        setSort={(next) => setSort(next)}
+        setSort={setSort}
         sortKeys={SORT_KEYS}
         viewMode={viewMode}
         setViewMode={setViewMode}
@@ -1395,7 +1444,7 @@ export default function FileList() {
         entrySizeStep={ENTRY_SIZE_STEP}
         // H.23 P1-3 row-density preset (compact / normal / comfortable).
         listRowDensity={listRowDensity}
-        onChangeListRowDensity={(d) => dispatch(setListRowDensity(d))}
+        onChangeListRowDensity={handleChangeListRowDensity}
         selectedCount={selectedPathsRef.current.size}
         onClearSelection={clearSelection}
         listSelectAllState={selectAllState}
@@ -1408,25 +1457,8 @@ export default function FileList() {
         // clamp logic isn't hidden inside the header.
         columnWidths={columnWidths}
         hiddenColumns={hiddenColumns}
-        setColumnWidth={(columnId, widthPx) => {
-          const bounds = LIST_COLUMN_BOUNDS[columnId];
-          const clamped = Math.max(
-            bounds.min,
-            Math.min(bounds.max, Math.round(widthPx))
-          );
-          dispatch(
-            setListColumnWidths({ [columnId]: clamped } as Record<
-              string,
-              number
-            >)
-          );
-        }}
-        toggleColumn={(columnId) => {
-          const next = hiddenColumns.includes(columnId)
-            ? hiddenColumns.filter((id) => id !== columnId)
-            : [...hiddenColumns, columnId];
-          dispatch(setListHiddenColumns(next));
-        }}
+        setColumnWidth={handleColumnWidth}
+        toggleColumn={handleToggleColumn}
         // H.23 P2-1 zebra toggle.
         listZebra={listZebra}
         onToggleListZebra={onToggleListZebra}
@@ -1474,7 +1506,7 @@ export default function FileList() {
                 // is a Button-driven sort UI in addition to the auxiliary
                 // `Sort` menu at the top of the toolbar.
                 sort={sort}
-                setSort={(next) => setSort(next)}
+                setSort={setSort}
                 // H.23 P1-5: column-width + visibility plumbing.
                 columnWidths={columnWidths}
                 hiddenColumns={hiddenColumns}
@@ -1505,7 +1537,7 @@ export default function FileList() {
                 }}
               />
             ) : null}
-            {viewMode === 'task' ? (
+            <Suspense fallback={PerspectiveFallback}>{viewMode === 'task' ? (
               // H.29: Task perspective is a thin container that hosts a
               // Kanban / Matrix sub-switch. Both child views are imported
               // here only as type references — TaskView owns the actual
@@ -1592,7 +1624,7 @@ export default function FileList() {
                   rowProps={cellData}
                 />
               </Box>
-            )}
+            )}</Suspense>
 
             {!trayVisible && selectedEntries.length > 0 && trayAppliesToView(viewMode) && (
               <Tooltip title={t('showProperties')}>
@@ -1746,12 +1778,10 @@ export default function FileList() {
         // behavior). The IPC layer (`shell:revealAndSelect`) handles the
         // platform branch internally.
         revealEntry={async (e) => {
-          console.log('[revealEntry] path=', JSON.stringify(e.path));
           try {
             await ipcApi.revealAndSelect(e.path);
-            console.log('[revealEntry] revealAndSelect resolved (main returned, no throw)');
-          } catch (err) {
-            console.log('[revealEntry] revealAndSelect REJECTED:', err);
+          } catch {
+            // best-effort: reveal failure is non-fatal
           }
         }}
         // H.23 P1-7: copy absolute entry path to the OS clipboard. Some

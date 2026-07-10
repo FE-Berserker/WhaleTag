@@ -5,7 +5,7 @@ import { useSelector } from 'react-redux';
 
 import { useBackgroundPlayer } from '-/hooks/BackgroundPlayerContextProvider';
 import { useExtensionContext } from '-/hooks/ExtensionContextProvider';
-import { useDirectoryContentContext } from '-/hooks/DirectoryContentContextProvider';
+import { useDirectoryContent } from '-/hooks/DirectoryContentContextProvider';
 import { ipcApi } from '-/services/ipc-api';
 import { useResolvedThemeMode } from '-/theme/useResolvedThemeMode';
 import { RootState } from '-/reducers';
@@ -62,7 +62,7 @@ export default function BackgroundPlayerDock() {
 
   const background = useBackgroundPlayer();
   const { openWithExtension, registry } = useExtensionContext();
-  const { entries } = useDirectoryContentContext();
+  const { entries } = useDirectoryContent();
 
   const postToExtension = useCallback((message: HostMessage) => {
     const iframe = iframeRef.current;

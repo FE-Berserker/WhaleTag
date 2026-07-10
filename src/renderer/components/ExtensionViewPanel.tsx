@@ -3,7 +3,7 @@ import { Box } from '@mui/material';
 import ExtensionHost from '-/components/ExtensionHost';
 import RevisionHistoryDialog from '-/components/RevisionHistoryDialog';
 import { useExtensionContext } from '-/hooks/ExtensionContextProvider';
-import { useDirectoryContentContext } from '-/hooks/DirectoryContentContextProvider';
+import { useDirectoryContent } from '-/hooks/DirectoryContentContextProvider';
 import type { DirEntry } from '../../shared/ipc-types';
 
 interface ExtensionViewPanelProps {
@@ -18,7 +18,7 @@ function extOf(name: string): string {
 export default function ExtensionViewPanel({ theme }: ExtensionViewPanelProps) {
   const { activeView, closeView, reloadContent, openFile } =
     useExtensionContext();
-  const { entries } = useDirectoryContentContext();
+  const { entries } = useDirectoryContent();
   const [historyOpen, setHistoryOpen] = useState(false);
 
   // Sibling paths the active extension can navigate to (e.g. image-viewer's

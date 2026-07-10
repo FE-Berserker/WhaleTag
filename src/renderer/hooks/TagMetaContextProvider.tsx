@@ -19,7 +19,7 @@ import {
 } from '../../shared/smart-tags';
 import { isGeoTag } from '../../shared/geo-tag';
 import { RootState } from '-/reducers';
-import { setTagColor } from '-/reducers/settings';
+import { setTagColors } from '-/reducers/settings';
 import { pickTagColor } from '../../shared/tag-colors';
 import { useCurrentLocationContext } from './CurrentLocationContextProvider';
 import { useDirectoryContentContext } from './DirectoryContentContextProvider';
@@ -139,12 +139,22 @@ export function TagMetaContextProvider({ children }: { children: ReactNode }) {
   }, [tagsByName, now]);
 
   // Auto-assign colors to newly seen tags (least-used palette color first).
+  // Batch into ONE dispatch so a freshly-opened directory with many uncolored
+  // tags doesn't fire N separate actions (each a sync persist write).
+  // Accumulating into a local map also gives each new tag a DISTINCT color —
+  // the stale-closure tagColors would otherwise hand them all the same
+  // "least used" palette slot.
   useEffect(() => {
+    const additions: Record<string, string> = {};
+    const acc = { ...tagColors };
     for (const { tag } of allTags) {
-      if (!tagColors[tag]) {
-        dispatch(setTagColor(tag, pickTagColor(tag, tagColors)));
+      if (!acc[tag]) {
+        const color = pickTagColor(tag, acc);
+        additions[tag] = color;
+        acc[tag] = color;
       }
     }
+    if (Object.keys(additions).length > 0) dispatch(setTagColors(additions));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allTags, tagColors, dispatch]);
 

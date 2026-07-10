@@ -23,7 +23,7 @@ import { newConversation, rewindConversation } from '-/reducers/ai';
 import type { RootState } from '-/reducers';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { useFileSelectionContext } from '-/hooks/FileSelectionContextProvider';
-import { useDirectoryContentContext } from '-/hooks/DirectoryContentContextProvider';
+import { useDirectoryUI } from '-/hooks/DirectoryContentContextProvider';
 import { readPrefs } from '../../../shared/perspective-prefs';
 import { ipcApi } from '-/services/ipc-api';
 import { useAiStream } from './useAiStream';
@@ -66,7 +66,7 @@ export default function AiPanel() {
   const viewDepth = useSelector((s: RootState) => s.settings.viewDepth);
   const { currentLocation } = useCurrentLocationContext();
   const { selectedEntries } = useFileSelectionContext();
-  const { viewMode } = useDirectoryContentContext();
+  const { viewMode } = useDirectoryUI();
   const { messages, streaming, error, usage, activeId, send, cancel } = useAiStream();
   const [input, setInput] = useState('');
   const [attachEnabled, setAttachEnabled] = useState(true);

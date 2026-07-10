@@ -31,7 +31,7 @@ import TagMetaDialog from '-/components/TagMetaDialog';
 import { usePeriodTagDialog } from '-/components/PeriodTagDialog';
 import { SmartTagChip, StageChip, PeriodChip } from '-/components/QuickTagChips';
 import { formatSize, formatDate } from '-/services/format';
-import { useDirectoryContentContext } from '-/hooks/DirectoryContentContextProvider';
+import { useDirectoryContent } from '-/hooks/DirectoryContentContextProvider';
 import { stripTagsFromName } from '-/services/tags';
 import { outlinedTagChipSx, tagDisplayLabel } from '-/services/tag-display';
 import {
@@ -207,7 +207,7 @@ export default function PropertiesTray({
   const { t } = useTranslation();
   // H.24 R1: tagsByName/descByName now live on DirectoryContentContext
   // (path-keyed, single source of truth across depth=1 and depth>1).
-  const { tagsByName, descByName } = useDirectoryContentContext();
+  const { tagsByName, descByName } = useDirectoryContent();
   const { save, saveMany } = useTagMetaContext();
   // Phase 3 / freshness: `now` is needed by `resolveInputTag` so that
   // `today` / `tomorrow` / etc. resolve to the right concrete value.

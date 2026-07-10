@@ -32,12 +32,26 @@ export interface SortState {
   dir: SortDir;
 }
 
-export interface DirectoryContentContextValue {
+/** Data slice: changes only on a rescan (entries / sidecars). Consumers that
+ *  read only this (entry / tag readers) are insulated from UI churn. (L11) */
+export interface DirectoryContentMetaValue {
   /** Sorted, display-ready file entries for the current directory (or recursive scan). */
   entries: DirEntry[];
   /** Directory entries for the current directory (or recursive scan). R3: split from
    *  `entries` so depth>1 flat views don't show subdirectory rows. */
   dirs: DirEntry[];
+  // H.24 R1/R2/R3: path-keyed projections so the same name in two subdirs
+  // (depth > 1) keeps its own tags / description / GPS without clobbering.
+  tagsByName: Map<string, string[]>;
+  descByName: Map<string, string>;
+  geoByName: Map<string, { lat: number; lng: number } | null>;
+  /** True when the last recursive scan was truncated by `MAX_RECURSIVE_ENTRIES`. */
+  recursiveTruncated: boolean;
+}
+
+/** UI / control slice: changes on loading lifecycle + user actions (sort /
+ *  view / size), independent of the data slice. */
+export interface DirectoryUIValue {
   loading: boolean;
   error: string | null;
   sort: SortState;
@@ -51,19 +65,19 @@ export interface DirectoryContentContextValue {
   setViewMode: (mode: ViewMode) => void;
   /** Persist this folder's grid cell size (debounced) and apply immediately. */
   setEntrySize: (px: number) => void;
-  // H.24 R1/R2/R3: path-keyed projections so the same name in two subdirs
-  // (depth > 1) keeps its own tags / description / GPS without clobbering.
-  tagsByName: Map<string, string[]>;
-  descByName: Map<string, string>;
-  geoByName: Map<string, { lat: number; lng: number } | null>;
-  /** True when the last recursive scan was truncated by `MAX_RECURSIVE_ENTRIES`. */
-  recursiveTruncated: boolean;
 }
 
-// Exported for component tests (CalendarView.test.tsx) to stub without standing
-// up the real provider (which depends on Redux + ipcApi). Production uses the hook.
+/** Combined shape (the legacy single-context value). For consumers that read
+ *  from BOTH slices via useDirectoryContentContext. */
+export type DirectoryContentContextValue = DirectoryContentMetaValue &
+  DirectoryUIValue;
+
+// Two contexts so single-slice consumers skip re-render when the other slice
+// changes (L11). Exported for component tests to stub without standing up the
+// real provider (which depends on Redux + ipcApi).
 export const DirectoryContentContext =
-  createContext<DirectoryContentContextValue | null>(null);
+  createContext<DirectoryContentMetaValue | null>(null);
+export const DirectoryUIContext = createContext<DirectoryUIValue | null>(null);
 
 const EMPTY_MAPS = {
   tagsByName: new Map<string, string[]>(),
@@ -71,14 +85,33 @@ const EMPTY_MAPS = {
   geoByName: new Map<string, { lat: number; lng: number } | null>(),
 };
 
-export function useDirectoryContentContext(): DirectoryContentContextValue {
+/** Data slice only. Re-renders only on a rescan, not on loading / sort / view. */
+export function useDirectoryContent(): DirectoryContentMetaValue {
   const ctx = useContext(DirectoryContentContext);
   if (!ctx) {
     throw new Error(
-      'useDirectoryContentContext must be used within DirectoryContentContextProvider'
+      'useDirectoryContent must be used within DirectoryContentContextProvider'
     );
   }
   return ctx;
+}
+
+/** UI / control slice only. Re-renders only on UI state changes, not on rescan. */
+export function useDirectoryUI(): DirectoryUIValue {
+  const ctx = useContext(DirectoryUIContext);
+  if (!ctx) {
+    throw new Error(
+      'useDirectoryUI must be used within DirectoryContentContextProvider'
+    );
+  }
+  return ctx;
+}
+
+/** Legacy combined hook — reads BOTH slices, so it re-renders on either change
+ *  (same as the pre-split single context). Use only when a consumer needs fields
+ *  from both (FileList, TagMetaContext); otherwise prefer the slice hooks. */
+export function useDirectoryContentContext(): DirectoryContentContextValue {
+  return { ...useDirectoryContent(), ...useDirectoryUI() };
 }
 
 /** Folders always group before files, then sort by the active key/direction. */
@@ -317,6 +350,15 @@ export function DirectoryContentContextProvider({
     [currentDirectoryPath]
   );
 
+  // Clear a pending debounced entrySize write if the provider unmounts mid-drag
+  // (the provider lives at the app root so this is mostly defensive).
+  useEffect(
+    () => () => {
+      if (entrySizeWriteTimer.current) clearTimeout(entrySizeWriteTimer.current);
+    },
+    []
+  );
+
   const refresh = useCallback(
     () => load(currentDirectoryPath),
     [currentDirectoryPath, load]
@@ -339,39 +381,43 @@ export function DirectoryContentContextProvider({
   // H.24 R1/R2: build path-keyed tag/desc/geo projections from sidecarsByPath.
   // Filename-embedded tags are merged in too (same logic as the old
   // TagMetaContext, but keyed by path).
-  const tagsByName = useMemo(() => {
-    const map = new Map<string, string[]>();
+  // Build all three path-keyed projections in a SINGLE pass over `entries`
+  // (was three separate loops / three Maps over the same data). Same inputs,
+  // one iteration.
+  const { tagsByName, descByName, geoByName } = useMemo(() => {
+    const tags = new Map<string, string[]>();
+    const desc = new Map<string, string>();
+    const geo = new Map<string, { lat: number; lng: number } | null>();
     for (const e of entries) {
-      const fileTags = extractTags(e.name);
-      const sideTags = sidecarsByPath.get(e.path)?.tags ?? [];
-      const merged = [...new Set([...fileTags, ...sideTags])];
-      if (merged.length > 0) map.set(e.path, merged);
+      const sc = sidecarsByPath.get(e.path);
+      const sideTags = sc?.tags;
+      const merged = [
+        ...new Set([...extractTags(e.name), ...(sideTags ?? [])]),
+      ];
+      if (merged.length > 0) tags.set(e.path, merged);
+      if (sc?.description) desc.set(e.path, sc.description);
+      geo.set(e.path, sideTags ? geoPointFromTags(sideTags) : null);
     }
-    return map;
+    return { tagsByName: tags, descByName: desc, geoByName: geo };
   }, [entries, sidecarsByPath]);
 
-  const descByName = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const e of entries) {
-      const desc = sidecarsByPath.get(e.path)?.description;
-      if (desc) map.set(e.path, desc);
-    }
-    return map;
-  }, [entries, sidecarsByPath]);
-
-  const geoByName = useMemo(() => {
-    const map = new Map<string, { lat: number; lng: number } | null>();
-    for (const e of entries) {
-      const tags = sidecarsByPath.get(e.path)?.tags;
-      map.set(e.path, tags ? geoPointFromTags(tags) : null);
-    }
-    return map;
-  }, [entries, sidecarsByPath]);
-
-  const value = useMemo(
+  // Two memoized context values (L11): meta (data) changes on rescan; ui
+  // (control) changes on loading / sort / viewMode. Single-slice consumers
+  // subscribe to only one, so a rescan no longer re-renders the tree/toolbar
+  // (ui-only) and a sort flip no longer re-renders the tag/entry readers.
+  const metaValue = useMemo<DirectoryContentMetaValue>(
     () => ({
       entries,
       dirs,
+      tagsByName,
+      descByName,
+      geoByName,
+      recursiveTruncated,
+    }),
+    [entries, dirs, tagsByName, descByName, geoByName, recursiveTruncated]
+  );
+  const uiValue = useMemo<DirectoryUIValue>(
+    () => ({
       loading,
       error,
       sort,
@@ -381,32 +427,25 @@ export function DirectoryContentContextProvider({
       entrySize,
       setViewMode,
       setEntrySize,
-      tagsByName,
-      descByName,
-      geoByName,
-      recursiveTruncated,
     }),
     [
-      entries,
-      dirs,
       loading,
       error,
       sort,
+      setSort,
       refresh,
       viewMode,
       entrySize,
       setViewMode,
       setEntrySize,
-      tagsByName,
-      descByName,
-      geoByName,
-      recursiveTruncated,
     ]
   );
 
   return (
-    <DirectoryContentContext.Provider value={value}>
-      {children}
+    <DirectoryContentContext.Provider value={metaValue}>
+      <DirectoryUIContext.Provider value={uiValue}>
+        {children}
+      </DirectoryUIContext.Provider>
     </DirectoryContentContext.Provider>
   );
 }

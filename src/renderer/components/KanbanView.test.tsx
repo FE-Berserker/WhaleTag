@@ -29,7 +29,7 @@ import i18next from 'i18next';
 import KanbanView from './KanbanView';
 import type { FileCellData } from './file-cell';
 import { CurrentLocationContext } from '../hooks/CurrentLocationContextProvider';
-import { DirectoryContentContext } from '../hooks/DirectoryContentContextProvider';
+import { DirectoryContentContext, DirectoryUIContext } from '../hooks/DirectoryContentContextProvider';
 import { DirectoryTreeRefreshContextProvider } from '../hooks/DirectoryTreeRefreshContextProvider';
 import {
   IOActionsContextProvider,
@@ -261,12 +261,14 @@ function renderKanban(
           <PeriodTagDialogProvider>
             <CurrentLocationContext.Provider value={LOCATION_CTX_STUB}>
               <DirectoryContentContext.Provider value={DIR_CONTENT_STUB}>
+            <DirectoryUIContext.Provider value={DIR_CONTENT_STUB}>
                 <DirectoryTreeRefreshContextProvider>
                   <IOActionsContextProvider>
                     <KanbanView data={data} stages={stages} onMoveToColumn={data.onMoveToColumn ?? (() => {})} />
                   </IOActionsContextProvider>
                 </DirectoryTreeRefreshContextProvider>
-              </DirectoryContentContext.Provider>
+              </DirectoryUIContext.Provider>
+          </DirectoryContentContext.Provider>
             </CurrentLocationContext.Provider>
           </PeriodTagDialogProvider>
         </DndProvider>

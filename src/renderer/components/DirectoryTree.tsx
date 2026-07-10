@@ -1,12 +1,15 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
+import { List as VirtualTreeList } from 'react-window';
 import {
   Alert,
   Box,
@@ -38,7 +41,7 @@ import type { DirEntry } from '../../shared/ipc-types';
 import { isAudioFile, isHiddenName } from '../../shared/whale-meta';
 import { RootState } from '-/reducers';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
-import { useDirectoryContentContext } from '-/hooks/DirectoryContentContextProvider';
+import { useDirectoryUI } from '-/hooks/DirectoryContentContextProvider';
 import { useIOActionsContext } from '-/hooks/IOActionsContextProvider';
 import { useExtensionContext } from '-/hooks/ExtensionContextProvider';
 import { useBackgroundPlayer } from '-/hooks/BackgroundPlayerContextProvider';
@@ -77,12 +80,43 @@ function ancestorChain(root: string, target: string): string[] {
  * first expand; navigating elsewhere (file list, breadcrumb, back/forward)
  * auto-expands the ancestor chain so the current directory stays visible.
  */
-export default function DirectoryTree() {
+const TREE_ROW_HEIGHT = 32;
+
+/** react-window v2 row component for the virtualized tree. react-window types
+ *  `rowProps` from this component's own props (minus reserved index/style), so
+ *  the data flows as individual props, not a `data` bag. Only the visible
+ *  window of rows is mounted. */
+function TreeRow({
+  index,
+  style,
+  nodes,
+  renderFolder,
+  renderFile,
+}: {
+  index: number;
+  style: CSSProperties;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  nodes: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  renderFolder: (n: any) => ReactNode;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  renderFile: (n: any) => ReactNode;
+}) {
+  const node = nodes[index];
+  if (!node) return null;
+  return (
+    <div style={style}>
+      {node.kind === 'folder' ? renderFolder(node) : renderFile(node)}
+    </div>
+  );
+}
+
+export default function DirectoryTree({ embedded = false }: { embedded?: boolean } = {}) {
   const { t } = useTranslation();
   const { currentLocation, currentDirectoryPath, navigateTo } =
     useCurrentLocationContext();
   const { createFolder, createFile, deleteEntry } = useIOActionsContext();
-  const { refresh } = useDirectoryContentContext();
+  const { refresh } = useDirectoryUI();
   const backgroundPlayer = useBackgroundPlayer();
   // While an extension view (e.g. the Excalidraw editor) is open, also list
   // files in the tree so they can be dragged into it.
@@ -365,6 +399,30 @@ export default function DirectoryTree() {
     );
   };
 
+  // L12: flatten the expanded tree (depth-first) into a visible-node list so it
+  // can be rendered by a virtualized List — a fully-expanded big subtree used
+  // to mount a ListItemButton per node (thousands for a repo's node_modules).
+  const visibleNodes = useMemo(() => {
+    const out: Array<
+      | { kind: 'folder'; name: string; path: string; depth: number }
+      | { kind: 'file'; entry: DirEntry; depth: number }
+    > = [];
+    if (!currentLocation) return out;
+    const walk = (name: string, path: string, depth: number) => {
+      out.push({ kind: 'folder', name, path, depth });
+      if (!expanded.has(path)) return;
+      const kids = childrenByPath.get(path);
+      if (!kids) return;
+      const visibleKids = showFiles ? kids : kids.filter((k) => k.isDirectory);
+      for (const k of visibleKids) {
+        if (k.isDirectory) walk(k.name, k.path, depth + 1);
+        else out.push({ kind: 'file', entry: k, depth: depth + 1 });
+      }
+    };
+    walk(currentLocation.name, currentLocation.path, 0);
+    return out;
+  }, [currentLocation, expanded, childrenByPath, showFiles]);
+
   // Leaf node for a file (only shown while an extension view is open). Dragging
   // it starts a native OS drag so it can be dropped into the editor iframe.
   const renderFileNode = (entry: DirEntry, depth: number): ReactNode => (
@@ -470,13 +528,6 @@ export default function DirectoryTree() {
             }}
           />
         </ListItemButton>
-        {isExpanded && visibleKids
-          ? visibleKids.map((k) =>
-              k.isDirectory
-                ? renderNode(k.name, k.path, depth + 1)
-                : renderFileNode(k, depth + 1)
-            )
-          : null}
       </Box>
     );
   };
@@ -485,33 +536,36 @@ export default function DirectoryTree() {
     <Box
       ref={rootRef}
       sx={{
-        width: 240,
+        width: embedded ? '100%' : 240,
         flexShrink: 0,
-        borderRight: 1,
+        borderRight: embedded ? 0 : 1,
         borderColor: 'divider',
         display: 'flex',
         flexDirection: 'column',
         minHeight: 0,
+        ...(embedded ? { height: '100%' } : {}),
       }}
     >
+      {embedded ? null : (
+        <Box
+          sx={{
+            minHeight: COLUMN_HEADER_HEIGHT,
+            px: 1.5,
+            py: 0,
+            flexShrink: 0,
+            borderBottom: 1,
+            borderColor: 'divider',
+            display: 'flex',
+            alignItems: 'center',
+          }}
+        >
+          <Typography variant="overline" color="text.secondary">
+            {t('folders')}
+          </Typography>
+        </Box>
+      )}
       <Box
-        sx={{
-          minHeight: COLUMN_HEADER_HEIGHT,
-          px: 1.5,
-          py: 0,
-          flexShrink: 0,
-          borderBottom: 1,
-          borderColor: 'divider',
-          display: 'flex',
-          alignItems: 'center',
-        }}
-      >
-        <Typography variant="overline" color="text.secondary">
-          {t('folders')}
-        </Typography>
-      </Box>
-      <Box
-        sx={{ flex: 1, overflow: 'auto', py: 0.5 }}
+        sx={{ flex: 1, overflow: 'hidden', py: 0.5 }}
         onContextMenu={(e) => {
           // Only fire on the empty area, not when the right-click lands on a
           // folder row (rows have their own context menu).
@@ -521,7 +575,31 @@ export default function DirectoryTree() {
           setEmptyCtxMenu({ x: e.clientX, y: e.clientY });
         }}
       >
-        {renderNode(currentLocation.name, currentLocation.path, 0)}
+        {currentLocation ? (
+          <VirtualTreeList
+            rowCount={visibleNodes.length}
+            rowHeight={TREE_ROW_HEIGHT}
+            rowComponent={TreeRow}
+            rowProps={
+              {
+                nodes: visibleNodes,
+                renderFolder: (n: {
+                  kind: 'folder';
+                  name: string;
+                  path: string;
+                  depth: number;
+                }) => renderNode(n.name, n.path, n.depth),
+                renderFile: (n: {
+                  kind: 'file';
+                  entry: DirEntry;
+                  depth: number;
+                }) => renderFileNode(n.entry, n.depth),
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              } as any
+            }
+            style={{ height: '100%' }}
+          />
+        ) : null}
       </Box>
 
       <Menu

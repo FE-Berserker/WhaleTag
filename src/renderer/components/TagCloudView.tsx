@@ -51,7 +51,7 @@ import {
   writePrefs,
 } from '../../shared/perspective-prefs';
 import { geoTagDisplayLabel, tagDisplayLabel } from '-/services/tag-display';
-import { useDirectoryContentContext } from '-/hooks/DirectoryContentContextProvider';
+import { useDirectoryUI } from '-/hooks/DirectoryContentContextProvider';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { useImageExport, base64FromDataUrl } from '-/hooks/useImageExport';
 import LoadingOverlay from '-/components/perspective/LoadingOverlay';
@@ -176,7 +176,7 @@ export default function TagCloudView({ data }: TagCloudViewProps) {
   // as the list, so clicking a word always filters against a consistent set.
   // The recursive-scan truncation banner is rendered once at the FileList
   // level, so individual views only need the `loading` flag here.
-  const { loading } = useDirectoryContentContext();
+  const { loading } = useDirectoryUI();
 
   // P2-2: keep a live ref to the latest prefs so the unmount cleanup can flush
   // them immediately. This prevents losing a just-toggled filter when the user

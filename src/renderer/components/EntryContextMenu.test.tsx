@@ -32,6 +32,7 @@ import { createStore } from 'redux';
 import i18next from 'i18next';
 
 import EntryContextMenu from './EntryContextMenu';
+import { BackgroundPlayerContextProvider } from '../hooks/BackgroundPlayerContextProvider';
 import type { ContextMenuPosition } from './EntryContextMenu';
 import type { DirEntry } from '../../shared/ipc-types';
 import type { ExtensionRegistry } from '../../shared/extension-types';
@@ -119,22 +120,24 @@ function renderMenu(
   return render(
     <I18nextProvider i18n={i18next} defaultNS="common">
       <Provider store={STUB_STORE}>
-        <EntryContextMenu
-          {...baseProps()}
-          ctx={ctx}
-          isInBulkContext={opts.isInBulkContext ?? (() => false)}
-          tagsByName={opts.tagsByName ?? new Map()}
-          onAddTag={(e, tag) => {
-            spies.addTag = spies.addTag ?? { called: 0, last: null };
-            spies.addTag.called += 1;
-            spies.addTag.last = { entry: e, tag };
-          }}
-          onRemoveTag={(e, tag) => {
-            spies.removeTag = spies.removeTag ?? { called: 0, last: null };
-            spies.removeTag.called += 1;
-            spies.removeTag.last = { entry: e, tag };
-          }}
-        />
+        <BackgroundPlayerContextProvider>
+          <EntryContextMenu
+            {...baseProps()}
+            ctx={ctx}
+            isInBulkContext={opts.isInBulkContext ?? (() => false)}
+            tagsByName={opts.tagsByName ?? new Map()}
+            onAddTag={(e, tag) => {
+              spies.addTag = spies.addTag ?? { called: 0, last: null };
+              spies.addTag.called += 1;
+              spies.addTag.last = { entry: e, tag };
+            }}
+            onRemoveTag={(e, tag) => {
+              spies.removeTag = spies.removeTag ?? { called: 0, last: null };
+              spies.removeTag.called += 1;
+              spies.removeTag.last = { entry: e, tag };
+            }}
+          />
+        </BackgroundPlayerContextProvider>
       </Provider>
     </I18nextProvider>
   );

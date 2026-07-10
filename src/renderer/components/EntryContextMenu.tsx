@@ -40,7 +40,7 @@ import { isPeriodTag } from '../../shared/smart-tags';
 import { dateTagRangeKey } from '../../shared/calendar';
 import { usePeriodTagDialog } from './PeriodTagDialog';
 import { useTagMetaContext } from '-/hooks/TagMetaContextProvider';
-import { useDirectoryContentContext } from '-/hooks/DirectoryContentContextProvider';
+import { useDirectoryContent } from '-/hooks/DirectoryContentContextProvider';
 import { useBackgroundPlayer } from '-/hooks/BackgroundPlayerContextProvider';
 import InlineTagInput from '-/components/InlineTagInput';
 import {
@@ -755,7 +755,7 @@ export function TagChipContextMenu(props: TagChipContextMenuProps) {
   // both go through the shared tag / directory contexts, not through
   // the parent callbacks.
   const { save, saveMany } = useTagMetaContext();
-  const { tagsByName, descByName, geoByName } = useDirectoryContentContext();
+  const { tagsByName, descByName, geoByName } = useDirectoryContent();
   const {
     ctx,
     readOnly,

@@ -125,6 +125,10 @@ export const ipcApi = {
     rootPath: string,
     record: ExifProcessedRecord
   ): Promise<void> => requireApi().markExifProcessed(rootPath, record),
+  markExifProcessedMany: (
+    rootPath: string,
+    records: ExifProcessedRecord[]
+  ): Promise<void> => requireApi().markExifProcessedMany(rootPath, records),
   clearExifProcessed: (rootPath: string): Promise<void> =>
     requireApi().clearExifProcessed(rootPath),
 

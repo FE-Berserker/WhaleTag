@@ -335,7 +335,7 @@ export const initialState: SettingsState = {
   aiAnthropicAuthMode: 'apiKey',
   aiEnabled: false,
   aiPanelOpen: false,
-  aiPanelWidth: 420,
+  aiPanelWidth: 380,
   aiModel: 'sonnet',
   aiPermissionMode: 'normal',
   aiEffort: 'high',
@@ -351,6 +351,7 @@ export const initialState: SettingsState = {
 export const SET_THEME_MODE = 'settings/SET_THEME_MODE';
 export const SET_THEME_PRESET = 'settings/SET_THEME_PRESET';
 export const SET_TAG_COLOR = 'settings/SET_TAG_COLOR';
+export const SET_TAG_COLORS = 'settings/SET_TAG_COLORS';
 export const SET_LANGUAGE = 'settings/SET_LANGUAGE';
 export const SET_FONT_SIZE = 'settings/SET_FONT_SIZE';
 export const SET_DEFAULT_LOCATION = 'settings/SET_DEFAULT_LOCATION';
@@ -434,6 +435,10 @@ export interface SetThemePresetAction extends AnyAction {
 export interface SetTagColorAction extends AnyAction {
   type: typeof SET_TAG_COLOR;
   payload: { tag: string; color: string | null }; // null = clear
+}
+export interface SetTagColorsAction extends AnyAction {
+  type: typeof SET_TAG_COLORS;
+  payload: Record<string, string>; // tag → color, merged in (batch)
 }
 export interface SetLanguageAction extends AnyAction {
   type: typeof SET_LANGUAGE;
@@ -584,6 +589,14 @@ export function setTagColor(
   color: string | null
 ): SetTagColorAction {
   return { type: SET_TAG_COLOR, payload: { tag, color } };
+}
+/** Batch-assign colors to many tags in one action (one persist write, not N).
+ *  Used by TagMetaContext when a freshly-opened directory surfaces many
+ *  uncolored tags at once. */
+export function setTagColors(
+  colors: Record<string, string>
+): SetTagColorsAction {
+  return { type: SET_TAG_COLORS, payload: colors };
 }
 
 export function setLanguage(language: SupportedLanguage): SetLanguageAction {
@@ -740,6 +753,7 @@ export default function settingsReducer(
     | SetThemeModeAction
     | SetThemePresetAction
     | SetTagColorAction
+    | SetTagColorsAction
     | SetLanguageAction
     | SetFontSizeAction
     | SetDefaultLocationAction
@@ -881,7 +895,11 @@ export default function settingsReducer(
     base = { ...base, aiAnthropicAuthMode: 'apiKey' };
   if (base.aiEnabled === undefined) base = { ...base, aiEnabled: false };
   if (base.aiPanelOpen === undefined) base = { ...base, aiPanelOpen: false };
-  if (base.aiPanelWidth === undefined) base = { ...base, aiPanelWidth: 420 };
+  // Slightly narrower default (was 420); migrate the old default to the new
+  // one. Custom values (anything other than the old default) are preserved.
+  if (base.aiPanelWidth === undefined || base.aiPanelWidth === 420) {
+    base = { ...base, aiPanelWidth: 380 };
+  }
   if (base.aiModel === undefined) base = { ...base, aiModel: 'sonnet' };
   if (base.aiPermissionMode === undefined)
     base = { ...base, aiPermissionMode: 'normal' };
@@ -908,6 +926,16 @@ export default function settingsReducer(
       if (color) tagColors[tag] = color;
       else delete tagColors[tag];
       return { ...base, tagColors };
+    }
+    case SET_TAG_COLORS: {
+      // Merge a batch of tag → color assignments in a single state update.
+      return {
+        ...base,
+        tagColors: {
+          ...base.tagColors,
+          ...(action as SetTagColorsAction).payload,
+        },
+      };
     }
     case SET_LANGUAGE:
       return { ...base, language: (action as SetLanguageAction).payload };

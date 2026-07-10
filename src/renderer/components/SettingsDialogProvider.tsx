@@ -21,6 +21,8 @@
 
 import {
   createContext,
+  lazy,
+  Suspense,
   useCallback,
   useContext,
   useEffect,
@@ -28,10 +30,16 @@ import {
   type ReactNode,
 } from 'react';
 
-import SettingsDialog, {
-  type SettingsDialogProps,
-  type SettingsSectionId,
+import type {
+  SettingsDialogProps,
+  SettingsSectionId,
 } from './SettingsDialog';
+
+// SettingsDialog is ~1900 lines and pulls WorkflowManagerDialog / AiMcpSection
+// / ~25 MUI icons. Lazy-load it so that weight only loads when the user opens
+// Settings (the render below is gated on `open`). The type-only import above is
+// fully erased, so it does NOT pull the module eagerly.
+const SettingsDialog = lazy(() => import('./SettingsDialog'));
 
 interface OpenSettingsArgs {
   /** When set, focus this tab on the next open. Falls back to `general`. */
@@ -93,11 +101,15 @@ export function SettingsDialogProvider({ children }: { children: ReactNode }) {
   return (
     <SettingsDialogContext.Provider value={value}>
       {children}
-      <SettingsDialog
-        open={open}
-        section={requestedSection}
-        onClose={closeDialog}
-      />
+      {open ? (
+        <Suspense fallback={null}>
+          <SettingsDialog
+            open={open}
+            section={requestedSection}
+            onClose={closeDialog}
+          />
+        </Suspense>
+      ) : null}
     </SettingsDialogContext.Provider>
   );
 }

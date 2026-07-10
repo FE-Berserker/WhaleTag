@@ -28,7 +28,7 @@ import { basename, parentDir } from '-/services/path-util';
 import { isImageFile } from '../../shared/whale-meta';
 import { encodeWhaleFileUrl } from '../../shared/whale-file-url';
 import { useExtensionContext } from '-/hooks/ExtensionContextProvider';
-import { useDirectoryContentContext } from '-/hooks/DirectoryContentContextProvider';
+import { useDirectoryUI } from '-/hooks/DirectoryContentContextProvider';
 import { useDirectoryTreeRefresh } from '-/hooks/DirectoryTreeRefreshContextProvider';
 import PromptDialog from '-/components/PromptDialog';
 import InlineEditModal from '-/components/ai/InlineEditModal';
@@ -121,7 +121,7 @@ export default function ExtensionHost({
   const locale = i18n.language;
   const dispatch = useDispatch();
   const { openWithExtension } = useExtensionContext();
-  const { refresh } = useDirectoryContentContext();
+  const { refresh } = useDirectoryUI();
   const { refreshTree } = useDirectoryTreeRefresh();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   // Inline-edit: pending `requestSelection` round-trips, keyed by requestId.

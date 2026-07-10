@@ -30,7 +30,7 @@ import i18next from 'i18next';
 import MatrixView from './MatrixView';
 import type { FileCellData } from './file-cell';
 import { CurrentLocationContext } from '../hooks/CurrentLocationContextProvider';
-import { DirectoryContentContext } from '../hooks/DirectoryContentContextProvider';
+import { DirectoryContentContext, DirectoryUIContext } from '../hooks/DirectoryContentContextProvider';
 import { DirectoryTreeRefreshContextProvider } from '../hooks/DirectoryTreeRefreshContextProvider';
 import { IOActionsContextProvider } from '../hooks/IOActionsContextProvider';
 import { PeriodTagDialogProvider } from './PeriodTagDialog';
@@ -183,6 +183,7 @@ function renderMatrix(data: FileCellData) {
           <PeriodTagDialogProvider>
             <CurrentLocationContext.Provider value={LOCATION_CTX_STUB}>
               <DirectoryContentContext.Provider value={DIR_CONTENT_STUB}>
+            <DirectoryUIContext.Provider value={DIR_CONTENT_STUB}>
                 <DirectoryTreeRefreshContextProvider>
                   <IOActionsContextProvider>
                     <MatrixView
@@ -204,7 +205,8 @@ function renderMatrix(data: FileCellData) {
                     />
                   </IOActionsContextProvider>
                 </DirectoryTreeRefreshContextProvider>
-              </DirectoryContentContext.Provider>
+              </DirectoryUIContext.Provider>
+          </DirectoryContentContext.Provider>
             </CurrentLocationContext.Provider>
           </PeriodTagDialogProvider>
         </DndProvider>
