@@ -54,6 +54,9 @@ type ThumbKind = 'image' | 'svg' | 'video' | 'pdf' | 'office' | 'ebook' | 'font'
 - `thumbPathFor(dir, basename)` → `<dir>/.whale/thumbs/<basename>.jpg`
 - 原子写 / mtime 缓存 / in-flight 去重 / delete/rename/move/copy 清理钩子**全部格式无关**
 - 失败一律静默回退类型图标(FileTypeIcon),不阻塞其它缩略图
+- **主进程并发闸门**([src/main/concurrency.ts](../src/main/concurrency.ts) 的 `Semaphore`):LibreOffice(`soffice`)**串行 cap 1**——`sofficeConvertArgs` 不传 `-env:UserInstallation`,并发进程争用 profile 锁会失败 / 损坏,所以 office 缩略图(`encodeOfficeThumb`)与 office-viewer PDF(`convertOfficeToPdf`)共用同一个 `sofficeSemaphore`;ffmpeg / calibre / dwg2dxf / ODA 共享 `mediaConvertSemaphore`(cap 2)。只包住子进程那一段,后续 pdfjs / sharp 渲染不持锁
+- **二进制探测记忆化**:soffice / dwg2dxf / ebook-convert / 7za 的 `--version` PATH 探测(`execFileSync`,最多 3s)**每进程只跑一次**(模块级缓存);override / 候选路径的 `existsSync` 仍每次跑(便宜)。soffice 冷启慢,以前每次 office 转换都重新探测
+- **pdfjs 惰性**:PDF 缩略图用的 pdfjs-dist 经 `getPdfjs()`(`nodeRequire`)在首次 PDF 缩略图时才 load,不在启动顶层(见 [docs/01 §4](./01-architecture.md))
 
 ## 4. ThumbIcon 加载机制(前端)
 

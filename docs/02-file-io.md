@@ -34,6 +34,11 @@
 
 **写路径必须经过 `assertWithinAllowedRoot`**(见 §6),保证只能修改已注册位置。
 
+**主进程 IO 性能**(防 UI 冻结):
+
+- `readTextFile`:chardet 只采样前 256KB(不扫整个 buffer);替换字符计数用 `indexOf` 循环(不建百万级 `match` 数组)。多 MB 老编码文件不再冻 UI 数百 ms
+- archive(7za)列表 / 读 entry 走**异步 `execFile`**([src/main/archive.ts](../src/main/archive.ts);以前 `execFileSync` 的 60s timeout 会冻整个主进程);`maxBuffer` 提到 64MB 防大压缩包列表截断
+
 ## 4. 右键菜单
 
 `EntryContextMenu.tsx` 聚合已有操作,场景分类:

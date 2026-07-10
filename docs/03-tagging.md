@@ -64,6 +64,8 @@
 
 每条分支都有 `getTagColor.test.ts` 单测覆盖。
 
+**自动上色(M9)**:[TagMetaContextProvider](../src/renderer/hooks/TagMetaContextProvider.tsx) 发现未上色的新 tag 时,`pickTagColor` 选"最少用"的调色板色,并**攒成一个 `setTagColors` 批量 action 一次 dispatch**(累加着算 → 每个 tag 拿到不同色),而不是逐个 `setTagColor`(每个一次同步 persist 写)。打开一个有很多新 tag 的目录从 N 次 fsync → 1 次。
+
 ## 6. Smart Date 与 `日期` 折叠
 
 [src/shared/smart-tags.ts](../src/shared/smart-tags.ts) 7 个日期类 functionality 的存储值与鲜度窗口:

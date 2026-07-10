@@ -14,7 +14,7 @@
 - `exif_processed`:已抽 GPS 的文件缓存(防止 N 次扫描重抽)
 - 触发器同步 `files` ↔ `files_fts`
 
-**增量索引**:mtime 未变复用旧 entry,见 [src/main/fulltext.ts](../src/main/fulltext.ts)。
+**增量重建**:`buildFulltextIndex` 只 select `path + mtime`(**不把全文 content load 进内存**);mtime 未变的行原样留在表里(不重抽、不重插),改动 / 新增才抽 → `insertFulltext`,消失的 path → `deleteFulltextPaths`,见 [src/main/fulltext.ts](../src/main/fulltext.ts)。旧"DELETE-all + 重 INSERT-all"策略要把每个文件正文搬进内存再全量重写,大语料冻结数秒。
 
 **分批提交**:`INGEST_BATCH = 1000`,批间 `setImmediate` yield —— 首次大目录索引不冻结主进程。`QUERY_LIMIT = 50` / `ADV_LIMIT = 300`。
 
@@ -22,10 +22,13 @@
 
 ```ts
 // 主进程入口 ipc
-buildLocationIndex(rootPath: string)        // 全量重建
-ingestFiles(rootPath: string)               // 增量
-ingestFulltext(rootPath: string, paths)     // 全文批量
-markExifProcessed(rootPath, path)           // 标记已抽 GPS
+buildLocationIndex(rootPath)                // 全量重建(目录遍历 mapWithConcurrency 8 并发)
+buildFulltextIndex(rootPath)                // 全文增量重建(遍历 + 抽取 mapWithConcurrency 8 并发)
+ingestFiles(rootPath)                       // 增量
+ingestFulltext(rootPath, records)           // 全文全量替换(测试 / 独立全量用)
+insertFulltext / deleteFulltextPaths        // 增量 delta 的两半
+markExifProcessed(rootPath, record)         // 单条标记已抽 GPS
+markExifProcessedMany(rootPath, records[])  // 批量(一个事务 + fsync)—— Mapique 抽 GPS 用
 loadExifProcessed(rootPath)                 // 查询
 ```
 
@@ -66,7 +69,8 @@ loadExifProcessed(rootPath)                 // 查询
 [src/main/fulltext.ts](../src/main/fulltext.ts) 覆盖:
 
 - 纯文本 / Markdown / HTML / 代码类(直接读)
-- PDF(`pdfjs-dist`,纯 JS 主进程抽取)
+- PDF(`pdfjs-dist`,纯 JS 主进程抽取,经 `getPdfjs()` 惰性 load,见 [docs/01 §4](./01-architecture.md))
+- **并发抽取**:`buildFulltextIndex` 的 walk + `extractText` 用 `mapWithConcurrency(8)` 并发(子目录递归 + 文件抽取重叠);共享的 `seen` / `count` / `upserts` 只在 `await` 之间同步变异,JS 单线程下无竞态。FTS5 的 `DELETE WHERE path = ?` 已实测可用,支持增量 upsert / delete
 
 媒体(binary)不参与全文索引。
 
@@ -75,7 +79,7 @@ loadExifProcessed(rootPath)                 // 查询
 [src/main/exif.ts](../src/main/exif.ts):
 
 - `extractGps(buffer)` / `getExifSummary(buffer)`
-- 已抽过 GPS 的文件写入 `exif_processed` 缓存,下次跳过
+- 已抽过 GPS 的文件写入 `exif_processed` 缓存,下次跳过;**Mapique 批量抽 GPS 时攒满 25 条或 batch 结束才 `markExifProcessedMany` 落盘**(一个事务 + 一次 fsync,以前每张图一个 fsync)
 - Mapique 用 `geoByName` map(O(1) 查)渲染 marker
 
 ## 9. 已知坑

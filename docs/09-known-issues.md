@@ -585,3 +585,77 @@ container.style.cssText =
 - `index.ts` Week 2 改造:`syncPreviewScroll` 重写为 `lineBlockAtHeight` + `data-source-line` querySelector(无 match 回退比例);`renderPreview` 在 innerHTML 后调 `highlightCodeBlocks`;`setupSplitter` 顶层 wire
 - 新增 dep `highlight.js@^11.11.1`(~50KB gzip,common 35 语言)入 [package.json:78](../package.json)
 - `editor.css` Week 2 增 ~200 行:GitHub + GitHub-Dark hljs 主题(轻量子集,主流 token class)+ splitter hover/drag/focus CSS 钩子
+
+## 19. webpack `module: 'esnext'` 把主进程 `createRequire` stub 成 undefined (2026-07-09)
+
+**症状**:`npm run dev` / `npm start` 主进程启动即崩,electron 退出码 1,electronmon 崩溃循环:
+
+```
+App threw an error during load
+TypeError: Cannot read properties of undefined (reading 'resolve')
+    at ./src/main/fulltext.ts (main.js:18426:32)
+    at __webpack_require__ ...
+    at ./src/main/ipc.ts
+```
+
+**根因**:为让 renderer 的 `React.lazy` 能 code-split,给 ts-loader 加了 `compilerOptions.module: 'esnext'`(让动态 `import()` 成为分割点)。这条**不能进主进程**:ESM 下 webpack 的 node-plugin 识别出 `import { createRequire } from 'module'` 的 `createRequire` 绑定,把 `createRequire(__filename)` **stub 成 `undefined`**(build 时无法解析 `__filename` 路径)。产物里 literally 是:
+
+```js
+const nodeRequire = /* createRequire() */ undefined;
+```
+
+随后 `nodeRequire.resolve('pdfjs-dist/...')` 当场炸。CommonJS 下 `import { createRequire } from 'module'` 编成普通 `require('module').createResolve`,webpack 不特殊识别,正常。
+
+**为什么 type-check / 单测 / `build:main` 都没抓到**:stub 只出现在**运行时主进程 webpack 产物**里。`tsc --noEmit`、ts-node 单测(直接读 tsconfig)、prod `build:main`(只编译不跑)都不执行产物。**只有真跑起来才暴露** —— smoke test 抓到的。
+
+**修复**:[webpack.config.base.ts](../.erb/configs/webpack.config.base.ts) 从 `export default {…}` 改成 `createBase({ esnext })` 函数。**只有 renderer 传 `esnext: true`**([renderer.dev](../.erb/configs/webpack.config.renderer.dev.ts) / [renderer.prod](../.erb/configs/webpack.config.renderer.prod.ts)),**主进程 + 扩展用 CommonJS**(`createBase()`,不传)。base 文件头部注释已写死这条约束。修后产物确认:`const nodeRequire = (0, module_1.createRequire)(__filename);` —— 真 createRequire。
+
+**教训**:
+
+- webpack 配置改动(尤其 `module` / `target` / `node`)必须**真跑 `npm run dev` 验证主进程启动**,不能只靠 build / test。
+- 主进程用 `nodeRequire`(`createRequire(__filename)`)的地方:[fulltext.ts](../src/main/fulltext.ts) / [thumbnail.ts](../src/main/thumbnail.ts) —— 任何让它们走 ESM 的改动都会复现这个 stub。
+
+## 20. 工具链硬化:测试自动发现 + pretest 类型闸门 (2026-07-09)
+
+**问题 A — 测试脚本漏跑**:`package.json` 的 `test` 曾是硬编码 91 个文件的手维护列表。实测磁盘 98 个 `.test.ts(x)`,**8 个从未跑过**(含 [EntryContextMenu.test.tsx](../src/renderer/components/EntryContextMenu.test.tsx) / [PeriodTagDialog.test.tsx](../src/renderer/components/PeriodTagDialog.test.tsx) / gantt hooks / [locations.test.ts](../src/renderer/reducers/locations.test.ts) / [migrate-date-tags.test.ts](../src/main/migrate-date-tags.test.ts) / 2 个 drawio 脚本测试),外加 1 个幽灵条目指向不存在的 `text-viewer/text-stats.test.ts`。[TaskView.test.tsx](../src/renderer/components/TaskView.test.tsx) 虽在列表里但 12 个 case 全失败(缺 `IOActionsContextProvider` 包裹),`npm test` 一直是红的 —— 只是没被当硬闸门。
+
+**修复**:[scripts/run-tests.cjs](../scripts/run-tests.cjs) 用 glob 自动发现 `src` + `scripts` 下全部测试交给 `electron --test`,新增测试无需改 package.json。补全 2 个测试文件的 provider 包裹(对照一直绿着的 [KanbanView.test.tsx](../src/renderer/components/KanbanView.test.tsx))。全套从"红"修到 **1702 绿**(每批加测试递增)。
+
+**问题 B — 构建全链路不做类型检查**:所有 `build:*` 带 `TS_NODE_TRANSPILE_ONLY` + ts-loader `transpileOnly`,无 CI、无 pretest 钩子。[src/main/ai/prompt.ts](../src/main/ai/prompt.ts) 有个类型导入路径错(`../../../shared/whale-meta`,多一层 `../`),运行时是 type-position 被擦除所以不崩,但 `tsc` 报错 —— 被 transpileOnly 掩盖已久。
+
+**修复**:加 `"pretest": "npm run type-check"`。`npm test` 先跑 `tsc --noEmit` 再跑测试;修了 prompt.ts 路径。之后 #11 加 `markExifProcessedMany` 时,pretest 当场抓到漏改 `WhaleApi` 接口([ipc-types.ts](../src/shared/ipc-types.ts)),避免了带病上线。
+
+**教训**:`transpileOnly` 下 pretest 是**唯一**的类型校验点;给桥(`window.whale` / `WhaleApi`)加方法必须三处同步改:[preload.ts](../src/main/preload.ts)(实现)+ [ipc-types.ts](../src/shared/ipc-types.ts)(接口)+ [ipc-api.ts](../src/renderer/services/ipc-api.ts)(renderer 侧)—— pretest 会拦下漏改。
+
+## 21. dev 缺 `splitChunks` → React.lazy 视图 chunk 带第二份 React → "Expected static flag was missing" (2026-07-10)
+
+**症状**:dev 下切到 lazy 视角(Gallery / Calendar / Mapique / KnowledgeGraph 等)时控制台抛:
+
+```
+Internal React error: Expected static flag was missing. Please notify the React team.
+  at GalleryCell ... at GalleryView ... at Suspense ... at FileList ...
+```
+
+(react-dom 开发模式);prod 不报。
+
+**根因**:[webpack.config.renderer.dev.ts](../.erb/configs/webpack.config.renderer.dev.ts) 原本没有 `splitChunks`,webpack 默认(async-only)把 **React 打第二份进每个 `React.lazy` 视图 chunk**。lazy 组件的 JSX(用它自己那份 `react/jsx-runtime` 实例生成)交给入口的 React 渲染时,JSX 静态 flag 对不上 → react-dom dev 抛错。prod 有 `splitChunks: { chunks: 'all' }`(React 去重成一份,所以 prod 没事),dev 漏了。
+
+**修复**:dev 配置加 `optimization: { splitChunks: { chunks: 'all' } }`,和 prod([webpack.config.renderer.prod.ts](../.erb/configs/webpack.config.renderer.prod.ts))对齐 —— React 去重成单个共享 vendor chunk,所有 lazy 视图共用同一份。配置改动需重启 dev server(HMR 不重载配置)。
+
+**教训**:给 renderer 加 `React.lazy` 拆包(见 [docs/01 §8](./01-architecture.md))后,**dev 配置也要同步 `splitChunks`**,否则 dev 下多份 React 触发这个内部错。和 §19(createRequire)一样,这类 webpack 配置问题只有真跑起来才暴露 —— dev / smoke test 验证不可省。
+
+## 22. AI `allowDangerouslySkipPermissions` 常开 → SDK shadow canUseTool → 授权弹窗不弹 + MCP 工具空字段 deny 抛错 (2026-07-10)
+
+**症状**:normal/plan 模式下让 AI 调一个需要授权的工具(如 MCP 的 `mmx`),授权弹窗**根本不弹**(`ApprovalModal` 没机会出现),工具直接走 CLI 自己的 bypass 路径,对未预批准的 MCP 工具返回一个**空字段的 deny**,SDK 校验器抛错。dev 日志里有 SDK 警告:
+
+```
+[CLAUDE_SDK_CAN_USE_TOOL_SHADOWED] canUseTool will not be invoked:
+permissionMode 'bypassPermissions' auto-approves every tool call
+(except explicit deny rules) before the callback is consulted.
+```
+
+**根因**:[buildQueryOptions.ts](../src/main/ai/providers/claude/buildQueryOptions.ts) 曾对**所有**权限模式(normal/plan/yolo)都设 `allowDangerouslySkipPermissions: true`。这个 flag 是 SDK 启用 `bypassPermissions` 的开关——设了它,SDK **强制 bypassPermissions**(即使 Whale 请求的是 `'default'`/`'plan'`),于是 `canUseTool` 被 **shadow**(永不调用)→ 弹窗不弹 → 工具落进 CLI bypass 路径 → 空字段 deny → 校验器抛错。
+
+**修复**:`allowDangerouslySkipPermissions` 只在 `'yolo'` 模式设(`settings.permissionMode === 'yolo'`)。normal/plan 不设 → SDK 尊重 `permissionMode: 'default'`/`'plan'` → **咨询 `canUseTool`** → Whale 弹窗出现 + 决定。
+
+**教训**:`canUseTool` 是 SDK 在**非 bypass 模式**下的闸门;`allowDangerouslySkipPermissions` 只是 bypass 的**启用开关**,绝不能在 normal/plan 开(开了就把 `canUseTool` 整个废掉,且无编译/类型错误——只有真跑 AI 工具调用才暴露)。和 §19/§21 同类:协议层配置坑,smoke test 验证不可省。详见 [docs/11 §5](./11-ai.md)。

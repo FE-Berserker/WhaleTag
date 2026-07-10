@@ -6,32 +6,37 @@
 
 ## 1. 单一数据源
 
-[src/renderer/hooks/DirectoryContentContextProvider.tsx](../src/renderer/hooks/DirectoryContentContextProvider.tsx) 是**所有 9 个有效视角**消费的同一份数据,暴露 `DirectoryContentContextValue`:
+[src/renderer/hooks/DirectoryContentContextProvider.tsx](../src/renderer/hooks/DirectoryContentContextProvider.tsx) 是**所有 9 个有效视角**消费的同一份数据。L11 起拆成**两个 context**,让只读数据的消费者不被 loading/sort/视角等 UI 字段变化连带重渲染(反之亦然):
+
+- **`DirectoryContentContext`(meta)** —— 只在**重新扫描**时变。hook:`useDirectoryContent()`。
+- **`DirectoryUIContext`(ui)** —— 只在**加载/排序/视角/尺寸/用户动作**时变。hook:`useDirectoryUI()`。
+- 合并 hook `useDirectoryContentContext()`(读两片,给 FileList / TagMetaContext 等同时要数据和 UI 的用)。
 
 ```ts
-interface DirectoryContentContextValue {
-  // ---- 数据字段 ----
+interface DirectoryContentMetaValue {
   entries: DirEntry[];                   // 文件 + 目录混合(viewDepth 内所有可见)
   dirs: DirEntry[];                      // 仅目录(FolderViz 重建树用)
   tagsByName: Map<string, string[]>;     // path → tags
   descByName: Map<string, string>;       // path → description
   geoByName: Map<string, GeoPoint|null>;// path → geo
+  recursiveTruncated: boolean;
+}
+interface DirectoryUIValue {
   loading: boolean;
   error: string | null;
-  recursiveTruncated: boolean;
-
-  // ---- 视图状态 ----
+  sort: SortState;
+  setSort: (sort: SortState) => void;
+  refresh: () => void;                   // 触发重新扫描
   viewMode: ViewMode;                    // per-folder 视角
   entrySize: EntrySize;                  // per-folder 条目尺寸
-  sort: SortState;                       // 当前 sort key + 升/降
-  refresh: () => void;                   // 触发重新扫描
-
-  // ---- 命令式 API ----
   setViewMode: (mode: ViewMode) => void;
   setEntrySize: (size: EntrySize) => void;
-  setSort: (sort: SortState) => void;
 }
+// 合并(legacy,读两片):
+type DirectoryContentContextValue = DirectoryContentMetaValue & DirectoryUIValue;
 ```
+
+单片消费者用 `useDirectoryContent()`(数据)或 `useDirectoryUI()`(UI);同时要两片的用 `useDirectoryContentContext()`。三个 Map 由**单趟遍历** `entries` 产出(M8,曾三趟独立 useMemo)。
 
 **Map 全部以 `entry.path` 作 key**(取代 basename),同名跨目录文件互不污染。`FileList`、`PropertiesTray`、`EntryCard`、`GridCell`、`MapiqueView`、`TagCloudView`、`KnowledgeGraphView`、`kanban.ts` 的 `bucketEntries` 等所有消费方都用 `e.path` 查。
 
