@@ -26,8 +26,8 @@ import {
   setApiKey,
   setSecret,
 } from './security/secretStore';
-import { getAiComponentState, isAiComponentInstalled } from './component-resolver';
-import { installAiComponent, uninstallAiComponent } from './component-installer';
+import { getAiComponentState, getComponentsRoot, isAiComponentInstalled } from './component-resolver';
+import { cleanupStaleComponentDirs, installAiComponent, uninstallAiComponent } from './component-installer';
 
 export function registerAiCoreHandlers(): void {
   // --- API keys (Anthropic) ---
@@ -72,6 +72,11 @@ export function registerAiCoreHandlers(): void {
   });
 
   ipcMain.handle('ai:uninstallComponent', async () => uninstallAiComponent());
+
+  // Sweep stale `.uninstalling-*` / `.old-*` dirs left by a prior session's
+  // uninstall/upgrade where claude.exe was still locked. Fire-and-forget,
+  // best-effort, runs once at startup.
+  void cleanupStaleComponentDirs(getComponentsRoot());
 }
 
 // Track whether the runtime handlers have been registered this process

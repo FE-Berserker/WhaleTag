@@ -1,7 +1,7 @@
 {
   "name": "whale-app",
   "productName": "WhaleTag",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Whale - a local-first, offline file manager",
   "main": "./dist/main/main.js",
   "author": {

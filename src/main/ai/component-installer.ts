@@ -166,15 +166,70 @@ export async function installAiComponent(packageFilePath: string): Promise<Insta
   }
 }
 
-/** Remove the AI component entirely. */
+/** Remove the AI component entirely.
+ *
+ * Windows cannot `unlink` a running `claude.exe` — a direct recursive `rm`
+ * throws EPERM whenever a Claude CLI subprocess is alive (warm query, in-flight
+ * turn) or a scanner holds the file. But Windows CAN rename a directory that
+ * contains a locked `.exe`. So we rename the component dir aside first (the
+ * app then sees it as uninstalled — `getComponentDir` no longer exists), then
+ * best-effort delete the renamed dir plus any stale `.uninstalling-*` / `.old-*`
+ * dirs left by earlier uninstalls/upgrades. A dir that still can't be deleted
+ * lingers out of the way and is retried on the next uninstall and at startup
+ * (see {@link cleanupStaleComponentDirs}). */
 export async function uninstallAiComponent(): Promise<UninstallResult> {
   const dir = getComponentDir(AI_COMPONENT_ID);
+  const root = getComponentsRoot();
   try {
     if (fs.existsSync(dir)) {
-      await fsp.rm(dir, { recursive: true, force: true });
+      const aside = path.join(
+        root,
+        `${AI_COMPONENT_ID}.uninstalling-${randomBytes(4).toString('hex')}`
+      );
+      try {
+        await fsp.rename(dir, aside);
+      } catch {
+        // Rename itself failed (very rare) — fall back to a direct rm so the
+        // caller still surfaces the real underlying error.
+        await fsp.rm(dir, { recursive: true, force: true });
+      }
     }
+    // Sweep stale aside/backup dirs from this and prior attempts (claude.exe
+    // may still be locked → those rm calls just no-op; they'll succeed once
+    // the CLI subprocess is gone).
+    await cleanupStaleComponentDirs(root).catch(() => undefined);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
+}
+
+/**
+ * Best-effort remove of `<components>/ai.uninstalling-*` and `ai.old-*` dirs
+ * left behind by {@link uninstallAiComponent} (and by the installer's
+ * atomic-swap backup in {@link installAiComponent}) when `claude.exe` was
+ * locked at the time. Safe to call anytime; still-locked dirs are skipped
+ * (caught) and retried on a later call. Called on every uninstall and at
+ * startup so a one-off uninstall doesn't leak ~150 MB forever.
+ */
+export async function cleanupStaleComponentDirs(root: string): Promise<void> {
+  let entries: string[];
+  try {
+    entries = await fsp.readdir(root);
+  } catch {
+    return;
+  }
+  await Promise.all(
+    entries
+      .filter(
+        (name) =>
+          name.startsWith(`${AI_COMPONENT_ID}.uninstalling-`) ||
+          name.startsWith(`${AI_COMPONENT_ID}.old-`)
+      )
+      .map((name) =>
+        fsp
+          .rm(path.join(root, name), { recursive: true, force: true })
+          .catch(() => undefined)
+      )
+  );
 }
