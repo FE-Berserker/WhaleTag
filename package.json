@@ -1,7 +1,7 @@
 {
   "name": "whaletag",
   "productName": "WhaleTag",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "WhaleTag - a local-first, offline file manager and tagging tool (Electron + React + TypeScript)",
   "keywords": [
     "electron",
@@ -23,6 +23,7 @@
     "build": "npm run build:main && npm run build:extensions && npm run build:renderer",
     "build:main": "cross-env NODE_ENV=production TS_NODE_TRANSPILE_ONLY=true webpack --config ./.erb/configs/webpack.config.main.prod.ts",
     "build:extensions": "node scripts/build-extensions.js",
+    "build:ai-component": "node scripts/build-ai-component.js",
     "watch:extensions": "node scripts/build-extensions.js --watch",
     "build:renderer": "cross-env NODE_ENV=production TS_NODE_TRANSPILE_ONLY=true webpack --config ./.erb/configs/webpack.config.renderer.prod.ts",
     "start": "cross-env NODE_ENV=production electron ./release/app/dist/main/main.js",
@@ -44,8 +45,6 @@
     "logLevel": "quiet"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.198",
-    "@anthropic-ai/claude-code": "^2.1.198",
     "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.10.4",
     "@codemirror/lang-css": "^6.3.1",
@@ -111,6 +110,8 @@
     "three": "^0.185.0"
   },
   "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.198",
+    "@anthropic-ai/claude-code": "^2.1.198",
     "@electron/rebuild": "^4.0.4",
     "@playwright/test": "^1.61.1",
     "@testing-library/dom": "^10.4.1",

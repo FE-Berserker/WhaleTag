@@ -289,6 +289,8 @@ export interface SettingsState {
   aiMcpServers: import('../../shared/ai-types').ManagedMcpServer[];
   /** Advertise Whale-defined tools to HTTP providers (read/list/write). */
   aiHttpTools: boolean;
+  /** User-configured shell commands (right-click → Commands). See `shared/shell-types`. */
+  userCommands: import('../../shared/shell-types').UserCommand[];
 }
 
 export const initialState: SettingsState = {
@@ -337,7 +339,7 @@ export const initialState: SettingsState = {
   aiPanelOpen: false,
   aiPanelWidth: 380,
   aiModel: 'sonnet',
-  aiPermissionMode: 'normal',
+  aiPermissionMode: 'yolo',
   aiEffort: 'high',
   aiSafeMode: 'acceptEdits',
   aiCustomSystemPrompt: '',
@@ -346,6 +348,7 @@ export const initialState: SettingsState = {
   aiLoadUserSettings: false,
   aiMcpServers: [],
   aiHttpTools: true,
+  userCommands: [],
 };
 
 export const SET_THEME_MODE = 'settings/SET_THEME_MODE';
@@ -747,6 +750,25 @@ export function setAiSettings(patch: Partial<AiSettingsPatch>): SetAiSettingsAct
   return { type: SET_AI_SETTINGS, payload: patch };
 }
 
+export const SET_USER_COMMANDS = 'settings/SET_USER_COMMANDS';
+
+export interface SetUserCommandsAction extends AnyAction {
+  type: typeof SET_USER_COMMANDS;
+  payload: import('../../shared/shell-types').UserCommand[];
+}
+
+/**
+ * Replace the whole user-commands list. The Settings UI mutates the array
+ * (add/edit/remove/toggle) and dispatches the new array — mirroring how
+ * `setAiSettings({ aiMcpServers })` works. Whole-array replace keeps the
+ * action surface to one creator.
+ */
+export function setUserCommands(
+  commands: import('../../shared/shell-types').UserCommand[]
+): SetUserCommandsAction {
+  return { type: SET_USER_COMMANDS, payload: commands };
+}
+
 export default function settingsReducer(
   state = initialState,
   action:
@@ -787,6 +809,7 @@ export default function settingsReducer(
     | SetKeybindingAction
     | ResetKeybindingsAction
     | SetAiSettingsAction
+    | SetUserCommandsAction
     | AnyAction
 ): SettingsState {
   // Migrate persisted state from before tagColors/language/default/fulltext existed.
@@ -901,8 +924,15 @@ export default function settingsReducer(
     base = { ...base, aiPanelWidth: 380 };
   }
   if (base.aiModel === undefined) base = { ...base, aiModel: 'sonnet' };
-  if (base.aiPermissionMode === undefined)
-    base = { ...base, aiPermissionMode: 'normal' };
+  // 'normal' has a deadlock: claude.exe blocks high-risk Bash (curl / python -c
+  // / redirections) at the schema level, and Whale's canUseTool can't override
+  // it (allowDangerouslySkipPermissions can't be on in non-yolo or it shadows
+  // canUseTool entirely). Migrate undefined + 'normal' → 'yolo' so existing
+  // users land on the working autonomous mode; 'plan' (read-only planning) is
+  // preserved as a deliberate choice.
+  if (base.aiPermissionMode === undefined || base.aiPermissionMode === 'normal') {
+    base = { ...base, aiPermissionMode: 'yolo' };
+  }
   if (base.aiEffort === undefined) base = { ...base, aiEffort: 'high' };
   if (base.aiSafeMode === undefined) base = { ...base, aiSafeMode: 'acceptEdits' };
   if (base.aiCustomSystemPrompt === undefined)
@@ -914,8 +944,11 @@ export default function settingsReducer(
     base = { ...base, aiLoadUserSettings: false };
   if (base.aiMcpServers === undefined) base = { ...base, aiMcpServers: [] };
   if (base.aiHttpTools === undefined) base = { ...base, aiHttpTools: true };
+  if (base.userCommands === undefined) base = { ...base, userCommands: [] };
 
   switch (action.type) {
+    case SET_USER_COMMANDS:
+      return { ...base, userCommands: (action as SetUserCommandsAction).payload };
     case SET_THEME_MODE:
       return { ...base, themeMode: (action as SetThemeModeAction).payload };
     case SET_THEME_PRESET:

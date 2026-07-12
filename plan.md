@@ -25,6 +25,7 @@
 | [docs/11-ai.md](docs/11-ai.md) | AI 助手(嵌入 Claude Code CLI + HTTP provider)、流式侧栏、工具/批准、只读护栏、safeStorage 密钥 |
 | [docs/12-frontend-checklist.md](docs/12-frontend-checklist.md) | 前端 UI 手动核对清单(分模块 `- [ ]`) |
 | [docs/13-security.md](docs/13-security.md) | 当前安全模型(隔离/沙箱/CSP/allowedRoots)+ 不在范围的能力 |
+| [docs/14-packaging.md](docs/14-packaging.md) | `npm run package:win` 完整流程、nsis-resources 离线、打包/AI 调试排坑(国内网络环境) |
 | [docs/UI.md](docs/UI.md) | 设计语言(从 Pencil `.pen` 导出,主题 token;源文件描述比代码实际少 2 个策划主题) |
 
 > 找不到某模块的现状?直接从对应 `docs/0X-*.md` 入口找,不必翻 git 历史。
@@ -87,7 +88,8 @@
 | 缩略图 | image / svg / video / pdf / office / ebook / font(7 种 ThumbKind)+ 文件夹;Excalidraw / Drawio / CAJ / MIDI 不出场景缩略图走品牌图标或系统应用 |
 | 主题 | **11 种**(3 经典 + 8 策划 = `warm-paper` / `midnight-plum` / `frosted-mint` / `deep-ocean` / `dawn-blush` / `forest-ink` / `soft-amber` / `high-contrast`);`PRESETS` 数组含 12 项(再加 4 个老 `ocean/forest/sunset/mono`);`'system'` 不流入 MUI,工厂签名收窄为 `mode: 'light' \| 'dark'` |
 | 扩展 | **17 个内置**(viewer / editor),主进程 IPC + iframe `postMessage` 桥;修订历史 + 右键 Open With;archive-viewer 解码 9 种(7z 通过 7zip-bin);cad-viewer 4 tier;pdf-viewer iframe 内 pdfjs 浏览器版 + fake worker + 二进制工厂 |
-| AI 助手 | Claude Code CLI 嵌入 + HTTP provider(`ollama` / `openai` 共享 runtime);**3 个 IPC 推送通道**(`ai:chunk` / `ai:error` / `ai:approvalRequest`)+ 13 个 invoke 通道;安全 storage 存 key;统一闸门 `decideToolCall` |
+| AI 助手 | Claude Code CLI(**可选 AI 组件**,用户安装 `.whaleai` 7z 包;非主安装包内置,见 [docs/11 §12](docs/11-ai.md))+ HTTP provider(`ollama` / `openai` 共享 runtime);**3 个 IPC 推送通道**(`ai:chunk` / `ai:error` / `ai:approvalRequest`)+ **16 个 invoke 通道**(13 个原 AI 通道 + 3 个组件生命周期 `ai:getComponentState` / `ai:installComponent` / `ai:uninstallComponent`);安全 storage 存 key;统一闸门 `decideToolCall` |
+| 自定义命令 | 右键文件/文件夹 → "命令" 子菜单运行用户预置命令(单行模板 + `${path}` / `${dir}` / `${name}` 占位,弹新终端窗口显示输出);设置 → 命令 管理;主进程安全引号([shell-quote.ts](src/main/shell-quote.ts))+ `assertWithinAllowedRoot` 闸 + Windows `%` 拒绝;详见 [docs/13 §11](docs/13-security.md) |
 
 ## D. 横切关注点
 

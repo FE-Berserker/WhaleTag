@@ -28,15 +28,16 @@ export default merge(createBase(), {
   externals: [
     {
       electron: 'commonjs electron',
-      // The Claude Agent SDK is a Node-only package that spawns the Claude Code
-      // CLI as a subprocess; it must not be bundled into main.js.
+      // Defensive guard only (see webpack.config.main.prod.ts for the full
+      // rationale): the SDK is loaded at runtime via loadClaudeSdk(), never
+      // statically imported, so this external is a belt-and-suspenders guard.
       '@anthropic-ai/claude-agent-sdk':
         'commonjs @anthropic-ai/claude-agent-sdk',
-      '@anthropic-ai/claude-code': 'commonjs @anthropic-ai/claude-code',
       'pdfjs-dist': 'commonjs pdfjs-dist',
       sharp: 'commonjs sharp',
       'better-sqlite3': 'commonjs better-sqlite3',
       'ffmpeg-static': 'commonjs ffmpeg-static',
+      '7zip-bin': 'commonjs 7zip-bin',
       '@napi-rs/canvas': 'commonjs @napi-rs/canvas',
       '@napi-rs/canvas-win32-x64-msvc': 'commonjs @napi-rs/canvas-win32-x64-msvc',
     },

@@ -80,7 +80,20 @@
 - 设置 `deleteToTrash: false`(redux-persist 设置项)才走 `fs.rm` 永久删除
 - toast 提供"打开回收站"按钮
 
-## 11. 已知不在范围
+## 11. 用户自定义 shell 命令(设置 → 命令)
+
+用户在设置里录入命令行模板(如 `python process.py ${path}`),右键文件/文件夹 → "命令" 子菜单运行,弹**新终端窗口**显示输出。本地优先 power-user 能力,安全模型见 [src/main/shell-command.ts](../src/main/shell-command.ts):
+
+- **opt-in**:模板存 redux-persist `settings.userCommands`(默认空 `[]`),未配置则右键菜单不显示"命令"子菜单。
+- **路径不可信,模板可信**:模板是用户显式录入;被替换进去的**文件路径**不可信(文件名可能含 `&` `|` `"` `%` 元字符 → 命令注入)。
+- **主进程做替换 + 引号**:renderer 只传 `{ template, targetPath }`;主进程 `runUserCommand` 把 `${path}` / `${dir}` / `${name}` 替换成**加好引号的值**再拼命令。renderer 永不构造 shell 字符串。
+- **引号复用** [windowsCmdShim.ts](../src/main/ai/utils/windowsCmdShim.ts) 的 `quoteWindowsShellArgument`(cmd 双引号 + 内嵌 `"` 翻倍)+ POSIX 单引号([shell-quote.ts](../src/main/shell-quote.ts))。
+- **`assertWithinAllowedRoot(targetPath)` 在 IPC 入口**(`shell:runCommand`,[ipc.ts](../src/main/ipc.ts))—— 拒配置位置外的路径 / symlink 逃逸 / 未注册根(fail-closed),对齐 `fs:rename` / `fs:delete`。
+- **Windows `%` 拒绝**:cmd 默认下 `"..."` 内的 `%VAR%` 仍展开(`%%` 只在 .bat 内有效,`cmd /k` 内不可靠转义)→ 路径含 `%` 直接拒,renderer toast 报 `commandPathBlocked`。`!`(delayed expansion 关)放行。详见 [docs/09 §24](./09-known-issues.md)。
+- **`spawn` + `detached` + `child.unref()`**(fire-and-forget,新终端窗口归用户);永不 `exec`。
+- **不按只读位置拒绝**:命令是用户显式 opt-in 的外部进程(可能只读分析),`readOnlyGuard`(约束 WhaleTag/AI 自身的写)不适用 —— 只保留 `assertWithinAllowedRoot` 这道基础闸。
+
+## 12. 已知不在范围
 
 | 项 | 状态 | 说明 |
 |---|---|---|

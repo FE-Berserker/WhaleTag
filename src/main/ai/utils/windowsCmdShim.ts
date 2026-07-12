@@ -98,7 +98,7 @@ function requiresWindowsShellQuoting(value: string): boolean {
   );
 }
 
-function quoteWindowsShellArgument(value: string): string {
+export function quoteWindowsShellArgument(value: string): string {
   if (!value.length) return '""';
   if (!requiresWindowsShellQuoting(value)) return value;
   return `"${value.replace(/"/g, '""')}"`;

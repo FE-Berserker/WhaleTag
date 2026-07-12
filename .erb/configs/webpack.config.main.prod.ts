@@ -26,18 +26,22 @@ export default merge(createBase(), {
   externals: [
     {
       electron: 'commonjs electron',
-      // The Claude Agent SDK is a Node-only package that spawns the Claude Code
-      // CLI as a subprocess; it must not be bundled into main.js. Mirrors the
-      // sharp / better-sqlite3 pattern above.
+      // Defensive guard only: the Agent SDK is never statically imported in the
+      // main bundle — it's loaded at runtime via loadClaudeSdk() (component-resolver),
+      // which uses eval('require') + createRequire so webpack never sees it. Keeping
+      // this external ensures any future stray static import stays externalized
+      // rather than bundling a Node-only package into main.js.
       '@anthropic-ai/claude-agent-sdk':
         'commonjs @anthropic-ai/claude-agent-sdk',
-      // The Claude Code CLI binary itself — bundled (asarUnpack'd) so users
-      // don't need to install it separately. Must not be webpack-bundled.
-      '@anthropic-ai/claude-code': 'commonjs @anthropic-ai/claude-code',
       'pdfjs-dist': 'commonjs pdfjs-dist',
       sharp: 'commonjs sharp',
       'better-sqlite3': 'commonjs better-sqlite3',
       'ffmpeg-static': 'commonjs ffmpeg-static',
+      // 7zip-bin computes its binary path via `path.join(__dirname, platform, ...)`.
+      // If bundled, __dirname becomes main.js's dir and the path is wrong →
+      // existsSync fails and sevenZipBinary() falsely reports "missing".
+      // Externalize so __dirname resolves to the real module dir (asar-unpacked).
+      '7zip-bin': 'commonjs 7zip-bin',
       '@napi-rs/canvas': 'commonjs @napi-rs/canvas',
       '@napi-rs/canvas-win32-x64-msvc': 'commonjs @napi-rs/canvas-win32-x64-msvc',
     },

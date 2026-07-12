@@ -231,28 +231,16 @@ function getNpmClaudeCodeEntrypointPaths(): string[] {
 }
 
 /**
- * Resolve the CLI entrypoint from the BUNDLED `@anthropic-ai/claude-code`
- * package (shipped inside the installer). Returns `null` when the package
- * isn't installed/resolvable (e.g. dev without the dep, or the require fails).
+ * Dev-mode only: resolve the CLI entrypoint from the `@anthropic-ai/claude-code`
+ * devDependency in node_modules. Returns `null` in a packaged build — the dep
+ * is no longer shipped with the installer (0.2.0), so the runtime CLI comes
+ * from the optional AI component (see {@link componentCliPath}). `eval` hides
+ * the call from webpack's static analysis (the package is never bundled).
  */
 function bundledCliPath(): string | null {
   try {
-    // `eval` hides this from webpack's static analysis — the package is an
-    // external that's asarUnpack'd at runtime, so Node's require.resolve
-    // finds it from the bundled node_modules, not the webpack graph.
     const resolve = eval('require.resolve') as (id: string) => string;
-    let pkgJsonPath = resolve('@anthropic-ai/claude-code/package.json');
-    // require.resolve returns the LOGICAL asar path (.../app.asar/.../package.json),
-    // but @anthropic-ai/claude-code is asarUnpack'd, so the file physically lives
-    // under app.asar.unpacked. customSpawn runs the CLI with an EXTERNAL node —
-    // which can't read inside the .asar archive (it's a single packed file, not a
-    // directory). Remap to the real unpacked path so node can actually load it.
-    if (pkgJsonPath.includes('app.asar')) {
-      pkgJsonPath = pkgJsonPath.replace(
-        /([\\/])app\.asar([\\/])/,
-        '$1app.asar.unpacked$2'
-      );
-    }
+    const pkgJsonPath = resolve('@anthropic-ai/claude-code/package.json');
     const pkgDir = path.dirname(pkgJsonPath);
     for (const entrypoint of CLAUDE_CODE_NODE_ENTRYPOINTS) {
       const candidate = path.join(pkgDir, entrypoint);
@@ -264,6 +252,67 @@ function bundledCliPath(): string | null {
     // Package not present / not resolvable — fall through to discovery.
   }
   return null;
+}
+
+/**
+ * Test-only override for the AI component root (the dir containing
+ * `@anthropic-ai/claude-code`). Production resolves it from Electron's
+ * `userData`; tests inject a fixture path so the resolution is deterministic
+ * without an Electron runtime. Mirrors the {@link __setFileCheckerForTest} seam.
+ */
+let componentRootOverride: string | null = null;
+export function __setComponentRootForTest(root: string | null): () => void {
+  const prev = componentRootOverride;
+  componentRootOverride = root;
+  return () => {
+    componentRootOverride = prev;
+  };
+}
+
+/**
+ * Resolve the CLI from the OPTIONAL AI component (user-installed `.whaleai`
+ * extracted to `<userData>/components/ai/node_modules/@anthropic-ai/claude-code`).
+ * Returns `null` when the component isn't installed.
+ *
+ * `require('electron')` is lazy + guarded: this module also runs under
+ * `node:test` (no Electron runtime), where the require returns the electron
+ * executable path string instead of the module — `app` is then undefined and
+ * we bail with null (or the test-injected override is used instead).
+ */
+function componentCliPath(): string | null {
+  let componentRoot: string;
+  if (componentRootOverride) {
+    componentRoot = componentRootOverride;
+  } else {
+    try {
+      // eslint-disable-next-line global-require, @typescript-eslint/no-var-requires
+      const electron = require('electron');
+      const userData = (
+        electron as { app?: { getPath: (name: string) => string } }
+      ).app?.getPath('userData');
+      if (!userData) return null;
+      componentRoot = path.join(
+        userData,
+        'components',
+        'ai',
+        'node_modules',
+        '@anthropic-ai',
+        'claude-code'
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  if (!isExistingFile(path.join(componentRoot, 'package.json'))) return null;
+
+  // v2.x ships a prebuilt single-executable: bin/claude.exe (win) / bin/claude.
+  const exeName = process.platform === 'win32' ? 'claude.exe' : 'claude';
+  const exe = path.join(componentRoot, 'bin', exeName);
+  if (isExistingFile(exe)) return exe;
+
+  // Fallback to legacy node entrypoints if the package ships those instead.
+  return findClaudeCodeNodeEntrypoint(componentRoot);
 }
 
 /**
@@ -283,13 +332,21 @@ export function findClaudeCLIPath(pathValue?: string): string | null {
     }
   }
 
-  // The BUNDLED @anthropic-ai/claude-code package (shipped inside the Whale
-  // installer, asarUnpack'd). Resolved at RUNTIME via Node's require so users
-  // don't need to install Claude Code separately. `eval` hides this from
-  // webpack's static analysis (the package is external + unpacked, not bundled).
+  // Dev mode: the @anthropic-ai/claude-code devDependency in node_modules
+  // (resolved at runtime via Node's require; `eval` hides it from webpack
+  // static analysis since the package is an external, not bundled). Returns
+  // null in a packaged build — the dep is no longer shipped with the installer.
   const bundled = bundledCliPath();
   if (bundled) {
     return bundled;
+  }
+
+  // Optional AI component: the user-installed `.whaleai` extracted to
+  // <userData>/components/ai/. Takes priority over any system-installed claude
+  // so the version WhaleTag shipped via the component is the one used.
+  const component = componentCliPath();
+  if (component) {
+    return component;
   }
 
   if (isWindows) {

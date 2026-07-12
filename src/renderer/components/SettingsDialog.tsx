@@ -42,7 +42,10 @@ import WbTwilightIcon from '@mui/icons-material/WbTwilight';
 import ParkIcon from '@mui/icons-material/Park';
 import ContrastIcon from '@mui/icons-material/Contrast';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
+import TerminalIcon from '@mui/icons-material/Terminal';
 import TuneIcon from '@mui/icons-material/Tune';
+import { AiComponentSection } from './AiComponentSection';
+import UserCommandsSection from './UserCommandsSection';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import MapIcon from '@mui/icons-material/Map';
 import StyleIcon from '@mui/icons-material/Style';
@@ -134,6 +137,7 @@ export type SettingsSectionId =
   | 'tags'
   | 'notifications'
   | 'ai'
+  | 'commands'
   | 'advanced';
 
 interface SettingsDialogProps {
@@ -1484,6 +1488,8 @@ function AiSection() {
     <Stack sx={{ gap: 2 }}>
       <SectionHeader title={t('aiSettingsTitle')} hint={t('aiSettingsHint')} />
 
+      <AiComponentSection />
+
       <Field label={t('aiProvider')} hint={t('aiProviderHint')}>
         <Select
           size="small"
@@ -1619,8 +1625,8 @@ function AiSection() {
             )
           }
         >
-          <MenuItem value="normal">{t('aiPermissionNormal')}</MenuItem>
           <MenuItem value="yolo">{t('aiPermissionYolo')}</MenuItem>
+          <MenuItem value="normal">{t('aiPermissionNormal')}</MenuItem>
           <MenuItem value="plan">{t('aiPermissionPlan')}</MenuItem>
         </Select>
       </Field>
@@ -1807,6 +1813,7 @@ const SECTIONS: {
     Icon: NotificationsIcon,
   },
   { id: 'ai', labelKey: 'settingsSectionAi', Icon: SmartToyIcon },
+  { id: 'commands', labelKey: 'settingsSectionCommands', Icon: TerminalIcon },
   { id: 'advanced', labelKey: 'settingsSectionAdvanced', Icon: SettingsIcon },
 ];
 
@@ -1851,6 +1858,8 @@ export default function SettingsDialog({
         return <NotificationsSection />;
       case 'ai':
         return <AiSection />;
+      case 'commands':
+        return <UserCommandsSection />;
       case 'advanced':
         return <AdvancedSection />;
       default:

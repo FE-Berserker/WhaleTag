@@ -33,6 +33,7 @@ import QueueMusicIcon from '@mui/icons-material/QueueMusic';
 import type { DirEntry } from '../../shared/ipc-types';
 import type { ExtensionManifest, ExtensionRegistry } from '../../shared/extension-types';
 import type { TagGroup } from '../../shared/tag-library';
+import type { UserCommand } from '../../shared/shell-types';
 import type { RootState } from '-/reducers';
 import { tagDisplayLabel } from '-/services/tag-display';
 import { isAudioFile, isImageFile, isVideoFile } from '../../shared/whale-meta';
@@ -114,6 +115,10 @@ export interface EntryContextMenuProps {
     manifest: ExtensionManifest
   ) => Promise<void>;
   openNative: (path: string) => Promise<void>;
+  /** User-configured shell commands (Settings → Commands); shown in a "Commands" submenu. */
+  userCommands: UserCommand[];
+  /** Run `command` on `entry` — parent resolves the path + spawns the terminal. */
+  onRunCommand: (entry: DirEntry, command: UserCommand) => void;
   setViewMode: (m: 'gallery') => void;
   revealEntry: (entry: DirEntry) => Promise<void> | void;
   /**
@@ -216,6 +221,8 @@ export default function EntryContextMenu(props: EntryContextMenuProps) {
     userDefaults,
     enabledOverrides,
     getCompatibleExtensions,
+    userCommands,
+    onRunCommand,
   } = props;
   // Tag-library state for the inline "Edit tags" editor embedded in the
   // single-entry branch. The parent already passes the directory's
@@ -541,6 +548,39 @@ export default function EntryContextMenu(props: EntryContextMenuProps) {
                   <ListItemText>{t('copyPath')}</ListItemText>
                 </MenuItem>
               ) : null}
+              {(() => {
+                const applicable = userCommands.filter(
+                  (c) =>
+                    c.enabled &&
+                    ((entry.isFile && c.applyToFiles) ||
+                      (entry.isDirectory && c.applyToFolders))
+                );
+                if (applicable.length === 0) return null;
+                return (
+                  <>
+                    <MenuItem
+                      onClick={(e) => e.stopPropagation()}
+                      sx={{ pl: 2 }}
+                    >
+                      <ListItemText sx={{ pl: 2 }}>
+                        {t('runCommand')}
+                      </ListItemText>
+                    </MenuItem>
+                    {applicable.map((c) => (
+                      <MenuItem
+                        key={c.id}
+                        onClick={() => {
+                          onRunCommand(entry, c);
+                          onClose();
+                        }}
+                        sx={{ pl: 4 }}
+                      >
+                        <ListItemText>{c.label}</ListItemText>
+                      </MenuItem>
+                    ))}
+                  </>
+                );
+              })()}
               {entry.isDirectory ? (
                 <>
                   <Divider />

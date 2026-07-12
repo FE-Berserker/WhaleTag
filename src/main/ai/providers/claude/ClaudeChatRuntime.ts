@@ -1,4 +1,4 @@
-import { query, startup, type Options, type WarmQuery } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, WarmQuery } from '@anthropic-ai/claude-agent-sdk';
 
 import type { AiProvider } from '../../provider';
 import type { AiQueryPayload, StreamChunk } from '../../../../shared/ai-types';
@@ -8,6 +8,7 @@ import {
   buildTurnPrompt,
 } from './buildQueryOptions';
 import { findClaudeCLIPath } from './cli/findClaudeCliPath';
+import { loadClaudeSdk } from '../../component-resolver';
 import {
   createTransformState,
   transformSdkMessage,
@@ -160,8 +161,12 @@ export class ClaudeChatRuntime implements AiProvider {
     this.warm = {
       key,
       controller,
-      promise: startup({ options })
-        // If startup fails, leave a rejected promise; the consumer falls back.
+      promise: (async () => {
+        const { startup } = await loadClaudeSdk();
+        return startup({ options });
+      })()
+        // If startup (or SDK load) fails, leave a rejected promise; the
+        // consumer falls back to a cold query.
         .catch((e) => {
           throw e;
         }),
@@ -221,6 +226,7 @@ export class ClaudeChatRuntime implements AiProvider {
     const prompt = buildTurnPrompt(payload);
     const transformState = createTransformState();
     try {
+      const sdk = await loadClaudeSdk();
       const warm = this.takeWarm(approvalCallback, payload, cliPath, prompt);
       let iterator: AsyncIterable<unknown>;
       let liveController: AbortController;
@@ -241,7 +247,7 @@ export class ClaudeChatRuntime implements AiProvider {
             approvalCallback,
             abortController: controller,
           });
-          iterator = query({ prompt, options });
+          iterator = sdk.query({ prompt, options });
         }
       } else {
         // Cold path: fresh controller + fresh query.
@@ -254,7 +260,7 @@ export class ClaudeChatRuntime implements AiProvider {
           approvalCallback,
           abortController: controller,
         });
-        iterator = query({ prompt, options });
+        iterator = sdk.query({ prompt, options });
       }
       this.active.set(payload.conversationId, liveController);
       try {

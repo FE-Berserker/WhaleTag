@@ -19,6 +19,7 @@ import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import type { AiSettingsSnapshot } from '../../shared/ai-types';
 import { getSecret, SECRET_NAMES } from './security/secretStore';
 import { findClaudeCLIPath } from './providers/claude/cli/findClaudeCliPath';
+import { loadClaudeSdk } from './component-resolver';
 
 const INLINE_SYSTEM_PROMPT =
   'You rewrite a text selection from the user\'s file per their instruction. ' +
@@ -101,33 +102,39 @@ export async function generateInlineEditClaude(
   if (!cliPath) return '';
   const { settings, selection, instruction } = input;
 
-  // Lazy import so the HTTP-only path never pays for SDK require at module
-  // load time; the SDK is a main-process external (see main webpack externals).
-  const sdk = await import('@anthropic-ai/claude-agent-sdk');
-  const query = sdk.query;
-  const abortController = new AbortController();
-  const options: Options = {
-    abortController,
-    model: settings.model,
-    systemPrompt: INLINE_SYSTEM_PROMPT,
-    pathToClaudeCodeExecutable: cliPath,
-    // No cwd / additionalDirectories — inline-edit is pure text→text, the agent
-    // doesn't read/write files here, so we don't widen the allowed-roots scope.
-    permissionMode: 'default',
-    maxTurns: 1,
-    effort: settings.effort,
-    allowDangerouslySkipPermissions: false,
-    // The DIRTI-setting suppresses any CLI-side "would you like to …" prompts.
-  };
-  const prompt =
-    `Instruction: ${instruction}\n\n` +
-    `Selection:\n"""\n${selection}\n"""`;
-
   try {
+    // Resolve the SDK via the OPTIONAL AI component (loadClaudeSdk). A packaged
+    // build has no devDeps in node_modules, so `import('@anthropic-ai/…')`
+    // (webpack-externalized to an app-level require) would throw
+    // MODULE_NOT_FOUND; only loadClaudeSdk's createRequire(<componentDir>/…)
+    // path can resolve it from <userData>/components/ai. If the component isn't
+    // installed this throws "未安装 AI 组件" — caught below → '' (graceful).
+    const sdk = await loadClaudeSdk();
+    const query = sdk.query;
+    const abortController = new AbortController();
+    const options: Options = {
+      abortController,
+      model: settings.model,
+      systemPrompt: INLINE_SYSTEM_PROMPT,
+      pathToClaudeCodeExecutable: cliPath,
+      // No cwd / additionalDirectories — inline-edit is pure text→text, the agent
+      // doesn't read/write files here, so we don't widen the allowed-roots scope.
+      permissionMode: 'default',
+      maxTurns: 1,
+      effort: settings.effort,
+      allowDangerouslySkipPermissions: false,
+      // The DIRTI-setting suppresses any CLI-side "would you like to …" prompts.
+    };
+    const prompt =
+      `Instruction: ${instruction}\n\n` +
+      `Selection:\n"""\n${selection}\n"""`;
+
     const iterator = query({ prompt, options }) as AsyncIterable<unknown>;
     const raw = await extractAssistantTextFromSdk(iterator);
     return cleanReplacement(raw);
   } catch {
+    // Missing component, CLI spawn failure, or SDK error — keep the editor
+    // interactive; the host shows aiInlineEditClaudeEmpty on ''.
     return '';
   }
 }

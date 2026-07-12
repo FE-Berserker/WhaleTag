@@ -22,8 +22,6 @@ import {
   Snackbar,
   Stack,
   TextField,
-  ToggleButton,
-  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -46,6 +44,8 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import SearchIcon from '@mui/icons-material/Search';
 import ClearIcon from '@mui/icons-material/Close';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import LockIcon from '@mui/icons-material/Lock';
+import LockOpenIcon from '@mui/icons-material/LockOpen';
 
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
@@ -95,7 +95,7 @@ const OSM_TILE_SUBDOMAINS = ['a', 'b', 'c'];
 const OSM_TILE_ATTRIBUTION =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
 
-const PANEL_WIDTH = 380;
+const PANEL_WIDTH = 300;
 const PREVIEW_HEIGHT = 120;
 
 export interface MapiqueViewProps {
@@ -273,6 +273,10 @@ export default function MapiqueView({
   // leaving the marker at the wrong spot (plan §H.21 P2 / Bug #2).
   const lastDragEndAtRef = useRef(0);
   const [activeEntry, setActiveEntry] = useState<DirEntry | null>(null);
+  // Place-lock (default ON): clicking the map does NOT place/move markers,
+  // preventing accidental geo edits while panning/zooming/browsing. Toggle off
+  // to place the selected/active entry.
+  const [placeLocked, setPlaceLocked] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // P3-2: tray row hover → bouncing marker. Transient UI state, not persisted.
   const [hoveredPath, setHoveredPath] = useState<string | null>(null);
@@ -871,7 +875,7 @@ export default function MapiqueView({
   // when nothing is selected (WGS-84).
   const handleMapClick = useCallback(
     (lat: number, lng: number) => {
-      if (!canEdit) return;
+      if (!canEdit || placeLocked) return;
       const wgs = fromDisplay(lat, lng);
       let changed = 0;
       if (selectedCount > 0) {
@@ -895,6 +899,7 @@ export default function MapiqueView({
     },
     [
       canEdit,
+      placeLocked,
       activeEntry,
       selectedCount,
       selectedEntries,
@@ -1013,7 +1018,7 @@ export default function MapiqueView({
           style={{
             height: '100%',
             width: '100%',
-            cursor: canEdit && activeEntry ? 'crosshair' : 'grab',
+            cursor: canEdit && activeEntry && !placeLocked ? 'crosshair' : 'grab',
           }}
         >
           <TileLayer
@@ -1253,23 +1258,23 @@ export default function MapiqueView({
               {selectedCount > 0 ? ` · ${selectedCount} ${t('selected')}` : ''}
             </Typography>
 
-            <ToggleButtonGroup
+            <Select
               size="small"
               value={trayFilter}
-              exclusive
-              onChange={(_, v) => v && setTrayFilter(v as TrayFilter)}
-              aria-label={t('mapiqueFilterAll')}
+              onChange={(e) => setTrayFilter(e.target.value as TrayFilter)}
+              inputProps={{ 'aria-label': t('mapiqueFilterAll') }}
+              sx={{ fontSize: 11, '& .MuiSelect-select': { py: 0.5 } }}
             >
-              <ToggleButton value="all" sx={{ px: 1, py: 0.25, fontSize: 11 }}>
+              <MenuItem value="all" dense sx={{ fontSize: 12 }}>
                 {t('mapiqueFilterAll')}
-              </ToggleButton>
-              <ToggleButton value="located" sx={{ px: 1, py: 0.25, fontSize: 11 }}>
+              </MenuItem>
+              <MenuItem value="located" dense sx={{ fontSize: 12 }}>
                 {t('mapiqueFilterLocated')}
-              </ToggleButton>
-              <ToggleButton value="unlocated" sx={{ px: 1, py: 0.25, fontSize: 11 }}>
+              </MenuItem>
+              <MenuItem value="unlocated" dense sx={{ fontSize: 12 }}>
                 {t('mapiqueFilterUnlocated')}
-              </ToggleButton>
-            </ToggleButtonGroup>
+              </MenuItem>
+            </Select>
 
             {/* P3-5: tray row sort. Persisted per-location. `distance` is
                 dynamic (re-orders as the map is panned). */}
@@ -1290,6 +1295,21 @@ export default function MapiqueView({
                 {t('mapiqueSortDistance')}
               </MenuItem>
             </Select>
+
+            <Tooltip title={placeLocked ? t('mapiquePlaceUnlock') : t('mapiquePlaceLock')}>
+              <IconButton
+                size="small"
+                onClick={() => setPlaceLocked((v) => !v)}
+                aria-label={placeLocked ? t('mapiquePlaceUnlock') : t('mapiquePlaceLock')}
+                color={placeLocked ? 'default' : 'primary'}
+              >
+                {placeLocked ? (
+                  <LockIcon fontSize="small" />
+                ) : (
+                  <LockOpenIcon fontSize="small" />
+                )}
+              </IconButton>
+            </Tooltip>
 
             <Tooltip title={t('panelClose')}>
               <IconButton size="small" onClick={() => setPanelOpen(false)}>

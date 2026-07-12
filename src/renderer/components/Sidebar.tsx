@@ -48,6 +48,7 @@ import {
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { useNewExcalidraw } from '-/hooks/useNewExcalidraw';
 import { useNewDrawio } from '-/hooks/useNewDrawio';
+import { useAiComponent } from '-/hooks/useAiComponent';
 import { ipcApi } from '-/services/ipc-api';
 import { DND_TYPE_LOCATION, type LocationDragItem } from '-/services/dnd';
 import type { WhaleLocation } from '../../shared/ipc-types';
@@ -214,6 +215,7 @@ export default function Sidebar({ onAddLocation, embedded = false }: SidebarProp
   const { currentLocation, openLocation } = useCurrentLocationContext();
   const newExcalidraw = useNewExcalidraw();
   const newDrawio = useNewDrawio();
+  const aiComponent = useAiComponent();
   // Settings dialog is owned one level up by SettingsDialogProvider so other
   // surfaces (file row right-click, kanban card right-click, …) can deep-link
   // to a particular section via `useSettingsDialog().openDialog({ section })`.
@@ -366,18 +368,28 @@ export default function Sidebar({ onAddLocation, embedded = false }: SidebarProp
           </IconButton>
         </Tooltip>
         {aiEnabled ? (
-          <Tooltip title={t('aiToggle')}>
-            <IconButton
-              size="small"
-              data-testid="ai-toggle-button"
-              color={aiPanelOpen ? 'primary' : 'default'}
-              onClick={() =>
-                dispatch(setAiSettings({ aiPanelOpen: !aiPanelOpen }))
-              }
-            >
-              <SmartToyIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
+          aiComponent.state.installed ? (
+            <Tooltip title={t('aiToggle')}>
+              <IconButton
+                size="small"
+                data-testid="ai-toggle-button"
+                color={aiPanelOpen ? 'primary' : 'default'}
+                onClick={() =>
+                  dispatch(setAiSettings({ aiPanelOpen: !aiPanelOpen }))
+                }
+              >
+                <SmartToyIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          ) : (
+            <Tooltip title={t('aiComponentNotInstalled')}>
+              <span>
+                <IconButton size="small" disabled>
+                  <SmartToyIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+          )
         ) : null}
         {newExcalidraw.available && (
           <Tooltip title={t('newExcalidraw')}>

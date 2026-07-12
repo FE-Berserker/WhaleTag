@@ -23,6 +23,7 @@ import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 
 import type { DirEntry } from '../../shared/ipc-types';
 import type { ViewMode, SidecarMeta } from '../../shared/whale-meta';
+import { COMMAND_PATH_BLOCKED } from '../../shared/shell-types';
 import { RootState } from '-/reducers';
 import { todayKey, periodTagFromRange } from '../../shared/gantt';
 import {
@@ -207,6 +208,9 @@ export default function FileList() {
   );
   const mapProvider = useShallowEqualSelector(
     (s: RootState) => s.settings?.mapProvider ?? 'gaode'
+  );
+  const userCommands = useShallowEqualSelector(
+    (s: RootState) => s.settings?.userCommands ?? []
   );
   const trayVisible = useShallowEqualSelector(
     (s: RootState) => s.settings?.trayVisible ?? true
@@ -1853,6 +1857,16 @@ export default function FileList() {
         userDefaults={userDefaults}
         enabledOverrides={enabledOverrides}
         getCompatibleExtensions={getCompatibleExtensions}
+        userCommands={userCommands}
+        onRunCommand={(entry, cmd) => {
+          ipcApi.runCommand(cmd.template, entry.path).catch((e: unknown) => {
+            const msg = e instanceof Error ? e.message : String(e);
+            // The main process throws Error(COMMAND_PATH_BLOCKED) when the path
+            // can't be safely substituted (e.g. `%` in a filename on Windows);
+            // map that sentinel to a localized message instead of raw English.
+            setNotice(msg === COMMAND_PATH_BLOCKED ? t('commandPathBlocked') : msg);
+          });
+        }}
       />
 
       {/* Per-tag context menu: right-click a row's tag chip → remove that tag. */}

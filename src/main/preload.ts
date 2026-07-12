@@ -33,6 +33,7 @@ const whaleApi: WhaleApi = {
   pathExists: (targetPath: string) => ipcRenderer.invoke('fs:pathExists', targetPath),
   openDirectoryDialog: () => ipcRenderer.invoke('dialog:openDirectory'),
   openImageFileDialog: () => ipcRenderer.invoke('dialog:openImageFile'),
+  openComponentFileDialog: () => ipcRenderer.invoke('dialog:openComponentFile'),
 
   // Lets the renderer register its configured location roots so the main
   // process can confine writes to them (defense-in-depth).
@@ -60,6 +61,8 @@ const whaleApi: WhaleApi = {
     ipcRenderer.invoke('fs:createTextFile', filePath, content),
   openNative: (targetPath: string) =>
     ipcRenderer.invoke('fs:openNative', targetPath),
+  runCommand: (template: string, targetPath: string) =>
+    ipcRenderer.invoke('shell:runCommand', template, targetPath),
 
   // Zip a folder into a sibling `<dir>.zip`; resolves with the archive path.
   zipDirectory: (dirPath: string) =>
@@ -281,6 +284,10 @@ const whaleApi: WhaleApi = {
     ipcRenderer.invoke('ai:setOpenaiKey', key),
   aiClearOpenaiKey: () => ipcRenderer.invoke('ai:clearOpenaiKey'),
   aiHasOpenaiKey: () => ipcRenderer.invoke('ai:hasOpenaiKey'),
+  aiGetComponentState: () => ipcRenderer.invoke('ai:getComponentState'),
+  aiInstallComponent: (filePath: string) =>
+    ipcRenderer.invoke('ai:installComponent', filePath),
+  aiUninstallComponent: () => ipcRenderer.invoke('ai:uninstallComponent'),
   onAiChunk: (
     cb: (e: { conversationId: string; chunk: StreamChunk }) => void
   ) => {

@@ -67,6 +67,14 @@ export interface TransformState {
   emittedToolIds: Set<string>;
   /** Tool-use blocks mid-stream, keyed by content-block index. */
   toolBlocks: Map<number, PendingToolBlock>;
+  /** True once any thinking delta streamed this turn — a dedup backstop for the
+   *  complete assistant message's thinking block, in case the SDK pairs a
+   *  partial stream_event with the complete message under different uuids (which
+   *  would leave the per-uuid `streamed` check false). Per content-type so a
+   *  streamed thinking block doesn't suppress a complete-only text block. */
+  thinkingStreamed: boolean;
+  /** Same backstop, for text. */
+  textStreamed: boolean;
 }
 
 export function createTransformState(): TransformState {
@@ -75,6 +83,8 @@ export function createTransformState(): TransformState {
     streamedMsgs: new Set(),
     emittedToolIds: new Set(),
     toolBlocks: new Map(),
+    thinkingStreamed: false,
+    textStreamed: false,
   };
 }
 
@@ -154,11 +164,15 @@ function* transformStreamEvent(
       if (parent) {
         yield { type: 'subagent_text', subagentId: parent, content: delta.text };
       } else {
+        state.textStreamed = true;
         yield { type: 'text', content: delta.text };
       }
     } else if (delta.type === 'thinking_delta' && typeof delta.thinking === 'string') {
       state.streamedMsgs.add(uuid);
-      if (!parent) yield { type: 'thinking', content: delta.thinking };
+      if (!parent) {
+        state.thinkingStreamed = true;
+        yield { type: 'thinking', content: delta.thinking };
+      }
     } else if (
       delta.type === 'input_json_delta' &&
       typeof delta.partial_json === 'string'
@@ -209,14 +223,21 @@ function* transformAssistant(
   const streamed = state.streamedMsgs.has(uuid);
   for (const block of content) {
     if (block.type === 'text') {
-      if (streamed) continue;
+      // Skip if streamed token-by-token. `textStreamed` is a per-turn backstop
+      // for partial/complete uuid mismatch (see TransformState).
+      if (streamed || state.textStreamed) continue;
       if (parent) {
         yield { type: 'subagent_text', subagentId: parent, content: block.text };
       } else {
         yield { type: 'text', content: block.text };
       }
     } else if (block.type === 'thinking') {
-      if (!streamed && !parent) yield { type: 'thinking', content: block.thinking };
+      // Skip if streamed token-by-token. `thinkingStreamed` is a per-turn
+      // backstop for partial/complete uuid mismatch.
+      if (streamed || state.thinkingStreamed) continue;
+      if (!parent) {
+        yield { type: 'thinking', content: block.thinking };
+      }
     } else if (block.type === 'tool_use') {
       if (state.emittedToolIds.has(block.id)) continue;
       if (parent) {

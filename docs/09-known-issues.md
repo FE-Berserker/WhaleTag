@@ -659,3 +659,36 @@ permissionMode 'bypassPermissions' auto-approves every tool call
 **修复**:`allowDangerouslySkipPermissions` 只在 `'yolo'` 模式设(`settings.permissionMode === 'yolo'`)。normal/plan 不设 → SDK 尊重 `permissionMode: 'default'`/`'plan'` → **咨询 `canUseTool`** → Whale 弹窗出现 + 决定。
 
 **教训**:`canUseTool` 是 SDK 在**非 bypass 模式**下的闸门;`allowDangerouslySkipPermissions` 只是 bypass 的**启用开关**,绝不能在 normal/plan 开(开了就把 `canUseTool` 整个废掉,且无编译/类型错误——只有真跑 AI 工具调用才暴露)。和 §19/§21 同类:协议层配置坑,smoke test 验证不可省。详见 [docs/11 §5](./11-ai.md)。
+
+## 23. AI 流式回复 thinking/text 重复 — partial/complete uuid 不匹配,streamed 去重失效 (2026-07-11)
+
+**症状**:Claude CLI provider 的回复里,**1 个 assistant 气泡内出现两段一模一样的思考(thinking)块**;修好 thinking 后,**两段一模一样的正文(text)**浮出。partial 流(token by token)累积成一段,complete 消息又原样发一段。yolo / normal 模式均可复现。
+
+**根因(推测,未 log 证实)**:[transformSdkMessage.ts](../src/main/ai/providers/claude/stream/transformSdkMessage.ts) 的 `streamed` 去重依赖 per-uuid 的 `streamedMsgs` —— partial `stream_event`(text_delta/thinking_delta)把 `message.uuid` 加进 `streamedMsgs`,complete `assistant` 消息检查 `streamedMsgs.has(uuid)` 命中才跳过。实测 complete 的 text/thinking block **没被跳过**(重复 yield),说明 complete 的 uuid 没命中 `streamedMsgs` —— 极可能是 SDK 的 partial `stream_event.uuid` 与 complete `assistant.uuid` **不是同一个值**(SDK 内部 id 体系不同),`streamedMsgs.has(completeUuid)` 落空 → complete 再 yield 一遍。
+
+> 注:`assistant_message_start` 的去重(`startedMsgs`)在同一 uuid 逻辑下却生效(只 1 个气泡),与 text/thinking 失效并存——矛盾没完全解明,确证需加 log 抓一次 uuid 流(见"遗留")。
+
+**修复**:`TransformState` 加两个 per-turn boolean 标志:`thinkingStreamed` / `textStreamed`。partial 流经 thinking_delta/text_delta 时把对应标志置 true;complete 消息的 thinking/text block 检查 `streamed || thinkingStreamed` / `streamed || textStreamed` 命中则跳过。**绕过 uuid 匹配**(标志是 per-turn 全局,不依赖 complete uuid),且 per content-type(流过 thinking 不影响 complete-only text)。
+
+**为什么用 boolean 标志而非内容 includes**:中间曾用 `partialText.includes(block.text)`(内容子串匹配)做 backstop,但子串匹配有理论误判风险(一个 block 是另一个的真子串)且语义不直观;boolean 标志干净、无歧义。两者都是 backstop(治标),真治本要让 `streamed` 的 uuid 检查自己 work。
+
+**遗留 / 未决**:
+- `streamed` 的 per-uuid 检查为什么失效(partial/complete uuid 是否真不匹配)**未 log 证实**。诊断被打断:dev 的 `electronmon` 在 Windows 上重启 electron 时杀不干净旧进程,反复 dev 累积 20+ 残留 electron,互相锁 userData disk cache(`Unable to move the cache: 拒绝访问 0x5`),新 electron `exit code 1`,无法稳定加 log 跑;重启电脑清残留后才稳定。需 log 抓 uuid 流确证。
+- 确证后可去掉 `thinkingStreamed`/`textStreamed` 标志,让 `streamed` 自然去重(complete 不 yield)。
+- 当前标志 backstop:work、不误判、好理解,可先这样。
+
+**教训**:
+- 流式协议里"partial + complete"去重必须**实测验证**——光看代码"complete 检查 streamed 跳过"会以为没问题,但 uuid 匹配是隐含前提,SDK 内部 id 体系不一致就**静默失效**(无报错、无类型错,只有 UI 重复)。
+- dev 热重载(electronmon)在 Windows 的进程清理是独立坑(与 §1 `ELECTRON_RUN_AS_NODE` 同类 dev 黑魔法):诊断流式问题时先用**一次性冷启动**(重启电脑 / 不靠 watch 重启)再加 log,避免 dev 工具的进程残留干扰诊断。
+
+**关联**:[docs/11 §4 流式与渲染](./11-ai.md)。
+
+## 24. 自定义命令:Windows 路径含 `%` 被拒(2026-07-12)
+
+**症状**:右键一个文件名含 `%` 的文件(如 `data%20file.csv`)→ "命令" 子菜单跑用户命令 → toast `commandPathBlocked`,命令不运行。
+
+**根因**(设计取舍,非 bug):cmd.exe 默认下,双引号 `"..."` 内的 `%VAR%` 仍会展开成环境变量(如 `%PATH%`)。`%%` 转义**只在 .bat 批处理内有效**,`cmd /k "<cmd>"` 单条命令内无法可靠转义 `%`。文件名里的 `%` 因此可能注入环境变量内容 → 命令注入面。
+
+**处理**:[runUserCommand](../src/main/shell-command.ts) 在替换前检测 `targetPath.includes('%')` → 直接拒,renderer 映射到 `commandPathBlocked` 文案。`!`(cmd 默认 delayed expansion 关)放行。99.99% 文件名不含 `%`。用户解法:重命名文件去掉 `%`,或改用不含 `${path}` 的命令。
+
+**通用教训**:任何"用户模板 + 文件路径替换进 cmd"的功能,`%` 是 cmd 引号套不住的唯一元字符 —— 要么拒(当前方案)、要么改走 PowerShell(`psQuote` 单引号全安全,见 [ipc.ts runOsZip](../src/main/ipc.ts))、要么写临时 .bat(批处理内 `%%` 生效)。详见 [docs/13 §11](./13-security.md)。

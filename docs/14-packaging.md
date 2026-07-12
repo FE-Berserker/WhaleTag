@@ -15,11 +15,17 @@ find release/build -mindepth 1 -delete
 
 # 3) 打包 —— 关键:离线 nsis-resources + unset ELECTRON_RUN_AS_NODE
 unset ELECTRON_RUN_AS_NODE
-export ELECTRON_BUILDER_NSIS_RESOURCES_DIR="C:/Whale/tools/nsis-resources-3.4.1"
+export ELECTRON_BUILDER_NSIS_RESOURCES_DIR="C:/WhaleTag/tools/nsis-resources-3.4.1"
 npm run package:win > package.log 2>&1
+
+# 4) (可选,与安装包分开交付)打 AI 组件包 —— 见 docs/11 §12
+npm run build:ai-component
+# → release/components/whaletag-ai-<ver>.whaleai(~159 MiB,平台专用,每平台各跑一次)
 ```
 
-产物:`release/build/WhaleTag Setup 0.0.1.exe`(~447 MiB)+ `release/build/win-unpacked/`(免安装版,可直接跑 `WhaleTag.exe`)。
+产物:`release/build/WhaleTag Setup <ver>.exe` + `release/build/win-unpacked/`(免安装版,可直接跑 `WhaleTag.exe`)。
+
+> **0.2.0 起安装包不再内置 Claude CLI**:`@anthropic-ai/claude-code`(~229MB)从主包移除(改可选 AI 组件,见 [docs/11 §12](./11-ai.md)),安装包体积相应下降。`npm run package:win`(`= npm run build && electron-builder`)**不**自动产 `.whaleai` —— 上面的 step 4 是独立脚本,产物 `release/components/whaletag-ai-*.whaleai` 与安装包**分开发布**,用户在 设置 → AI 里手动安装。
 
 ## 2. 前置(一次性)
 
@@ -29,7 +35,7 @@ npm run package:win > package.log 2>&1
 
 ## 3. 验证打包成功
 
-- exe 大小 ~447 MiB,PE `MZ` 头 OK(`node -e "console.log(require('fs').readFileSync('...').slice(0,2))"`)。
+- exe 大小 ~447 MiB(0.1.0 及更早,含内置 claude-code);0.2.0 起去掉内置 CLI 后应明显更小 —— 打包后以实际为准。PE `MZ` 头 OK(`node -e "console.log(require('fs').readFileSync('...').slice(0,2))"`)。
 - 日志收尾有 `building block map`(electron-builder 最后一步)。
 - `grep -c "file:///C:/Whale" release/app/dist/main/main.js` = 0(无 import.meta.url 硬编码,见坑 4)。
 
@@ -72,6 +78,8 @@ npm run package:win > package.log 2>&1
   ```
   通用教训:Electron 主进程把 asar 内文件路径传给**外部子进程**时,必须转成 `app.asar.unpacked` 真实路径。
 
+> ⚠️ **0.2.0 起此坑对 AI CLI 已失效**:`@anthropic-ai/claude-code` 不再内置打包(改可选 AI 组件,见 [docs/11 §12](./11-ai.md))。packaged build 的 `bundledCliPath()` 直接返 null(两包是 devDep、不在 packaged node_modules),这段 `app.asar → app.asar.unpacked` 重映射对 claude-code 已是死代码;dev 下 node_modules 命中也不走 asar。CLI 现从 `<userData>/components/ai/` 解析。**通用教训本身(app.asar → app.asar.unpacked 给外部子进程)对其他 asarUnpack 二进制仍然成立**,只是 claude-code 不再是其用例。
+
 ### 坑 6:AI "Claude Code process exited with code 1"(黑盒)
 - **症状**:AI 报裸 exit code,看不出真正原因。
 - **根因**:`customSpawn.ts` 的 stdio 第三项 `'ignore'`,claude.exe / cli-wrapper.cjs 的 stderr 全丢。
@@ -112,7 +120,9 @@ npm run package:win > package.log 2>&1
 |---|---|
 | `resources/builder.json` | electron-builder 配置(icon / asarUnpack / win.signAndEditExecutable) |
 | `.erb/configs/webpack.config.main.{dev,prod}.ts` | main bundle webpack(externals) |
-| `src/main/ai/providers/claude/cli/findClaudeCliPath.ts` | 解析 claude.exe 路径(asar.unpacked 重映射) |
+| `src/main/ai/providers/claude/cli/findClaudeCliPath.ts` | 解析 claude(.exe) 路径(顺序:settings > dev node_modules > AI 组件 > 系统装 > npm-global > PATH,见 [docs/11 §12](./11-ai.md)) |
+| `src/main/ai/component-resolver.ts` / `component-installer.ts` | 可选 AI 组件:SDK 运行时加载 + `.whaleai` 原子安装/卸载(见 [docs/11 §12](./11-ai.md)) |
+| `scripts/build-ai-component.js` | 打 `.whaleai` 7z 包(claude-code + sdk + 平台 optionalDeps)→ `release/components/` |
 | `src/main/ai/providers/claude/customSpawn.ts` | spawn claude.exe + stderr 捕获(ring buffer) |
 | `src/main/ai/providers/claude/buildQueryOptions.ts` | 构造 env(API_KEY/AUTH_TOKEN/BASE_URL) |
 | `src/main/ai/providers/claude/ClaudeChatRuntime.ts` | runTurn / 预热降级 / 认证预检 / errorMessage |
@@ -122,8 +132,8 @@ npm run package:win > package.log 2>&1
 ## 6. AI 调用链(理解坑 5-8)
 
 ```
-renderer ai:query  →  ipc-ai.ts streamTurn  →  ClaudeChatRuntime.runTurn
-   →  claude-agent-sdk query()/startup()
+renderer ai:query  →  ipc-ai-runtime.ts streamTurn(组件装了才注册,见 docs/11 §12.5) →  ClaudeChatRuntime.runTurn
+   →  loadClaudeSdk() →  claude-agent-sdk query()/startup()
    →  customSpawn spawn(外部 node, [cli-wrapper.cjs, ...])
    →  cli-wrapper.cjs spawnSync(claude.exe, ...)
    →  claude.exe  读 env(ANTHROPIC_API_KEY/AUTH_TOKEN/BASE_URL)+ ~/.claude/.credentials.json

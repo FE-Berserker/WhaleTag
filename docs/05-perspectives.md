@@ -310,3 +310,63 @@ Gallery 拖拽打标已实现 P0。
 3. 在共享层 / hook 实现的项,在 [src/shared/gantt.test.ts](../src/shared/gantt.test.ts) 或新 test 文件里补测试覆盖
 4. 新增 i18n key 同步 en/zh 两份 [src/renderer/locales/{en,zh}/common.json](../src/renderer/locales/)
 5. 一次性把这节最后更新于 `<YYYY-MM-DD>` 标在文头
+
+---
+
+## 10. Mapique 地名搜索(geocoding)— 实现计划
+
+> 目标:mapique 地图视图加地名搜索(输入「北京天安门」→ 查坐标 → 地图 flyTo 定位 + 结果列表选)。本节是实现设计,review 后落地。
+
+> **决策(2026-07-11):B 方案** —— 不配高德 key,两种 mapProvider **统一用 Nominatim**(免费、无需 key)。代价:国内地址偏弱、英文/拼音友好。坐标系:Nominatim 返 WGS-84 → `toDisplay`(gaode 模式转 GCJ-02 显示,与 marker 放置同链路)。
+
+### 10.1 现状摸底(已确认)
+
+- **mapProvider**:二元 `'gaode' | 'osm'`([settings.ts:46](../src/renderer/reducers/settings.ts#L46)),默认 `'gaode'`。**无 baidu/google**。
+- **tile**:二元 if/else([MapiqueView.tsx:226-229](../src/renderer/components/MapiqueView.tsx#L226)),gaode = GCJ-02(`webrd0{1-4}.is.autonavi.com`),osm = WGS-84(`tile.openstreetmap.org`)。
+- **坐标系**:内部/存储统一 **WGS-84**;GCJ-02 只在 gaode 显示层。`toDisplay`(WGS-84→显示,233)/ `fromDisplay`(显示→WGS-84,241)是组件内闭包,调 [src/shared/gcj02.ts](../src/shared/gcj02.ts)。
+- **flyTo**:**无现成 flyTo/setView**(只有 `FitBounds` 1627)。需加 `FlyTo` 子组件(同款 useMap 模板)。
+- **nameQuery**(203):文件名搜索(detail panel 文件筛选),**非地名**,不能复用。
+
+### 10.2 geocoding(B 方案:统一 Nominatim)
+
+不分 mapProvider,两种模式都走 Nominatim:
+
+| 项 | 值 |
+|---|---|
+| API | `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=cn&accept-language=zh&q=<query>` |
+| 返回坐标系 | **WGS-84**(内部系,直接用) |
+| key | 无需 |
+| 限制 | 需自定义 `User-Agent`(浏览器 fetch 设不了 → 必走 main 进程)+ 限频 1 req/s |
+
+### 10.3 坐标系(B 简化)
+
+Nominatim 返 **WGS-84**(= 内部系),**无需任何转换**就能喂给 `toDisplay`:
+
+- gaode 模式:`toDisplay(wgs)` 内部 `wgs84ToGcj02` → GCJ-02 显示坐标 → flyTo(和 marker 放置同链路,不会错位)
+- osm 模式:`toDisplay(wgs)` 恒等 → 直接 flyTo
+
+→ geocoding 结果统一 `toDisplay(lat,lng)` 后用,与 marker 放置一致。
+
+### 10.4 实现步骤(文件改动)
+
+1. **IPC 层([src/main](../src/main))**:加 `mapique:geocode` channel,主进程用 `net`/`fetch` 调 Nominatim(带自定义 `User-Agent: WhaleTag/<version>`)。**走 main 不走 renderer**:(a) renderer fetch 外部域撞 CSP;(b) Nominatim 强制 UA,浏览器 fetch 设不了。入参 `{ query }` → 返 `{ results: Array<{ name, lat, lng }> }`(WGS-84)。
+2. **[MapiqueView.tsx](../src/renderer/components/MapiqueView.tsx)**:
+   - 搜索框 UI:`mapWrapperRef` Box(1017)内、MapContainer 后、EmptyHint 前,`position:absolute; top:8; left:8; zIndex:1000`,TextField + 结果下拉。复用已 import 的 `SearchIcon`/`TextField`/`InputAdornment`/`ClearIcon`。
+   - `FlyTo` 子组件(参考 `FitBounds` 1627-1647):props `{ target: {lat,lng,zoom}, nonce }`,`useEffect` 检 nonce 变化调 `map.flyTo([toDisplay(lat,lng)], zoom)`。放 MapContainer 内(1031)。
+   - 流程:输入(防抖 400ms)→ `ipcApi.mapiqueGeocode(query)` → 结果下拉 → 选结果 → `setFlyToTarget` + nonce++。
+3. **preload + [ipc-types](../src/shared/ipc-types.ts) + [ipc-api](../src/renderer/services/ipc-api.ts)**:加 `mapiqueGeocode(query: string): Promise<{ results: GeoSearchResult[] }>` invoke 通道。
+4. **i18n**([en/zh common.json](../src/renderer/locales/)):搜索框 placeholder(「搜索地名…」)/ 无结果 / 加载中。
+
+### 10.5 风险 / 注意
+
+- **CSP**:geocoding 必走 main IPC(renderer fetch 撞 CSP + Nominatim UA)。
+- **Nominatim 合规**:1 req/s、有效 UA、`countrycodes=cn` + `limit=5` + `accept-language=zh`、尊重结果 license。
+- **限频防抖**:搜索输入防抖 400ms,避免打字每键一请求(Nominatim 限频严格)。
+- **国内地址弱**:Nominatim 国内 POI 覆盖不如高德;后续若需国内准,可加高德 key 升级(回到 A 方案,接口已在 main IPC 层好扩展)。
+- **坐标系**:见 §10.3。
+
+### 10.6 不在本期
+
+- 反向 geocoding(点地图 → 地名)—— marker 已有坐标,非必需。
+- 搜索历史 / 收藏地点 —— 可后加(localStorage)。
+- 高德 geocoding(A 方案)/ 百度 / Google —— 留接口,后续按需加(provider 分支在 main IPC 层)。

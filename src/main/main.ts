@@ -6,7 +6,7 @@ import os from 'os';
 import { app, BrowserWindow, ipcMain, Menu, protocol, session, shell } from 'electron';
 import windowStateKeeper from 'electron-window-state';
 import { registerIpcHandlers } from './ipc';
-import { registerAiHandlers } from './ai/ipc-ai';
+import { registerAiCoreHandlers, maybeRegisterAiRuntimeHandlers } from './ai/ipc-ai-core';
 import { buildMenu } from './menu';
 import { assertWithinAllowedRoot, getAllowedRoots } from './allowed-roots';
 import { runMigration } from './migrate-date-tags';
@@ -195,7 +195,11 @@ function configureCsp(): void {
 function bootstrap(): void {
   Menu.setApplicationMenu(buildMenu());
   registerIpcHandlers();
-  registerAiHandlers();
+  registerAiCoreHandlers();
+  // Register the SDK-backed AI runtime handlers iff the optional AI component
+  // is installed (user-installed .whaleai → <userData>/components/ai). Core
+  // handlers — keys, CLI discovery, component install/state — always register.
+  void maybeRegisterAiRuntimeHandlers();
 
   // Phase 4 (§8): one-shot migration of legacy smart-tag storage form
   // (`today-20251223` → `20251223` etc.) across every allowed location.

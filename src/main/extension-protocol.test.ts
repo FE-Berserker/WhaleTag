@@ -20,7 +20,7 @@ import assert from 'node:assert/strict';
 import path from 'path';
 import os from 'os';
 import { promises as fsp } from 'fs';
-import { resolveExtensionRequest } from './extension-protocol';
+import { resolveExtensionRequest, isWithinRoot } from './extension-protocol';
 
 let EXT_ROOT: string;
 let PARENT_DIR: string;
@@ -279,5 +279,49 @@ describe('resolveExtensionRequest — cross-extension isolation', () => {
     assert.equal(r.ok, false);
     if (r.ok) return;
     assert.equal(r.status, 404);
+  });
+});
+
+describe('isWithinRoot', () => {
+  // The traversal guard compares a realpath'd child against a realpath'd
+  // root. On Windows packaged builds, Node's realpath canonicalizes the
+  // asar prefix (\\?\ prefix + drive-letter case), so the comparison MUST
+  // be case-insensitive and tolerate that shared canonical prefix. These
+  // cases lock the behavior — a regression to a case-sensitive, single-
+  // side `startsWith` (the pre-fix bug) fails the `\\?\` + case cases.
+  const sep = path.sep;
+
+  it('accepts a child directly inside root (same form)', () => {
+    assert.equal(isWithinRoot(`C:${sep}ext${sep}f.js`, `C:${sep}ext`), true);
+  });
+
+  it('accepts an exact root match', () => {
+    assert.equal(isWithinRoot(`C:${sep}ext`, `C:${sep}ext`), true);
+  });
+
+  it('is case-insensitive (drive-letter / dir case)', () => {
+    assert.equal(isWithinRoot(`c:${sep}Ext${sep}f.js`, `C:${sep}eXt`), true);
+  });
+
+  it('accepts a matching \\\\?\\ canonical prefix on BOTH sides (packaged asar case)', () => {
+    // realpath canonicalizes the prefix identically for child + root when
+    // both are realpath'd, so both carry \\?\ and must still match.
+    assert.equal(
+      isWithinRoot(`\\\\?\\C:${sep}ext${sep}f.js`, `\\\\?\\C:${sep}ext`),
+      true
+    );
+  });
+
+  it('rejects a sibling directory (escape)', () => {
+    assert.equal(isWithinRoot(`C:${sep}ext2${sep}f.js`, `C:${sep}ext`), false);
+  });
+
+  it('rejects a namesake prefix (ext-foo must not match ext)', () => {
+    // A plain startsWith('C:\\ext') would wrongly match 'C:\\ext-foo\\…';
+    // the `+ sep` guard is what prevents it.
+    assert.equal(
+      isWithinRoot(`C:${sep}ext-foo${sep}f.js`, `C:${sep}ext`),
+      false
+    );
   });
 });

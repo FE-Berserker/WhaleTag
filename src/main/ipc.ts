@@ -71,6 +71,7 @@ import {
 } from './office-cache';
 import { convertDwgToDxf, dwg2dxfBinary, odaConverterBinary } from './cad-convert';
 import { convertEbookToEpub, ebookConvertBinary } from './ebook-convert';
+import { runUserCommand } from './shell-command';
 import {
   listArchive,
   readArchiveEntry,
@@ -454,6 +455,19 @@ async function openImageFileDialog(): Promise<string | null> {
   return result.filePaths[0];
 }
 
+/** Shows the native "select AI component (.whaleai)" dialog. Returns null if cancelled. */
+async function openComponentFileDialog(): Promise<string | null> {
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile'],
+    filters: [
+      { name: 'WhaleTag AI Component', extensions: ['whaleai'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0];
+}
+
 /**
  * Wires every `fs:*` / `dialog:*` channel to its handler.
  * Called once from main.ts after the app is ready.
@@ -497,6 +511,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('dialog:openDirectory', () => openDirectoryDialog());
   ipcMain.handle('dialog:openImageFile', () => openImageFileDialog());
+  ipcMain.handle('dialog:openComponentFile', () => openComponentFileDialog());
 
   ipcMain.handle(
     'fs:rename',
@@ -784,6 +799,14 @@ export function registerIpcHandlers(): void {
         await run('nautilus', ['--select', targetPath]);
       }
     }
+  );
+
+  // Run a user-configured shell command (Settings → Commands) on a right-
+  // clicked file/folder, with the path substituted into ${path}/${dir}/${name}.
+  // Opens a NEW terminal window with the command; main quotes the path. See
+  // shell-command.ts + docs/13-security.md.
+  ipcMain.handle('shell:runCommand', (_event, template: string, targetPath: string) =>
+    runUserCommand(template, targetPath)
   );
 
   // ---- EXIF / GPS (Mapique perspective) ----

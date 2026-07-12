@@ -1,13 +1,16 @@
 /**
- * AI IPC handlers — the main-process half of the AI feature. Registered from
- * `main.ts` (alongside `registerIpcHandlers`). Mirrors the rest of Whale's
- * `ipcMain.handle` pattern, with ONE addition: streaming + approval both push
- * main→renderer.
+ * AI IPC — SDK-backed RUNTIME handlers. Registered on-demand by
+ * `maybeRegisterAiRuntimeHandlers` (in ipc-ai-core.ts) once the AI component
+ * is detected. Covers the streaming chat path + inline edit:
  *
- * Whale had no main→renderer push channel before this feature; every call was
- * `ipcRenderer.invoke`. The AI stream uses `event.sender.send('ai:chunk', …)`
- * and approvals use `event.sender.send('ai:approvalRequest', …)` — both pushed
- * to the webContents that invoked `ai:query`. Channels are fixed `ai:*` names.
+ *  - `ai:query` (streaming, pushes `ai:chunk`)
+ *  - `ai:cancel` / `ai:prewarm` / `ai:resolveApproval`
+ *  - `ai:generateTitle` / `ai:inlineEdit`
+ *
+ * `ClaudeChatRuntime` pulls the SDK lazily via `loadClaudeSdk()` at first use,
+ * so merely importing this module does not require the SDK to be resolvable
+ * yet — but it is still dynamically imported so the code path is absent from
+ * component-less installs.
  */
 import { randomUUID } from 'crypto';
 import { ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
@@ -21,16 +24,6 @@ import type { AiProvider } from './provider';
 import type { ApprovalCallback } from './providers/claude/approvalHandler';
 import { ClaudeChatRuntime } from './providers/claude/ClaudeChatRuntime';
 import { HttpChatProvider } from './providers/http/HttpChatProvider';
-import { findClaudeCLIPath } from './providers/claude/cli/findClaudeCliPath';
-import {
-  SECRET_NAMES,
-  clearApiKey,
-  clearSecret,
-  hasApiKey,
-  hasSecret,
-  setApiKey,
-  setSecret,
-} from './security/secretStore';
 import { generateTitle } from './titleGen';
 import { generateInlineEdit } from './inlineEdit';
 
@@ -40,17 +33,27 @@ const pendingApprovals = new Map<
   (decision: ApprovalDecision) => void
 >();
 
-// Both providers are cheap to keep around; the active one is picked per turn
-// from `payload.settings.provider`. `cancel` fans out to both (the inactive is
-// a no-op for that conversation id).
-const claudeRuntime = new ClaudeChatRuntime();
-const httpProvider = new HttpChatProvider();
+/** Tools the user marked "allow-always" — skip the modal thereafter (process lifetime). */
+const allowAlwaysTools = new Set<string>();
 
-function providerFor(id: AiProviderId): AiProvider {
-  return id === 'ollama' || id === 'openai' ? httpProvider : claudeRuntime;
+// Lazy singletons — instantiated on first real use, NOT at module load. This
+// keeps `ai:cancel` cheap when no turn has run yet (null-guarded below).
+let claudeRuntime: ClaudeChatRuntime | null = null;
+let httpProvider: HttpChatProvider | null = null;
+
+function getClaudeRuntime(): ClaudeChatRuntime {
+  if (!claudeRuntime) claudeRuntime = new ClaudeChatRuntime();
+  return claudeRuntime;
 }
 
-/** Push one chunk to the renderer that started this conversation. */
+function providerFor(id: AiProviderId): AiProvider {
+  if (id === 'ollama' || id === 'openai') {
+    if (!httpProvider) httpProvider = new HttpChatProvider();
+    return httpProvider;
+  }
+  return getClaudeRuntime();
+}
+
 function pushChunk(
   event: IpcMainInvokeEvent,
   conversationId: string,
@@ -66,10 +69,6 @@ function pushChunk(
  * `ai:resolveApproval`. The promise rejects cleanly if the renderer goes away
  * (destroyed handler) — the SDK then sees a denied tool.
  */
-/** Tools the user marked "allow-always" — skip the modal thereafter (in-memory,
- *  for the process lifetime). Stops per-call prompts for repetitive tools. */
-const allowAlwaysTools = new Set<string>();
-
 function makeApprovalCallback(
   sender: WebContents,
   conversationId: string
@@ -106,10 +105,6 @@ function makeApprovalCallback(
 /**
  * Run a turn in the background, streaming chunks to the sender. Returns
  * immediately; the renderer follows progress via the `ai:chunk` subscription.
- *
- * The provider is picked from `payload.settings.provider`. For the Claude CLI
- * provider, `payload.sessionId` drives multi-turn resume; HTTP providers are
- * stateless and replay `payload.history`.
  */
 function streamTurn(event: IpcMainInvokeEvent, payload: AiQueryPayload): void {
   const approvalCallback = makeApprovalCallback(event.sender, payload.conversationId);
@@ -129,7 +124,7 @@ function streamTurn(event: IpcMainInvokeEvent, payload: AiQueryPayload): void {
   })();
 }
 
-export function registerAiHandlers(): void {
+export function registerAiRuntimeHandlers(): void {
   ipcMain.handle('ai:query', async (event, payload: AiQueryPayload) => {
     streamTurn(event, payload);
     return { ok: true };
@@ -137,8 +132,9 @@ export function registerAiHandlers(): void {
 
   ipcMain.handle('ai:cancel', (_event, conversationId: string) => {
     // Fan out — only the active provider has this conversation in flight.
-    claudeRuntime.cancel(conversationId);
-    httpProvider.cancel(conversationId);
+    // Null-guarded: a cancel before any turn ran is a harmless no-op.
+    claudeRuntime?.cancel(conversationId);
+    httpProvider?.cancel(conversationId);
     return { ok: true };
   });
 
@@ -150,7 +146,7 @@ export function registerAiHandlers(): void {
         event.sender,
         payload.conversationId
       );
-      claudeRuntime.prewarm(payload, approvalCallback);
+      getClaudeRuntime().prewarm(payload, approvalCallback);
     }
     return { ok: true };
   });
@@ -166,33 +162,6 @@ export function registerAiHandlers(): void {
       return { ok: true };
     }
   );
-
-  ipcMain.handle('ai:setApiKey', (_event, key: string) => {
-    setApiKey(key);
-    return { ok: true };
-  });
-
-  ipcMain.handle('ai:clearApiKey', () => {
-    clearApiKey();
-    return { ok: true };
-  });
-
-  ipcMain.handle('ai:hasApiKey', () => hasApiKey());
-
-  // OpenAI-compatible provider key (stored encrypted alongside the Anthropic key).
-  ipcMain.handle('ai:setOpenaiKey', (_event, key: string) => {
-    setSecret(SECRET_NAMES.openai, key);
-    return { ok: true };
-  });
-  ipcMain.handle('ai:clearOpenaiKey', () => {
-    clearSecret(SECRET_NAMES.openai);
-    return { ok: true };
-  });
-  ipcMain.handle('ai:hasOpenaiKey', () => hasSecret(SECRET_NAMES.openai));
-
-  ipcMain.handle('ai:discoverCli', (_event, override: string | null) => ({
-    path: findClaudeCLIPath(override || undefined),
-  }));
 
   // Auto conversation title (HTTP providers; Claude CLI returns '' in main).
   ipcMain.handle(

@@ -5,6 +5,7 @@ node_modules/
 dist/
 release/app/dist/
 release/build/
+release/components/
 build-cache/
 .exe/
 

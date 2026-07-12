@@ -16,6 +16,9 @@ import type {
 } from './archive-types';
 import type {
   AiApprovalRequest,
+  AiComponentInstallResult,
+  AiComponentState,
+  AiComponentUninstallResult,
   AiQueryPayload,
   ApprovalDecision,
   StreamChunk,
@@ -132,6 +135,7 @@ export interface WhaleApi {
   openDirectoryDialog: () => Promise<string | null>;
   /** Shows the native file picker restricted to images. Returns null if cancelled. */
   openImageFileDialog: () => Promise<string | null>;
+  openComponentFileDialog: () => Promise<string | null>;
 
   /** Register configured location roots so main can confine writes to them. */
   setAllowedRoots: (roots: string[]) => Promise<void>;
@@ -151,6 +155,14 @@ export interface WhaleApi {
   createDirectory: (dirPath: string) => Promise<void>;
   createTextFile: (filePath: string, content: string) => Promise<void>;
   openNative: (targetPath: string) => Promise<void>;
+  /**
+   * Run a user-configured shell command (Settings → Commands) on a file/folder.
+   * Main quotes the path + opens a terminal window; resolves `{ ok: true }`
+   * once launched. Rejects with `Error(COMMAND_PATH_BLOCKED)` if the path can't
+   * be safely substituted (e.g. `%` on Windows), or the assertWithinAllowedRoot
+   * error if the path is outside a configured location.
+   */
+  runCommand: (template: string, targetPath: string) => Promise<{ ok: true }>;
 
   /**
    * Zips a directory into a sibling `<dir>.zip` (auto-suffixed if taken).
@@ -420,6 +432,10 @@ export interface WhaleApi {
   aiSetOpenaiKey: (key: string) => Promise<{ ok: true }>;
   aiClearOpenaiKey: () => Promise<{ ok: true }>;
   aiHasOpenaiKey: () => Promise<boolean>;
+  // Optional AI component (user-installed .whaleai → <userData>/components/ai).
+  aiGetComponentState: () => Promise<AiComponentState>;
+  aiInstallComponent: (filePath: string) => Promise<AiComponentInstallResult>;
+  aiUninstallComponent: () => Promise<AiComponentUninstallResult>;
   /** Subscribe to tool-call approval requests. Returns unsubscribe. */
   onAiApprovalRequest: (cb: (req: AiApprovalRequest) => void) => () => void;
   /** Subscribe to streamed chunks for the active turn. Returns unsubscribe. */

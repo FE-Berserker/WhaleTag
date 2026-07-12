@@ -312,3 +312,35 @@ export interface AiQueryPayload {
    */
   history: ChatMessage[];
 }
+
+// ---------------------------------------------------------------------------
+// Optional AI component (user-installed `.whaleai` → <userData>/components/ai).
+// The Claude Code CLI + Agent SDK are NOT shipped in the main installer; users
+// install this component on demand. These types cross the main/preload/renderer
+// boundary so the renderer can show install status and drive install/uninstall.
+// ---------------------------------------------------------------------------
+
+/** Snapshot of the installed AI component (or `{ installed: false }`). */
+export interface AiComponentState {
+  installed: boolean;
+  version?: string;
+  /** `@anthropic-ai/claude-code` version shipped in the component. */
+  claudeCodeVersion?: string;
+  /** `@anthropic-ai/claude-agent-sdk` version shipped in the component. */
+  sdkVersion?: string;
+  /** Absolute path to the installed component dir. */
+  path?: string;
+}
+
+/** Result of installing the AI component from a `.whaleai` archive. */
+export interface AiComponentInstallResult {
+  ok: boolean;
+  state?: AiComponentState;
+  error?: string;
+}
+
+/** Result of uninstalling the AI component. */
+export interface AiComponentUninstallResult {
+  ok: boolean;
+  error?: string;
+}

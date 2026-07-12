@@ -21,6 +21,22 @@ import path from 'path';
 import * as fsp from 'fs/promises';
 
 /**
+ * Case-insensitive, separator-aware "is `child` inside `root`?" used by both
+ * traversal guards. Exported for unit tests.
+ *
+ * On Windows, `realpath` (GetFinalPathNameByHandle) canonicalizes the prefix
+ * of an asar path — prepending `\\?\` and possibly changing drive-letter case
+ * — so a plain case-sensitive `startsWith` on mixed forms false-rejects every
+ * packaged asset. Lowercasing both sides and matching on `root + path.sep`
+ * (mirrors `assertWithinAllowedRoot` in allowed-roots.ts) is the robust check.
+ */
+export function isWithinRoot(child: string, root: string): boolean {
+  const c = child.toLowerCase();
+  const r = root.toLowerCase();
+  return c === r || c.startsWith(r + path.sep);
+}
+
+/**
  * Resolve a `whale-extension://<extId>/<relPath>` URL to either the
  * file bytes + MIME type, or a structured error with the right HTTP
  * status.
@@ -59,17 +75,24 @@ export async function resolveExtensionRequest(
   // First-line guard: after URL-parser `..` normalization, the
   // string-level resolved path MUST stay inside extRoot. (URL
   // normalization already collapses `..`, so this catches the rare
-  // hand-crafted URL or symlink-path that bypasses the parser.)
-  if (fullPath !== extRoot && !fullPath.startsWith(extRoot + path.sep)) {
+  // hand-crafted URL or symlink-path that bypasses the parser.) Case-
+  // insensitive via `isWithinRoot`; the realpath guard below is the
+  // authority on canonical form.
+  if (!isWithinRoot(fullPath, extRoot)) {
     return { ok: false, status: 403, msg: 'Path traversal blocked' };
   }
   // Second-line guard: also check the *real* path (after resolving
-  // symlinks). A symlink living inside extRoot that points outside
-  // would pass the string-level check above. Match the `whale-file`
-  // protocol's `assertWithinAllowedRoot` pattern (see main.ts) which
-  // uses realpath for the same reason. The realpath here is scoped
-  // to extRoot — it does NOT follow symlinks inside extRoot that
-  // point to other in-root locations, only ones that escape.
+  // symlinks). A symlink living inside extRoot that points outside would
+  // pass the string-level check above. Mirrors `assertWithinAllowedRoot`
+  // (allowed-roots.ts), which realpaths + lowercases BOTH sides.
+  //
+  // Realpath-ing `extRoot` too is the load-bearing fix on Windows packaged
+  // builds: Node's realpath (GetFinalPathNameByHandle) canonicalizes the
+  // real-FS prefix of an asar path — prepending `\\?\` and possibly changing
+  // drive-letter case — so a realpath'd file path never string-matches the
+  // plain `extRoot`. Without realpath-ing + lowercasing `extRoot` as well,
+  // EVERY packaged (asar) asset request false-fires this 403 (dev passes
+  // because its real-FS paths realpath to the same string they started as).
   let realFullPath: string;
   try {
     realFullPath = await fsp.realpath(fullPath);
@@ -89,10 +112,14 @@ export async function resolveExtensionRequest(
       msg: `whale-extension realpath failed: ${(err as Error).message}`,
     };
   }
-  if (
-    realFullPath !== extRoot &&
-    !realFullPath.startsWith(extRoot + path.sep)
-  ) {
+  let realExtRoot = extRoot;
+  try {
+    realExtRoot = await fsp.realpath(extRoot);
+  } catch {
+    // extRoot not real-pathable (shouldn't happen — it's the ext dir);
+    // fall back to the string form. The first-line guard still governs.
+  }
+  if (!isWithinRoot(realFullPath, realExtRoot)) {
     return { ok: false, status: 403, msg: 'Path traversal blocked' };
   }
   let buf: Buffer;

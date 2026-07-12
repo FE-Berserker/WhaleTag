@@ -13,6 +13,9 @@ import type { ExtensionRegistry, RevisionInfo } from '../../shared/extension-typ
 import type { EbookAnnotations } from '../../shared/ebook-annotations';
 import type {
   AiApprovalRequest,
+  AiComponentInstallResult,
+  AiComponentState,
+  AiComponentUninstallResult,
   AiQueryPayload,
   ApprovalDecision,
   StreamChunk,
@@ -64,6 +67,8 @@ export const ipcApi = {
     requireApi().openDirectoryDialog(),
   openImageFileDialog: (): Promise<string | null> =>
     requireApi().openImageFileDialog(),
+  openComponentFileDialog: (): Promise<string | null> =>
+    requireApi().openComponentFileDialog(),
 
   /** Register configured location roots so main can confine writes to them. */
   setAllowedRoots: (roots: string[]): Promise<void> =>
@@ -90,6 +95,8 @@ export const ipcApi = {
     requireApi().createTextFile(filePath, content),
   openNative: (targetPath: string): Promise<void> =>
     requireApi().openNative(targetPath),
+  runCommand: (template: string, targetPath: string): Promise<{ ok: true }> =>
+    requireApi().runCommand(template, targetPath),
 
   /** Zip a folder into a sibling `<dir>.zip`; resolves with the archive path. */
   zipDirectory: (dirPath: string): Promise<string> =>
@@ -333,6 +340,14 @@ export const ipcApi = {
     requireApi().aiSetOpenaiKey(key),
   aiClearOpenaiKey: (): Promise<{ ok: true }> => requireApi().aiClearOpenaiKey(),
   aiHasOpenaiKey: (): Promise<boolean> => requireApi().aiHasOpenaiKey(),
+  aiGetComponentState: (): Promise<AiComponentState> =>
+    requireApi().aiGetComponentState(),
+  aiInstallComponent: (
+    filePath: string
+  ): Promise<AiComponentInstallResult> =>
+    requireApi().aiInstallComponent(filePath),
+  aiUninstallComponent: (): Promise<AiComponentUninstallResult> =>
+    requireApi().aiUninstallComponent(),
   onAiApprovalRequest: (
     cb: (req: AiApprovalRequest) => void
   ): (() => void) => requireApi().onAiApprovalRequest(cb),

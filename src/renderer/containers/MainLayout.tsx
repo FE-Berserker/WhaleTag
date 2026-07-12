@@ -54,7 +54,7 @@ export default function MainLayout() {
   // tabbed panel so the left side takes a single column (~240px) instead of
   // two (~500px), giving the workspace room. Each renders "embedded" (no own
   // header — the tab bar below replaces it).
-  const narrow = useMediaQuery('(max-width: 1200px)');
+  const narrow = useMediaQuery('(max-width: 1400px)');
   const [leftTab, setLeftTab] = useState<'locations' | 'tree'>(
     currentLocation ? 'tree' : 'locations'
   );

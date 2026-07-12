@@ -25,7 +25,7 @@ import globalJsdom from 'global-jsdom';
 
 import { before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { render, cleanup } from '@testing-library/react';
+import { render, cleanup, fireEvent } from '@testing-library/react';
 import { I18nextProvider, initReactI18next } from 'react-i18next';
 import { Provider } from 'react-redux';
 import { createStore } from 'redux';
@@ -36,6 +36,7 @@ import { BackgroundPlayerContextProvider } from '../hooks/BackgroundPlayerContex
 import type { ContextMenuPosition } from './EntryContextMenu';
 import type { DirEntry } from '../../shared/ipc-types';
 import type { ExtensionRegistry } from '../../shared/extension-types';
+import type { UserCommand } from '../../shared/shell-types';
 
 function makeT(): (key: string) => string {
   return ((key: string) => key) as unknown as (key: string) => string;
@@ -58,6 +59,7 @@ function entry(name: string, extra: Partial<DirEntry> = {}): DirEntry {
 interface Spies {
   addTag?: { called: number; last: { entry: DirEntry; tag: string } | null };
   removeTag?: { called: number; last: { entry: DirEntry; tag: string } | null };
+  runCommand?: { called: number; last: { entry: DirEntry; command: UserCommand } | null };
 }
 
 const EMPTY_REGISTRY: ExtensionRegistry = {
@@ -109,13 +111,15 @@ function baseProps(): Omit<
     userDefaults: {},
     enabledOverrides: {},
     getCompatibleExtensions: () => [],
+    userCommands: [],
+    onRunCommand: () => {},
   };
 }
 
 function renderMenu(
   ctx: ContextMenuPosition | null,
   spies: Spies = {},
-  opts: { isInBulkContext?: (e: DirEntry) => boolean; tagsByName?: Map<string, string[]> } = {}
+  opts: { isInBulkContext?: (e: DirEntry) => boolean; tagsByName?: Map<string, string[]>; userCommands?: UserCommand[] } = {}
 ) {
   return render(
     <I18nextProvider i18n={i18next} defaultNS="common">
@@ -126,6 +130,7 @@ function renderMenu(
             ctx={ctx}
             isInBulkContext={opts.isInBulkContext ?? (() => false)}
             tagsByName={opts.tagsByName ?? new Map()}
+            userCommands={opts.userCommands ?? []}
             onAddTag={(e, tag) => {
               spies.addTag = spies.addTag ?? { called: 0, last: null };
               spies.addTag.called += 1;
@@ -135,6 +140,11 @@ function renderMenu(
               spies.removeTag = spies.removeTag ?? { called: 0, last: null };
               spies.removeTag.called += 1;
               spies.removeTag.last = { entry: e, tag };
+            }}
+            onRunCommand={(e, command) => {
+              spies.runCommand = spies.runCommand ?? { called: 0, last: null };
+              spies.runCommand.called += 1;
+              spies.runCommand.last = { entry: e, command };
             }}
           />
         </BackgroundPlayerContextProvider>
@@ -259,5 +269,95 @@ describe('EntryContextMenu #3: closed state', () => {
     cleanup();
     const { queryByTestId } = renderMenu(null);
     assert.equal(queryByTestId('entry-edit-tags'), null);
+  });
+});
+
+// ---------------------------------------------------------------------
+// #4: "Commands" submenu — lists applicable user commands, hides when
+// none apply (empty / disabled / wrong entry kind), routes a click
+// through onRunCommand with the right entry + command.
+// ---------------------------------------------------------------------
+describe('EntryContextMenu #4: Commands submenu', () => {
+  it('lists an applicable command + routes a click through onRunCommand', async () => {
+    cleanup();
+    const e = entry('data.csv');
+    const cmds: UserCommand[] = [
+      {
+        id: 'c1',
+        label: 'Process data',
+        template: 'python process.py ${path}',
+        applyToFiles: true,
+        applyToFolders: false,
+        enabled: true,
+      },
+    ];
+    const spies: Spies = {};
+    const { findByText } = renderMenu(
+      { x: 0, y: 0, entry: e },
+      spies,
+      { userCommands: cmds }
+    );
+    const item = await findByText('Process data');
+    fireEvent.click(item);
+    assert.equal(spies.runCommand?.called, 1);
+    assert.equal(spies.runCommand?.last?.entry.path, '/root/data.csv');
+    assert.equal(spies.runCommand?.last?.command.id, 'c1');
+  });
+
+  it('hides the submenu when the command only applies to folders (entry is a file)', async () => {
+    cleanup();
+    const e = entry('data.csv');
+    const cmds: UserCommand[] = [
+      {
+        id: 'c1',
+        label: 'Folder only',
+        template: 'ls ${path}',
+        applyToFiles: false,
+        applyToFolders: true,
+        enabled: true,
+      },
+    ];
+    const { queryByText } = renderMenu(
+      { x: 0, y: 0, entry: e },
+      {},
+      { userCommands: cmds }
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(queryByText('Folder only'), null);
+    assert.equal(queryByText('runCommand'), null); // header absent too
+  });
+
+  it('hides the submenu when the commands list is empty', async () => {
+    cleanup();
+    const e = entry('data.csv');
+    const { queryByText } = renderMenu(
+      { x: 0, y: 0, entry: e },
+      {},
+      { userCommands: [] }
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(queryByText('runCommand'), null);
+  });
+
+  it('hides a disabled command', async () => {
+    cleanup();
+    const e = entry('data.csv');
+    const cmds: UserCommand[] = [
+      {
+        id: 'c1',
+        label: 'Disabled cmd',
+        template: 'echo ${path}',
+        applyToFiles: true,
+        applyToFolders: false,
+        enabled: false,
+      },
+    ];
+    const { queryByText } = renderMenu(
+      { x: 0, y: 0, entry: e },
+      {},
+      { userCommands: cmds }
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(queryByText('Disabled cmd'), null);
   });
 });

@@ -42,6 +42,7 @@ export function buildSystemPrompt(ctx: SystemPromptContext): string {
     sections.push(buildPerspectivesSection(ctx.viewMode, ctx.subview, ctx.viewDepth).trim());
   }
   sections.push(EXTENSIONS_SECTION.trim());
+  sections.push(USER_COMMANDS_SECTION.trim());
   sections.push(TOOL_MAP_SECTION.trim());
   sections.push(SAFETY_SECTION.trim());
   if (ctx.customInstructions && ctx.customInstructions.trim()) {
@@ -194,6 +195,30 @@ click the toolbar ✨ button to have you rewrite the selection. This works only
 with the HTTP providers (Ollama / OpenAI); the Claude CLI path is not wired
 (tell the user to switch provider if they want it).
 `;
+
+const USER_COMMANDS_SECTION = [
+  '# User commands',
+  '',
+  'Whale can run a user-configured shell command on a right-clicked file or',
+  'folder. The user defines commands in **Settings → Commands** (a label + a',
+  'command-line template with placeholders), then right-clicks any file/folder',
+  '→ **Commands** submenu → picks one → a new terminal window opens with the',
+  'command executed there.',
+  '',
+  'Placeholders (Whale shell-quotes them automatically — write them BARE, no',
+  'surrounding quotes):',
+  '- `${path}` — absolute path of the right-clicked file or folder',
+  '- `${dir}` — parent directory',
+  '- `${name}` — basename',
+  '',
+  'Example template: `python process.py ${path}`. On Windows, filenames',
+  'containing `%` cannot be safely substituted and are rejected.',
+  '',
+  '**When to mention it**: if the user wants to run their own script / CLI tool',
+  'on files repeatedly (data processing, format conversion, git, a custom',
+  'opener), suggest they set up a User command — it becomes a one-click',
+  'right-click shortcut they keep, rather than you running it ad-hoc each time.',
+].join('\n');
 
 const TOOL_MAP_SECTION = `
 # Tool map
