@@ -245,6 +245,17 @@ function copyExtensionRuntimeAssets(id) {
     } else {
       console.warn(`md-editor: katex.min.css not found at ${katexCss}`);
     }
+    // KaTeX's CSS references `fonts/KaTeX_*.woff2|.woff|.ttf` (60 files) relative
+    // to katex.min.css — copy the whole fonts/ dir so rendered math uses the
+    // proper Main/Math/Size/Caligraphic fonts. Without it the formulas render in
+    // a fallback font (wrong glyphs, no math italic). Same-origin under the main
+    // iframe's `default-src 'self'`, so no CSP change is needed.
+    const katexFontsSrc = path.join(katexDist, 'fonts');
+    if (fs.existsSync(katexFontsSrc)) {
+      fs.cpSync(katexFontsSrc, path.join(destDir, 'fonts'), { recursive: true });
+    } else {
+      console.warn(`md-editor: katex fonts/ not found at ${katexFontsSrc}`);
+    }
     return;
   }
 

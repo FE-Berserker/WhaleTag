@@ -2097,20 +2097,8 @@ export function _resetKatexSandboxForTest(): void {
 export async function renderKatex(container: HTMLElement): Promise<void> {
   const blocks = extractKatexBlocks(container);
   if (blocks.length === 0) return;
-  // eslint-disable-next-line no-console
-  console.log(`[md-editor] renderKatex: ${blocks.length} block(s) to render`);
 
   const sb = await getKatexSandbox();
-  sb.ready
-    .then(() => {
-      // eslint-disable-next-line no-console
-      console.log('[md-editor] renderKatex: sandbox ready');
-    })
-    .catch((err) => {
-      // eslint-disable-next-line no-console
-      console.warn('[md-editor] katex sandbox failed to start', err);
-    });
-
   const { newKatexId } = await import('./katex-sandbox');
 
   // Each equation is independent — Promise.all + per-block try/catch
