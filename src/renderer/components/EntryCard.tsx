@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { memo, useMemo, useRef } from 'react';
 import { useDrag, useDrop } from 'react-dnd';
 import { Box, Card, Typography } from '@mui/material';
 
@@ -42,7 +42,7 @@ function todayIsoLocal(): string {
  * list/grid/Matrix continue to use). FileList doesn't pass this prop, so the
  * fallback path is the existing FileList behavior.
  */
-export default function EntryCard({
+function EntryCardBase({
   entry,
   data,
   renderContextMenu,
@@ -309,3 +309,21 @@ export default function EntryCard({
     </Card>
   );
 }
+
+/**
+ * P0-4 (perf audit): memo'd so the Kanban / Matrix / Gantt card stacks don't
+ * re-run `useDrag` + `useDrop` (+ the nested `ThumbIcon` IntersectionObserver
+ * / redux subscription and `EntryTagChips`) on every unrelated parent
+ * re-render. Props are all reference-stable from the call sites:
+ *   - `entry`    — a DirEntry ref reused from `data.entries` (per-card stable)
+ *   - `data`     — FileList's `cellData` useMemo (re-binds only when a real
+ *                  input changes; selection flips `isSelected`'s identity,
+ *                  which IS a cellData dep, so a selection change still
+ *                  re-renders every card with the fresh `selectedPaths`)
+ *   - `renderContextMenu` — a `useCallback` in each view (see P0-4 notes)
+ * So the shallow compare bails out unless one genuinely changes. `ThumbIcon`
+ * keeps updating on its own when a thumbnail loads (its own useState), so
+ * memoizing the card does not freeze thumbnail display — same model as the
+ * react-window-memoized list `Row`.
+ */
+export default memo(EntryCardBase);

@@ -132,6 +132,17 @@ export default function KanbanView({
     [data.onMoreFileActions]
   );
 
+  // P0-4 (perf audit): stable per-card menu opener. Passed down to every
+  // KanbanColumn so the column's own `renderContextMenu` (also useCallback'd)
+  // stays referentially stable — required for the memo'd <EntryCard> to bail
+  // out on unrelated re-renders. `setKanbanMenu` is a stable useState setter.
+  const openEntryMenu = useCallback(
+    (entry: DirEntry, x: number, y: number) => {
+      setKanbanMenu({ entry, x, y });
+    },
+    []
+  );
+
   return (
     <>
       <Box
@@ -157,9 +168,7 @@ export default function KanbanView({
             onMoveToColumn={onMoveToColumn}
             onOpenWorkflowManager={() => setWfMgrOpen(true)}
             onCloseEntryMenu={() => setKanbanMenu(null)}
-            onOpenEntryMenu={(entry, x, y) =>
-              setKanbanMenu({ entry, x, y })
-            }
+            onOpenEntryMenu={openEntryMenu}
           />
         ))}
       </Box>
@@ -245,6 +254,19 @@ function KanbanColumn({
     setColumnCtx(null);
     if (tag !== null) onCreateTagged?.(kind, tag);
   };
+
+  // P0-4 (perf audit): stable per-card right-click handler. Closes this
+  // column's own menu first (so the two never stack) then forwards to the
+  // parent's stable `onOpenEntryMenu`. Both deps are stable (useState setter +
+  // parent useCallback), so this never re-creates — keeping the memo'd
+  // <EntryCard> from busting on column-local state changes (menu open/close).
+  const renderCardContextMenu = useCallback(
+    (e: DirEntry, x: number, y: number) => {
+      setColumnCtx(null);
+      onOpenEntryMenu(e, x, y);
+    },
+    [onOpenEntryMenu]
+  );
 
   // H.25 P1-2: prefer the parent's `data.resolveEntry` (O(1) path → entry
   // lookup) over the previous `data.entries.find(e => e.path === p)` (O(N)
@@ -356,12 +378,7 @@ function KanbanColumn({
             key={entry.path}
             entry={entry}
             data={data}
-            renderContextMenu={(e, x, y) => {
-              // Close this column's own menu first so we never show both
-              // the column menu and the per-card menu at the same time.
-              setColumnCtx(null);
-              onOpenEntryMenu(e, x, y);
-            }}
+            renderContextMenu={renderCardContextMenu}
           />
         ))}
       </Box>

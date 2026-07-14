@@ -1,4 +1,5 @@
 import {
+  memo,
   useEffect,
   useMemo,
   useReducer,
@@ -98,6 +99,15 @@ const OSM_TILE_ATTRIBUTION =
 const PANEL_WIDTH = 300;
 const PREVIEW_HEIGHT = 120;
 
+// P0-3 (perf audit): stable empty defaults. The `tagColors` / `groups`
+// props default to these constants (not inline `{}` / `[]`, which would be a
+// fresh reference each render) so the React.memo'd <GeoMarker> children that
+// receive them can bail out on unrelated re-renders. In practice FileList
+// passes shallow-stable values from useShallowEqualSelector anyway; this is
+// defense for the no-arg / test path.
+const EMPTY_TAG_COLORS: Record<string, string> = {};
+const EMPTY_GROUPS: TagGroup[] = [];
+
 export interface MapiqueViewProps {
   entries: DirEntry[];
   geoByName: Map<string, { lat: number; lng: number } | null>;
@@ -164,8 +174,8 @@ export default function MapiqueView({
   onClearGeo,
   onAddTag,
   onRemoveTag,
-  tagColors = {},
-  groups = [],
+  tagColors = EMPTY_TAG_COLORS,
+  groups = EMPTY_GROUPS,
 }: MapiqueViewProps) {
   // Re-render whenever the parent's `geoByName` / `tagsByName` props change
   // identity, even if React's normal prop-diff path doesn't take effect for
@@ -452,16 +462,40 @@ export default function MapiqueView({
     return byFilter.filter((e) => e.name.toLowerCase().includes(q));
   }, [trayEntries, trayFilter, locatedPaths, nameQuery]);
 
+  // P0-3 (perf audit): hold the latest tray snapshot + path→index map in refs
+  // so `selectRow` (used by BOTH tray rows and map markers) can be
+  // referentially stable. Without this, `selectRow` rebuilds on every
+  // `setMapCenter` — a `moveend` recomputes `trayEntries` for the `distance`
+  // sort (mapCenter is in its dep list), so `visibleTrayEntries` and
+  // `selectRow` get fresh identities on every pan. The marker click handler
+  // built on `selectRow` would then bust <GeoMarker>'s React.memo on every
+  // pan, rebuilding every Leaflet marker (the exact cost P0-3 removes).
+  const visibleTrayEntriesRef = useRef(visibleTrayEntries);
+  visibleTrayEntriesRef.current = visibleTrayEntries;
+  const trayIndexByPath = useMemo(() => {
+    const m = new Map<string, number>();
+    for (let i = 0; i < visibleTrayEntries.length; i += 1) {
+      m.set(visibleTrayEntries[i].path, i);
+    }
+    return m;
+  }, [visibleTrayEntries]);
+  const trayIndexByPathRef = useRef(trayIndexByPath);
+  trayIndexByPathRef.current = trayIndexByPath;
+
   const selectRow = useCallback(
     (index: number, mods: { shift: boolean; ctrl: boolean }) => {
-      const entry = visibleTrayEntries[index];
+      // P0-3: read the tray through a ref so this callback never changes
+      // identity when the tray reorders (pan / sort / filter) — see the refs
+      // above. Behaves identically to the prior closure-over-array version.
+      const tray = visibleTrayEntriesRef.current;
+      const entry = tray[index];
       if (!entry) return;
       setSelected((prev) => {
         const next = new Set(prev);
         if (mods.shift && selectAnchorRef.current !== null) {
           const a = selectAnchorRef.current;
           const [lo, hi] = a < index ? [a, index] : [index, a];
-          for (let i = lo; i <= hi; i += 1) next.add(visibleTrayEntries[i].path);
+          for (let i = lo; i <= hi; i += 1) next.add(tray[i].path);
         } else if (mods.ctrl) {
           if (next.has(entry.path)) next.delete(entry.path);
           else next.add(entry.path);
@@ -475,7 +509,7 @@ export default function MapiqueView({
       });
       setActiveEntry(entry);
     },
-    [visibleTrayEntries]
+    []
   );
 
   // H.4 (plan §H.4) extended for Mapique: an honest 3-state select-all that
@@ -909,6 +943,48 @@ export default function MapiqueView({
     ]
   );
 
+  // P0-3 (perf audit): map-marker interaction handlers, kept referentially
+  // stable so the React.memo'd <GeoMarker> children bail out on panning /
+  // sorting / unrelated state instead of rebuilding every Leaflet marker
+  // (fresh DivIcon + react-leaflet event rebind) each render. Volatile data
+  // (tray index, applySetGeo) is read through refs so the handler identities
+  // never change.
+  const applySetGeoRef = useRef(applySetGeo);
+  applySetGeoRef.current = applySetGeo;
+
+  const handleMarkerClick = useCallback(
+    (path: string, mods: { shift: boolean; ctrl: boolean }) => {
+      const idx = trayIndexByPathRef.current.get(path);
+      if (idx === undefined) return;
+      selectRow(idx, mods);
+    },
+    [selectRow]
+  );
+
+  const handleMarkerContextMenu = useCallback(
+    (geo: GeoEntry, x: number, y: number) => {
+      setCtxMenu({
+        x,
+        y,
+        type: 'marker',
+        entry: geo.entry,
+        lat: geo.lat,
+        lng: geo.lng,
+      });
+    },
+    []
+  );
+
+  const handleMarkerDragEnd = useCallback(
+    (geo: GeoEntry, lat: number, lng: number) => {
+      const wgs = fromDisplay(lat, lng);
+      lastDragEndAtRef.current = Date.now();
+      applySetGeoRef.current(geo.entry, wgs.lat, wgs.lng);
+      setNotice({ message: t('mapiqueGeoUpdated'), undoable: true });
+    },
+    [fromDisplay, t]
+  );
+
   const activeGeo = activeEntry ? geoByName.get(activeEntry.path) ?? null : null;
   const activeTags = activeEntry ? tagsByName.get(activeEntry.path) ?? [] : [];
 
@@ -1042,62 +1118,29 @@ export default function MapiqueView({
             {knownGeo.map((geo) => {
               const isActive = activeEntry?.path === geo.entry.path;
               const isSel = selected.has(geo.entry.path);
-              const color = geoColorMap.get(geo.entry.path) ?? getGeoColor(geo.lat, geo.lng);
+              const color =
+                geoColorMap.get(geo.entry.path) ?? getGeoColor(geo.lat, geo.lng);
+              const [dLat, dLng] = toDisplay(geo.lat, geo.lng);
               return (
-                <Marker
+                <GeoMarker
                   key={geo.entry.path}
-                  position={toDisplay(geo.lat, geo.lng)}
-                  icon={makePinIcon(
-                    color,
-                    isActive ? 'active' : isSel ? 'selected' : 'normal',
-                    geo.entry.path
-                  )}
+                  geo={geo}
+                  color={color}
+                  state={isActive ? 'active' : isSel ? 'selected' : 'normal'}
                   draggable={canEdit && isActive}
-                  eventHandlers={{
-                    click: (e) => {
-                      const native = e.originalEvent as MouseEvent | undefined;
-                      selectRow(visibleTrayEntries.findIndex((en) => en.path === geo.entry.path), {
-                        shift: native?.shiftKey ?? false,
-                        ctrl: (native?.ctrlKey ?? false) || (native?.metaKey ?? false),
-                      });
-                    },
-                    contextmenu: (e) => {
-                      const native = e.originalEvent as MouseEvent | undefined;
-                      if (!native) return;
-                      native.preventDefault();
-                      native.stopPropagation();
-                      setCtxMenu({
-                        x: native.clientX,
-                        y: native.clientY,
-                        type: 'marker',
-                        entry: geo.entry,
-                        lat: geo.lat,
-                        lng: geo.lng,
-                      });
-                    },
-                    dragend: (e) => {
-                      const m = e.target as L.Marker;
-                      const ll = m.getLatLng();
-                      const wgs = fromDisplay(ll.lat, ll.lng);
-                      lastDragEndAtRef.current = Date.now();
-                      applySetGeo(geo.entry, wgs.lat, wgs.lng);
-                      setNotice({ message: t('mapiqueGeoUpdated'), undoable: true });
-                    },
-                  }}
-                >
-                  <Popup maxWidth={220} minWidth={180}>
-                    <MapPopup
-                      geo={geo}
-                      thumbCache={thumbCache}
-                      tags={tagsByName.get(geo.entry.path) ?? []}
-                      tagColors={tagColors}
-                      groups={groups}
-                      t={t}
-                      provider={provider}
-                      onOpen={handleOpen}
-                    />
-                  </Popup>
-                </Marker>
+                  displayLat={dLat}
+                  displayLng={dLng}
+                  onSelect={handleMarkerClick}
+                  onContextMenu={handleMarkerContextMenu}
+                  onDragEnd={handleMarkerDragEnd}
+                  thumbCache={thumbCache}
+                  tagsByName={tagsByName}
+                  tagColors={tagColors}
+                  groups={groups}
+                  t={t}
+                  provider={provider}
+                  onOpen={handleOpen}
+                />
               );
             })}
           </MarkerClusterGroup>
@@ -1520,6 +1563,110 @@ export default function MapiqueView({
   </Box>
   );
 }
+
+/**
+ * P0-3 (perf audit): a single geo marker, React.memo'd so it only re-renders
+ * when its OWN inputs change (active/selected state, color, position,
+ * draggable). The parent re-renders on every pan / select / hover / sort /
+ * `setMapCenter`, but unchanged markers bail out entirely — no fresh
+ * `makePinIcon` DivIcon (DOM rebuild) and no react-leaflet event rebind.
+ *
+ * Granularity matters: passing the primitive `state` ('normal' | 'selected'
+ * | 'active') instead of the whole `selected` Set means a selection change
+ * only re-renders the one marker whose state actually changed, not every
+ * marker. The icon / position / event-handlers are each memoized inside so
+ * that even when a re-render does occur, react-leaflet skips setIcon /
+ * setPosition / (un)bind for the fields that didn't change.
+ */
+const GeoMarker = memo(function GeoMarker({
+  geo,
+  color,
+  state,
+  draggable,
+  displayLat,
+  displayLng,
+  onSelect,
+  onContextMenu,
+  onDragEnd,
+  thumbCache,
+  tagsByName,
+  tagColors,
+  groups,
+  t,
+  provider,
+  onOpen,
+}: {
+  geo: GeoEntry;
+  color: string;
+  state: 'normal' | 'selected' | 'active';
+  draggable: boolean;
+  displayLat: number;
+  displayLng: number;
+  onSelect: (path: string, mods: { shift: boolean; ctrl: boolean }) => void;
+  onContextMenu: (geo: GeoEntry, x: number, y: number) => void;
+  onDragEnd: (geo: GeoEntry, lat: number, lng: number) => void;
+  thumbCache: Map<string, string>;
+  tagsByName: Map<string, string[]>;
+  tagColors?: Record<string, string>;
+  groups?: TagGroup[];
+  t: TFunction;
+  provider?: MapProvider;
+  onOpen?: (entry: DirEntry) => void;
+}) {
+  const icon = useMemo(
+    () => makePinIcon(color, state, geo.entry.path),
+    [color, state, geo.entry.path]
+  );
+  const position = useMemo<[number, number]>(
+    () => [displayLat, displayLng],
+    [displayLat, displayLng]
+  );
+  const eventHandlers = useMemo(
+    () => ({
+      click: (e: L.LeafletMouseEvent) => {
+        const native = e.originalEvent as MouseEvent | undefined;
+        onSelect(geo.entry.path, {
+          shift: native?.shiftKey ?? false,
+          ctrl: (native?.ctrlKey ?? false) || (native?.metaKey ?? false),
+        });
+      },
+      contextmenu: (e: L.LeafletMouseEvent) => {
+        const native = e.originalEvent as MouseEvent | undefined;
+        if (!native) return;
+        native.preventDefault();
+        native.stopPropagation();
+        onContextMenu(geo, native.clientX, native.clientY);
+      },
+      dragend: (e: L.DragEndEvent) => {
+        const m = e.target as L.Marker;
+        const ll = m.getLatLng();
+        onDragEnd(geo, ll.lat, ll.lng);
+      },
+    }),
+    [geo, onSelect, onContextMenu, onDragEnd]
+  );
+  return (
+    <Marker
+      position={position}
+      icon={icon}
+      draggable={draggable}
+      eventHandlers={eventHandlers}
+    >
+      <Popup maxWidth={220} minWidth={180}>
+        <MapPopup
+          geo={geo}
+          thumbCache={thumbCache}
+          tags={tagsByName.get(geo.entry.path) ?? []}
+          tagColors={tagColors}
+          groups={groups}
+          t={t}
+          provider={provider}
+          onOpen={onOpen}
+        />
+      </Popup>
+    </Marker>
+  );
+});
 
 /** H.26 P0-1: captures map blank right-clicks and forwards display coords. */
 function MapContextMenuHandler({

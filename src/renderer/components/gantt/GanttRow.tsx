@@ -90,7 +90,13 @@ interface GanttRowProps {
    *  PointerEvent is forwarded so the view can position the popup near
    *  the click point instead of MUI's centered default. */
   onClick: (entry: DirEntry, e: React.PointerEvent) => void;
-  onCommit: (path: string, next: GanttPeriod) => void;
+  /**
+   * Drag-to-move / drag-to-resize commit. Entry-scoped (P1-5): GanttRow binds
+   * its own `row.entry` when forwarding to <GanttBar>, so GanttTimeline can
+   * pass a stable reference through instead of a per-row adapter (which would
+   * bust GanttRow's memo every render). Mirrors the `onClick` binding below.
+   */
+  onCommit: (entry: DirEntry, next: GanttPeriod) => void;
   onContextMenu: (entry: DirEntry, clientX: number, clientY: number) => void;
   /** P0 #2: today's date as YYYY-MM-DD — drives overdue/in-progress
    *  visual coding on the bar. Threaded down from GanttTimeline. */
@@ -386,7 +392,7 @@ function GanttRowImpl({
           // as React.PointerEvent instead of as the first-param
           // `entryPath: string` (which it does for a 1-param arrow).
           onClick={(_path, e) => onClick(entry, e)}
-          onCommit={onCommit}
+          onCommit={(_path, next) => onCommit(entry, next)}
           todayKey={todayKey}
           t={t}
           focused={focused}

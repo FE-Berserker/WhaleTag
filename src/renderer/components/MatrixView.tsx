@@ -121,6 +121,17 @@ export default function MatrixView({ data, onMoveToColumn, stages }: MatrixViewP
     [data.onMoreFileActions]
   );
 
+  // P0-4 (perf audit): stable per-card menu opener, shared by Quadrant and
+  // UntaggedTray. `setMatrixMenu` is a stable useState setter, so this never
+  // re-creates — letting the children's own `renderContextMenu` callbacks
+  // stay stable and the memo'd <EntryCard> bail out on unrelated re-renders.
+  const openEntryMenu = useCallback(
+    (entry: DirEntry, x: number, y: number) => {
+      setMatrixMenu({ entry, x, y });
+    },
+    []
+  );
+
   return (
     <Box
       sx={{
@@ -158,9 +169,7 @@ export default function MatrixView({ data, onMoveToColumn, stages }: MatrixViewP
             // H.28 P0-1: card right-click → open MatrixEntryMenu. Reuse
             // the same `setMatrixMenu` setter as MatrixView's main
             // container; quadrant containers don't need their own menu.
-            onOpenEntryMenu={(entry, x, y) =>
-              setMatrixMenu({ entry, x, y })
-            }
+            onOpenEntryMenu={openEntryMenu}
           />
         ))}
       </Box>
@@ -171,7 +180,7 @@ export default function MatrixView({ data, onMoveToColumn, stages }: MatrixViewP
           entries={untagged}
           data={data}
           onMoveToColumn={onMoveToColumn}
-          onOpenEntryMenu={(entry, x, y) => setMatrixMenu({ entry, x, y })}
+          onOpenEntryMenu={openEntryMenu}
         />
       ) : null}
 
@@ -235,6 +244,19 @@ function Quadrant({ value, entries, data, onMoveToColumn, onOpenEntryMenu }: Qua
     setQuadrantCtx(null);
     onCreateTagged?.(kind, value);
   };
+
+  // P0-4 (perf audit): stable per-card right-click handler. Closes this
+  // quadrant's header menu first (so the two never stack) then forwards to
+  // the parent's stable `onOpenEntryMenu`. Both deps are stable, so this never
+  // re-creates — keeping the memo'd <EntryCard> from busting on quadrant-local
+  // state changes (menu open/close).
+  const renderCardContextMenu = useCallback(
+    (e: DirEntry, x: number, y: number) => {
+      setQuadrantCtx(null);
+      onOpenEntryMenu(e, x, y);
+    },
+    [onOpenEntryMenu]
+  );
 
   // Quadrant accepts both internal cards (DND_TYPE_FILE) and native OS
   // files (NativeTypes.FILE). The native path imports the dropped files
@@ -336,10 +358,7 @@ function Quadrant({ value, entries, data, onMoveToColumn, onOpenEntryMenu }: Qua
             // H.28 P0-1: card right-click → open the per-card domain menu
             // (matrix scope). Closes the column header menu first so the
             // two menus never stack.
-            renderContextMenu={(e, x, y) => {
-              setQuadrantCtx(null);
-              onOpenEntryMenu(e, x, y);
-            }}
+            renderContextMenu={renderCardContextMenu}
           />
         ))}
       </Box>
@@ -470,8 +489,10 @@ function UntaggedTray({
               entry={entry}
               data={data}
               // H.28 P0-1: same domain menu injection as the quadrant
-              // body — card right-click opens MatrixEntryMenu.
-              renderContextMenu={(e, x, y) => onOpenEntryMenu(e, x, y)}
+              // body — card right-click opens MatrixEntryMenu. `onOpenEntryMenu`
+              // is already a stable useCallback from the parent (P0-4), so it
+              // doubles as the card's renderContextMenu without a wrapper.
+              renderContextMenu={onOpenEntryMenu}
             />
           </Box>
         ))}

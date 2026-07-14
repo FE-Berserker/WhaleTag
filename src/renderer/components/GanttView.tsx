@@ -104,6 +104,7 @@ import {
   periodTagFromRange,
   scaleForRange,
   todayKey,
+  type GanttPeriod,
   type GanttZoom,
 } from '../../shared/gantt';
 import { DND_TYPE_FILE, type FileDragItem } from '-/services/dnd';
@@ -291,6 +292,42 @@ export default function GanttView({ data, stages, onMoveToColumn }: GanttViewPro
     y: number;
     entry: DirEntry;
   } | null>(null);
+
+  // P0-4 (perf audit): stable right-click opener for the Triage <EntryCard>
+  // stack. `setGanttMenu` is a stable useState setter, so this never
+  // re-creates — keeping the memo'd <EntryCard> from busting on unrelated
+  // GanttView re-renders (zoom / range / export notice / menu state). (The
+  // GanttRow onContextMenu closure is the same shape but is stabilized as
+  // part of P1-5's GanttRow callback cleanup.)
+  const openEntryMenu = useCallback(
+    (entry: DirEntry, x: number, y: number) => {
+      setGanttMenu({ entry, x, y });
+    },
+    []
+  );
+
+  // P1-5 (perf audit): stable GanttTimeline-bound handlers so memo'd
+  // <GanttRow> children bail out on menu / notice state changes. Both depend
+  // only on stable inputs (readOnly primitive + cellData's onSetEntryDateTag,
+  // itself a FileList useCallback), so they never re-create.
+  const handleDropEntry = useCallback(
+    (entry: DirEntry, dayKey: string | null) => {
+      if (!dayKey) return;
+      if (readOnly) return;
+      if (!data.onSetEntryDateTag) return;
+      const tag = periodTagFromRange({ startKey: dayKey, endKey: dayKey });
+      data.onSetEntryDateTag(entry, tag);
+    },
+    [readOnly, data.onSetEntryDateTag]
+  );
+
+  const handleCommit = useCallback(
+    (entry: DirEntry, next: GanttPeriod) => {
+      const tag = periodTagFromRange(next);
+      data.onSetEntryDateTag?.(entry, tag);
+    },
+    [data.onSetEntryDateTag]
+  );
 
   const menuSources = useMemo<DirEntry[]>(() => {
     if (!ganttMenu) return [];
@@ -818,11 +855,9 @@ export default function GanttView({ data, stages, onMoveToColumn }: GanttViewPro
         activeTag={activeTag}
         isRowFilteredOut={isRowFilteredOut}
         stages={stages}
-        onClickTag={(tag) => onClickTag?.(tag)}
-        onTagContextMenu={(entry, tag, x, y) =>
-          onTagContextMenu?.(entry, tag, x, y)
-        }
-        onOpen={(e) => data.onOpen(e)}
+        onClickTag={onClickTag}
+        onTagContextMenu={onTagContextMenu}
+        onOpen={data.onOpen}
         // Drop target for unscheduled files: GanttTimeline resolves the
         // drag item to DirEntry[] + a dayKey under the cursor; we just
         // translate to a 1-day period (startKey=endKey=dayKey) and
@@ -832,13 +867,9 @@ export default function GanttView({ data, stages, onMoveToColumn }: GanttViewPro
         // or past the chart's right edge — we treat that as a no-op
         // (GanttTimeline also bails when the scroller ref is unmounted,
         // which covers the rare race during fast unmounts).
-        onDropEntry={(entry, dayKey) => {
-          if (!dayKey) return;
-          if (readOnly) return;
-          if (!data.onSetEntryDateTag) return;
-          const tag = periodTagFromRange({ startKey: dayKey, endKey: dayKey });
-          data.onSetEntryDateTag(entry, tag);
-        }}
+        // P1-5: stabilized as `handleDropEntry` so memo'd <GanttRow> bails
+        // out on unrelated re-renders.
+        onDropEntry={handleDropEntry}
         resolveEntry={data.resolveEntry}
         // Single-click on a taskbar opens the period-edit dialog
         // (populated with the entry's current start/end). Drag-to-move
@@ -846,11 +877,8 @@ export default function GanttView({ data, stages, onMoveToColumn }: GanttViewPro
         // opening moves to right-click → GanttEntryMenu → "Open" (or
         // any external double-click handler the parent may wire up).
         onClick={handleClickPeriod}
-        onCommit={(entry, next) => {
-          const tag = periodTagFromRange(next);
-          data.onSetEntryDateTag?.(entry, tag);
-        }}
-        onContextMenu={(entry, x, y) => setGanttMenu({ entry, x, y })}
+        onCommit={handleCommit}
+        onContextMenu={openEntryMenu}
         colorFor={colorFor}
         hasTriageHint={triage.length > 0}
         // P1 #9: ref to the inner chart-content Box for PNG export.
@@ -936,9 +964,7 @@ export default function GanttView({ data, stages, onMoveToColumn }: GanttViewPro
                 <EntryCard
                   entry={entry}
                   data={data}
-                  renderContextMenu={(e, x, y) => {
-                    setGanttMenu({ entry: e, x, y });
-                  }}
+                  renderContextMenu={openEntryMenu}
                 />
               </Box>
             ))}

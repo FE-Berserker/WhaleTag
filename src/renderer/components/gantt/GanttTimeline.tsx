@@ -785,7 +785,7 @@ export default function GanttTimeline({
               onTagContextMenu={onTagContextMenu}
               onOpen={onOpen}
               onClick={onClick}
-              onCommit={(_path, next) => onCommit(row.entry, next)}
+              onCommit={onCommit}
               onContextMenu={onContextMenu}
               // P0 #2: reuse the todayKey computed for the today line so
               // the bar's overdue/in-progress classification is in sync
