@@ -128,7 +128,7 @@ context 暴露:
 
 ## 11. 已知取舍
 
-- **结果缓存** 未做(按 FolderViz `index-archive` 同模式补 `index-recursive/`,mtime 失效 + 原子写)—— 留作独立项
+- **结果缓存** ✅ 已做(2026-07-14,P1-3)—— `listDirectoryRecursive` 的 `DirEntry[]` 现缓存到 `<dir>/.whale/index-recursive/d<depth>.json`([recursive-cache.ts](../src/main/recursive-cache.ts),镜像 transcode/office-cache)。**只缓存 scan**(sidecar 读留后续)。失效:读时 `dirPath`+`folderMtime` 双守卫 + 6 个 fs-op 钩子(delete/rename/move/copy/importExternal/mkdir)清祖先。对 renderer 透明(IPC 仍返 `DirEntry[]`)。详见 [docs/15 P1-3](./15-perf-audit.md)。
 - 每文件夹深度覆盖(像视角 / 尺寸存 `wsm.json`)—— 不做,真需要再补 per-folder override
 - `useRecursiveEntries` hook(老)已删除,4 个原使用方(TagCloud / KG / Mapique / FolderViz)grep 不到 import(R4,2026-07-01)
 - `maxDepth` 从 `whale.folderViz.<id>` / `whale.tagCloud.<id>` / `whale.kg.<id>` 三处 localStorage 全清空

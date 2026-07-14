@@ -1,7 +1,7 @@
 import path from 'path';
 import os from 'os';
 import { existsSync, promises as fsp } from 'fs';
-import { execFile, execFileSync } from 'child_process';
+import { execFile } from 'child_process';
 import sharp from 'sharp';
 import ffmpegStatic from 'ffmpeg-static';
 import { createCanvas } from '@napi-rs/canvas';
@@ -101,15 +101,22 @@ export function ffmpegPath(): string | null {
 // Memoized PATH-probe result for the bare `soffice` command (spawns a child,
 // up to 3s — LibreOffice's bootstrap can be slow on a cold Windows install).
 // Cached so office thumbnails / PDF conversions don't re-probe on every call;
-// the candidate-path checks below stay per-call (cheap existsSync).
+// the candidate-path checks below stay per-call (cheap existsSync). The probe
+// itself runs via async `execFile` (P1-1 — execFileSync would block the main
+// process event loop on cold PATH lookup and freeze every window / IPC).
+// `_sofficeInflight` dedupes concurrent probes: the first caller kicks off the
+// spawn, subsequent callers await the same Promise.
 let _sofficeOnPath: boolean | undefined;
+let _sofficeInflight: Promise<boolean> | null = null;
 
 /**
  * Tries to locate the LibreOffice `soffice` binary. Honours an explicit
  * override, then common install locations, then PATH. Returns null when
  * LibreOffice cannot be found.
  */
-export function sofficeBinary(override: string | null | undefined): string | null {
+export async function sofficeBinary(
+  override: string | null | undefined
+): Promise<string | null> {
   if (override) return override;
 
   const candidates: string[] = [];
@@ -133,22 +140,28 @@ export function sofficeBinary(override: string | null | undefined): string | nul
 
   // Final fallback: let PATH resolve it. Memoized (see _sofficeOnPath).
   if (_sofficeOnPath === undefined) {
-    try {
-      execFileSync('soffice', ['--version'], {
-        timeout: 3000,
-        stdio: 'ignore',
+    if (!_sofficeInflight) {
+      _sofficeInflight = new Promise<boolean>((resolve) => {
+        execFile(
+          'soffice',
+          ['--version'],
+          { timeout: 3000 },
+          (err) => {
+            _sofficeOnPath = !err;
+            _sofficeInflight = null;
+            resolve(_sofficeOnPath);
+          }
+        );
       });
-      _sofficeOnPath = true;
-    } catch {
-      _sofficeOnPath = false;
     }
+    await _sofficeInflight;
   }
   return _sofficeOnPath ? 'soffice' : null;
 }
 
 /** Returns true when a LibreOffice `soffice` binary can be located. */
-export function isSofficeAvailable(): boolean {
-  return sofficeBinary(null) !== null;
+export async function isSofficeAvailable(): Promise<boolean> {
+  return (await sofficeBinary(null)) !== null;
 }
 
 /**
@@ -184,7 +197,7 @@ async function encodeOfficeThumb(
   srcPath: string,
   sofficePath?: string | null
 ): Promise<Buffer> {
-  const bin = sofficeBinary(sofficePath);
+  const bin = await sofficeBinary(sofficePath);
   if (!bin) throw new Error('LibreOffice (soffice) not found');
 
   const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-office-'));
@@ -485,18 +498,57 @@ async function doGenerateThumbnail(
  * Loads a file's thumbnail as a `data:image/jpeg;base64,...` URL (CSP permits
  * `data:`/`blob:`; `file:` is blocked). Returns null when no thumbnail exists
  * yet — the renderer then asks to generate one. Throws on real IO errors.
+ *
+ * P2-1: an in-process LRU memo (keyed by filePath, invalidated by the thumb
+ * file's mtimeMs) avoids re-reading + re-base64-encoding the same JPEG on
+ * every revisit / re-scroll / multi-consumer request (list + tray + kanban
+ * all ask for the same thumb). `doGenerateThumbnail` stamps the thumb's mtime
+ * to >= the source mtime on (re)generation, so a regenerated thumb changes
+ * mtimeMs → automatic cache miss. Bounded so a long session can't leak.
  */
+interface ThumbCacheEntry {
+  mtimeMs: number;
+  dataUrl: string;
+}
+const thumbCache = new Map<string, ThumbCacheEntry>();
+const THUMB_CACHE_MAX = 500;
+
 export async function loadThumbnail(
   filePath: string
 ): Promise<string | null> {
   const target = thumbPathFor(filePath);
-  if (!existsSync(target)) return null;
+  // `fsp.stat` is both the existence check and the invalidation signal (one
+  // syscall, vs the prior sync `existsSync` + later `readFile`).
+  let mtimeMs: number;
+  try {
+    mtimeMs = (await fsp.stat(target)).mtimeMs;
+  } catch {
+    // Missing (ENOENT) or inaccessible — nothing to return. Drop any stale
+    // entry so a later regeneration starts clean.
+    thumbCache.delete(filePath);
+    return null;
+  }
+  const cached = thumbCache.get(filePath);
+  if (cached !== undefined && cached.mtimeMs === mtimeMs) {
+    // LRU refresh: re-insert to move this key to most-recent.
+    thumbCache.delete(filePath);
+    thumbCache.set(filePath, cached);
+    return cached.dataUrl;
+  }
   const buf = await fsp.readFile(target);
-  return `data:image/jpeg;base64,${buf.toString('base64')}`;
+  const dataUrl = `data:image/jpeg;base64,${buf.toString('base64')}`;
+  thumbCache.set(filePath, { mtimeMs, dataUrl });
+  // Evict the oldest entry (Map preserves insertion order) over the cap.
+  if (thumbCache.size > THUMB_CACHE_MAX) {
+    const oldest = thumbCache.keys().next().value;
+    if (oldest !== undefined) thumbCache.delete(oldest);
+  }
+  return dataUrl;
 }
 
 /** Removes a file's thumbnail (used when the file is deleted). No-op if absent. */
 export async function removeThumbnail(filePath: string): Promise<void> {
+  thumbCache.delete(filePath);
   await fsp.rm(thumbPathFor(filePath), { force: true }).catch(() => undefined);
 }
 

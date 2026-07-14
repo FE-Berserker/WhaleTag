@@ -110,6 +110,8 @@ main
        └─ console.error on failure
 ```
 
+**日志策略**(`persist-storage.ts`):每次 read/write **不**打 `console.log`(每次 state 变更 + 关机 flush 都跑,会显著拖慢主进程同步 IO);真实 IO 失败的 catch 分支保留 `console.error`(`eslint:recommended` 默认允许,且符合 plan.md §A「错误必须上抛」)。详见 [docs/15-perf-audit.md](./15-perf-audit.md) P1-2。
+
 **白名单**(`configureStore.ts`):`locations` / `settings` / `taglibrary` / `workflow` / `recent` / `savedsearches` / `extensions` / `ai`。`extensions` 走 `createTransform` 只持久化 `userDefaults` + `enabledOverrides`,运行时 `registry` 重新加载。
 
 **Flush 流程**:window `close` → `event.preventDefault()` → renderer 发 `app:request-flush` → `persistor.flush()` 排空 → main 收到 `app:flush-complete` → `mainWindow.destroy()`。3 秒内没收到触发 `closeFallback` `setTimeout` 强 destroy。

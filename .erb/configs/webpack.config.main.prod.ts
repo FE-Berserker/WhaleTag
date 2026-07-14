@@ -13,6 +13,10 @@ export default merge(createBase(), {
   entry: {
     main: path.resolve(SRC_PATH, 'main', 'main.ts'),
     preload: path.resolve(SRC_PATH, 'main', 'preload.ts'),
+    // P0-2: utilityProcess entry that owns <root>/.whale/index.db.
+    // Externalized (better-sqlite3 / pdfjs-dist / sharp) just like main.js
+    // so the worker can load native bindings from asar-unpacked.
+    'index-worker': path.resolve(SRC_PATH, 'main', 'index-worker.ts'),
   },
   output: {
     path: MAIN_DIST,

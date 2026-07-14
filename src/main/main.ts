@@ -7,6 +7,10 @@ import { app, BrowserWindow, ipcMain, Menu, protocol, session, shell } from 'ele
 import windowStateKeeper from 'electron-window-state';
 import { registerIpcHandlers } from './ipc';
 import { registerAiCoreHandlers, maybeRegisterAiRuntimeHandlers } from './ai/ipc-ai-core';
+// P0-2: index utilityProcess lifecycle hook. The worker is lazy-spawned on
+// first IPC request and torn down here on app quit (best-effort kill;
+// graceful shutdown with WAL flush is a follow-up).
+import { killIndexWorker } from './index-worker-host';
 import { buildMenu } from './menu';
 import { assertWithinAllowedRoot, getAllowedRoots } from './allowed-roots';
 import { runMigration } from './migrate-date-tags';
@@ -242,6 +246,15 @@ function bootstrap(): void {
   registerExtensionProtocol();
   registerWhaleFileProtocol();
   createWindow();
+
+  // P0-2: tear down the index utilityProcess on quit. Best-effort kill —
+  // a graceful `shutdown` op with a WAL checkpoint would be safer but is
+  // deferred. The host's pending requests are rejected via the `exit`
+  // handler in `index-worker-host.ts`; if the OS reaps the process before
+  // `kill()` completes, those promises are also rejected.
+  app.on('before-quit', () => {
+    killIndexWorker();
+  });
 
   // ABI/availability probe for the bundled ffmpeg (video thumbnails). Logged
   // once so a missing/locked binary is visible. Lazy-imported so ffmpeg-static

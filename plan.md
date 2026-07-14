@@ -26,6 +26,8 @@
 | [docs/12-frontend-checklist.md](docs/12-frontend-checklist.md) | 前端 UI 手动核对清单(分模块 `- [ ]`) |
 | [docs/13-security.md](docs/13-security.md) | 当前安全模型(隔离/沙箱/CSP/allowedRoots)+ 不在范围的能力 |
 | [docs/14-packaging.md](docs/14-packaging.md) | `npm run package:win` 完整流程、nsis-resources 离线、打包/AI 调试排坑(国内网络环境) |
+| [docs/15-perf-audit.md](docs/15-perf-audit.md) | **性能审计与待办清单**(2026-07-12);Tier 0–3 可勾选优化项 + 已接受取舍 + 可复用范式;plan.md §F 的例外追踪文档 |
+| [docs/16-cross-platform.md](docs/16-cross-platform.md) | **macOS / Linux 跨平台打包可行性**(2026-07-12);已就绪代码清单 + 硬阻塞(mac 签名)+ 需改项(Linux 大小写守卫/DE fallback/图标);§F 例外评估文档 |
 | [docs/UI.md](docs/UI.md) | 设计语言(从 Pencil `.pen` 导出,主题 token;源文件描述比代码实际少 2 个策划主题) |
 
 > 找不到某模块的现状?直接从对应 `docs/0X-*.md` 入口找,不必翻 git 历史。
@@ -102,7 +104,7 @@
 | 安全 | 沙箱 iframe + 严格 CSP + `registerSchemesAsPrivileged`;扩展 IPC `event.source === iframe.contentWindow` 校验 |
 | IO 错误 | 不静默,主进程抛出,renderer 显式 toast |
 | 性能 | 缩略图 FIFO 队列 `MAX_CONCURRENT=4`;缩略图/lazy IO;SQLite 分批 yield;viewDepth 200ms 防抖 |
-| i18n | `t()` + i18next;en + zh |
+| i18n | `t()` + i18next;en / zh / zh-TW / ja / ko(`scripts/check-locales.test.ts` 强制与 en key 对齐) |
 | 测试 | `electron --test --require ts-node/register`(非 jest);70+ `.test.ts(x)` |
 
 ## E. 已知坑(进入新模块前请读)

@@ -57,16 +57,10 @@ function tmpPathForKey(key: string): string {
 
 export function persistRead(key: string): string | null {
   const filePath = filePathForKey(key);
-  // eslint-disable-next-line no-console
-  console.log('[persist-storage] read', key, 'from', filePath, 'exists=', existsSync(filePath));
   if (!existsSync(filePath)) return null;
   try {
-    const value = readFileSync(filePath, 'utf8');
-    // eslint-disable-next-line no-console
-    console.log('[persist-storage] read length', value.length);
-    return value;
+    return readFileSync(filePath, 'utf8');
   } catch (e) {
-    // eslint-disable-next-line no-console
     console.error('[persist-storage] read failed for', key, e);
     return null;
   }
@@ -75,8 +69,6 @@ export function persistRead(key: string): string | null {
 export function persistWrite(key: string, value: string): void {
   const filePath = filePathForKey(key);
   const tmpPath = tmpPathForKey(key);
-  // eslint-disable-next-line no-console
-  console.log('[persist-storage] write', key, 'to', filePath, 'length', value.length);
   try {
     mkdirSync(persistDir(), { recursive: true });
     // Atomic write: write to .tmp, then rename over the final path. A crash
@@ -84,7 +76,6 @@ export function persistWrite(key: string, value: string): void {
     writeFileSync(tmpPath, value, 'utf8');
     renameSync(tmpPath, filePath);
   } catch (e) {
-    // eslint-disable-next-line no-console
     console.error('[persist-storage] write failed for', key, e);
     // Best-effort cleanup of the leftover .tmp so it doesn't accumulate.
     try {
@@ -106,7 +97,6 @@ export function persistDelete(key: string): void {
   try {
     unlinkSync(filePath);
   } catch (e) {
-    // eslint-disable-next-line no-console
     console.error('[persist-storage] delete failed for', key, e);
   }
 }

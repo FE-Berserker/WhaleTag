@@ -34,6 +34,13 @@ export const THUMBS_DIR = 'thumbs';
  * them to Opus once and caches the result here (mirror of THUMBS_DIR). */
 export const TRANSCODES_DIR = 'transcodes';
 
+/** Subdirectory of `.whale/` holding recursive-listing caches (`d<depth>.json`),
+ * one per (folder, depth). The recursive stat-walk (viewDepth > 1) is expensive
+ * on big trees; this caches the flat `DirEntry[]` so repeat visits / depth
+ * tweaks are instant. Invalidation: folder-mtime guard on read + fs-op hooks
+ * (see src/main/recursive-cache.ts). */
+export const INDEX_RECURSIVE_DIR = 'index-recursive';
+
 /** Extensions Whale generates image thumbnails for (lowercase, no dot).
  * SVG is included so the host treats it as an image for drag / image-viewer
  * dispatch — but its thumbnail kind is `'svg'` (separate from the raster

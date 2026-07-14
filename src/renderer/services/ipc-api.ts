@@ -256,7 +256,7 @@ export const ipcApi = {
   convertOfficeToPdf: (
     filePath: string,
     options?: { sofficePath?: string | null }
-  ): Promise<ArrayBuffer> => requireApi().convertOfficeToPdf(filePath, options),
+  ): Promise<Uint8Array> => requireApi().convertOfficeToPdf(filePath, options),
   convertDwgToDxf: (
     filePath: string,
     options?: { dwg2dxfPath?: string | null; odaPath?: string | null }

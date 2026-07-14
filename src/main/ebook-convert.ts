@@ -1,7 +1,7 @@
 import path from 'path';
 import os from 'os';
 import { existsSync, promises as fsp } from 'fs';
-import { execFile, execFileSync } from 'child_process';
+import { execFile } from 'child_process';
 import { mediaConvertSemaphore } from './concurrency';
 
 export interface ConvertEbookOptions {
@@ -12,8 +12,12 @@ export interface ConvertEbookOptions {
 }
 
 // Memoized PATH-probe result for the bare `ebook-convert` command (spawns a
-// child, up to 3s). Cached so repeated ebook conversions don't re-probe.
+// child, up to 3s). Cached so repeated ebook conversions don't re-probe. The
+// probe runs via async `execFile` (P1-1 — execFileSync would block the main
+// process on cold PATH lookup and freeze every window / IPC).
+// `_ebookInflight` dedupes concurrent probes.
 let _ebookOnPath: boolean | undefined;
+let _ebookInflight: Promise<boolean> | null = null;
 
 /**
  * Locates the Calibre `ebook-convert` binary.
@@ -21,7 +25,9 @@ let _ebookOnPath: boolean | undefined;
  * Checks the user override first, then common platform install locations, then
  * falls back to searching PATH. Returns null when Calibre cannot be found.
  */
-export function ebookConvertBinary(override?: string | null): string | null {
+export async function ebookConvertBinary(
+  override?: string | null
+): Promise<string | null> {
   if (override) return override;
 
   const candidates: string[] = [];
@@ -41,22 +47,23 @@ export function ebookConvertBinary(override?: string | null): string | null {
   }
 
   if (_ebookOnPath === undefined) {
-    try {
-      execFileSync('ebook-convert', ['--version'], {
-        timeout: 3000,
-        stdio: 'ignore',
+    if (!_ebookInflight) {
+      _ebookInflight = new Promise<boolean>((resolve) => {
+        execFile(
+          'ebook-convert',
+          ['--version'],
+          { timeout: 3000 },
+          (err) => {
+            _ebookOnPath = !err;
+            _ebookInflight = null;
+            resolve(_ebookOnPath);
+          }
+        );
       });
-      _ebookOnPath = true;
-    } catch {
-      _ebookOnPath = false;
     }
+    await _ebookInflight;
   }
   return _ebookOnPath ? 'ebook-convert' : null;
-}
-
-/** Returns true when a Calibre `ebook-convert` binary can be located. */
-export function isEbookConvertAvailable(): boolean {
-  return ebookConvertBinary(null) !== null;
 }
 
 /**
@@ -70,7 +77,7 @@ export async function convertEbookToEpub(
   srcPath: string,
   options: ConvertEbookOptions = {}
 ): Promise<Buffer> {
-  const bin = ebookConvertBinary(options.calibrePath);
+  const bin = await ebookConvertBinary(options.calibrePath);
   if (!bin || (options.calibrePath && !existsSync(bin))) {
     throw new Error('Calibre (ebook-convert) not found');
   }

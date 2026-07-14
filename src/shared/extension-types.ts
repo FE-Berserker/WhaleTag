@@ -191,7 +191,7 @@ export interface SiblingsMessage {
 export interface OfficePdfContentMessage {
   type: 'officePdfContent';
   requestId: string;
-  data: ArrayBuffer | null;
+  data: Uint8Array | null;
   error?: string;
 }
 

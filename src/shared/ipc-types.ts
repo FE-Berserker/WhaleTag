@@ -318,11 +318,12 @@ export interface WhaleApi {
    *  getCadWasm — see the heic-viewer getLibheif() loader). */
   getHeicWasm: () => Promise<ArrayBuffer>;
   /** Convert an Office document to PDF bytes using LibreOffice. Returns the PDF
-   *  as an ArrayBuffer. Throws if LibreOffice is missing or conversion fails. */
+   *  as a Uint8Array (the main process returns a Buffer; Electron IPC serializes
+   *  it to a Uint8Array on the renderer — no intermediate ArrayBuffer copy). */
   convertOfficeToPdf: (
     filePath: string,
     options?: { sofficePath?: string | null }
-  ) => Promise<ArrayBuffer>;
+  ) => Promise<Uint8Array>;
   /** Convert a DWG file to DXF bytes via an external converter (LibreDWG
    *  `dwg2dxf`, or ODA File Converter as fallback). Returns the DXF as an
    *  ArrayBuffer. Throws if no converter is installed or conversion fails. */

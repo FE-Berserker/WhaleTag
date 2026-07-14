@@ -86,4 +86,4 @@ loadExifProcessed(rootPath)                 // 查询
 
 - 首次索引大目录(数 GB / 数十万文件)虽已分批 yield,但仍耗时 —— UI 用 loading + spinner 反馈
 - 索引丢失单事务原子性(可接受,缓存可重建)
-- 主进程 SQLite 阻塞由分批提交缓解;**真阻塞场景已移到下一阶段**:考虑 `utilityProcess` 沙箱跑
+- 主进程 SQLite 阻塞**已解决**:索引 / 全文 / EXIF 管线迁入 `utilityProcess` 子进程(`serviceName: 'whale-index'`,入口 `src/main/index-worker.ts`,宿主 `index-worker-host.ts`)。better-sqlite3 的 `openDbs` 缓存现在 scoped 到该子进程,主进程事件循环不再被同步 DB 调用阻塞。批让步(`INGEST_BATCH=1000` / `setImmediate` / `mapWithConcurrency`)在子进程内沿用。设计 / 排坑见 [docs/15 P0-2](./15-perf-audit.md);`assertWithinAllowedRoot` 仍在主进程校验,不信任 renderer、不下游重复。

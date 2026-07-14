@@ -1,7 +1,7 @@
 import path from 'path';
 import os from 'os';
 import { existsSync, readdirSync, promises as fsp } from 'fs';
-import { execFile, execFileSync } from 'child_process';
+import { execFile } from 'child_process';
 import { mediaConvertSemaphore } from './concurrency';
 
 export interface ConvertDwgOptions {
@@ -15,22 +15,37 @@ export interface ConvertDwgOptions {
 
 // Memoized PATH-probe result for the bare `dwg2dxf` command (spawns a child,
 // up to 3s). Cached so opening multiple .dwg files doesn't re-probe each time.
+// The probe runs via async `execFile` (P1-1 — execFileSync would block the main
+// process on cold PATH lookup and freeze every window / IPC).
+// `_dwg2dxfInflight` dedupes concurrent probes.
 let _dwg2dxfOnPath: boolean | undefined;
+let _dwg2dxfInflight: Promise<boolean> | null = null;
 
 /**
  * Locate a LibreDWG `dwg2dxf` binary. It has no standard install path on
  * Windows, so detection relies on PATH (`dwg2dxf --version`). macOS brew and
  * Linux package-manager installs also land on PATH. Returns null if absent.
  */
-export function dwg2dxfBinary(override?: string | null): string | null {
+export async function dwg2dxfBinary(
+  override?: string | null
+): Promise<string | null> {
   if (override) return override;
   if (_dwg2dxfOnPath === undefined) {
-    try {
-      execFileSync('dwg2dxf', ['--version'], { timeout: 3000, stdio: 'ignore' });
-      _dwg2dxfOnPath = true;
-    } catch {
-      _dwg2dxfOnPath = false;
+    if (!_dwg2dxfInflight) {
+      _dwg2dxfInflight = new Promise<boolean>((resolve) => {
+        execFile(
+          'dwg2dxf',
+          ['--version'],
+          { timeout: 3000 },
+          (err) => {
+            _dwg2dxfOnPath = !err;
+            _dwg2dxfInflight = null;
+            resolve(_dwg2dxfOnPath);
+          }
+        );
+      });
     }
+    await _dwg2dxfInflight;
   }
   return _dwg2dxfOnPath ? 'dwg2dxf' : null;
 }
@@ -149,7 +164,7 @@ export async function convertDwgToDxf(
   const timeout = options.timeout ?? 120000;
   const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-dwg-'));
   try {
-    const dwg2dxf = dwg2dxfBinary(options.dwg2dxfPath);
+    const dwg2dxf = await dwg2dxfBinary(options.dwg2dxfPath);
     if (dwg2dxf) {
       const baseName = path.basename(srcPath, path.extname(srcPath));
       return await convertWithDwg2dxf(

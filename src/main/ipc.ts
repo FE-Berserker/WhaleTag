@@ -8,25 +8,13 @@ import iconv from 'iconv-lite';
 import { createCanvas } from '@napi-rs/canvas';
 import { DirEntry } from '../shared/ipc-types';
 import { nextAvailableName } from '../shared/dedupe-name';
-import { buildIndex } from './indexer';
-import {
-  ingestFiles,
-  queryFiles,
-  advancedQuery,
-  distinctTags,
-  indexStatus,
-  removeLegacyWsi,
-  loadExifProcessed,
-  markExifProcessed,
-  markExifProcessedMany,
-  clearExifProcessed,
-} from './index-db';
+// P0-2: the SQLite / FTS5 / EXIF pipeline (formerly imported from
+// ./indexer, ./index-db, ./fulltext) now runs in a utilityProcess. The
+// 11 channels below forward each request to the worker via `request()`
+// — the renderer-facing API (channel names, request/response shapes) is
+// unchanged.
+import { request } from './index-worker-host';
 import type { SearchQuery } from '../shared/search-query';
-import {
-  buildFulltextIndex,
-  searchFulltext,
-  hasFulltextIndex,
-} from './fulltext';
 import { readSidecars, readSidecardsForPaths, writeSidecar, removeSidecar, moveSidecar, copySidecar } from './sidecar';
 import { readFolderMeta, writeFolderMeta } from './folder-meta';
 import {
@@ -69,6 +57,7 @@ import {
   moveOfficePdf,
   copyOfficePdf,
 } from './office-cache';
+import { loadRecursiveScan, invalidateRecursiveScan } from './recursive-cache';
 import { convertDwgToDxf, dwg2dxfBinary, odaConverterBinary } from './cad-convert';
 import { convertEbookToEpub, ebookConvertBinary } from './ebook-convert';
 import { runUserCommand } from './shell-command';
@@ -281,6 +270,9 @@ async function readTextFile(filePath: string): Promise<string> {
 async function createDirectory(dirPath: string): Promise<void> {
   assertWithinAllowedRoot(dirPath);
   await fsp.mkdir(dirPath, { recursive: true });
+  // A new subfolder changes its ancestors' recursive listings — invalidate
+  // them (best-effort, mirrors the cache cleanup in the other fs handlers).
+  await invalidateRecursiveScan(dirPath).catch(() => undefined);
 }
 
 /**
@@ -325,6 +317,7 @@ async function deletePath(targetPath: string, useTrash = true): Promise<void> {
       removeThumbnail(targetPath).catch(() => undefined),
       removeTranscode(targetPath).catch(() => undefined),
       removeOfficePdf(targetPath).catch(() => undefined),
+      invalidateRecursiveScan(targetPath).catch(() => undefined),
     ]);
 
   if (useTrash) {
@@ -490,7 +483,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     'fs:listDirectoryRecursive',
     (_event, dirPath: string, options?: { maxDepth?: number }) =>
-      listDirectoryRecursive(dirPath, options?.maxDepth ?? 3)
+      loadRecursiveScan(dirPath, options?.maxDepth ?? 3, listDirectoryRecursive)
   );
 
   ipcMain.handle('fs:readTextFile', (_event, filePath: string) =>
@@ -533,6 +526,8 @@ export function registerIpcHandlers(): void {
         moveThumbnail(oldPath, newPath),
         moveTranscode(oldPath, newPath),
         moveOfficePdf(oldPath, newPath),
+        invalidateRecursiveScan(oldPath),
+        invalidateRecursiveScan(newPath),
       ]);
     } catch {
       // file rename already succeeded; metadata sync is non-critical
@@ -567,6 +562,8 @@ export function registerIpcHandlers(): void {
         moveThumbnail(oldPath, newPath),
         moveTranscode(oldPath, newPath),
         moveOfficePdf(oldPath, newPath),
+        invalidateRecursiveScan(oldPath),
+        invalidateRecursiveScan(newPath),
       ]);
     } catch {
       // non-critical
@@ -589,6 +586,7 @@ export function registerIpcHandlers(): void {
         copyThumbnail(sourcePath, destPath),
         copyTranscode(sourcePath, destPath),
         copyOfficePdf(sourcePath, destPath),
+        invalidateRecursiveScan(destPath),
       ]);
     } catch {
       // non-critical
@@ -632,6 +630,7 @@ export function registerIpcHandlers(): void {
             copyThumbnail(source, destPath),
             copyTranscode(source, destPath),
             copyOfficePdf(source, destPath),
+            invalidateRecursiveScan(destPath),
           ]);
         } catch {
           // sidecar/thumbnail carry-over is non-critical
@@ -820,7 +819,7 @@ export function registerIpcHandlers(): void {
   // back after each attempt.
   ipcMain.handle('exif:load-processed', (_event, rootPath: string) => {
     assertWithinAllowedRoot(rootPath);
-    return loadExifProcessed(rootPath);
+    return request('exif:load-processed', { rootPath });
   });
   // P3-7: popup EXIF summary. Lazy — the renderer fetches this when a
   // marker is clicked, never on the initial map render.
@@ -835,11 +834,13 @@ export function registerIpcHandlers(): void {
       record: { path: string; status: 'ok' | 'none'; lat: number | null; lng: number | null; triedAt: number }
     ) => {
       assertWithinAllowedRoot(rootPath);
-      markExifProcessed(rootPath, record);
+      return request('exif:mark-processed', { rootPath, record });
     }
   );
   // Batched variant — one IPC + one transaction (fsync) per batch instead of
   // per image. Used by the Mapique EXIF extractor for a whole folder at once.
+  // P0-2: forwarded to the worker; the worker keeps the single-transaction
+  // property (one WAL fsync per call, not per record).
   ipcMain.handle(
     'exif:mark-processed-many',
     (
@@ -848,41 +849,41 @@ export function registerIpcHandlers(): void {
       records: { path: string; status: 'ok' | 'none'; lat: number | null; lng: number | null; triedAt: number }[]
     ) => {
       assertWithinAllowedRoot(rootPath);
-      markExifProcessedMany(rootPath, records);
+      return request('exif:mark-processed-many', { rootPath, records });
     }
   );
   ipcMain.handle('exif:clear-processed', (_event, rootPath: string) => {
     assertWithinAllowedRoot(rootPath);
-    clearExifProcessed(rootPath);
+    return request('exif:clear-processed', { rootPath });
   });
 
   // ---- Index (SQLite, plan §6.6 P2) ----
+  // P0-2: each handler here is a thin forwarder to the index utilityProcess.
+  // assertWithinAllowedRoot stays in the main process — never trust the
+  // renderer with path validation, and never duplicate the check downstream.
+  // The worker trusts the inputs it receives from main.
   ipcMain.handle('index:build', async (_event, rootPath: string) => {
     assertWithinAllowedRoot(rootPath); // writes <root>/.whale/index.db
-    const entries = await buildIndex(rootPath);
-    await ingestFiles(rootPath, entries);
-    removeLegacyWsi(rootPath); // best-effort: drop the superseded wsi.json
-    return { count: entries.length };
+    return request('index:build', { rootPath });
   });
 
   // Filename/path/tags fuzzy search (FTS5 trigram) — replaces the old in-memory
   // Fuse load+search. Returns IndexEntry[]; the renderer highlights client-side.
   ipcMain.handle('index:query', (_event, rootPath: string, q: string) =>
-    queryFiles(rootPath, q)
+    request('index:query', { rootPath, q })
   );
 
   // Structured (advanced) search — the SearchQuery compiled to a SQL WHERE.
-  ipcMain.handle(
-    'index:advanced',
-    (_event, rootPath: string, q: SearchQuery) => advancedQuery(rootPath, q)
+  ipcMain.handle('index:advanced', (_event, rootPath: string, q: SearchQuery) =>
+    request('index:advanced', { rootPath, q })
   );
 
   ipcMain.handle('index:tags', (_event, rootPath: string) =>
-    distinctTags(rootPath)
+    request('index:tags', { rootPath })
   );
 
   ipcMain.handle('index:status', (_event, rootPath: string) =>
-    indexStatus(rootPath)
+    request('index:status', { rootPath })
   );
 
   // ---- Full-text index (SQLite FTS5, plan §6.6 P2) ----
@@ -891,15 +892,15 @@ export function registerIpcHandlers(): void {
   // state to clear first.
   ipcMain.handle('fulltext:build', (_event, rootPath: string) => {
     assertWithinAllowedRoot(rootPath);
-    return buildFulltextIndex(rootPath);
+    return request('fulltext:build', { rootPath });
   });
 
   ipcMain.handle('fulltext:search', (_event, rootPath: string, query: string) =>
-    searchFulltext(rootPath, query)
+    request('fulltext:search', { rootPath, q: query })
   );
 
   ipcMain.handle('fulltext:has', (_event, rootPath: string) =>
-    hasFulltextIndex(rootPath)
+    request('fulltext:has', { rootPath })
   );
 
   // ---- Sidecar metadata (`.whale/<file>.json`) ----
@@ -1079,11 +1080,12 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     'ext:convertOfficeToPdf',
     async (_event, filePath: string, options?: { sofficePath?: string | null }) => {
-      const buf = await loadOfficePdf(filePath, options);
-      // Electron serializes Buffer/ArrayBuffer across IPC; return as ArrayBuffer.
-      const out = new ArrayBuffer(buf.byteLength);
-      new Uint8Array(out).set(buf);
-      return out;
+      // Return the Buffer directly — Electron IPC serializes it as a Uint8Array
+      // on the renderer, so the previous `new ArrayBuffer + .set(buf)` was a
+      // redundant memcpy on every office-PDF open (MBs to tens of MBs). The
+      // office-viewer passes the bytes through to pdfjs without re-wrapping.
+      // See docs/15 P1-4.
+      return loadOfficePdf(filePath, options);
     }
   );
 
@@ -1102,7 +1104,7 @@ export function registerIpcHandlers(): void {
   );
 
   ipcMain.handle('ext:detectDwgConverters', async () => ({
-    dwg2dxf: dwg2dxfBinary(),
+    dwg2dxf: await dwg2dxfBinary(),
     oda: odaConverterBinary(),
   }));
 
@@ -1117,7 +1119,7 @@ export function registerIpcHandlers(): void {
   );
 
   ipcMain.handle('ext:detectEbookConverter', async () => ({
-    calibre: ebookConvertBinary(),
+    calibre: await ebookConvertBinary(),
   }));
 
   // Audio transcode (APE/WMA/etc → Opus) for media-player. Goes through the

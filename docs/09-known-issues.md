@@ -543,7 +543,7 @@ container.style.cssText =
 
 **测试**:`extractMermaidBlocks` 5 case(空 / language-mermaid / 裸 mermaid / 多块保序 / 缩进保留),全过;`scripts/mermaid-iife-patch.test.ts` 3 case。沙箱协议层测试被 auto-mode 拒绝创建新文件 — 用 `Test/mermaid-demo.md` 手动验证(7 种 diagram 类型 + 1 错误注入 + js 块不误捕 + 图片不干扰)。
 
-**KaTeX 未做**:同 mermaid 沙箱思路可复制,week 6+ 单独排期。
+**KaTeX ✅ 已修(2026-07-14)**:同 mermaid 沙箱思路——独立 `katex-sandbox.html` + `katex-sandbox.ts`(`sandbox="allow-scripts"` 无 `allow-same-origin`),父侧 `renderKatex` 找 `.katex[data-katex-source]` 占位 → postMessage LaTeX → 沙箱 `katex.renderToString` → 回传 HTML 替换。marked 扩展(`katexInline` `$…$` / `katexBlock` `$$…$$`)产占位,DOMPurify 放行(`data-*` 默认允许 + `span`/`div`/`class` 在白名单)。**关键 bug(本次修)**:沙箱 CSP 漏了 `script-src 'unsafe-inline'`——katex 本身是纯 JS 不需要 `unsafe-eval`(正确省略),但**沙箱自己的内联 `<script>`(ready 轮询 + message listener)需要 `'unsafe-inline'` 才能跑**;漏了 → 内联胶水被 CSP 拦 → `ready()` 永不执行 → 父侧 5s 超时 → 公式不渲染(对照 mermaid 沙箱 CSP 有 `'unsafe-inline'`)。修法:`katex-sandbox.html` 的 `script-src` 加 `'unsafe-inline'`(仍不带 `'unsafe-eval'`,比 mermaid 沙箱更严)。顺带清掉 `renderKatex` 里排查此 bug 的 debug `console.log`。**第二个 bug(字体 404)**:`build-extensions.js` 只 copy 了 `katex.min.js`/`.css`,**漏了 `fonts/`(60 个 .woff2/.woff/.ttf)** → `katex.min.css` 引用的 `fonts/KaTeX_*` 全 404 → 公式渲染但用 fallback 字体(无数学斜体/尺寸字体)。修法:`build-extensions.js` md-editor 分支加 `fs.cpSync(node_modules/katex/dist/fonts, dist/fonts, {recursive:true})`;主 iframe CSP 无需改(字体同源,`default-src 'self'` 放行)。验证:`md-render.test.ts` 115/115;dist CSP 含 `'unsafe-inline'`;dist `fonts/` 60 文件齐。
 
 §18.3.4 **persist font-size / wrap mode** ✅ 已修(2026-07-06 Week 3 工具栏)— Week 3 #6 工具栏改造时已经实现,localStorage key 用 `md-editor-font-size` + `md-editor-wrap-mode`(`md-editor-` 前缀避免与 text-editor 冲突),`clampFontSize` 范围 10-32。见 [docs/09 §18.2.1](./09-known-issues.md)。
 
@@ -692,3 +692,28 @@ permissionMode 'bypassPermissions' auto-approves every tool call
 **处理**:[runUserCommand](../src/main/shell-command.ts) 在替换前检测 `targetPath.includes('%')` → 直接拒,renderer 映射到 `commandPathBlocked` 文案。`!`(cmd 默认 delayed expansion 关)放行。99.99% 文件名不含 `%`。用户解法:重命名文件去掉 `%`,或改用不含 `${path}` 的命令。
 
 **通用教训**:任何"用户模板 + 文件路径替换进 cmd"的功能,`%` 是 cmd 引号套不住的唯一元字符 —— 要么拒(当前方案)、要么改走 PowerShell(`psQuote` 单引号全安全,见 [ipc.ts runOsZip](../src/main/ipc.ts))、要么写临时 .bat(批处理内 `%%` 生效)。详见 [docs/13 §11](./13-security.md)。
+
+---
+
+## 25. utilityProcess 子进程:`parentPort` 在 `process` 上不在 `electron` 导出上;且 fork 能直读 app.asar(2026-07-13,P0-2 索引迁出主进程)
+
+**症状**:P0-2 把 SQLite / FTS5 / EXIF 管线迁进 `utilityProcess`([index-worker.ts](../src/main/index-worker.ts)),type-check 过、dev 不报错,但 worker **一启动就 `exit code 1`**,所有 `index:*` / `fulltext:*` / `exif:*` IPC 全 reject「index worker exited unexpectedly」。dev 没被发现是因为 worker 惰性 spawn(首次索引请求才拉起)。
+
+**根因(三个独立坑,前两个打包才触发,第三个 dev 才触发)**:
+
+1. **`parentPort` 取错地方**:`index-worker.ts` 写 `import { parentPort } from 'electron'`。但 Electron 42 的 utilityProcess 子进程里 `parentPort` **只在 `process.parentPort` 上**;`require('electron').parentPort` 运行时是 `undefined`(Electron 的 `.d.ts` 把类型挂在 electron 导出上 → TS 不报错,值却不在)→ `if (!parentPort) throw` → 启动即崩。探针实证:`{ hasProcessParentPort: true, hasElectronParentPort: false }`。
+2. **`utilityProcess.fork` 能直读 asar**(P0-1):`index-worker-spawn.ts` 误把 [docs/14 §5](./14-packaging.md) 的「外部 node 读不了 asar」教训套到 utilityProcess 上,做了 `app.asar → app.asar.unpacked` 重写。但 utilityProcess 是 Electron 原生进程、asar 感知(不同于 `child_process.fork`,见 electron#2708);而 worker entry **不在 `asarUnpack`**(只原生 node_modules 解包了)→ 重写后路径不存在 → 打包版 fork ENOENT。dev 无 asar,不触发。
+3. **dev 下 `app.getAppPath()` 是项目根**(第 3 个坑,dev 冒烟才发现):原 `index-worker-spawn.ts` 用 `path.join(app.getAppPath(), 'dist', 'main', ...)` 拼 worker 路径。打包时 `getAppPath()` = `app.asar`,拼出来对;但 **dev(electronmon 跑 `.`)`getAppPath()` 返回项目根 `c:\WhaleTag`**,拼出 `c:\WhaleTag\dist\main\index-worker.js`(不存在,真文件在 `release/app/dist/main/`)→ dev fork `ERR_MODULE_NOT_FOUND`。打包不触发。
+
+**修复**:
+- [index-worker.ts](../src/main/index-worker.ts):`import { parentPort } from 'electron'` → `const parentPort = process.parentPort`(主进程里 `process.parentPort` 为 `null`,守卫仍挡得住误从主进程加载)。
+- [index-worker-spawn.ts](../src/main/index-worker-spawn.ts):**锚定 `__dirname`**(worker 和 main.js 同目录;webpack `node.__dirname:false` dev+prod 都开着 → dev=`release/app/dist/main`、打包=`app.asar/dist/main` 都对),不再用 `app.getAppPath()`;同时删掉 asar 重写(fork 直读 app.asar)。
+- [index-db.ts](../src/main/index-db.ts) 生产守卫同样用 `!process.parentPort`(Electron 类型:非 utility 进程为 `null`,不是 `undefined`)。
+
+**冒烟验证**:打包版 `utilityProcess.fork('…/app.asar/dist/main/index-worker.js')` → `ready` → `index:status` / `index:build` 往返 OK(`better-sqlite3` 从 app.asar 正常加载);dev 版 fork `release/app/dist/main/index-worker.js` 同样 OK。三个坑 type-check 全过、dev 只触发第 3 个、打包只触发前两个。
+
+**通用教训**:
+- utilityProcess 子进程的 parent port 用 `process.parentPort`,**不要** `import from 'electron'`——类型在、运行时值不在。Electron 类型声明误导的高发区。
+- `utilityProcess.fork`(Electron 原生)≠ `child_process.fork`(纯 Node)。前者 asar 感知,后者读不了 asar(electron#2708)。docs/14 §5 的 asar 重写只对外部 node 子进程成立。
+- **`app.getAppPath()` 在 dev 和打包返回值不同**(dev = 启动目录/项目根,打包 = `app.asar`)。要拿「和 main.js 同目录的文件」,锚定 `__dirname`(前提 webpack `node.__dirname:false`),别用 `getAppPath()` 拼。
+- utilityProcess / 打包相关改动,type-check 发现不了;dev 和打包各自的坑只有各自冒烟才暴露。**`npm run dev` 触发一次索引 + `npm run package` fork 冒烟,两个都要做**。详见 [docs/15 P0-2](./15-perf-audit.md)。

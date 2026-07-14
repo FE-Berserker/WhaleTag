@@ -5,6 +5,31 @@ import Database from 'better-sqlite3';
 /** A better-sqlite3 db instance (the default export is class+namespace merged,
  *  so use InstanceType to name the instance type unambiguously). */
 type DB = InstanceType<typeof Database>;
+
+// P0-2: this module must only be required from the index utilityProcess
+// worker (`src/main/index-worker.ts`). Loading it directly in the Electron
+// main process would bring the SQLite cache back onto the main event loop,
+// defeating the entire migration. The `parentPort` check is the most
+// reliable signal: utilityProcess children get a `ParentPort` instance; the
+// main process gets `null` (Electron's `NodeJS.Process.parentPort` is a
+// `ParentPort` if this is a UtilityProcess, `null` otherwise). Use a truthy
+// check so both `null` and a hypothetical `undefined` are caught.
+//
+// Gated on NODE_ENV === 'production' so unit tests (which import this
+// module directly via ts-node) and dev mode both still work. In a packaged
+// build, webpack replaces `process.env.NODE_ENV` with the literal string
+// `'production'`, so the check is always on in shipped binaries.
+if (
+  !process.parentPort &&
+  process.env.NODE_ENV === 'production'
+) {
+  throw new Error(
+    'index-db.ts must be required from the index utilityProcess worker ' +
+      '("src/main/index-worker.ts"), not the Electron main process. ' +
+      'Use `request()` from "./index-worker-host" instead of importing ' +
+      'this module directly.'
+  );
+}
 import { META_DIR } from '../shared/whale-meta';
 import type { IndexEntry, FulltextHit } from '../shared/ipc-types';
 import type { SearchQuery } from '../shared/search-query';
@@ -81,6 +106,11 @@ const SCHEMA = `
     lng REAL,
     tried_at INTEGER NOT NULL
   );
+  -- P2-2: per-root derived counters so the readiness poll (indexStatus) is
+  -- O(1) instead of a SELECT count(*) full scan on a large index. Only
+  -- files_count is maintained today (set to the walked entry count at the
+  -- end of every ingest); other keys are reserved.
+  CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
 `;
 
 interface FileRow {
@@ -130,6 +160,50 @@ export function closeAllDbs(): void {
   openDbs.clear();
 }
 
+// P2-3: prepared-statement cache. Compiling a statement (`db.prepare`) walks
+// SQLite's parser/planner; doing it on every keystroke of an as-you-type
+// search is pure waste. Statements are connection-bound, so the cache is
+// keyed by DB instance (WeakMap → entries are reclaimed automatically when a
+// closed db is GC'd, and a reopened db gets a fresh cache with no stale
+// statements). `advancedQuery` builds its SQL per filter shape, but the same
+// shape repeats across keystrokes → the cache hits on everything but the
+// param values (which are bound at `.all()` time, not prepare time).
+type PreparedStatement = Database.Statement<unknown[], unknown>;
+const stmtCache = new WeakMap<DB, Map<string, PreparedStatement>>();
+
+/** Returns a cached `Statement` for `sql` on `db`, preparing it on first use. */
+function prepareCached(db: DB, sql: string): PreparedStatement {
+  let bySql = stmtCache.get(db);
+  if (!bySql) {
+    bySql = new Map();
+    stmtCache.set(db, bySql);
+  }
+  let stmt = bySql.get(sql);
+  if (!stmt) {
+    stmt = db.prepare(sql);
+    bySql.set(sql, stmt);
+  }
+  return stmt;
+}
+
+// P2-2: O(1) file count via `meta.files_count` (maintained at the end of every
+// `ingestFiles`). For dbs created before this counter existed, fall back to a
+// one-time `count(*)` and cache the result so subsequent readiness polls are
+// O(1) — the expensive scan runs at most once per root, ever.
+function getFileCount(db: DB): number {
+  const row = prepareCached(db, "SELECT value FROM meta WHERE key = 'files_count'").get() as
+    | { value: number }
+    | undefined;
+  if (row !== undefined) return row.value;
+  const r = prepareCached(db, 'SELECT count(*) AS c FROM files').get() as { c: number };
+  prepareCached(
+    db,
+    `INSERT INTO meta(key, value) VALUES('files_count', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  ).run(r.c);
+  return r.c;
+}
+
 function rowToEntry(r: FileRow): IndexEntry {
   return {
     path: r.path,
@@ -157,16 +231,48 @@ function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+/** Signature capturing every field of a files row that can change between
+ *  walks. `mtime` + `size` cover file modifications; `tags` come from sidecars
+ *  and can change WITHOUT an mtime bump (indexer.ts relies on exactly this), so
+ *  tags MUST be in the signature or a tag edit wouldn't re-index. `name`/`ext`
+ *  are derived from the path (stable per path); `is_dir` is stable per path.
+ *  See docs/15 P0-1. */
+function filesSignature(e: IndexEntry): string {
+  return `${e.mtime}|${e.size}|${(e.tags ?? []).join(' ')}`;
+}
+
+/** Existing files rows as Map<path, signature> — the "prior" state ingestFiles
+ *  compares against to skip unchanged upserts. Mirrors `fulltextPrior`. Returns
+ *  an empty map when the db doesn't exist yet (first index of this root). */
+export function filesPrior(rootPath: string): Map<string, string> {
+  if (!existsSync(dbPath(rootPath))) return new Map();
+  const rows = getDb(rootPath).prepare(
+    'SELECT path, mtime, size, tags FROM files'
+  ).all() as { path: string; mtime: number; size: number; tags: string }[];
+  const m = new Map<string, string>();
+  for (const r of rows) m.set(r.path, `${r.mtime}|${r.size}|${r.tags}`);
+  return m;
+}
+
 /**
- * Replaces the files index with `entries` (the full current set for the root):
- * upserts every entry and deletes any file no longer present. FTS stays in sync
- * via the triggers.
+ * Incrementally upserts `entries` (the full current set for the root) into the
+ * files index, and deletes any file no longer present. FTS stays in sync via
+ * the triggers.
+ *
+ * Incremental (docs/15 P0-1): rows whose signature (`mtime|size|tags`) is
+ * unchanged since the last build are skipped entirely. `ON CONFLICT DO UPDATE`
+ * always runs the UPDATE branch — which fires the `files_au` trigger (an FTS
+ * delete+insert) — even for byte-identical rows, so a no-op re-index of a
+ * 100k-file root used to pay 100k FTS delete+inserts. Now only changed/new rows
+ * are upserted and only removed rows are deleted (mirrors the fulltext side's
+ * `fulltextPrior` skip). `cur_paths` temp table is gone — `seen` is tracked in
+ * JS and `removed` = prior paths not walked this run.
  *
  * The work is split into `INGEST_BATCH`-sized transactions with an event-loop
  * yield between each, so the synchronous better-sqlite3 calls never block the
- * main process for long. A 100k-file rebuild becomes many sub-10ms hiccups
- * (IPC/UI stay responsive) instead of one multi-second freeze. The index is a
- * rebuildable cache, so the loss of single-transaction atomicity is acceptable.
+ * worker for long. A 100k-file rebuild becomes many sub-10ms hiccups instead of
+ * one multi-second freeze. The index is a rebuildable cache, so the loss of
+ * single-transaction atomicity is acceptable.
  */
 export async function ingestFiles(
   rootPath: string,
@@ -181,21 +287,28 @@ export async function ingestFiles(
       mtime=excluded.mtime, ext=excluded.ext, tags=excluded.tags
   `);
 
-  // Collect the surviving paths, then drop rows for files no longer on disk.
-  // `cur_paths` is a TEMP table (per-connection); IF NOT EXISTS + a reset clear
-  // make this safe even if a previous run left it behind after an error.
-  db.exec('CREATE TEMP TABLE IF NOT EXISTS cur_paths(path TEXT PRIMARY KEY)');
-  db.exec('DELETE FROM cur_paths');
-  const insCur = db.prepare('INSERT OR IGNORE INTO cur_paths(path) VALUES (?)');
-  const insCurBatch = db.transaction((rows: IndexEntry[]) => {
-    for (const e of rows) insCur.run(e.path);
+  const prior = filesPrior(rootPath);
+  const seen = new Set<string>();
+  const changed: IndexEntry[] = [];
+  for (const e of entries) {
+    seen.add(e.path);
+    const prevSig = prior.get(e.path);
+    if (prevSig !== undefined && prevSig === filesSignature(e)) continue;
+    changed.push(e);
+  }
+
+  // Drop rows for files no longer on disk (in the db but not walked this run).
+  const removed: string[] = [];
+  for (const p of prior.keys()) if (!seen.has(p)) removed.push(p);
+
+  const delStmt = db.prepare('DELETE FROM files WHERE path = ?');
+  const delBatch = db.transaction((paths: string[]) => {
+    for (const p of paths) delStmt.run(p);
   });
-  for (let i = 0; i < entries.length; i += INGEST_BATCH) {
-    insCurBatch(entries.slice(i, i + INGEST_BATCH));
+  for (let i = 0; i < removed.length; i += INGEST_BATCH) {
+    delBatch(removed.slice(i, i + INGEST_BATCH));
     await yieldToEventLoop();
   }
-  db.exec('DELETE FROM files WHERE path NOT IN (SELECT path FROM cur_paths)');
-  db.exec('DROP TABLE cur_paths');
 
   const upsertBatch = db.transaction((rows: IndexEntry[]) => {
     for (const e of rows) {
@@ -210,10 +323,20 @@ export async function ingestFiles(
       });
     }
   });
-  for (let i = 0; i < entries.length; i += INGEST_BATCH) {
-    upsertBatch(entries.slice(i, i + INGEST_BATCH));
+  for (let i = 0; i < changed.length; i += INGEST_BATCH) {
+    upsertBatch(changed.slice(i, i + INGEST_BATCH));
     await yieldToEventLoop();
   }
+
+  // P2-2: the files table now holds exactly `seen` (every current entry —
+  // unchanged rows stay, changed/new are upserted, removed are deleted), so
+  // cache that count for O(1) readiness polls. Self-healing: every ingest
+  // rewrites it, so any drift is corrected on the next walk.
+  prepareCached(
+    db,
+    `INSERT INTO meta(key, value) VALUES('files_count', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  ).run(seen.size);
 }
 
 /** Filename/path/tags fuzzy search via FTS5 trigram (>=3 chars) or LIKE (<3). */
@@ -223,21 +346,19 @@ export function queryFiles(rootPath: string, q: string): IndexEntry[] {
   const db = getDb(rootPath);
   let rows: FileRow[];
   if (term.length >= 3) {
-    rows = db
-      .prepare(
-        `SELECT f.* FROM files_fts
+    rows = prepareCached(
+      db,
+      `SELECT f.* FROM files_fts
          JOIN files f ON f.rowid = files_fts.rowid
          WHERE files_fts MATCH ? ORDER BY rank LIMIT ?`
-      )
-      .all(ftsPhrase(term), QUERY_LIMIT) as FileRow[];
+    ).all(ftsPhrase(term), QUERY_LIMIT) as FileRow[];
   } else {
     const like = `%${term}%`;
-    rows = db
-      .prepare(
-        `SELECT * FROM files WHERE name LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\'
+    rows = prepareCached(
+      db,
+      `SELECT * FROM files WHERE name LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\'
          ORDER BY is_dir DESC, name LIMIT ?`
-      )
-      .all(like, like, QUERY_LIMIT) as FileRow[];
+    ).all(like, like, QUERY_LIMIT) as FileRow[];
   }
   return rows.map(rowToEntry);
 }
@@ -293,14 +414,20 @@ export function advancedQuery(rootPath: string, q: SearchQuery): IndexEntry[] {
 
   const sql = `SELECT * FROM files ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY is_dir DESC, name LIMIT ?`;
   params.push(ADV_LIMIT);
-  const rows = db.prepare(sql).all(...params) as FileRow[];
+  // P2-3: cache by the assembled SQL string. The same filter shape (same set
+  // of active filters) produces identical SQL across keystrokes → cache hit;
+  // only the param values differ, and those bind at .all() time.
+  const rows = prepareCached(db, sql).all(...params) as FileRow[];
   return rows.map(rowToEntry);
 }
 
 /** All distinct tags across the index (for the advanced-search tag picker). */
 export function distinctTags(rootPath: string): string[] {
   const db = getDb(rootPath);
-  const rows = db.prepare("SELECT tags FROM files WHERE tags != ''").all() as Pick<FileRow, 'tags'>[];
+  const rows = prepareCached(db, "SELECT tags FROM files WHERE tags != ''").all() as Pick<
+    FileRow,
+    'tags'
+  >[];
   const set = new Set<string>();
   for (const r of rows) {
     for (const t of r.tags.split(' ')) {
@@ -395,14 +522,13 @@ export function queryFulltext(rootPath: string, q: string): FulltextHit[] {
   const term = q.trim();
   if (term.length < 3) return []; // trigram needs >= 3 chars
   const db = getDb(rootPath);
-  const rows = db
-    .prepare(
-      `SELECT path, name,
+  const rows = prepareCached(
+    db,
+    `SELECT path, name,
          snippet(fulltext_fts, 3, '<mark>', '</mark>', '…', 12) AS snippet
        FROM fulltext_fts WHERE fulltext_fts MATCH ?
        ORDER BY rank LIMIT 100`
-    )
-    .all(ftsPhrase(term)) as { path: string; name: string; snippet: string }[];
+  ).all(ftsPhrase(term)) as { path: string; name: string; snippet: string }[];
   return rows.map((r) => ({
     path: path.join(rootPath, ...r.path.split('/')),
     name: r.name,
@@ -410,20 +536,22 @@ export function queryFulltext(rootPath: string, q: string): FulltextHit[] {
   }));
 }
 
-/** True if the root has any full-text content indexed. */
+/** True if the root has any full-text content indexed. O(1)-ish: stops at the
+ *  first row instead of a `count(*)` over every fulltext segment. */
 export function hasFulltext(rootPath: string): boolean {
   if (!existsSync(dbPath(rootPath))) return false;
   const db = getDb(rootPath);
-  const r = db.prepare('SELECT count(*) AS c FROM fulltext_fts').get() as { c: number };
-  return r.c > 0;
+  const row = prepareCached(db, 'SELECT 1 FROM fulltext_fts LIMIT 1').get();
+  return row !== undefined;
 }
 
-/** Index status: how many files are indexed, and whether one exists at all. */
+/** Index status: how many files are indexed, and whether one exists at all.
+ *  O(1) via `meta.files_count` (see `getFileCount`). */
 export function indexStatus(rootPath: string): { count: number; ready: boolean } {
   if (!existsSync(dbPath(rootPath))) return { count: 0, ready: false };
   const db = getDb(rootPath);
-  const r = db.prepare('SELECT count(*) AS c FROM files').get() as { c: number };
-  return { count: r.c, ready: r.c > 0 };
+  const count = getFileCount(db);
+  return { count, ready: count > 0 };
 }
 
 /** Best-effort removal of the legacy wsi.json (now superseded by index.db). */

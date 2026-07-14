@@ -219,7 +219,7 @@ describe('image thumbnails (.whale/thumbs/<file>.jpg)', () => {
 
 describe('Office thumbnails (.whale/thumbs/<file>.jpg)', () => {
   it('silently skips Office files when LibreOffice is unavailable', async () => {
-    if (isSofficeAvailable()) {
+    if (await isSofficeAvailable()) {
       // This machine has LibreOffice installed, so the "unavailable" scenario
       // cannot be exercised here. The conversion path is covered by manual/dev
       // testing; this test guards the fallback path on machines without it.

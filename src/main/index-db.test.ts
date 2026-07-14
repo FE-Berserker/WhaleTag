@@ -5,6 +5,7 @@ import os from 'os';
 import { promises as fsp } from 'fs';
 import {
   ingestFiles,
+  filesPrior,
   queryFiles,
   advancedQuery,
   distinctTags,
@@ -89,6 +90,49 @@ describe('index-db (SQLite + FTS5 trigram)', () => {
       await ingestFiles(root, [entry({ path: 'keep.txt', name: 'keep.txt' })]);
       assert.equal(queryFiles(root, 'gone').length, 0);
       assert.equal(queryFiles(root, 'keep').length, 1);
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('ingestFiles is incremental: unchanged rows skipped, tag-only changes re-indexed (P0-1)', async () => {
+    const root = await tmpRoot();
+    try {
+      await setup(root);
+      await ingestFiles(root, [
+        entry({ path: 'a.txt', name: 'a.txt', mtime: 100, size: 10, tags: ['x'] }),
+        entry({ path: 'b.txt', name: 'b.txt', mtime: 200, size: 20, tags: ['y'] }),
+      ]);
+
+      // filesPrior exposes the signature used to decide skips: `${mtime}|${size}|${tags}`.
+      const prior = filesPrior(root);
+      assert.equal(prior.size, 2);
+      assert.equal(prior.get('a.txt'), '100|10|x');
+      assert.equal(prior.get('b.txt'), '200|20|y');
+
+      // Re-ingest IDENTICAL entries — a no-op re-index. Rows must stay queryable
+      // (FTS intact); this is the regression guard for the incremental skip.
+      await ingestFiles(root, [
+        entry({ path: 'a.txt', name: 'a.txt', mtime: 100, size: 10, tags: ['x'] }),
+        entry({ path: 'b.txt', name: 'b.txt', mtime: 200, size: 20, tags: ['y'] }),
+      ]);
+      assert.equal(queryFiles(root, 'a.txt').length, 1);
+      assert.equal(queryFiles(root, 'b.txt').length, 1);
+      assert.equal(distinctTags(root).length, 2);
+
+      // b's TAGS change with NO mtime bump (a sidecar edit). tags is in the
+      // signature, so b must be re-upserted and the new tag become searchable —
+      // the key correctness reason tags can't be left out of the signature.
+      await ingestFiles(root, [
+        entry({ path: 'a.txt', name: 'a.txt', mtime: 100, size: 10, tags: ['x'] }),
+        entry({ path: 'b.txt', name: 'b.txt', mtime: 200, size: 20, tags: ['y', 'z'] }),
+      ]);
+      assert.equal(
+        advancedQuery(root, { ...emptyQ(), tags: ['z'] }).length,
+        1
+      );
+      assert.deepEqual(distinctTags(root).sort(), ['x', 'y', 'z']);
     } finally {
       closeDb(root);
       await fsp.rm(root, { recursive: true, force: true });
@@ -194,6 +238,36 @@ describe('index-db (SQLite + FTS5 trigram)', () => {
         entry({ path: 'b', name: 'b' }),
       ]);
       assert.deepEqual(indexStatus(root), { count: 2, ready: true });
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('indexStatus count tracks adds + deletes across re-ingests (P2-2 meta counter)', async () => {
+    const root = await tmpRoot();
+    try {
+      await setup(root);
+      await ingestFiles(root, [
+        entry({ path: 'a', name: 'a' }),
+        entry({ path: 'b', name: 'b' }),
+        entry({ path: 'c', name: 'c' }),
+      ]);
+      assert.equal(indexStatus(root).count, 3);
+
+      // Re-ingest with one removed and one added (net unchanged). The meta
+      // counter is rewritten to seen.size every ingest, so it must stay exact
+      // — a naive delta or a stale count would drift here.
+      await ingestFiles(root, [
+        entry({ path: 'a', name: 'a' }),
+        entry({ path: 'c', name: 'c' }),
+        entry({ path: 'd', name: 'd' }),
+      ]);
+      assert.equal(indexStatus(root).count, 3);
+
+      // Shrink to a single entry.
+      await ingestFiles(root, [entry({ path: 'a', name: 'a' })]);
+      assert.equal(indexStatus(root).count, 1);
     } finally {
       closeDb(root);
       await fsp.rm(root, { recursive: true, force: true });

@@ -180,7 +180,10 @@ window.whaleExt.onMessage((msg) => {
       if (!pending) break;
       pendingConversions.delete(msg.requestId);
       if (msg.data) {
-        pending.resolve(new Uint8Array(msg.data));
+        // msg.data arrives as a Uint8Array (the main process returns a Buffer;
+        // Electron IPC serializes it). Pass it straight to pdfjs — wrapping with
+        // `new Uint8Array(...)` would copy a typed array. See docs/15 P1-4.
+        pending.resolve(msg.data);
       } else {
         pending.reject(new Error(msg.error || 'conversion failed'));
       }

@@ -49,9 +49,9 @@ describe('ebook-convert', () => {
     );
   });
 
-  it('detects an explicit Calibre override', () => {
+  it('detects an explicit Calibre override', async () => {
     const override = '/custom/ebook-convert';
-    assert.strictEqual(ebookConvertBinary(override), override);
+    assert.strictEqual(await ebookConvertBinary(override), override);
   });
 
   it('converts using a fake Calibre binary', async () => {

@@ -25,7 +25,7 @@ export async function convertOfficeToPdf(
   srcPath: string,
   options: ConvertOfficeOptions = {}
 ): Promise<Buffer> {
-  const bin = sofficeBinary(options.sofficePath);
+  const bin = await sofficeBinary(options.sofficePath);
   if (!bin) {
     throw new Error('LibreOffice (soffice) not found');
   }
@@ -77,6 +77,6 @@ export async function convertOfficeToPdf(
 }
 
 /** Returns true when a LibreOffice `soffice` binary can be located. */
-export function isSofficeAvailable(): boolean {
-  return sofficeBinary(null) !== null;
+export async function isSofficeAvailable(): Promise<boolean> {
+  return (await sofficeBinary(null)) !== null;
 }

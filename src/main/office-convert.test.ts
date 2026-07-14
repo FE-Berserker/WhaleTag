@@ -114,14 +114,14 @@ describe('office-convert (with fake soffice)', () => {
     );
   });
 
-  it('sofficeBinary honours explicit override', () => {
-    assert.strictEqual(sofficeBinary('/custom/soffice'), '/custom/soffice');
+  it('sofficeBinary honours explicit override', async () => {
+    assert.strictEqual(await sofficeBinary('/custom/soffice'), '/custom/soffice');
   });
 
-  it('isSofficeAvailable delegates to sofficeBinary', () => {
+  it('isSofficeAvailable delegates to sofficeBinary', async () => {
     // Smoke check — actual value depends on host having real soffice installed.
     // We only assert the function is callable and returns a boolean.
-    assert.strictEqual(typeof isSofficeAvailable(), 'boolean');
+    assert.strictEqual(typeof await isSofficeAvailable(), 'boolean');
   });
 
   it('converts using a fake soffice binary and returns the produced bytes', async () => {
