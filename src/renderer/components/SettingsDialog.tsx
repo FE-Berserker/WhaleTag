@@ -124,7 +124,10 @@ import WorkflowManagerDialog from '-/components/WorkflowManagerDialog';
 
 const LANGUAGE_LABELS: Record<SupportedLanguage, string> = {
   en: 'English',
-  zh: '中文',
+  zh: '简体中文',
+  'zh-TW': '繁體中文',
+  ja: '日本語',
+  ko: '한국어',
 };
 
 /** The IDs are also persisted as the "settings section to open" prop from

@@ -1736,7 +1736,7 @@ export default function FileList() {
       >
         <Alert
           severity={
-            notice?.startsWith(t('tagsApplied')) ||
+            notice?.startsWith(t('tagsApplied', { count: 0 }).split('0')[0]) ||
             notice?.startsWith(t('movedToTrash')) ||
             notice?.startsWith(t('importedItems', { count: 0 }).split('0')[0])
               ? 'success'

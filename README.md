@@ -81,7 +81,7 @@ whole library stays movable.
 | UI components | **MUI** 9 + Emotion |
 | State | **Redux** + react-redux + redux-thunk (plain reducers, no Toolkit) |
 | Persistence | **redux-persist** (synced through main-process IPC) |
-| i18n | **i18next** + react-i18next (`common` namespace, en + zh) |
+| i18n | **i18next** + react-i18next (`common` namespace, en / zh / zh-TW / ja / ko) |
 | Search index | **SQLite FTS5** (per-location `index.db`) |
 | Build | **Webpack** 5 + ts-loader, multi-target via `webpack-merge` |
 | Packaging | **electron-builder** |
@@ -215,7 +215,7 @@ MIT. Third-party notices (e.g. bundled FFmpeg under GPL-3.0) live in [LICENSES/]
 | UI 组件 | **MUI** 9 + Emotion |
 | 状态 | **Redux** + react-redux + redux-thunk(纯 reducer,无 Toolkit)|
 | 持久化 | **redux-persist**(走主进程同步 IPC)|
-| 国际化 | **i18next** + react-i18next(`common` namespace,en + zh)|
+| 国际化 | **i18next** + react-i18next(`common` namespace,en / zh / zh-TW / ja / ko)|
 | 搜索索引 | **SQLite FTS5**(每个位置一个 `index.db`)|
 | 构建 | **Webpack** 5 + ts-loader,`webpack-merge` 多目标 |
 | 打包 | **electron-builder** |
