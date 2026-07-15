@@ -70,7 +70,7 @@ export function createKatexSandbox(opts: SandboxOptions): KatexSandboxRenderer {
   const mount = opts.mount ?? document.body;
 
   const pending = new Map<string, PendingRpc>();
-  let idCounter = 0;
+  const idCounter = 0;
   let readyResolve: () => void = () => undefined;
   let readyReject: (err: Error) => void = () => undefined;
   const ready = new Promise<void>((resolve, reject) => {

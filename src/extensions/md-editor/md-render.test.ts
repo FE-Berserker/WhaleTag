@@ -1157,7 +1157,7 @@ describe('extractMermaidBlocks', () => {
     const found = extractMermaidBlocks(el);
     // Mermaid uses leading whitespace as part of node IDs / labels;
     // textContent preserves it as the renderer would see it.
-    assert.match(found[0].textContent!, /  graph TD/);
+    assert.match(found[0].textContent!, / {2}graph TD/);
   });
 });
 

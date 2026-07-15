@@ -1419,7 +1419,7 @@ export async function exportPreviewAsPdf(
    */
   const textOf = (el: Element | null): string => {
     if (!el) return '';
-    return (el.textContent ?? '').replace(/ /g, ' ');
+    return (el.textContent ?? '').replace(/\u00A0/g, ' ');
   };
 
   /**

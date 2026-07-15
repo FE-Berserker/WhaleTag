@@ -402,7 +402,7 @@ function tessellateArc(
   startAngle: number,
   endAngle: number
 ): THREE.Vector3[] {
-  let sa = startAngle || 0;
+  const sa = startAngle || 0;
   let ea = endAngle || 0;
   if (ea <= sa) ea += Math.PI * 2;
   const span = ea - sa;

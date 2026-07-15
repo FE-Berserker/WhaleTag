@@ -89,7 +89,7 @@ export function createMermaidSandbox(opts: SandboxOptions): SandboxRenderer {
   // Use Map<id, PendingRpc> — `delete` on first match avoids keeping
   // stale entries around.
   const pending = new Map<string, PendingRpc>();
-  let idCounter = 0;
+  const idCounter = 0;
   let readyResolve: () => void = () => undefined;
   let readyReject: (err: Error) => void = () => undefined;
   const ready = new Promise<void>((resolve, reject) => {
