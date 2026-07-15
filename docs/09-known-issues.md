@@ -241,7 +241,7 @@ Task reminder check failed: Error: Error invoking remote method 'index:build':
 ## 16. office-viewer 已知坑与遗留(对照 audio-convert / pdf-viewer)
 
 **对照基准**:
-- audio-convert 有完整 `.whale/transcodes/<basename>.opus` 缓存([src/main/transcode-cache.ts](../src/main/transcode-cache.ts)):mtime 失效 / inflight 去重 / 原子写 / `removeTranscode` / `moveTranscode` / `copyTranscode` 全套
+- audio-convert 转码走 `whale-audio://` 实时流式([src/main/main.ts](../src/main/main.ts) `registerWhaleAudioProtocol`):ffmpeg stdout 边转边推给 `<audio>`,同步 tee 写 `.whale/transcodes/<basename>.opus`(缓存命中走 Range/206);`isTranscodeCached` mtime 失效 + `removeTranscode` / `moveTranscode` / `copyTranscode` 全套钩子在 [src/main/transcode-cache.ts](../src/main/transcode-cache.ts),inflight dedup + 信号量在协议层
 - pdf-viewer 渲染层有 fit-width / fit-page / 旋转 / 跳页 input / 键盘导航 / ResizeObserver 重排 / 滚动同步 currentPage / status 栏 / 主题初始猜测去白闪
 
 **进度**(2026-07-06 改造):§16.1 / §16.2 / §16.3 / §16.5 / §16.7 / §16.9 / §16.11 / §16.13 / §16.15 已修。新增代码:[src/main/office-cache.ts](../src/main/office-cache.ts) / [src/main/office-cache.test.ts](../src/main/office-cache.ts) / [src/main/office-convert.test.ts](../src/main/office-convert.test.ts) / [src/extensions/shared/pdfjs-in-iframe.ts](../src/extensions/shared/pdfjs-in-iframe.ts)。**还剩** §16.4 / §16.6 / §16.8 / §16.10 / §16.14 / §16.16 / §16.17 / §16.18 / §16.19 / §16.20 / §16.21 11 项遗留,按 ROI 排在下方。
@@ -261,7 +261,7 @@ Task reminder check failed: Error: Error invoking remote method 'index:build':
 
 ### 16.3 无 inflight 去重 ✅ 已修(2026-07-06,随 §16.1)
 
-`convertOfficeToPdf` 是裸函数,没 `inflight Map`。**已修**:`loadOfficePdf` 加了模块级 `inflight: Map<string, Promise<Buffer>>`,与 [src/main/transcode-cache.ts:36-44](../src/main/transcode-cache.ts) 的 `loadTranscode` 同模式。8 并发 → 1 次 soffice 调用已验证。
+`convertOfficeToPdf` 是裸函数,没 `inflight Map`。**已修**:`loadOfficePdf` 加了模块级 `inflight: Map<string, Promise<Buffer>>`(与 audio 转码的 `activeAudioTranscodes` 同模式 —— audio 转码现已改为 `whale-audio://` 实时流式,见 [src/main/main.ts](../src/main/main.ts) `registerWhaleAudioProtocol`,inflight dedup 在协议层)。8 并发 → 1 次 soffice 调用已验证。
 
 ### 16.4 Buffer → ArrayBuffer 双重拷贝
 
@@ -298,11 +298,13 @@ office-viewer 当前只支持手动缩放(+/− 两按钮),**无**:
 
 [src/extensions/office-viewer/index.ts](../src/extensions/office-viewer/index.ts) 硬编码 `applyTheme('light')`,**深色主题用户首次打开 iframe 看到一帧白底**。**已修**:office-viewer 启动改为 `applyTheme(detectInitialTheme())`,helper 从 [shared/pdfjs-in-iframe.ts](../src/extensions/shared/pdfjs-in-iframe.ts) import,与 pdf-viewer 完全对齐。
 
-### 16.10 缺缩略图占位 → 2–5s 空白
+### 16.10 缺缩略图占位 → 2–5s 空白 ✅ 已修(2026-07-15,docs/15 P3-1)
 
 [src/main/thumbnail.ts:138-165](../src/main/thumbnail.ts) 已经为 office 文件生成 256px JPEG 缩略图,存到 `.whale/thumbs/<basename>.jpg`,**office-viewer 完全没用**。soffice 转换 2–5s 期间 iframe 空白,用户不知道在干嘛。
 
 修复:扩展启动时**并行**发 `requestThumbnail`(用现成 IPC 拿 jpg)和 `requestOfficeConvert`(走转换),拿到缩略图立即显示 + 进度文字,PDF 渲染完淡入。Cache 命中时直接跳到 PDF 渲染,但缩略图仍作为 first-page placeholder。
+
+**已修**:新增 `requestThumbnail`(ext→host)/ `thumbnailContent`(host→ext)消息对([extension-types.ts](../src/shared/extension-types.ts)),host 桥([ExtensionHost.tsx](../src/renderer/components/ExtensionHost.tsx))调 `ipcApi.loadThumbnail`;office-viewer `openOfficeFile` 并行 fire 两请求,缩略图到达即 `showThumbnailPlaceholder` 居中显 jpg,`renderPdf` 清占位画真页。**未做 crossfade**(直接替换,可后续加);缓存命中时占位窗口极短但 cold convert 完整覆盖。
 
 ### 16.11 `doc.destroy()` 未调用 ✅ 已修(2026-07-06,随 §16.7)
 

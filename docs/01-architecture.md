@@ -63,6 +63,7 @@ folder/
 |---|---|
 | `whale-extension://<ext-id>/...` | 沙箱扩展 iframe 资源;`registerSchemesAsPrivileged({standard, secure})` 在 `app.ready` **之前** 调用,否则 origin 是 opaque,`document.cookie` 抛 `SecurityError`。各扩展自己 meta CSP 治理,主进程 CSP **跳过** 该协议 |
 | `whale-file://<encoded-path>` | 支持 Range 的流式文件服务,渲染层 `<video>` / `<audio>` / `<img>` 直接用;`createReadStream` + Range 响应,不进渲染层内存 |
+| `whale-audio://<encoded-source-path>` | Chromium 不能原生解码的音频(APE/WMA/AIFF/…)实时 Opus 转码:主进程 spawn ffmpeg → Ogg/Opus stdout 直接流给 `<audio>`(首播 ~1s 出声,不先把整份转码完),输出同步 tee 写 `.whale/transcodes/<basename>.opus`;缓存命中时走 `whale-file://` 同款 Range/206 路径(可拖动)。与 `whale-file://` 同 privilege(`standard, secure, supportFetchAPI, stream`);Range 逻辑共享 `protocol-range.ts` |
 
 ## 4. 主进程入口
 
@@ -71,7 +72,8 @@ folder/
 - **`pinUserDataToProductName()`**:`app.whenReady()` **之前** 调 `app.setPath('userData', ...)` + `app.setName(...)`,强制 `userData` 落到 `%APPDATA%/WhaleTag/`。直接 `electron .` 不经 npm 时不调这条会让 `app.getPath('userData')` 退化为 `AppData/Roaming/Electron/`,跟打包应用分两套 userData,"无法保存"的错觉根因
 - **CSP**:`onHeadersReceived` 设 renderer CSP(`default-src 'self'; img-src 'self' https: http: data: blob: ...`),**跳过 `whale-extension://` 响应**,由各扩展 meta CSP 自己治理
 - **`registerSchemesAsPrivileged([{ scheme: 'whale-extension', privileges: { standard: true, secure: true } }])`** 在 app.ready 之前
-- **whale-file 网关**:`registerFileProtocol` 注册 `whale-file://`,经 `assertWithinAllowedRoot` 后从磁盘 Range 读
+- **whale-file 网关**:`protocol.handle('whale-file')` 注册 `whale-file://`,经 `assertWithinAllowedRoot` 后从磁盘 Range 读(Range 逻辑抽到 `protocol-range.ts`,`createFileRangeResponse` 共享)
+- **whale-audio 网关**:`protocol.handle('whale-audio')` 注册 `whale-audio://`,为 APE/WMA/AIFF/… 实时 ffmpeg→Opus 流式转码(缓存命中则 Range 读 `.whale/transcodes/<basename>.opus`);经 `assertWithinAllowedRoot`;`mediaConvertSemaphore` 限并发,`before-quit` 杀残留 ffmpeg
 - **冷启动惰性加载**:pdfjs-dist(~1MB+)与 ffmpeg-static **不在** main.ts 顶层 import——pdfjs 经 `nodeRequire`(`createRequire(__filename)`)在首次 PDF 缩略图 / 全文抽取时才 load([src/main/fulltext.ts](../src/main/fulltext.ts) 与 [src/main/thumbnail.ts](../src/main/thumbnail.ts) 的 `getPdfjs()`),ffmpeg-static 只为诊断日志惰性 `import()`([src/main/main.ts](../src/main/main.ts))。sharp / better-sqlite3 / @napi-rs/canvas 仍随 `./ipc` eager 加载(IPC handler 启动即要用)。
 
 ## 5. 渲染层桥

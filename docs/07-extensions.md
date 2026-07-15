@@ -56,19 +56,20 @@ src/extensions/
 | `setTheme` / `setReadOnly` / `setLocale` | 主题 / 只读 / 语言切换 |
 | `requestSave` | 触发扩展保存 |
 | `pdfAsset` / `cadWasm` / `heicWasm` | PDF cmap/字体 + CAD wasm 经 host IPC 供给(绕 iframe CSP) |
-| `dwgConvertedContent` / `officePdfContent` / `ebookConvertedContent` / `audioConvertedContent` | 主进程 CLI 转换结果(office / dwg / ebook / 音频 → opus) |
+| `dwgConvertedContent` / `officePdfContent` / `ebookConvertedContent` | 主进程 CLI 转换结果(office / dwg / ebook) |
+| `thumbnailContent` | office-viewer 缩略图占位(host `loadThumbnail` 回的 jpg data URL,docs/15 P3-1) |
 | `archiveList` / `archiveEntryContent` / `archiveExtracted` | 主进程 archive 解码结果(7zip-bin) |
 | `directoryDialogResult` | 目录选择对话框结果 |
 | `externalDrag` / `fileEmbed` / `siblings` | 文件夹拖入 / 嵌入 / 同级条目 |
 | `ebookAnnotations` | 阅读高亮注释 |
 | `requestSelection` / `applyReplacement` | AI inline-edit 桥(host ↔ CodeMirror) |
-| `streamingUrl` | 媒体流式 URL(`whale-file://` 协议) |
+| `streamingUrl` | 媒体流式 URL(host 按扩展名选协议:原生/视频走 `whale-file://`,转码音频 APE/WMA/… 走 `whale-audio://` 主进程实时 Opus 转码) |
 
-**Ext → Host 全部消息类型**(`ExtensionMessage` 联合,`src/shared/extension-types.ts:529-558`,29 种):
+**Ext → Host 全部消息类型**(`ExtensionMessage` 联合,`src/shared/extension-types.ts`,28 种):
 
 核心生命周期 / 编辑:`ready` / `loadDefaultTextContent` / `parentSaveDocument` / `contentChangedInEditor` / `editDocument`
 
-资产 / 转换请求:`requestPdfAsset` / `requestCadWasm` / `requestHeicWasm` / `requestDwgConvert` / `requestOfficeConvert` / `requestEbookConvert` / `requestAudioConvert` / `requestStreamingUrl` / `requestArchiveList` / `requestArchiveEntry` / `requestArchiveExtract` / `requestDirectoryDialog`
+资产 / 转换请求:`requestPdfAsset` / `requestCadWasm` / `requestHeicWasm` / `requestDwgConvert` / `requestOfficeConvert` / `requestThumbnail` / `requestEbookConvert` / `requestStreamingUrl`(媒体用,host 按扩展名回 `whale-file://` 或 `whale-audio://`)/ `requestArchiveList` / `requestArchiveEntry` / `requestArchiveExtract` / `requestDirectoryDialog`
 
 图片编辑:`saveImageEdit` / `copyImageToClipboard` / `saveImageComposite` / `requestFileEmbed` / `requestFile`
 
@@ -234,8 +235,8 @@ src/extensions/
 | image-viewer | 原生 `<img>` + Lightbox 缩放 / pan / 旋转 / `flipH` / `flipV`;`<` `>` `Space` 等快捷键 |
 | heic-viewer | libheif-js wasm 解码;大文件同步阻塞 → iframe 显示 "Decoding…" |
 | pdf-viewer | 扩展 iframe 内 pdfjs 浏览器版 + 线程内 fake worker + `HostBinaryDataFactory`(经 host IPC 拿 cmap / 标准字体 / wasm)+ `<canvas>` 渲染 + fit W/P + 旋转 + 状态栏;CJK 字体自动回退系统 |
-| media-player | `<video>` / `<audio>` 用 `whale-file://` 流式 URL(主进程 Range 响应);10 视频 + 16 音频;APE/WMA/AIFF/AMR/AC3/DTS/MPC/WV/DSF 等转码 ffmpeg → Opus 缓存到 `.whale/transcodes/`;`.opus` MIME `audio/opus`;playlist + 循环 + 速度 + 随机 + 进度记忆 |
-| office-viewer | `requestOfficeConvert` → 主进程 `soffice --headless --convert-to pdf` → `officePdfContent` 推回 → iframe 内 pdfjs 浏览器版渲染到 `<canvas>`;fake worker + `HostBinaryDataFactory` 与 pdf-viewer 同款;**无缓存,每次开档冷启动 soffice**;仅支持手动缩放,无 fit / 旋转 / 跳页 / 键盘导航 |
+| media-player | `<video>` / `<audio>` 流式播放;10 视频 + 16 音频。原生 / 视频 → `whale-file://`(主进程 Range 206 响应);**APE/WMA/AIFF/AMR/AC3/DTS/MPC/WV/DSF → `whale-audio://`**:主进程实时 ffmpeg → Opus 流式推给 `<audio>`(首播 ~1s 出声,不先把整份转码完),输出同步 tee 写入 `.whale/transcodes/<basename>.opus`,播完后即缓存,再开秒开 + 可拖动;`.opus` MIME `audio/opus`;playlist + 循环 + 速度 + 随机 + 进度记忆 |
+| office-viewer | `requestOfficeConvert` → 主进程 `soffice --headless --convert-to pdf` → `officePdfContent` 推回 → iframe 内 pdfjs 浏览器版渲染到 `<canvas>`;fake worker + `HostBinaryDataFactory` 与 pdf-viewer 同款;**每次开档冷启动 soffice**(P3-1:冷转码 2-5s 期间并行 `requestThumbnail` 取缓存 jpg 当首页占位,不再空白);手动缩放 + rAF scroll 同步「当前页 / 总页」(P3-2),无 fit / 旋转 / 跳页 / 键盘导航 |
 | archive-viewer | 主进程 `archive.ts` + `7zip-bin` 二进制解码 9 种格式(zip / tar / tgz / tbz2 / txz / gz / bz2 / xz / 7z);双栏(文件树 + 预览);文本 utf-8 + 1MB 截断;图片 Blob URL;HTML 沙箱 iframe(无 `allow-same-origin`);二进制 hex head + 字节数;`__MACOSX/` 与 `.DS_Store` 过滤;> 50,000 entries 视为 zip-bomb 拒绝 |
 | cad-viewer | WebGLRenderer + OrbitControls;Tier 0 (stl/obj/glb/gltf/ply) + Tier 1 (dxf,2D/3D) + Tier 1.5 (step/stp/iges/igs/brep 经 occt-import-js wasm) + Tier 2 (dwg 经 dwg2dxf / ODA File Converter) |
 | ebook-viewer | fflate 解 EPUB/CBZ;FB2 XML 解析;MOBI/AZW/AZW3 经 Calibre CLI 转 EPUB;annotations JSON 存 `.whale/ebook-annotations/<basename>.json`;阅读进度 + 选区高亮 + Ctrl-F 跨章搜索 + 主题 |
@@ -262,8 +263,8 @@ src/extensions/
 
 - `convertOfficeToPdf(srcPath, options)` 走 `execFile(bin, ['--headless','--convert-to','pdf','--outdir',tmpDir, srcPath], {timeout: 120000})`
 - `tmpDir` 用 `fsp.mkdtemp(os.tmpdir() + '/whale-office-')`,转换完 `fsp.rm(tmpDir, {recursive, force})`
-- `bin` 来自 [src/main/thumbnail.ts:94-126](../src/main/thumbnail.ts) 的 `sofficeBinary(override)`:`override` > `C:\Program Files\LibreOffice\program\soffice.exe` (Win) / `/Applications/LibreOffice.app/Contents/MacOS/soffice` (Mac) / `/usr/bin/soffice` / `/usr/lib/libreoffice/program/soffice` (Linux) > PATH `soffice --version` 探针
-- `isSofficeAvailable()` 探针同上,但扩展没主动用,缺 soffice 时报 `'LibreOffice (soffice) not found'`
+- `bin` 来自 [src/main/thumbnail.ts:111-159](../src/main/thumbnail.ts) 的 `await sofficeBinary(override)`(`Promise<string|null>`,async — P1-1):`override` > `C:\Program Files\LibreOffice\program\soffice.exe` (Win) / `/Applications/LibreOffice.app/Contents/MacOS/soffice` (Mac) / `/usr/bin/soffice` / `/usr/lib/libreoffice/program/soffice` (Linux) > PATH `soffice --version` 异步探针(并发首调用 inflight 去重)
+- `await isSofficeAvailable()` 探针同上,扩展不主动调,缺 soffice 时报 `'LibreOffice (soffice) not found'`
 
 **iframe**([src/extensions/office-viewer/index.ts](../src/extensions/office-viewer/index.ts)):
 
@@ -390,14 +391,14 @@ src/extensions/
 **协议**(基于现有 `ExtensionMessage` + `HostMessage`):
 - 入站(扩展 → host):
   - `requestFile` — 上下首 / 点播队列里的某行,host 解析成 `BackgroundPlayerContext.jumpTo`
-  - `requestStreamingUrl` / `requestAudioConvert` — 与全屏 viewer 走同一通路
+  - `requestStreamingUrl` — 与全屏 viewer 走同一通路(host 按扩展名回 `whale-file://` 或 `whale-audio://`)
   - **新增** `requestOpenInView` — dock 的"放大"按钮,host 调 `openWithExtension` 把当前曲目升格成全屏 viewer;dock 状态保留
   - **新增** `requestHide` — dock 的"收起"按钮,host 设 `BackgroundPlayerContext.dismissed = true`
 - 出站(host → 扩展):
   - `fileContent` — `BackgroundPlayerContext.currentPath` 变化时推送(走 streaming URL 转码通路,与全屏路径一致)
   - `siblings` — 把整个 `queue` 当作 siblings,让 prev/next 在队列内导航
   - `setTheme` / `setLocale` — 与全屏同步
-  - `streamingUrl` / `audioConvertedContent` — 协议层响应
+  - `streamingUrl` — 协议层响应(媒体流式 URL)
 
 **模式切换**:`?mode=bar` 通过 URL 查询参数传进去,扩展读 `location.search` 后给 `<body>` 设 `data-mode`,CSS 切换两套布局(`#toolbar`/`#stage`/`#playlist` 隐藏,`#bar` 显示)。同一份 playback / queue / loop / shuffle / rate / volume / progress 逻辑,DOM 形状不同 —— 0 行播放核心代码改动。
 

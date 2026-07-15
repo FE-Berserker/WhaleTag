@@ -179,7 +179,7 @@ image-viewer 11 种格式,jpg/jpeg/png/gif/webp/bmp/avif/tiff/tif/ico/svg;Lightb
 ### pdf-viewer / media-player / office-viewer / ebook-viewer
 
 - pdf-viewer:**iframe 内 pdfjs 浏览器版**(CJK 字体自动回退)+ fake worker + `HostBinaryDataFactory` + wasm 经 host IPC
-- media-player:10 视频 + 16 音频;APE/WMA/AIFF/AMR/AC3/DTS/MPC/WV/DSF 自动 ffmpeg→Opus 转码到 `.whale/transcodes/`;`.opus` 走 MIME `audio/opus`;视频/原生音频用 `whale-file://` 流式 URL(206 Range)
+- media-player:10 视频 + 16 音频;视频/原生音频用 `whale-file://` 流式 URL(206 Range);APE/WMA/AIFF/AMR/AC3/DTS/MPC/WV/DSF 走 `whale-audio://` 实时 ffmpeg→Opus 流式(首播 ~1s 出声,边转边播,tee 写 `.whale/transcodes/` 缓存,再开秒开 + 可拖动);`.opus` MIME `audio/opus`
 - office-viewer:`requestOfficeConvert` → 主进程 soffice 转 PDF → `officePdfContent` 推回 → iframe 内 pdfjs 浏览器版渲染到 `<canvas>`(与 pdf-viewer 共用 `src/extensions/shared/pdfjs-in-iframe.ts` 抽象);支持 `doc/docx/xls/xlsx/ppt/pptx/odt/ods/odp` 9 种;**PDF 已缓存到 `.whale/transcodes/<basename>.pdf`**(仿 audio-convert cache);soffice 加 `--norestore --nologo --nofirststartwizard` + stderr 捕获;启动用 `detectInitialTheme()`;仅手动 +/- 缩放,无 fit / 旋转 / 跳页 / 键盘导航;未装 LibreOffice 报 `'LibreOffice (soffice) not found'`,无引导
 - ebook-viewer:EPUB/CBZ/FB2 直读,MOBI/AZW/AZW3 经 Calibre 转 EPUB;阅读进度持久化 + 选区高亮 + Ctrl-F
 
