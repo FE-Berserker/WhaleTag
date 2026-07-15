@@ -23,6 +23,7 @@ import { bucketEntries, UNTAGGED_COLUMN } from '../../shared/kanban';
 import { DND_TYPE_FILE, type FileDragItem } from '-/services/dnd';
 import type { FileCellData } from '-/components/file-cell';
 import EntryCard from '-/components/EntryCard';
+import EntryCardStack from '-/components/EntryCardStack';
 import { noTransitionMenuSlots } from './MenuNoTransition';
 import MatrixEntryMenu from './MatrixEntryMenu';
 import { useIOActionsContext } from '-/hooks/IOActionsContextProvider';
@@ -349,18 +350,18 @@ function Quadrant({ value, entries, data, onMoveToColumn, onOpenEntryMenu }: Qua
         </Typography>
         <Chip label={entries.length} size="small" variant="outlined" />
       </Box>
-      <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: 1, pb: 1 }}>
-        {entries.map((entry) => (
-          <EntryCard
-            key={entry.path}
-            entry={entry}
-            data={data}
-            // H.28 P0-1: card right-click → open the per-card domain menu
-            // (matrix scope). Closes the column header menu first so the
-            // two menus never stack.
-            renderContextMenu={renderCardContextMenu}
-          />
-        ))}
+      {/* Quadrant body: virtualized card stack (P0-4②). The quadrant Box above
+          is the DnD drop target — it wraps this stack, so drops still land on
+          the quadrant regardless of which cards are virtualized in/out. */}
+      <Box sx={{ flex: 1, minHeight: 0, px: 1, pb: 1 }}>
+        <EntryCardStack
+          entries={entries}
+          data={data}
+          // H.28 P0-1: card right-click → open the per-card domain menu
+          // (matrix scope). Closes the column header menu first so the
+          // two menus never stack.
+          renderContextMenu={renderCardContextMenu}
+        />
       </Box>
 
       <Menu

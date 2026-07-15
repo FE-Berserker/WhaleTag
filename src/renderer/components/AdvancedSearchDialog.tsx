@@ -26,6 +26,7 @@ import FolderIcon from '@mui/icons-material/Folder';
 import FileTypeIcon from './FileTypeIcon';
 import type { IndexEntry } from '../../shared/ipc-types';
 import { RootState } from '-/reducers';
+import { EMPTY_ARR, EMPTY_OBJ } from '-/constants';
 import { addSavedSearch, removeSavedSearch } from '-/reducers/savedsearches';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { ipcApi } from '-/services/ipc-api';
@@ -75,10 +76,14 @@ export default function AdvancedSearchDialog({
   const dispatch = useDispatch();
   const { currentLocation, navigateTo } = useCurrentLocationContext();
   const savedSearches = useSelector(
-    (s: RootState) => s.savedsearches?.items ?? []
+    (s: RootState) => s.savedsearches?.items ?? EMPTY_ARR
   );
-  const tagColors = useSelector((s: RootState) => s.settings?.tagColors ?? {});
-  const tagGroups = useSelector((s: RootState) => s.taglibrary?.groups ?? []);
+  const tagColors = useSelector(
+    (s: RootState) => s.settings?.tagColors ?? EMPTY_OBJ
+  );
+  const tagGroups = useSelector(
+    (s: RootState) => s.taglibrary?.groups ?? EMPTY_ARR
+  );
 
   // Tag suggestions: the index's distinct tags (async, from main) merged with
   // tag-group tags and any colored tag, so the picker is useful even before the

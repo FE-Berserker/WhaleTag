@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { Box, Skeleton } from '@mui/material';
 import FolderIcon from '@mui/icons-material/Folder';
 import { useSelector } from 'react-redux';
@@ -28,7 +28,7 @@ import FileTypeIcon from './FileTypeIcon';
  * user scrolls (or pre-fills a viewport-margin lookahead so the visible
  * area appears instantly). No more "freeze for 5s on mount".
  */
-export default function ThumbIcon({
+function ThumbIconBase({
   entry,
   thumbCache,
   size,
@@ -247,3 +247,14 @@ export default function ThumbIcon({
     </div>
   );
 }
+
+/**
+ * P2-5 (perf audit): memo'd so a row/grid/gantt/gallery cell re-rendering on
+ * hover, selection, or drop doesn't tear down + rebuild its IntersectionObserver
+ * subscription when the cell's identity is unchanged. Props are all primitive or
+ * reference-stable: `entry` (a DirEntry ref from `entries`), `thumbCache`
+ * (FileList-owned Map, useMemo'd), and numeric/string sizes. The thumbnail
+ * itself keeps updating via the component's own `useState` once a load resolves,
+ * so memoizing does not freeze the fill-in — same model as the memo'd `Row`.
+ */
+export default memo(ThumbIconBase);

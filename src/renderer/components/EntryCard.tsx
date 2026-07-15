@@ -13,14 +13,18 @@ import { stripTagsFromName } from '-/services/tags';
 import type { FileCellData } from '-/components/file-cell';
 import ThumbIcon from '-/components/ThumbIcon';
 import EntryTagChips from '-/components/EntryTagChips';
+import { EMPTY_ARR } from '-/constants';
 import { usePeriodTagDialog } from './PeriodTagDialog';
 
 const CARD_THUMB = 40;
 const MAX_TAGS_PER_CARD = 4;
-// Fixed card height so Kanban/Matrix rows stay visually aligned whether the
-// entry carries tags or not: padding (16) + thumb row (40) + gap (4) + one tag
-// row (24) = 84px. Cards with more tags still grow naturally.
-const CARD_MIN_HEIGHT = 84;
+// P0-4② (perf audit): exported so the virtualized EntryCardStack can seed its
+// `useDynamicRowHeight` default with the card's minimum height.
+export const CARD_MIN_HEIGHT = 84;
+
+// P2-5 (perf audit): hoisted so the memo'd <EntryTagChips> gets a referentially
+// stable `containerSx` prop instead of a fresh `{ flexWrap: 'wrap' }` per render.
+const TAG_CHIPS_SX = { flexWrap: 'wrap' } as const;
 
 /** Local `YYYY-MM-DD` for "today" — used as the default for the period
  *  drop dialog. See Row.tsx / GridCell.tsx for the same helper; small
@@ -191,7 +195,7 @@ function EntryCardBase({
 
   const dropActive = isOver && canDrop;
 
-  const tags = tagsByName.get(entry.path) ?? [];
+  const tags = tagsByName.get(entry.path) ?? EMPTY_ARR;
 
   // H.25 P2-1: keyboard reachability. Finder / Explorer convention:
   //   Enter — open the file
@@ -303,7 +307,7 @@ function EntryCardBase({
           t={t}
           onClickTag={onClickTag}
           onTagContextMenu={onTagContextMenu}
-          containerSx={{ flexWrap: 'wrap' }}
+          containerSx={TAG_CHIPS_SX}
         />
       ) : null}
     </Card>

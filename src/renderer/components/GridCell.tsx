@@ -23,6 +23,7 @@ import { usePeriodTagDialog } from './PeriodTagDialog';
 import type { FileCellData } from './file-cell';
 import ThumbIcon from './ThumbIcon';
 import EntryTagChips from './EntryTagChips';
+import { EMPTY_ARR } from '-/constants';
 
 /** Local `YYYY-MM-DD` for "today" — used as the default for the period
  *  drop dialog. Duplicated from Row.tsx; small enough to inline at each
@@ -34,6 +35,14 @@ function todayIsoLocal(): string {
 
 /** Max tag chips shown on a grid card before the `+N` overflow chip. */
 const MAX_TAGS_PER_CELL = 3;
+
+// P2-5 (perf audit): hoisted so the memo'd <EntryTagChips> gets a referentially
+// stable `containerSx` prop instead of a fresh object every render.
+const TAG_CHIPS_SX = {
+  justifyContent: 'center',
+  flexWrap: 'wrap',
+  mt: 0.25,
+} as const;
 /** Vertical room below the thumbnail for name + tags + meta (px). */
 export const GRID_CELL_FOOTER = 84;
 /** Gap between cards (px); the card insets by half on each side. */
@@ -188,7 +197,7 @@ export default function GridCell({
   // Trailing cells in the last row have no entry — keep the grid shape intact.
   if (!entry) return <div style={style} />;
 
-  const tags = tagsByName.get(entry.path) ?? [];
+  const tags = tagsByName.get(entry.path) ?? EMPTY_ARR;
   const selected = isSelected(entry);
   const dropActive = (isOver && canDrop) || (isOverFile && entry.isDirectory);
   const thumbSize = Math.max(0, Math.min(entrySize, cellWidth) - 24);
@@ -319,7 +328,7 @@ export default function GridCell({
             t={t}
             onClickTag={onClickTag}
             onTagContextMenu={onTagContextMenu}
-            containerSx={{ justifyContent: 'center', flexWrap: 'wrap', mt: 0.25 }}
+            containerSx={TAG_CHIPS_SX}
           />
         ) : null}
 

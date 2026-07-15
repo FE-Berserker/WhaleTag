@@ -21,7 +21,7 @@ import { bucketEntries, UNTAGGED_COLUMN } from '../../shared/kanban';
 import { DND_TYPE_FILE, type FileDragItem } from '-/services/dnd';
 import { tagDisplayLabel } from '-/services/tag-display';
 import type { FileCellData } from '-/components/file-cell';
-import EntryCard from '-/components/EntryCard';
+import EntryCardStack from '-/components/EntryCardStack';
 import KanbanEntryMenu, {
   type KanbanEntryContext,
 } from '-/components/KanbanEntryMenu';
@@ -85,10 +85,19 @@ export default function KanbanView({
     );
   }
 
-  const stageValues = stages.map((s) => s.value);
-  const buckets = bucketEntries(entries, stageValues, tagsByName);
+  const stageValues = useMemo(() => stages.map((s) => s.value), [stages]);
+  // P2-6 (perf audit): bucketEntries is O(N) over visible entries (one
+  // tagsByName.get per file). Memoize so selection/menu/hover re-renders
+  // don't re-bucket thousands of files — mirrors MatrixView.
+  const buckets = useMemo(
+    () => bucketEntries(entries, stageValues, tagsByName),
+    [entries, stageValues, tagsByName]
+  );
   // Column order: stage values (board order), then the untagged column.
-  const columnKeys = [...stageValues, UNTAGGED_COLUMN];
+  const columnKeys = useMemo(
+    () => [...stageValues, UNTAGGED_COLUMN],
+    [stageValues]
+  );
 
   // H.25 P0-4: per-card domain menu state. `null` ⇒ closed; otherwise the
   // anchor coords + the right-clicked entry. The `sources` (multi-selection
@@ -371,16 +380,15 @@ function KanbanColumn({
         <Chip label={entries.length} size="small" variant="outlined" />
       </Box>
 
-      {/* Column body: scrollable card stack */}
-      <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: 1, pb: 1 }}>
-        {entries.map((entry) => (
-          <EntryCard
-            key={entry.path}
-            entry={entry}
-            data={data}
-            renderContextMenu={renderCardContextMenu}
-          />
-        ))}
+      {/* Column body: virtualized card stack (P0-4②). The column Box above is
+          the DnD drop target — it wraps this stack, so drops still land on the
+          column regardless of which cards are virtualized in/out. */}
+      <Box sx={{ flex: 1, minHeight: 0, px: 1, pb: 1 }}>
+        <EntryCardStack
+          entries={entries}
+          data={data}
+          renderContextMenu={renderCardContextMenu}
+        />
       </Box>
 
       <Menu

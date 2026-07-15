@@ -19,7 +19,6 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useState,
 } from 'react';
@@ -189,25 +188,6 @@ export default function GanttTimeline({
   onJumpToToday,
   exportRef,
 }: GanttTimelineProps) {
-  // ResizeObserver: re-measure on each scroller resize so the
-  // scroll-to-Today math (which subtracts clientWidth/2 from the target
-  // offset) stays centered. The width is a ref-backed value to avoid
-  // re-renders on every resize tick.
-  useLayoutEffect(() => {
-    const el = scrollerRef.current;
-    if (!el) return undefined;
-    if (typeof ResizeObserver === 'undefined') return undefined;
-    const ro = new ResizeObserver(() => {
-      // No state update needed; scrollToToday reads `clientWidth` lazily
-      // from the live element each time it's called. We only attach the
-      // observer so the parent can be sure the DOM has measured at least
-      // once before mounting its toolbar button.
-      void el.clientWidth;
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [scrollerRef]);
-
   // (No IntersectionObserver here — row thumbnails use native
   // `<img loading="lazy">` and let the browser handle deferred decode.
   // See `GanttRow.tsx` header for the IO-vs-native decision.)

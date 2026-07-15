@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDispatch, useSelector } from 'react-redux';
 import {
@@ -27,6 +27,7 @@ import HistoryIcon from '@mui/icons-material/History';
 import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
 
 import { RootState } from '-/reducers';
+import { EMPTY_ARR } from '-/constants';
 import { COLUMN_HEADER_HEIGHT } from '-/theme';
 import { clearRecent } from '-/reducers/recent';
 import { setViewDepth, MAX_VIEW_DEPTH, MIN_VIEW_DEPTH } from '-/reducers/settings';
@@ -101,7 +102,9 @@ export default function FileToolbar() {
   } = useCurrentLocationContext();
   const { refresh, loading } = useDirectoryContentContext();
   const { createFolder, createFile } = useIOActionsContext();
-  const recentItems = useSelector((s: RootState) => s.recent?.items ?? []);
+  const recentItems = useSelector(
+    (s: RootState) => s.recent?.items ?? EMPTY_ARR
+  );
   const locations = useSelector((s: RootState) => s.locations.items);
   // H.24: viewDepth is the global recursion depth for the file area. Until
   // the data-layer change in PR3 ships, this slider only updates settings —
@@ -132,7 +135,12 @@ export default function FileToolbar() {
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        setToolbarWidth(entry.contentRect.width);
+        // P3-5 (perf audit): guard against spurious same-width RO notifications
+        // (matches FileList's pattern) so resize ticks don't re-render the bar.
+        setToolbarWidth((prev) => {
+          const w = entry.contentRect.width;
+          return prev === w ? prev : w;
+        });
       }
     });
     ro.observe(el);
@@ -143,15 +151,21 @@ export default function FileToolbar() {
     computeFileToolbarVisibility(toolbarWidth);
 
   // Only show recents whose location still exists; tag each with its name.
-  const recents = recentItems
-    .map((it) => ({
-      ...it,
-      location: locations.find((l) => l.id === it.locationId),
-    }))
-    .filter(
-      (it): it is typeof it & { location: NonNullable<typeof it.location> } =>
-        it.location !== undefined
-    );
+  // P3-5 (perf audit): memoize — this maps + filters on every render otherwise,
+  // handing consumers a fresh array each time.
+  const recents = useMemo(
+    () =>
+      recentItems
+        .map((it) => ({
+          ...it,
+          location: locations.find((l) => l.id === it.locationId),
+        }))
+        .filter(
+          (it): it is typeof it & { location: NonNullable<typeof it.location> } =>
+            it.location !== undefined
+        ),
+    [recentItems, locations]
+  );
 
   const atRoot =
     !!currentLocation && currentDirectoryPath === currentLocation.path;

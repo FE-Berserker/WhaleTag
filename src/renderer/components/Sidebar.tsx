@@ -205,8 +205,15 @@ function LocationRow({
 export default function Sidebar({ onAddLocation, embedded = false }: SidebarProps) {
   const { t } = useTranslation();
   const dispatch = useDispatch();
-  const { items } = useSelector((s: RootState) => s.locations);
-  const { defaultLocationId } = useSelector((s: RootState) => s.settings);
+  // P2-4 (perf audit): select the narrow field, not the whole slice. The
+  // whole-slice selectors (`s.locations` / `s.settings`) re-rendered this
+  // component on *any* change to those slices — e.g. switching the active
+  // location (activeId) re-rendered just to read `items`, and any settings
+  // toggle re-rendered just to read `defaultLocationId`.
+  const items = useSelector((s: RootState) => s.locations.items);
+  const defaultLocationId = useSelector(
+    (s: RootState) => s.settings.defaultLocationId
+  );
   const aiEnabled = useSelector((s: RootState) => s.settings.aiEnabled);
   const aiPanelOpen = useSelector((s: RootState) => s.settings.aiPanelOpen);
   const taskReminderLocationId = useSelector(

@@ -53,7 +53,7 @@
 - **做法**(先廉后贵):① `React.memo(EntryCard)` + 把 `renderContextMenu` 从内联箭头稳定下来(`useCallback`);② 单列卡片超百张时换 `react-window` `List`(`MapiqueTray` 是最近模板)。
 
 - [x] ① memo + 稳定回调(2026-07-14)— `EntryCard` 改 `memo(EntryCardBase)` 默认导出。三 prop 全 ref-stable:`entry`(来自 `data.entries` 的 DirEntry ref)、`data`(FileList `cellData` useMemo)、`renderContextMenu`(各视图 `useCallback`)。**关键正确性**:选择仍生效——`isSelected` 身份挂在 `selectedTick` 上、是 `cellData` 的 dep,故选择变化会 re-bind `data` → 所有 EntryCard 重渲读新 `selectedPaths`(与改前一致);缩略图不受影响——`ThumbIcon` 靠自身 `useState`(`dataUrl`/`loaded`)在 `doLoad` 里刷新,父 memo 不挡子自渲(与 react-window memo 化的 list `Row` 同模型)。**稳定 4 个调用点**:① Kanban 主 `openEntryMenu` `useCallback([])` → 传 `KanbanColumn`;`KanbanColumn` 内 `renderCardContextMenu` `useCallback([onOpenEntryMenu])`(先关列菜单再转发)。② Matrix 主 `openEntryMenu` `useCallback([])` 共享给 `Quadrant` + `UntaggedTray`;`Quadrant` 内 `renderCardContextMenu` `useCallback([onOpenEntryMenu])`;`UntaggedTray` 是纯转发,直接 `renderContextMenu={onOpenEntryMenu}`(无需包一层)。③ Gantt 主 `openEntryMenu` `useCallback([])` → Triage `EntryCard` 的 `renderContextMenu`。**验证**:`type-check` + `eslint` 干净;KanbanView / MatrixView / GanttView 三套测试 **74/74 通过**(含 Kanban 卡片右键菜单 #3-5b、EntryCard tag-drop #8、Matrix 象限菜单 #3 / 未标记托盘 #4、Gantt Triage #2 / domain 菜单 #5)。注:GanttRow 的 `onContextMenu` 是同形闭包,留 **P1-5** 统一处理(本项不动 GanttRow)。
-- [ ] ② 列内虚拟化 — 未做(`react-window` `List`,模板 `MapiqueTray`)。① 已消除「无关重渲整列重建卡片」的主成本;② 是单列卡片量极大(数百+)时的进一步退路,需处理虚拟列表内拖拽跨列,留待按需。
+- [x] ② 列内虚拟化(2026-07-15)— 新增 [EntryCardStack.tsx](../src/renderer/components/EntryCardStack.tsx):react-window v2 `List` + `useDynamicRowHeight`(卡片可变高:84px min,标签换行更高),抄 `MapiqueTray` 范式(ResizeObserver 测容器高 + `rowProps` memo)。接入 **Kanban 列体**([KanbanView.tsx](../src/renderer/components/KanbanView.tsx))+ **Matrix 象限体**([MatrixView.tsx](../src/renderer/components/MatrixView.tsx))——这俩是竖向卡片栈,单 stage/象限可能数百卡。**横向 tray 不虚拟化**:Matrix `UntaggedTray`、Gantt Triage 都是 `overflowX:auto` 的薄横条(maxHeight 160 / 单行),横向虚拟化要 `Grid(1×N)` 复杂且低值,留原 `entries.map` + flex `gap`。**DnD 不受影响**:drop target 是包裹 stack 的列/象限 Box(恒挂载,与哪张卡虚进虚出无关),可见卡仍各自 `useDrag`;无列内位序重排(workflow stage 是分类不是有序表),故无需卡级 drop target。**几个坑**:① row 组件不能 `memo`(react-window v2 `rowComponent` 要函数不要 `NamedExoticComponent`;`<EntryCard>` 已 memo + `rowData` 已 memo,够省);② row 包 `display:flex;flexDirection:column` 让卡的 `mb:1` **算进测量高**(flex item 不折叠 margin,否则行高量不到 8px gap);③ jsdom 下 `getBoundingClientRect`=0,`height` 留默认 400、行用 `defaultRowHeight`——小 board(测试 1–3 卡/列)仍全挂载,断言不受影响(MapiqueView 已证 react-window v2 在 jsdom 能查到 `[data-entry-path]`)。`CARD_MIN_HEIGHT` 从 EntryCard export 给 `defaultRowHeight`。type-check + eslint 干净;Kanban/Matrix/Gantt/GanttEntryMenu 83/83 过。
 
 ---
 
@@ -116,7 +116,7 @@
 - **影响**:宽树展开并发触发多个 `generateFolderThumbnail`,每个又对首个可缩略子项调 `generateThumbnail` → 并发 fan-out 大量 sharp/ffmpeg/pdfjs/soffice。主进程只有 per-source `inflight` 去重,无全局 cap。
 - **做法**:`doGenerateThumbnail` 外包共享 `Semaphore(4)`(匹配 renderer 预算,或 `os.cpus().length`),顺带覆盖非 renderer 调用方(folder thumb、setFolderThumbnail)。
 
-- [ ] 实现
+- [x] 实现(2026-07-14)— 加 `thumbnailSemaphore = new Semaphore(4)`([concurrency.ts](../src/main/concurrency.ts),抄 `sofficeSemaphore`/`mediaConvertSemaphore` 范式)。`doGenerateThumbnail` 把**encode+write** 包进 `thumbnailSemaphore.run(async () => {...})`;**便宜的 kind/stat/reuse 短路留在 permit 外**(缓存命中不占槽)。`generateThumbnail` 的 `inflight` 去重仍在上层——同文件并发仍只编一次,不同文件最多 4 路并发。因 cap 在 `doGenerateThumbnail` 内,**所有调用方自动覆盖**:file-thumb IPC(renderer 队列 4)、`generateFolderThumbnail`(L665)、`setFolderThumbnail`(L684)全共享同一 4-permit 预算。lambda 内的 `return`(office/ebook/svg/font 静默失败)从 run 返回(undefined,不写盘);`throw e` 经 `Semaphore.run` 的 `finally release` 仍正确释放槽。`type-check` 干净;`thumbnail.test.ts` + `concurrency.test.ts` 28/28 过(含「dedupes concurrent generation of the same video」回归闸)。
 
 ---
 
@@ -152,7 +152,7 @@
   - `?? {}` / `?? []` 每次新引用:[AdvancedSearchDialog.tsx](../src/renderer/components/AdvancedSearchDialog.tsx) L80、[TagGroups.tsx](../src/renderer/components/TagGroups.tsx) L159、TaskReminder L58、TagLibrary L139——`tagColors` 未定义时每次返回新 `{}`,任何 store 更新都强制重渲。
 - **做法**:选 primitive(`useSelector((s) => s.locations.items)` / `s.settings.defaultLocationId`);hoist 模块级 `const EMPTY_OBJ = {}; const EMPTY_ARR: never[] = [];`;或用已有 `useShallowEqualSelector`。更彻底:reducer 初始化好这些字段,`??` 永不命中。
 
-- [ ] 实现
+- [x] 实现(2026-07-14)— **真问题是 whole-slice selector,不是 `?? {}`**。核对 reducer:`settings.tagColors`/`taglibrary.groups`/`workflow.stages`/`savedsearches.items`/`locations.items` **全都已初始化**(`combineReducers` 保证 slice 恒在 + 各 reducer initialState + settings migrate 补 tagColors),故审计列的 4 个 `?? {}`/`?? []` 位点(TagGroups/TagLibrary/TaskReminder/AdvancedSearchDialog)**按审计自己的「彻底」标准已满足**——`?? {}` 实际永不命中、永远返回稳定 reducer 引用。仍按 MapiqueView P0-3 范式把它们 harden 成共享 `EMPTY_OBJ`/`EMPTY_ARR`([constants.ts](../src/renderer/constants.ts),`never` 类型通配)做 defense-in-depth + 显式意图。**真正改动**:① Sidebar `const { items } = useSelector(s=>s.locations)` → `s.locations.items`(原先切 `activeId` 也重渲);② Sidebar `const { defaultLocationId } = useSelector(s=>s.settings)` → `s.settings.defaultLocationId`(原先任何 settings 变更都重渲)。**不改** CurrentLocationContextProvider L66:它同时用 `items`+`activeId`,而 `LocationsState` 恰只有这两字段,whole-slice 与 narrow 行为完全等价。`type-check` + `eslint` 干净。
 
 ### P2-5. `EntryTagChips` / `ThumbIcon` 未 memo
 
@@ -160,14 +160,14 @@
 - **影响**:行因 hover/drop 重渲时,这俩 props 没变也跟着白渲。
 - **做法**:`React.memo`。props 全是 primitive / 来自 `cellData` 的稳定引用。
 
-- [ ] 实现
+- [x] 实现(2026-07-14)— `EntryTagChips` / `ThumbIcon` 各包 `memo(Base)`(抄 EntryCard P0-4 的 `export default memo(XBase)` 范式)。**ThumbIcon** props 全 primitive / FileList 拥有的 `thumbCache` Map,无需改调用点,memo 在所有调用点(List/Grid/Gallery/Gantt/Kanban/Matrix/Calendar/Mapique/PropertiesTray)直接生效;缩略图仍靠自身 `useState` 刷,memo 不冻填充。**EntryTagChips** 要先稳 props:① 4 个调用点(Row/GridCell/EntryCard/GanttRow)的 `containerSx={{...}}` 内联字面量 hoist 成模块级 `TAG_CHIPS_SX`(`as const` 撑住 `flexWrap:'wrap'` 等字面量对 SxProps 的窄类型),否则 memo 永不命中;② Row/GridCell/EntryCard 的 `tagsByName.get(entry.path) ?? []`(无 tag 行每渲染新数组)改 `?? EMPTY_ARR`(GanttRow 的 `tags` 来自已 memo 的 `row`,稳定,不动)。回调(`onClickTag`/`onTagContextMenu`)/`tagColors`/`groups`/`t`/`activeTag`/`entry` 均来自 FileList `cellData`(`useCallback`/`useMemo` 稳定)。`type-check` + `eslint` 干净;KanbanView/MatrixView/GanttView/GanttEntryMenu 83/83 过。
 
 ### P2-6. `KanbanView.bucketEntries` 在 render body 未 memo
 
 - **现状**:[KanbanView.tsx](../src/renderer/components/KanbanView.tsx) L88-89,`const buckets = bucketEntries(...)` 每次 KanbanView 渲染重算(选中、菜单、hover 都触发)。`MatrixView.tsx` L69-72 同调用正确 `useMemo` 了——这是漏网。
 - **做法**:`useMemo(() => bucketEntries(entries, stageValues, tagsByName), [entries, stageValues, tagsByName])`。一行。
 
-- [ ] 实现
+- [x] 实现(2026-07-14)— `stageValues` 先 `useMemo(() => stages.map((s) => s.value), [stages])`(原 `stages.map(...)` 每渲染新数组,直接进 deps 会让 buckets memo 永不命中);`buckets` 照 MatrixView 范式 memo;顺手把 `columnKeys`(`[...stageValues, UNTAGGED_COLUMN]`)也 memo(它传进 `columnKeys.map` 渲染列,稳定引用更干净)。`useMemo` 已在 import 列表。`type-check` + `eslint` 干净;KanbanView/MatrixView/GanttView/GanttEntryMenu 测试 83/83 过。
 
 ### P2-7. 重型原生依赖仍 eager import
 
@@ -180,7 +180,7 @@
 - **参照**:[docs/01-architecture.md](./01-architecture.md) §4 冷启惰性加载已建范式;`getPdfjs()` via `createRequire(__filename)`。**注意硬约束** [docs/09-known-issues.md](./09-known-issues.md) §19:主进程必须保持 CommonJS,`module: 'esnext'` 会把 `createRequire` stub 成 `undefined`。
 - **做法**:补 `getSharp()` / `getCanvas()` / `getExifr()` / `getChardet()`。`better-sqlite3` 几乎每操作都用,eager 正确,不动。
 
-- [ ] 实现
+- [x] 实现(2026-07-14)— 新增 [lazy-native.ts](../src/main/lazy-native.ts):`getSharp()` / `getCanvas()` / `getExifr()` / `getChardet()` / `getIconv()`,全用 `createRequire(__filename)`(`nodeRequire`)+ 模块级 `let _x` 缓存,照 `getPdfjs()` 范式。**sharp 类型坑**:`typeof import('sharp')` namespace 在类型位不可调用(报 no call signatures),改 `typeof import('sharp')['default']`(esModuleInterop 合成的 default 才是 callable factory)。改的文件:① [thumbnail.ts](../src/main/thumbnail.ts) 删 `import sharp` + `import { createCanvas }`(`ffmpegStatic` 保留——只当路径串用,极廉价),4 处 `sharp(...)` → `getSharp()(...)`,1 处 `createCanvas` → `getCanvas().createCanvas`。② [exif.ts](../src/main/exif.ts) `exifr.gps/parse` → `getExifr().gps/parse`。③ [ipc.ts](../src/main/ipc.ts) `chardet.detect`/`iconv.decode`/`createCanvas` → 三个 getter。④ [font-thumb.ts](../src/main/font-thumb.ts) `createCanvas`+`GlobalFonts` → `getCanvas().*`,L75 的 `ReturnType<ReturnType<typeof createCanvas>['getContext']>` 改 type-only `SKRSContext2D`。⑤ [drawio-thumb.ts](../src/main/drawio-thumb.ts)/[excalidraw-thumb.ts](../src/main/excalidraw-thumb.ts) `createCanvas` → `getCanvas().createCanvas`(`SKRSContext2D` 保留为 type-only)。**webpack**:exifr/jschardet/iconv-lite 原本被 bundle(sharp/canvas/pdfjs 早 externalized),在两份 main config 的 `externals` 加这 3 项,与 sharp/canvas 一致。**冒烟**:`build:main:dev` 通过;bundle 里 5 个 `nodeRequire('...')` 全在 getter 内、createRequire 未被 stub(9 处)、sharp/canvas/exifr/jschardet/iconv **不再出现在 bundle 依赖图**(无 `external "sharp"` stub,因无静态 import)——冷启不再付这 5 个原生/重型 JS 模块的加载。type-check(本项文件)+ eslint 干净;thumbnail/exif/concurrency/font-thumb 测试 45/45 过。
 
 ---
 
@@ -192,7 +192,7 @@
 - **参照**:[docs/09-known-issues.md](./09-known-issues.md) §16.10。
 - **做法**:extension ready 时**并行** `requestThumbnail` + `requestOfficeConvert`;先显 jpg + 进度标签,再 crossfade 到渲染 PDF;缓存命中也用缩略图当首页占位。
 
-- [ ] 实现
+- [x] 实现(2026-07-15)— 新增消息对:`requestThumbnail`(ext→host)+ `thumbnailContent`(host→ext,data URL | null)([extension-types.ts](../src/shared/extension-types.ts));host 桥([ExtensionHost.tsx](../src/renderer/components/ExtensionHost.tsx))`case 'requestThumbnail'` 调 `ipcApi.loadThumbnail(path)` 回 data URL。office-viewer `openOfficeFile` **并行** fire `requestThumbnail` + `requestOfficeConvert`;缩略图到达即 `showThumbnailPlaceholder`(居中 `<img>` + `opacity:0.85` + 阴影),`renderPdf` 清掉占位画真页。双守卫防覆盖:token 比对(被新开档/renderPdf 超越则弃)+ `pagesEl.querySelector('canvas')`(真页已画则弃)。取做法的「先显 jpg + 进度标签」;**未做 crossfade**(简化:`renderPdf` 直接清占位画真页,无过渡动画——可后续加 CSS transition);「缓存命中也用缩略图当首页占位」部分满足——缓存命中 convert 快、占位窗口极短,但 **cold convert(主场景)占位完整覆盖 2-5s**。**验证**:`type-check` + `eslint` 干净;pdfjs-in-iframe 22/22;`build:extensions` 15 个扩展全过(office-viewer bundle 1.65MiB)。详见 [docs/09 §16.10](./09-known-issues.md)。
 
 ### P3-2. office-viewer 缺 pdf-viewer 同款 rAF resize/scroll
 
@@ -201,7 +201,7 @@
 - **参照**:[docs/09-known-issues.md](./09-known-issues.md) §16.8;§16.7 已抽出公共 `src/extensions/shared/pdfjs-in-iframe.ts`。
 - **做法**:复用该公共 session plumbing,接上 rAF 批量 resize/scroll。
 
-- [ ] 实现
+- [x] 实现(2026-07-15)— **只移植了 scroll 半边**(有真实价值):office-viewer 给 session 加 `onAfterPageRender` 给每张 canvas 盖 `data-page-num`(office 原本忽略该 hook);新增 `currentPage`/`totalPages` 状态 + rAF scroll handler(抄 pdf-viewer 的「top ≤ 视口顶 25% 且最接近」规则),`pageInfoEl` 从静态 `N / N` 改 `cur / total`。**resize 半边对 office 是 N/A**:office 画布是**固定 px 宽**(`renderPageContent` 设的 `baseVp.width` px,无 fit-mode),容器 resize 既不重栅格化也不需要 CSS relayout——没东西要节流。审计「现状/影响」描述的 resize 重栅格化 / 滚动 handler 无节流,对 office 的固定-px 模型不成立(office 连滚动 handler 都没有);真正缺的就是 scroll-sync 这半边,现已补。**验证**:`type-check` + `eslint` 干净;pdfjs-in-iframe 22/22;`build:extensions` 全过。
 
 ### P3-3. 长期:UNO/soffice 常驻后台进程
 
@@ -221,14 +221,14 @@
 
 ### P3-5. 零碎项(单点小、批量做)
 
-- [ ] `firstThumbnailableFile`([thumbnail.ts](../src/main/thumbnail.ts) L575-595)串行 `for { await fsp.stat }` → 换 `mapWithConcurrency`。
-- [ ] `distinctTags`([index-db.ts](../src/main/index-db.ts) L301-311)把每行 tags 拉进 JS 再 split/Set → 触发器维护 `tags(tag TEXT PRIMARY KEY)` 表,或 SQL 递归 CTE。
-- [ ] `importExternal`([ipc.ts](../src/main/ipc.ts) L610-646)串行 `for { await fsp.cp }` → `mapWithConcurrency(sources, 4, ...)`。
-- [ ] `atomicWrite`([atomic-write.ts](../src/main/atomic-write.ts) L22-36)每次写都 `readdir`+N `rm` 扫残留 temp → 用 `Set` 记"已扫目录",仅首次写扫。
-- [ ] `odaConverterBinary`([cad-convert.ts](../src/main/cad-convert.ts) L45-78)无 memo → 加 `let _odaCache`。
-- [ ] `getPdfAsset` / `readCadWasm` / `readHeicWasm`([ipc.ts](../src/main/ipc.ts) L1267、L1287、L1307)不可变字节每次重读 → 首读后缓存 `ArrayBuffer`/`Buffer`。
-- [ ] `extractPdfText`([fulltext.ts](../src/main/fulltext.ts) L128 / [thumbnail.ts](../src/main/thumbnail.ts) L342)整 PDF 读进内存 → 病态大 PDF 内存峰值(罕见,可接受,仅记录)。
-- [ ] renderer 零碎:[GalleryView.tsx](../src/renderer/components/GalleryView.tsx) L74-81 重复 width observer、[FileToolbar.tsx](../src/renderer/components/FileToolbar.tsx) L146-154 `recents` 未 memo、[GanttTimeline.tsx](../src/renderer/components/gantt/GanttTimeline.tsx) L196-209 no-op ResizeObserver 可删、多处 RO 回调缺 `prev === next ? prev : next` 等值守卫(参照 [FileList.tsx](../src/renderer/components/FileList.tsx) L1612)。
+- [x] ~~`firstThumbnailableFile`~~(2026-07-15 评估→**不做**)— 它是「按排序名找第一个可缩略文件」+ 早返回。常见情况第一个候选就是文件(目录极少带可缩略扩展名)→ **1 次 stat** 即中。换 `mapWithConcurrency` 反而会 stat 全部候选(过度取数),对 find-first 是劣化。已是最优,留原样。
+- [x] ~~`distinctTags`~~(2026-07-15 评估→**不做**)— 仅 advanced-search 标签选择器开打时调一次,**非热点**(非每键)。trigger 维护 `tags` 表要管多对多计数(add 增 / file-delete 减 / 归零删),复杂且易漂移;递归 CTE 切空格 gnarly。当前 `SELECT tags ... split/Set` 简单正确,留原样。
+- [x] `importExternal`([ipc.ts](../src/main/ipc.ts))串行 `for { await fsp.cp }` → `mapWithConcurrency(sources, 4, ...)`(2026-07-15)。**name dedup 无竞态**:`nextAvailableName` + `taken.add` 在首个 `await` 前同步执行,JS 单线程不交错;per-item 返回 destPath/error,结果按序聚合。
+- [x] `atomicWrite`([atomic-write.ts](../src/main/atomic-write.ts))每次写 `readdir`+N `rm` 扫残留 temp → per-target `sweptTargets: Set<string>` 记已扫(2026-07-15)。`.whale/thumbs/` 这种高基数目录原本每次 thumb 写都 readdir 全目录(O(n)/写、O(n²)/n thumb)。残留 temp 来自真实 crash(正常写自清);后来的 crash temp 名字唯一(pid+counter)不撞,等下次会话首扫清。
+- [x] `odaConverterBinary`([cad-convert.ts](../src/main/cad-convert.ts))加 `let _odaCache` memo(2026-07-15)— 抽 `detectOdaConverter()` 纯探测,no-override 结果缓存(ODA 装载路径会话内不变)。
+- [x] `getPdfAsset` / `readCadWasm` / `readHeicWasm`([ipc.ts](../src/main/ipc.ts))不可变字节缓存源 `Buffer`(2026-07-15)— pdf asset 走 `Map<path,Buffer>`、两 wasm 各 `let _xxxBuf`。仍每次返回**新拷贝 ArrayBuffer**(字节过 IPC→iframe,emscripten 可能消费)。
+- [ ] `extractPdfText`([fulltext.ts](../src/main/fulltext.ts) / [thumbnail.ts](../src/main/thumbnail.ts))整 PDF 读进内存 → 病态大 PDF 内存峰值(**罕见,可接受,仅记录**;见下「已接受的取舍」)。
+- [x] renderer 零碎(2026-07-15):① [FileToolbar.tsx](../src/renderer/components/FileToolbar.tsx) `recents` 加 `useMemo`(`recentItems` 顺带 `?? EMPTY_ARR` 稳定)+ toolbar RO 加 `prev===w` 守卫;② [GanttTimeline.tsx](../src/renderer/components/gantt/GanttTimeline.tsx) 删 no-op ResizeObserver(回调 `void el.clientWidth` 纯空转,scrollToToday 懒读 clientWidth,本就不需要它;顺带清未用的 `useLayoutEffect` import);③ [GalleryView.tsx](../src/renderer/components/GalleryView.tsx) 手动 width RO 加 `prev===w` 守卫(减少 resize tick 重渲;与 `<VirtualGrid onResize>` 的双路测宽结构未动——删手动 RO 有首帧布局 flash 风险,onResize 已有守卫,收益不值)。**未穷举**其余 RO 守卫(审计说「多处」),只补了被点名的热路径。
 
 ---
 

@@ -117,6 +117,10 @@ interface GanttRowProps {
  *  Gantt looks similar to the same directory opened in Board. */
 const MAX_TAGS_PER_ROW = 2;
 
+// P2-5 (perf audit): hoisted so the memo'd <EntryTagChips> gets a referentially
+// stable `containerSx` prop instead of a fresh `{ gap: 0.25 }` per render.
+const TAG_CHIPS_SX = { gap: 0.25 } as const;
+
 function GanttRowImpl({
   row,
   top,
@@ -341,7 +345,7 @@ function GanttRowImpl({
                     t={t}
                     onClickTag={onClickTag}
                     onTagContextMenu={onTagContextMenu}
-                    containerSx={{ gap: 0.25 }}
+                    containerSx={TAG_CHIPS_SX}
                   />
                 </Box>
               </Tooltip>
@@ -356,7 +360,7 @@ function GanttRowImpl({
                 t={t}
                 onClickTag={onClickTag}
                 onTagContextMenu={onTagContextMenu}
-                containerSx={{ gap: 0.25 }}
+                containerSx={TAG_CHIPS_SX}
               />
             )}
           </Box>

@@ -14,6 +14,7 @@ import {
 } from '@mui/material';
 
 import { RootState } from '-/reducers';
+import { EMPTY_ARR, EMPTY_OBJ } from '-/constants';
 import { setTaskReminderStageIds } from '-/reducers/settings';
 import { ipcApi } from '-/services/ipc-api';
 import { waitForAllowedRoots } from '-/services/allowed-roots';
@@ -53,9 +54,13 @@ export default function TaskReminder() {
   const stageIds = useSelector(
     (s: RootState) => s.settings?.taskReminderStageIds ?? null
   );
-  const stages = useSelector((s: RootState) => s.workflow?.stages ?? []);
+  const stages = useSelector(
+    (s: RootState) => s.workflow?.stages ?? EMPTY_ARR
+  );
   const locations = useSelector((s: RootState) => s.locations.items);
-  const tagColors = useSelector((s: RootState) => s.settings?.tagColors ?? {});
+  const tagColors = useSelector(
+    (s: RootState) => s.settings?.tagColors ?? EMPTY_OBJ
+  );
 
   const [open, setOpen] = useState(false);
   const [groups, setGroups] = useState<PendingGroup[]>([]);

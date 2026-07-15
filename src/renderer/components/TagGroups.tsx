@@ -18,6 +18,7 @@ import LabelIcon from '@mui/icons-material/LabelOutlined';
 import { useDrag } from 'react-dnd';
 
 import { RootState } from '-/reducers';
+import { EMPTY_ARR, EMPTY_OBJ } from '-/constants';
 import { setTagColor } from '-/reducers/settings';
 import {
   addGroup,
@@ -154,9 +155,15 @@ type DialogState =
 export default function TagGroups() {
   const { t } = useTranslation();
   const dispatch = useDispatch();
-  const groups = useSelector((s: RootState) => s.taglibrary?.groups ?? []);
-  const stages = useSelector((s: RootState) => s.workflow?.stages ?? []);
-  const tagColors = useSelector((s: RootState) => s.settings?.tagColors ?? {});
+  const groups = useSelector(
+    (s: RootState) => s.taglibrary?.groups ?? EMPTY_ARR
+  );
+  const stages = useSelector(
+    (s: RootState) => s.workflow?.stages ?? EMPTY_ARR
+  );
+  const tagColors = useSelector(
+    (s: RootState) => s.settings?.tagColors ?? EMPTY_OBJ
+  );
   const { descriptions: tagDescriptions } = useLocationTagLibrary();
   const { activeTag, setActiveTag } = useTagMetaContext();
 

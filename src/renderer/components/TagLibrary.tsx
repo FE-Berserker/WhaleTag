@@ -21,6 +21,7 @@ import { useDrag } from 'react-dnd';
 import type { TFunction } from 'i18next';
 
 import { RootState } from '-/reducers';
+import { EMPTY_ARR, EMPTY_OBJ } from '-/constants';
 import { useTagMetaContext } from '-/hooks/TagMetaContextProvider';
 import { useLocationTagLibrary } from '-/hooks/LocationTagLibraryContextProvider';
 import { DND_TYPE_TAG, type TagDragItem } from '-/services/dnd';
@@ -136,8 +137,12 @@ export default function TagLibrary() {
   const { t } = useTranslation();
   const { allTags, activeTag, setActiveTag } = useTagMetaContext();
   const { descriptions: tagDescriptions } = useLocationTagLibrary();
-  const tagColors = useSelector((s: RootState) => s.settings?.tagColors ?? {});
-  const groups = useSelector((s: RootState) => s.taglibrary?.groups ?? []);
+  const tagColors = useSelector(
+    (s: RootState) => s.settings?.tagColors ?? EMPTY_OBJ
+  );
+  const groups = useSelector(
+    (s: RootState) => s.taglibrary?.groups ?? EMPTY_ARR
+  );
 
   const [collapsed, setCollapsed] = useState(false);
   const [filter, setFilter] = useState('');

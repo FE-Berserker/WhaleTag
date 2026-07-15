@@ -73,7 +73,10 @@ export default function GalleryView({
     setGridWidth(Math.max(0, el.clientWidth - 32));
     const ro = new ResizeObserver((entriesObs) => {
       for (const entry of entriesObs) {
-        setGridWidth(entry.contentRect.width);
+        // P3-5 (perf audit): guard against spurious same-width notifications
+        // (matches FileList's pattern) so resize ticks don't recompute cols.
+        const w = entry.contentRect.width;
+        setGridWidth((prev) => (prev === w ? prev : w));
       }
     });
     ro.observe(el);

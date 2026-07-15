@@ -26,6 +26,7 @@ import {
 } from '-/services/dnd';
 import ThumbIcon from '-/components/ThumbIcon';
 import EntryTagChips from '-/components/EntryTagChips';
+import { EMPTY_ARR } from '-/constants';
 import type { FileCellData } from '-/components/file-cell';
 import { stripTagsFromName } from '-/services/tags';
 import { formatSize, formatDate } from '-/services/format';
@@ -33,6 +34,10 @@ import { formatSize, formatDate } from '-/services/format';
 /** Max number of tag chips rendered before the row truncates (`+N` chip is
  *  tracked under H.23 P1-6 follow-up — currently it just slices). */
 const MAX_TAGS_PER_ROW = 4;
+
+// P2-5 (perf audit): hoisted so the memo'd <EntryTagChips> gets a referentially
+// stable `containerSx` prop instead of a fresh `{ flex: 1 }` every render.
+const TAG_CHIPS_SX = { flex: 1 } as const;
 
 /** Edge length of the list row's thumbnail / icon area (px). Must match the
  *  width FileListHeader reserves for the column-header checkbox + thumb slot
@@ -93,7 +98,7 @@ export default function Row(props: RowComponentProps<FileCellData>) {
     commitInlineRename,
   } = props;
   const entry = entries[index];
-  const tags = tagsByName.get(entry.path) ?? [];
+  const tags = tagsByName.get(entry.path) ?? EMPTY_ARR;
   const desc = descByName.get(entry.path);
 
   // H.23 P1-3: scale the row's thumb/icon with the virtual-list row height so
@@ -370,7 +375,7 @@ export default function Row(props: RowComponentProps<FileCellData>) {
         t={t}
         onClickTag={onClickTag}
         onTagContextMenu={onTagContextMenu}
-        containerSx={{ flex: 1 }}
+        containerSx={TAG_CHIPS_SX}
       />
       {!hiddenColumns.includes('size') ? (
         // H.23 P2-6: span wrapper carries an aria-label so screen readers

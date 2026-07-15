@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import {
   Box,
   Chip,
@@ -24,7 +24,7 @@ import { chipSx, tagDisplayLabel } from '-/services/tag-display';
  * styling, color fallback, click-to-filter, and right-click-to-remove behavior
  * stay identical across views.
  */
-export default function EntryTagChips({
+function EntryTagChipsBase({
   entry,
   tags,
   activeTag,
@@ -216,3 +216,16 @@ export default function EntryTagChips({
     </Box>
   );
 }
+
+/**
+ * P2-5 (perf audit): memo'd so a row/grid/gantt cell re-rendering on hover or
+ * drag doesn't re-render its chip strip when none of the inputs changed. The
+ * strip is mounted once per visible cell (dozens to hundreds of instances) and
+ * each subscribes to redux (`tagShape`), so skipping unrelated re-renders is
+ * worth it. Props are reference-stable from the call sites:
+ *   - `entry` / `tags` / `tagColors` / `groups` / `activeTag` / `t` and the two
+ *     callbacks come from FileList's `cellData` useMemo (or a memoized `row` in
+ *     GanttRow) — see P0-4 / P1-5. Call sites hoist `containerSx` to a
+ *     module-level constant so it is not a fresh object each render.
+ */
+export default memo(EntryTagChipsBase);
