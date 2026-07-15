@@ -336,7 +336,7 @@ async function main(): Promise<void> {
     await new Promise<void>((resolve) => {
       spawn('powershell', [
         '-Command',
-        "Get-CimInstance Win32_Process | Where-Object { \$_.Name -eq 'electron.exe' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }",
+        "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'electron.exe' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
       ]).on('exit', () => resolve());
     });
 

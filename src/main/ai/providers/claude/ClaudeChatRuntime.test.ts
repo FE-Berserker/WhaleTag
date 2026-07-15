@@ -106,9 +106,9 @@ describe('buildTurnPrompt', () => {
       })
     );
     assert.match(p, /<selected_files count="3">/);
-    assert.match(p, /(- |  - )\/a\/x\.txt/);
-    assert.match(p, /(- |  - )\/a\/y\.md/);
-    assert.match(p, /(- |  - )\/a\/z\.log/);
+    assert.match(p, /(- | {2}- )\/a\/x\.txt/);
+    assert.match(p, /(- | {2}- )\/a\/y\.md/);
+    assert.match(p, /(- | {2}- )\/a\/z\.log/);
     assert.match(p, /hello/);
     // Envelope appears before the user text.
     assert.ok(p.indexOf('<selected_files') < p.indexOf('hello'));

@@ -42,8 +42,10 @@ function errorMessage(e: unknown): string {
     const diag =
       expectedCode !== null ? consumeRecentSpawnExit(expectedCode) : null;
     if (diag?.stderrTail) {
+      // eslint-disable-next-line no-control-regex -- intentional: strip ANSI color escapes from Claude CLI stderr
+      const ansiColor = /\x1b\[[0-9;]*m/g;
       const tail = diag.stderrTail
-        .replace(/\x1b\[[0-9;]*m/g, '') // strip ANSI colors
+        .replace(ansiColor, '') // strip ANSI colors
         .split(/\r?\n/)
         .filter(Boolean)
         .slice(-8)

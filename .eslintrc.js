@@ -27,6 +27,19 @@ module.exports = {
     'release/',
     '.erb/dll/',
     '*.config.ts',
+    // Build artifacts (webpack bundles, hashed assets) — gitignored but eslint
+    // doesn't read .gitignore, so list them explicitly. Without this, `eslint .`
+    // scans the 40 MB+ `dist/` bundle and emits thousands of bogus errors
+    // (no-constant-condition / no-this-alias / no-redeclare on minified code).
+    'dist/',
+    // Vendored / non-source dirs (UI design export, samples, runtime tools).
+    'WhaleTag_Page/',
+    'UI_Design/',
+    'LightWork/',
+    'build-cache/',
+    'samples/',
+    'tools/',
+    'Test/',
   ],
   rules: {
     'react/react-in-jsx-scope': 'off',
