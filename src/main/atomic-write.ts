@@ -14,12 +14,26 @@ function tmpPathFor(filePath: string): string {
 }
 
 /**
+ * Targets whose stale temps have already been swept this session. The sweep
+ * `readdir`s the whole target directory (expensive in high-cardinality dirs
+ * like `.whale/thumbs/`), and atomic writes are extremely frequent (every
+ * sidecar / index / thumbnail / folder-meta write) — so re-sweeping the same
+ * target on every write is O(n) per write, O(n²) over n thumbnails. Stale temps
+ * only arise from actual crashes (a normal write renames/removes its own temp),
+ * and a lingering temp from a LATER crash has a unique name (pid + counter) and
+ * can't collide with future writes — it just waits for the next session's first
+ * sweep. So memoizing per-target is safe.
+ */
+const sweptTargets = new Set<string>();
+
+/**
  * Removes stale temp files left by previous crashed writes of the same target.
  * Whale is a single-instance desktop app, so there is no legitimate concurrent
  * atomic write to the same target; any matching `*.tmp` sibling is therefore
  * debris from an earlier crash and can be safely deleted.
  */
 async function removeStaleTempsFor(filePath: string): Promise<void> {
+  if (sweptTargets.has(filePath)) return;
   const dir = path.dirname(filePath);
   const base = path.basename(filePath);
   try {
@@ -29,6 +43,7 @@ async function removeStaleTempsFor(filePath: string): Promise<void> {
         .filter((entry) => entry.startsWith(`${base}.`) && entry.endsWith('.tmp'))
         .map((entry) => fsp.rm(path.join(dir, entry), { force: true }))
     );
+    sweptTargets.add(filePath);
   } catch {
     // Directory may not exist or be unreadable; ignore. The actual write will
     // surface any real permission problem.

@@ -2,9 +2,7 @@ import path from 'path';
 import os from 'os';
 import { existsSync, promises as fsp } from 'fs';
 import { execFile } from 'child_process';
-import sharp from 'sharp';
 import ffmpegStatic from 'ffmpeg-static';
-import { createCanvas } from '@napi-rs/canvas';
 import { pathToFileURL } from 'url';
 import { createRequire } from 'module';
 import {
@@ -17,9 +15,10 @@ import {
 } from '../shared/whale-meta';
 import type { GenerateThumbnailOptions } from '../shared/ipc-types';
 import { atomicWriteBytes } from './atomic-write';
-import { sofficeSemaphore } from './concurrency';
+import { sofficeSemaphore, thumbnailSemaphore } from './concurrency';
 import { extractEbookCover } from './ebook-cover';
 import { renderFontToPng } from './font-thumb';
+import { getSharp, getCanvas } from './lazy-native';
 
 /**
  * Per-file thumbnails, stored at `<dir>/.whale/thumbs/<basename>.jpg`.
@@ -248,7 +247,7 @@ async function encodeOfficeThumb(
  * buffer. The single place that touches the image backend (sharp).
  */
 async function encodeImageThumb(input: string | Buffer): Promise<Buffer> {
-  return sharp(input)
+  return getSharp()(input)
     .rotate() // honor EXIF orientation (no-op for buffers without EXIF)
     .resize({
       width: THUMB_SIZE,
@@ -283,7 +282,7 @@ async function encodeImageThumb(input: string | Buffer): Promise<Buffer> {
  * remote `<image href="https://...">` references — Whale is local-first.
  */
 async function encodeSvgThumb(srcPath: string): Promise<Buffer> {
-  return sharp(srcPath, { density: 96 })
+  return getSharp()(srcPath, { density: 96 })
     .resize({
       width: THUMB_SIZE,
       height: THUMB_SIZE,
@@ -372,7 +371,7 @@ async function encodePdfThumb(srcPath: string): Promise<Buffer> {
       const viewport = page.getViewport({ scale: 1 });
       const scale = THUMB_SIZE / Math.max(viewport.width, viewport.height);
       const scaled = page.getViewport({ scale: Math.max(scale, 1) });
-      const canvas = createCanvas(scaled.width, scaled.height);
+      const canvas = getCanvas().createCanvas(scaled.width, scaled.height);
       const ctx = canvas.getContext('2d');
       await page.render({
         canvas: null,
@@ -457,41 +456,48 @@ async function doGenerateThumbnail(
     }
   }
 
-  let buf: Buffer;
-  try {
-    buf =
-      kind === 'video'
-        ? await encodeVideoThumb(filePath)
-        : kind === 'pdf'
-          ? await encodePdfThumb(filePath)
-          : kind === 'office'
-            ? await encodeOfficeThumb(filePath, options?.sofficePath)
-            : kind === 'ebook'
-              ? await encodeEbookThumb(filePath)
-              : kind === 'font'
-                ? await encodeFontThumb(filePath)
-                : kind === 'svg'
-                  ? await encodeSvgThumb(filePath)
-                  : await encodeImageThumb(filePath);
-  } catch (e) {
-    // Office conversion depends on an external binary that may be missing or
-    // misconfigured; ebooks may simply carry no embedded cover; an SVG may have
-    // no viewBox / invalid XML / unsupported features librsvg can't parse.
-    // Fonts may be corrupt or use an unsupported table/layout. In those cases
-    // fail silently so the renderer shows a type icon.
-    if (
-      kind === 'office' ||
-      kind === 'ebook' ||
-      kind === 'svg' ||
-      kind === 'font'
-    ) {
-      return;
+  // P1-6 (perf audit): bound concurrent thumbnail encodes (sharp / ffmpeg /
+  // pdfjs / soffice) across ALL callers — file-thumb IPC AND folder thumbs.
+  // The cheap kind/stat/reuse short-circuits above run OUTSIDE the permit so a
+  // cache hit never consumes a slot; only the real encoding + write holds one.
+  await thumbnailSemaphore.run(async () => {
+    let buf: Buffer;
+    try {
+      buf =
+        kind === 'video'
+          ? await encodeVideoThumb(filePath)
+          : kind === 'pdf'
+            ? await encodePdfThumb(filePath)
+            : kind === 'office'
+              ? await encodeOfficeThumb(filePath, options?.sofficePath)
+              : kind === 'ebook'
+                ? await encodeEbookThumb(filePath)
+                : kind === 'font'
+                  ? await encodeFontThumb(filePath)
+                  : kind === 'svg'
+                    ? await encodeSvgThumb(filePath)
+                    : await encodeImageThumb(filePath);
+    } catch (e) {
+      // Office conversion depends on an external binary that may be missing or
+      // misconfigured; ebooks may simply carry no embedded cover; an SVG may have
+      // no viewBox / invalid XML / unsupported features librsvg can't parse.
+      // Fonts may be corrupt or use an unsupported table/layout. In those cases
+      // fail silently so the renderer shows a type icon. Returning from this
+      // lambda leaves no thumbnail on disk (run() resolves to undefined).
+      if (
+        kind === 'office' ||
+        kind === 'ebook' ||
+        kind === 'svg' ||
+        kind === 'font'
+      ) {
+        return;
+      }
+      throw e;
     }
-    throw e;
-  }
 
-  await fsp.mkdir(path.dirname(target), { recursive: true });
-  await atomicWriteBytes(target, buf);
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    await atomicWriteBytes(target, buf);
+  });
 }
 
 /**
@@ -607,7 +613,7 @@ async function writeFolderThumbImage(
   targetPath: string
 ): Promise<void> {
   await fsp.mkdir(path.dirname(targetPath), { recursive: true });
-  const buf = await sharp(sourcePath)
+  const buf = await getSharp()(sourcePath)
     .rotate()
     .resize({
       width: THUMB_SIZE,
@@ -736,7 +742,7 @@ export async function setFolderBackground(
 ): Promise<void> {
   const targetPath = folderBackgroundPathFor(dirPath);
   await fsp.mkdir(path.dirname(targetPath), { recursive: true });
-  const buf = await sharp(sourcePath)
+  const buf = await getSharp()(sourcePath)
     .rotate()
     .resize({
       width: 1024,

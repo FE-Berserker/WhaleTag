@@ -50,6 +50,11 @@ export async function dwg2dxfBinary(
   return _dwg2dxfOnPath ? 'dwg2dxf' : null;
 }
 
+// P3-5 (perf audit): memoized result of the no-override scan below. The scan
+// does several `existsSync` + a `readdirSync`; ODA's install path can't change
+// mid-session, so cache it. `undefined` = not yet probed.
+let _odaCache: string | null | undefined;
+
 /**
  * Locate the ODA File Converter binary. ODA installs under a versioned dir
  * (e.g. `C:\Program Files\ODA\ODAFileConverter 27.1.0\`), so we scan the ODA
@@ -59,6 +64,13 @@ export async function dwg2dxfBinary(
  */
 export function odaConverterBinary(override?: string | null): string | null {
   if (override) return override;
+  if (_odaCache !== undefined) return _odaCache;
+  _odaCache = detectOdaConverter();
+  return _odaCache;
+}
+
+/** Pure detection (no memo) — wrapped by `odaConverterBinary`. */
+function detectOdaConverter(): string | null {
   if (process.platform === 'darwin') {
     const mac =
       '/Applications/ODAFileConverter.app/Contents/MacOS/ODAFileConverter';

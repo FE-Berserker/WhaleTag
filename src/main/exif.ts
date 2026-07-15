@@ -5,7 +5,7 @@
  * boundary; only the extracted `{lat, lng}` (or null) travels to the renderer.
  */
 
-import exifr from 'exifr';
+import { getExifr } from './lazy-native';
 
 /**
  * P3-7: a small, render-friendly subset of EXIF metadata shown in the
@@ -120,7 +120,7 @@ export async function extractGps(
   filePath: string
 ): Promise<{ lat: number; lng: number } | null> {
   try {
-    const gps = await exifr.gps(filePath);
+    const gps = await getExifr().gps(filePath);
     if (
       !gps ||
       typeof gps.latitude !== 'number' ||
@@ -149,7 +149,7 @@ export async function getExifSummary(filePath: string): Promise<ExifSummary> {
   try {
     // `pick` keeps the parser focused on the fields we care about — saves
     // a few ms per call vs. parsing the whole EXIF tree.
-    const raw = await exifr.parse(filePath, {
+    const raw = await getExifr().parse(filePath, {
       pick: [
         'Make',
         'Model',

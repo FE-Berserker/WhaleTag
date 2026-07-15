@@ -92,3 +92,21 @@ export const sofficeSemaphore = new Semaphore(1);
  * one-at-a-time conversions rather than bulk pipelines.
  */
 export const mediaConvertSemaphore = new Semaphore(2);
+
+/**
+ * Bounds how many thumbnail *encodes* run at once in the main process.
+ *
+ * Two paths request thumbnails: the renderer's file-thumb IPC queue
+ * (`thumb-load-queue.ts`, already capped at `MAX_CONCURRENT=4`) AND the folder-
+ * thumbnail path (`generateFolderThumbnail` / `setFolderThumbnail`), which each
+ * delegate to `generateThumbnail`. The folder path has NO renderer-side cap, so
+ * expanding a wide tree fanned out many concurrent `generateFolderThumbnail`
+ * calls — each kicking off a sharp / ffmpeg / pdfjs / soffice encode — with only
+ * per-source `inflight` dedup and no global limit (P1-6).
+ *
+ * Wrapping the encode inside `doGenerateThumbnail` in this semaphore caps the
+ * total concurrent CPU/IO work regardless of caller. 4 matches the renderer's
+ * proven file-thumb budget; the cheap `stat` / reuse short-circuit in
+ * `doGenerateThumbnail` runs OUTSIDE the permit so cache hits never block.
+ */
+export const thumbnailSemaphore = new Semaphore(4);

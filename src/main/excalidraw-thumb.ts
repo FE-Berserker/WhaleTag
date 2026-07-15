@@ -1,5 +1,6 @@
 import { promises as fsp } from 'fs';
-import { createCanvas, type SKRSContext2D } from '@napi-rs/canvas';
+import type { SKRSContext2D } from '@napi-rs/canvas';
+import { getCanvas } from './lazy-native';
 
 /**
  * Renders an `.excalidraw` scene to a PNG for thumbnailing. Excalidraw's own
@@ -205,7 +206,7 @@ export async function renderExcalidrawToPng(srcPath: string): Promise<Buffer> {
   const cw = Math.max(1, Math.round(bw * scale) + PAD * 2);
   const ch = Math.max(1, Math.round(bh * scale) + PAD * 2);
 
-  const canvas = createCanvas(cw, ch);
+  const canvas = getCanvas().createCanvas(cw, ch);
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = bg || '#ffffff';
   ctx.fillRect(0, 0, cw, ch);

@@ -1,6 +1,7 @@
 import { promises as fsp } from 'fs';
 import zlib from 'zlib';
-import { createCanvas, type SKRSContext2D } from '@napi-rs/canvas';
+import type { SKRSContext2D } from '@napi-rs/canvas';
+import { getCanvas } from './lazy-native';
 
 /**
  * Renders a drawio (diagrams.net) `.drawio` / `.dio` file to a PNG buffer for
@@ -722,7 +723,7 @@ export async function renderDrawioToPng(srcPath: string): Promise<Buffer> {
   const cw = Math.max(1, Math.round(bw * scale) + PAD * 2);
   const ch = Math.max(1, Math.round(bh * scale) + PAD * 2);
 
-  const canvas = createCanvas(cw, ch);
+  const canvas = getCanvas().createCanvas(cw, ch);
   const ctx = canvas.getContext('2d');
 
   // Background — explicit (rare) or white. The mxgraph default page color is

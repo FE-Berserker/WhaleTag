@@ -42,6 +42,10 @@ export default merge(createBase(), {
       '7zip-bin': 'commonjs 7zip-bin',
       '@napi-rs/canvas': 'commonjs @napi-rs/canvas',
       '@napi-rs/canvas-win32-x64-msvc': 'commonjs @napi-rs/canvas-win32-x64-msvc',
+      // P2-7: lazy-loaded via createRequire in lazy-native.ts. See prod config.
+      exifr: 'commonjs exifr',
+      jschardet: 'commonjs jschardet',
+      'iconv-lite': 'commonjs iconv-lite',
     },
     // pdfjs-dist subpaths (e.g. pdfjs-dist/legacy/build/pdf.mjs) must also be
     // external. Object-form externals only match the bare name 'pdfjs-dist', so

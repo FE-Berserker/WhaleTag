@@ -11,7 +11,8 @@
  * `finally` block to avoid leaking registrations.
  */
 
-import { createCanvas, GlobalFonts } from '@napi-rs/canvas';
+import type { SKRSContext2D } from '@napi-rs/canvas';
+import { getCanvas } from './lazy-native';
 import { randomBytes } from 'crypto';
 
 const PREVIEW_SIZE = 512;
@@ -27,13 +28,13 @@ const SAMPLE_FG = '#1e1e1e';
  */
 export async function renderFontToPng(srcPath: string): Promise<Buffer> {
   const alias = `WhaleFont-${randomBytes(4).toString('hex')}`;
-  const key = GlobalFonts.registerFromPath(srcPath, alias);
+  const key = getCanvas().GlobalFonts.registerFromPath(srcPath, alias);
   if (!key) {
     throw new Error(`Font registration failed: ${srcPath}`);
   }
 
   try {
-    const canvas = createCanvas(PREVIEW_SIZE, PREVIEW_SIZE);
+    const canvas = getCanvas().createCanvas(PREVIEW_SIZE, PREVIEW_SIZE);
     const ctx = canvas.getContext('2d');
 
     ctx.fillStyle = SAMPLE_BG;
@@ -66,13 +67,13 @@ export async function renderFontToPng(srcPath: string): Promise<Buffer> {
 
     return canvas.encode('png');
   } finally {
-    GlobalFonts.remove(key);
+    getCanvas().GlobalFonts.remove(key);
   }
 }
 
 /** Trims `text` so it fits into `maxWidth`, appending "…" if truncated. */
 function fitText(
-  ctx: ReturnType<ReturnType<typeof createCanvas>['getContext']>,
+  ctx: SKRSContext2D,
   text: string,
   maxWidth: number
 ): string {
