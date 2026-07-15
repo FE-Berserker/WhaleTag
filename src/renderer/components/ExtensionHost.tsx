@@ -25,8 +25,11 @@ import {
 } from '../../shared/extension-types';
 import { ipcApi } from '-/services/ipc-api';
 import { basename, parentDir } from '-/services/path-util';
-import { isImageFile } from '../../shared/whale-meta';
-import { encodeWhaleFileUrl } from '../../shared/whale-file-url';
+import { AUDIO_TRANSCODE_EXT, isImageFile } from '../../shared/whale-meta';
+import {
+  encodeWhaleAudioUrl,
+  encodeWhaleFileUrl,
+} from '../../shared/whale-file-url';
 import { useExtensionContext } from '-/hooks/ExtensionContextProvider';
 import { useDirectoryUI } from '-/hooks/DirectoryContentContextProvider';
 import { useDirectoryTreeRefresh } from '-/hooks/DirectoryTreeRefreshContextProvider';
@@ -550,6 +553,31 @@ export default function ExtensionHost({
             });
           break;
         }
+        case 'requestThumbnail': {
+          // P3-1: office-viewer asks for the cached thumbnail (data URL) to
+          // show as an instant first-page placeholder while LibreOffice
+          // cold-converts to PDF. `loadThumbnail` returns null when no
+          // thumbnail has been generated yet — the viewer then just keeps
+          // its "Converting…" status.
+          const { requestId, path: thumbPath } = msg;
+          ipcApi
+            .loadThumbnail(thumbPath)
+            .then((dataUrl) => {
+              postToExtension({
+                type: 'thumbnailContent',
+                requestId,
+                dataUrl: dataUrl ?? null,
+              });
+            })
+            .catch(() => {
+              postToExtension({
+                type: 'thumbnailContent',
+                requestId,
+                dataUrl: null,
+              });
+            });
+          break;
+        }
         case 'requestDwgConvert': {
           const { requestId, path: dwgPath } = msg;
           ipcApi
@@ -588,29 +616,16 @@ export default function ExtensionHost({
             });
           break;
         }
-        case 'requestAudioConvert': {
-          const { requestId, path: audioPath } = msg;
-          ipcApi
-            .convertAudio(audioPath)
-            .then((data) => {
-              postToExtension({
-                type: 'audioConvertedContent',
-                requestId,
-                data,
-              });
-            })
-            .catch((e) => {
-              postToExtension({
-                type: 'audioConvertedContent',
-                requestId,
-                data: null,
-                error: e instanceof Error ? e.message : String(e),
-              });
-            });
-          break;
-        }
         case 'requestStreamingUrl': {
-          const url = encodeWhaleFileUrl(msg.path);
+          // Pick the scheme by extension: transcode-only audio (APE/WMA/…)
+          // gets whale-audio:// (host live-transcodes ffmpeg → Opus → <audio>
+          // so large files start playing within ~1s); everything else gets
+          // whale-file:// (streamed with Range support).
+          const dot = msg.path.lastIndexOf('.');
+          const ext = dot >= 0 ? msg.path.slice(dot + 1).toLowerCase() : '';
+          const url = AUDIO_TRANSCODE_EXT.has(ext)
+            ? encodeWhaleAudioUrl(msg.path)
+            : encodeWhaleFileUrl(msg.path);
           postToExtension({
             type: 'streamingUrl',
             path: msg.path,

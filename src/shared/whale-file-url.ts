@@ -23,22 +23,26 @@
  *      percent-encoded and decoded symmetrically.
  */
 
-const SCHEME = 'whale-file';
-
 /**
- * Encode a platform-native absolute path into a `whale-file://` URL.
+ * Encode a platform-native absolute path into a `<scheme>://` URL.
+ *
+ * Scheme-parameterized core: `whale-file` (stream any file to `<video>` /
+ * `<img>` / `<audio>`) and `whale-audio` (live Opus transcode of formats
+ * Chromium can't decode). Both share the exact same byte format; only the
+ * scheme prefix differs, and the main process dispatches to the right
+ * handler by scheme.
  *
  * Returns `null` for relative paths or empty input — the caller should
  * surface that as a precondition error rather than producing a malformed
  * URL that silently 404s on the main side.
  */
-export function encodeWhaleFileUrl(filePath: string): string | null {
+function encodeForScheme(filePath: string, scheme: string): string | null {
   if (!filePath) return null;
   // Normalize: Windows uses `\`, POSIX uses `/`. The protocol body uses `/`
   // uniformly — splitting later is easier with one separator.
   const normalized = filePath.replace(/\\/g, '/');
   // A relative path (no leading slash, no drive letter) can't be encoded
-  // into a `whale-file://` URL because the result would be ambiguous
+  // into a `<scheme>://` URL because the result would be ambiguous
   // (e.g. `whale-file://foo` means `foo` is the host, not a path).
   const isWindowsAbs = /^[A-Za-z]:(\/|$)/.test(normalized);
   const isPosixAbs = normalized.startsWith('/');
@@ -64,27 +68,27 @@ export function encodeWhaleFileUrl(filePath: string): string | null {
     }
     return escaped;
   });
-  return `${SCHEME}://${encoded.join('/')}`;
+  return `${scheme}://${encoded.join('/')}`;
 }
 
 /**
- * Decode a `whale-file://` URL back into a platform-native path.
+ * Decode a `<scheme>://` URL back into a platform-native path.
  *
- * Symmetric to `encodeWhaleFileUrl` — used by the main-process protocol
- * handler. Returns `null` if the input isn't a `whale-file://` URL or the
- * path can't be parsed (caller maps to 404).
+ * Symmetric to `encodeForScheme` — used by the main-process protocol
+ * handlers. Returns `null` if the input isn't a `<scheme>://` URL for the
+ * requested scheme or the path can't be parsed (caller maps to 404).
  *
  * On Windows the returned path uses `/` separators (forward slashes), which
  * `fs.createReadStream` accepts everywhere — Node normalizes internally.
  */
-export function decodeWhaleFileUrl(rawUrl: string): string | null {
+function decodeForScheme(rawUrl: string, scheme: string): string | null {
   let url: URL;
   try {
     url = new URL(rawUrl);
   } catch {
     return null;
   }
-  if (url.protocol !== `${SCHEME}:`) return null;
+  if (url.protocol !== `${scheme}:`) return null;
   // `url.pathname` already percent-decodes for us, but per-segment is
   // safer for round-trip (a stray `/` in encoded form would otherwise
   // decode wrong). Decode each segment ourselves.
@@ -97,6 +101,31 @@ export function decodeWhaleFileUrl(rawUrl: string): string | null {
     decoded = decoded.slice(1);
   }
   return decoded;
+}
+
+/** Encode an absolute path into a `whale-file://` URL (stream any file). */
+export function encodeWhaleFileUrl(filePath: string): string | null {
+  return encodeForScheme(filePath, 'whale-file');
+}
+
+/** Decode a `whale-file://` URL back into a platform-native path. */
+export function decodeWhaleFileUrl(rawUrl: string): string | null {
+  return decodeForScheme(rawUrl, 'whale-file');
+}
+
+/**
+ * Encode an absolute path into a `whale-audio://` URL (live Opus transcode
+ * of formats Chromium can't decode: APE / WMA / AIFF / …). Same byte format
+ * as `whale-file://` — only the scheme prefix differs, and the main process
+ * dispatches to the transcode-streaming handler by scheme.
+ */
+export function encodeWhaleAudioUrl(filePath: string): string | null {
+  return encodeForScheme(filePath, 'whale-audio');
+}
+
+/** Decode a `whale-audio://` URL back into a platform-native path. */
+export function decodeWhaleAudioUrl(rawUrl: string): string | null {
+  return decodeForScheme(rawUrl, 'whale-audio');
 }
 
 /** `decodeURIComponent` wrapper that returns the raw string on bad escape. */

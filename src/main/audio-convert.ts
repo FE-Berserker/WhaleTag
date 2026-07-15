@@ -1,91 +1,69 @@
-import path from 'path';
-import os from 'os';
-import { existsSync, promises as fsp } from 'fs';
-import { execFile } from 'child_process';
+import type { ChildProcess } from 'child_process';
+import { spawn } from 'child_process';
+import type { Readable } from 'node:stream';
 import { ffmpegPath } from './thumbnail';
-import { mediaConvertSemaphore } from './concurrency';
-
-export interface ConvertAudioOptions {
-  /** Maximum time to wait for the transcode, in milliseconds. */
-  timeout?: number;
-}
 
 /**
- * Transcodes an audio file Chromium can't decode (APE / WMA / AIFF / AMR /
- * AC-3 / DTS / MusePack / WavPack / DSD) into Opus-in-Ogg bytes via the bundled
- * `ffmpeg-static`. Output is always Opus regardless of input: Chromium plays it
- * natively, the `libopus` encoder is BSD (MIT-compatible), and 128 kbps keeps a
- * typical song a few MB. ffmpeg auto-resamples, so odd input rates (AMR 8 kHz,
- * DSD 2.8 MHz) are handled.
+ * Spawns ffmpeg to transcode an audio file Chromium can't decode (APE / WMA /
+ * AIFF / AMR / AC-3 / DTS / MusePack / WavPack / DSD) into an Ogg/Opus stream
+ * on **stdout**, so the `whale-audio://` protocol handler can pipe it straight
+ * to the renderer's `<audio>` element and begin playback as soon as the first
+ * Ogg pages arrive — instead of waiting for ffmpeg to transcode the whole file
+ * (the old buffer-the-whole-`.opus` path, which made large APE album rips take
+ * minutes to start).
  *
- * Runs in a temp dir and returns the `.opus` as a Buffer. Throws when ffmpeg is
- * missing or the transcode fails / produces no output — the caller surfaces the
- * error to media-player, which falls back to the system app. Mirrors the shape
- * of `convertOfficeToPdf` (office-convert.ts).
+ * Output is always Opus regardless of input: Chromium plays it natively, the
+ * `libopus` encoder is BSD (MIT-compatible), and 128 kbps keeps a typical song
+ * a few MB. ffmpeg auto-resamples, so odd input rates (AMR 8 kHz, DSD 2.8 MHz)
+ * are handled. `-f ogg pipe:1` writes a streaming Ogg/Opus mux to stdout
+ * (drop `-y` — there's no output file to clobber).
+ *
+ * The caller owns the lifecycle: it MUST drain `child.stderr` (an undrained
+ * stderr pipe deadlocks ffmpeg once its OS buffer fills), enforce a timeout
+ * via `setTimeout` + `child.kill` (spawn ignores the `timeout` option), kill
+ * the child on consumer cancel, and — for cache warming — tee `stdout` to the
+ * `.whale/transcodes/<basename>.opus` cache file.
  */
-export async function convertAudioToOpus(
-  srcPath: string,
-  options: ConvertAudioOptions = {}
-): Promise<Buffer> {
+export interface TranscodeStream {
+  child: ChildProcess;
+  stdout: Readable;
+}
+
+export function spawnTranscodeStream(srcPath: string): TranscodeStream {
   const bin = ffmpegPath();
   if (!bin) {
     throw new Error('ffmpeg-static unavailable');
   }
-
-  const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-audio-'));
-  const expectedOut = path.join(tmpDir, 'out.opus');
-
-  try {
-    // Bound concurrent heavyweight child processes (ffmpeg / calibre / cad).
-    await mediaConvertSemaphore.run(
-      () =>
-        new Promise<void>((resolve, reject) => {
-          execFile(
-            bin,
-            [
-              '-hide_banner',
-              '-loglevel',
-              'error',
-              '-i',
-              srcPath,
-              // First audio stream only; drop video (e.g. cover-art), subtitle,
-              // and data tracks some containers (m4a/mov) carry alongside audio.
-              '-map',
-              '0:a:0',
-              '-vn',
-              '-sn',
-              '-dn',
-              '-c:a',
-              'libopus',
-              '-b:a',
-              '128k',
-              '-vbr',
-              'on',
-              '-application',
-              'audio',
-              '-y',
-              expectedOut,
-            ],
-            { timeout: options.timeout ?? 300000 },
-            (err) => (err ? reject(err) : resolve())
-          );
-        })
-    );
-
-    if (!existsSync(expectedOut)) {
-      throw new Error('ffmpeg did not produce audio');
-    }
-    const buf = await fsp.readFile(expectedOut);
-    if (buf.length === 0) {
-      throw new Error('ffmpeg produced an empty file');
-    }
-    return buf;
-  } finally {
-    await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
-  }
-}
-
-/** Returns true when the bundled ffmpeg binary can be located. */
-export function isAudioConvertAvailable(): boolean {
-  return ffmpegPath() !== null;
+  const child = spawn(
+    bin,
+    [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-i',
+      srcPath,
+      // First audio stream only; drop video (e.g. cover-art), subtitle, and
+      // data tracks some containers (m4a/mov) carry alongside audio.
+      '-map',
+      '0:a:0',
+      '-vn',
+      '-sn',
+      '-dn',
+      '-c:a',
+      'libopus',
+      '-b:a',
+      '128k',
+      '-vbr',
+      'on',
+      '-application',
+      'audio',
+      '-f',
+      'ogg',
+      'pipe:1',
+    ],
+    // Pipe stdout + stderr so the caller can drain stderr (a full stderr OS
+    // buffer deadlocks ffmpeg) and read the Ogg/Opus bytes off stdout.
+    { stdio: ['ignore', 'pipe', 'pipe'] }
+  );
+  return { child, stdout: child.stdout };
 }

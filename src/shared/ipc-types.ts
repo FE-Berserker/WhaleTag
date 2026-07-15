@@ -350,10 +350,6 @@ export interface WhaleApi {
    *  the settings UI can show whether MOBI/AZW/AZW3 preview will work without
    *  actually converting a file. */
   detectEbookConverter: () => Promise<{ calibre: string | null }>;
-  /** Transcode an audio file Chromium can't decode (APE/WMA/etc) into Opus
-   *  bytes via the bundled ffmpeg, serving from the `.whale/transcodes/` cache
-   *  when fresh. Throws when ffmpeg is missing or the transcode fails. */
-  convertAudio: (filePath: string) => Promise<ArrayBuffer>;
   // Phase 4b — Archive viewer (main-process decoder)
   /** List the entries of a supported archive (zip/tar/tgz/7z/bz2/xz/gz).
    *  Throws if the format is unsupported or the archive is unreadable. */

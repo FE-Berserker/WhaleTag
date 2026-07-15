@@ -215,8 +215,6 @@ const whaleApi: WhaleApi = {
     ipcRenderer.invoke('ext:detectEbookConverter') as Promise<{
       calibre: string | null;
     }>,
-  convertAudio: (filePath: string) =>
-    ipcRenderer.invoke('ext:convertAudio', filePath),
 
   // Phase 4b — Archive viewer main-process decoder
   listArchive: (filePath: string, options?) =>

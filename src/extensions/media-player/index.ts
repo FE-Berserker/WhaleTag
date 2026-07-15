@@ -39,8 +39,7 @@
  * - `state.loopMode === 'one'` does NOT set HTML `loop`. We manually rewind +
  * play on `ended` so `ended` remains the single source of truth.
  * - `state.loadingNew` debounces rapid prev/next presses; cleared at the end of
- * `playBytes` and in the `renderTranscoded` error branch. `loadToken` still
- * prevents stale transcoded bytes from clobbering newer playback.
+ * `playBytes` / `playStreamingUrl` and in the streaming error branch.
  * - `state.history` is pushed on every real navigation (when the new
  * `fileContent` arrives with a different path than the previous currentPath).
  * It is cleared on `first` / `last` jumps — those are absolute, not part of
@@ -293,25 +292,10 @@ const I18N: Record<string, Strings> = {
 
 let T: Strings = I18N.en;
 
-// --- Host convert bridge (mirrors office-viewer's pendingConversions Map) ---
-type PendingResolver = {
- resolve: (data: Uint8Array) => void;
- reject: (err: Error) => void;
-};
-const pendingConversions = new Map<string, PendingResolver>();
-let convertReqId = 0;
-
-function requestAudioConvert(filePath: string): Promise<Uint8Array> {
- const requestId = `a${(convertReqId += 1)}`;
- return new Promise<Uint8Array>((resolve, reject) => {
- pendingConversions.set(requestId, { resolve, reject });
- window.whaleExt.postMessage({
- type: 'requestAudioConvert',
- requestId,
- path: filePath,
- });
- });
-}
+// --- Host convert bridge removed: transcode-only formats now stream live via
+// whale-audio:// (host live-transcodes ffmpeg → Opus → <audio>). No more
+// buffer-the-whole-file round trip, so the pendingConversions Map +
+// requestAudioConvert are gone. See shouldStream + playStreamingUrl. ---
 
 function extOf(filePath: string): string {
  const dot = filePath.lastIndexOf('.');
@@ -429,8 +413,6 @@ const state: State = {
 };
 
 let lastProgressSaveAt = 0;
-
-let loadToken = 0;
 
 // --- DOM helpers ---
 
@@ -902,52 +884,18 @@ function renderNative(filePath: string, content: string) {
  playBytes(base64ToUint8Array(content), mime, VIDEO_EXT.has(ext), filePath);
 }
 
-async function renderTranscoded(filePath: string, token: number) {
- clearCurrent();
- statusEl.textContent = T.transcoding;
- try {
- const bytes = await requestAudioConvert(filePath);
- // A newer file may have opened while transcode was in flight; drop this
- // result so we don't clobber the newer playback.
- if (token !== loadToken) {
- state.loadingNew = false;
- updateToolbar();
- return;
- }
- // Output is always Opus regardless of the source extension (.ape etc) —
- // the host bakes the format into the convert channel.
- playBytes(bytes, 'audio/opus', false, filePath);
- } catch (e) {
- if (token !== loadToken) {
- state.loadingNew = false;
- updateToolbar();
- return;
- }
- state.loadingNew = false;
- updateToolbar();
- statusEl.textContent = T.transcodeError.replace(
- '{msg}',
- e instanceof Error ? e.message : String(e)
- );
- }
-}
-
 function shouldStream(filePath: string): boolean {
  const ext = extOf(filePath);
+ // Transcode-only formats (APE/WMA/AIFF/…) stream via whale-audio://, which
+ // live-transcodes to Opus and pipes it straight to <audio> instead of
+ // buffering the whole transcode first (the old path made large APE rips take
+ // minutes to start playing). The host picks the scheme in its
+ // requestStreamingUrl handler.
+ if (TRANSCODE_EXT.has(ext)) return true;
  if (VIDEO_EXT.has(ext)) return true;
  const mime = MIME_MAP[ext];
- if (mime?.startsWith('audio/') && !TRANSCODE_EXT.has(ext)) return true;
+ if (mime?.startsWith('audio/')) return true;
  return false;
-}
-
-function openMediaFile(filePath: string, content: string) {
- loadToken += 1;
- const token = loadToken;
- if (TRANSCODE_EXT.has(extOf(filePath))) {
- void renderTranscoded(filePath, token);
- } else {
- renderNative(filePath, content);
- }
 }
 
 // --- Navigation (prev / next / first / last) ---
@@ -1305,13 +1253,18 @@ window.whaleExt.onMessage((msg) => {
  // mounting) so the user sees the new track name at once.
  updateBar();
  if (shouldStream(msg.path)) {
- // Large video / native audio: ask the host for a whale-file:/ streaming
- // URL instead of inflating the whole file as a base64 blob.
+ // Video / native audio / transcode-only audio: ask the host for a
+ // streaming URL (whale-file:// for native + video, whale-audio:// for
+ // live Opus transcode) instead of inflating the whole file as a blob.
  state.loadingNew = true;
  updateToolbar();
  window.whaleExt.postMessage({ type: 'requestStreamingUrl', path: msg.path });
  } else {
- openMediaFile(msg.path, msg.content);
+ // Degenerate fallback: a file type the host didn't pre-empt with an empty
+ // content blob. Render whatever base64 bytes arrived (usually empty → the
+ // element simply won't play; no streaming URL to request for an unknown
+ // type). In practice every media-player manifest type hits shouldStream.
+ renderNative(msg.path, msg.content);
  }
  break;
  case 'streamingUrl':
@@ -1335,17 +1288,6 @@ window.whaleExt.onMessage((msg) => {
  updateToolbar();
  renderPlaylistRows();
  break;
- case 'audioConvertedContent': {
- const pending = pendingConversions.get(msg.requestId);
- if (!pending) break;
- pendingConversions.delete(msg.requestId);
- if (msg.data) {
- pending.resolve(new Uint8Array(msg.data));
- } else {
- pending.reject(new Error(msg.error || 'audio transcode failed'));
- }
- break;
- }
  case 'setTheme':
  applyTheme(msg.theme);
  break;

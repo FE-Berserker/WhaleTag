@@ -1,6 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { encodeWhaleFileUrl, decodeWhaleFileUrl } from './whale-file-url';
+import {
+  encodeWhaleFileUrl,
+  decodeWhaleFileUrl,
+  encodeWhaleAudioUrl,
+  decodeWhaleAudioUrl,
+} from './whale-file-url';
 
 /**
  * Round-trip tests for the `whale-file://` URL format shared between the
@@ -157,4 +162,69 @@ describe('encode/decode round-trip', () => {
       assert.equal(decoded, expected);
     });
   }
+});
+
+/**
+ * `whale-audio://` uses the SAME byte format as `whale-file://` — only the
+ * scheme prefix differs — so the host dispatches to the live-Opus-transcode
+ * handler. These tests pin that the two schemes share format but stay
+ * isolated (a whale-file URL must NOT decode as whale-audio and vice versa,
+ * else a transcode stream could be served for a plain file request).
+ */
+describe('encodeWhaleAudioUrl', () => {
+  it('uses the whale-audio scheme', () => {
+    assert.equal(
+      encodeWhaleAudioUrl('/home/foo/track.ape'),
+      'whale-audio:///home/foo/track.ape'
+    );
+    assert.equal(
+      encodeWhaleAudioUrl('C:\\Users\\foo\\track.ape'),
+      'whale-audio:///C:/Users/foo/track.ape'
+    );
+  });
+
+  it('returns null for relative / empty input', () => {
+    assert.equal(encodeWhaleAudioUrl(''), null);
+    assert.equal(encodeWhaleAudioUrl('track.ape'), null);
+  });
+});
+
+describe('decodeWhaleAudioUrl', () => {
+  it('round-trips POSIX + Windows paths', () => {
+    assert.equal(
+      decodeWhaleAudioUrl('whale-audio:///home/foo/track.ape'),
+      '/home/foo/track.ape'
+    );
+    assert.equal(
+      decodeWhaleAudioUrl('whale-audio:///C:/Users/foo/track.ape'),
+      'C:/Users/foo/track.ape'
+    );
+  });
+
+  it('rejects whale-file URLs (cross-scheme isolation)', () => {
+    assert.equal(
+      decodeWhaleAudioUrl('whale-file:///home/foo/track.ape'),
+      null
+    );
+  });
+
+  it('rejects non-whale-audio URLs', () => {
+    assert.equal(decodeWhaleAudioUrl('http://example.com/track.ape'), null);
+    assert.equal(decodeWhaleAudioUrl('not a url'), null);
+  });
+});
+
+describe('whale-file vs whale-audio scheme isolation', () => {
+  it('decodeWhaleFileUrl rejects whale-audio URLs', () => {
+    assert.equal(
+      decodeWhaleFileUrl('whale-audio:///home/foo/track.ape'),
+      null
+    );
+  });
+
+  it('both schemes round-trip the same path bytes', () => {
+    const p = '/home/foo/中文 track.ape';
+    assert.equal(decodeWhaleAudioUrl(encodeWhaleAudioUrl(p)), p);
+    assert.equal(decodeWhaleFileUrl(encodeWhaleFileUrl(p)), p);
+  });
 });

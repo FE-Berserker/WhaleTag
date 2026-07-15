@@ -268,8 +268,6 @@ export const ipcApi = {
   ): Promise<ArrayBuffer> => requireApi().convertEbookToEpub(filePath, options),
   detectEbookConverter: (): Promise<{ calibre: string | null }> =>
     requireApi().detectEbookConverter(),
-  convertAudio: (filePath: string): Promise<ArrayBuffer> =>
-    requireApi().convertAudio(filePath),
 
   // Phase 4b — Archive viewer main-process decoder
   listArchive: (

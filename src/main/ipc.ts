@@ -3,9 +3,6 @@ import os from 'os';
 import { existsSync, promises as fsp } from 'fs';
 import { ipcMain, dialog, shell, nativeImage, BrowserWindow } from 'electron';
 import { exec, execFile } from 'child_process';
-import chardet from 'jschardet';
-import iconv from 'iconv-lite';
-import { createCanvas } from '@napi-rs/canvas';
 import { DirEntry } from '../shared/ipc-types';
 import { nextAvailableName } from '../shared/dedupe-name';
 // P0-2: the SQLite / FTS5 / EXIF pipeline (formerly imported from
@@ -38,6 +35,7 @@ import {
 } from './thumbnail';
 import { mapWithConcurrency } from './concurrency';
 import { extractGps, getExifSummary } from './exif';
+import { getCanvas, getChardet, getIconv } from './lazy-native';
 import type { SidecarMeta } from '../shared/whale-meta';
 import type { FolderMeta } from '../shared/whale-meta';
 import { assertWithinAllowedRoot, setAllowedRoots, getAllowedRoots } from './allowed-roots';
@@ -67,7 +65,6 @@ import {
   extractArchive,
 } from './archive';
 import {
-  loadTranscode,
   removeTranscode,
   moveTranscode,
   copyTranscode,
@@ -83,7 +80,7 @@ const HIDDEN = new Set(['.DS_Store', 'Thumbs.db', 'ehthumbs.db']);
 let dragFallbackIcon: Electron.NativeImage | null = null;
 function getDragFallbackIcon(): Electron.NativeImage {
   if (dragFallbackIcon) return dragFallbackIcon;
-  const c = createCanvas(64, 64);
+  const c = getCanvas().createCanvas(64, 64);
   const g = c.getContext('2d');
   g.fillStyle = '#eef0f5';
   g.fillRect(12, 6, 40, 52);
@@ -220,7 +217,7 @@ async function readTextFile(filePath: string): Promise<string> {
   // it over a multi-MB buffer is wasted main-thread CPU. subarray is a
   // zero-copy view, so this is cheap.
   const CHARDET_SAMPLE = 256 * 1024;
-  const detected = chardet.detect(
+  const detected = getChardet().detect(
     buf.length > CHARDET_SAMPLE ? buf.subarray(0, CHARDET_SAMPLE) : buf
   );
   const encoding = detected?.encoding?.toLowerCase() ?? 'utf8';
@@ -242,7 +239,7 @@ async function readTextFile(filePath: string): Promise<string> {
   // Windows text), so keep the detected name as the iconv target unless it is
   // clearly a UTF-8 alias.
   const target = encoding === 'utf-8' || encoding === 'ascii' ? 'utf8' : encoding;
-  const decoded = iconv.decode(buf, target);
+  const decoded = getIconv().decode(buf, target);
 
   // A legacy-encoded file may contain a handful of invalid bytes (e.g. a
   // corrupted download or mixed-encoding ebook). Forcing UTF-8 in that case
@@ -615,10 +612,12 @@ export function registerIpcHandlers(): void {
     const taken = new Set<string>(
       await fsp.readdir(destDir).catch(() => [] as string[])
     );
-    let copied = 0;
-    const errors: string[] = [];
-    const importedPaths: string[] = [];
-    for (const source of sources) {
+    // P3-5 (perf audit): copy in parallel (cap 4) instead of serially — a
+    // multi-hundred-file drag-drop used to copy one at a time. Name dedup stays
+    // race-free: `nextAvailableName` + `taken.add` run synchronously before the
+    // first `await`, so each source reserves its name atomically (JS is
+    // single-threaded; nothing interleaves between them).
+    const outcomes = await mapWithConcurrency(sources, 4, async (source) => {
       try {
         const name = nextAvailableName(path.basename(source), taken);
         taken.add(name);
@@ -635,13 +634,18 @@ export function registerIpcHandlers(): void {
         } catch {
           // sidecar/thumbnail carry-over is non-critical
         }
-        importedPaths.push(destPath);
-        copied += 1;
+        return { destPath };
       } catch (e) {
-        errors.push(e instanceof Error ? e.message : String(e));
+        return { error: e instanceof Error ? e.message : String(e) };
       }
+    });
+    const importedPaths: string[] = [];
+    const errors: string[] = [];
+    for (const o of outcomes) {
+      if ('destPath' in o) importedPaths.push(o.destPath);
+      else errors.push(o.error);
     }
-    return { copied, errors, importedPaths };
+    return { copied: importedPaths.length, errors, importedPaths };
   }
 
   ipcMain.handle(
@@ -1122,16 +1126,6 @@ export function registerIpcHandlers(): void {
     calibre: await ebookConvertBinary(),
   }));
 
-  // Audio transcode (APE/WMA/etc → Opus) for media-player. Goes through the
-  // transcode cache (loadTranscode) so repeat opens are instant and concurrent
-  // opens of the same file share one ffmpeg run. Returns Opus bytes as
-  // ArrayBuffer; media-player hardcodes the `audio/opus` blob MIME.
-  ipcMain.handle('ext:convertAudio', async (_event, filePath: string) => {
-    const buf = await loadTranscode(filePath);
-    const out = new ArrayBuffer(buf.byteLength);
-    new Uint8Array(out).set(buf);
-    return out;
-  });
 
   // Archive decoder for archive-viewer Phase 2+.
   ipcMain.handle(
@@ -1266,6 +1260,12 @@ function getPdfjsRoot(): string {
  * extension, which renders in its iframe and cannot read the filesystem. The
  * filename is reduced to its basename to prevent path traversal.
  */
+// P3-5 (perf audit): pdfjs data files (cmap / standard font / wasm) are
+// immutable bundled assets — cache the source bytes by path so repeated viewer
+// opens don't re-read from disk. A fresh ArrayBuffer copy is still returned per
+// call (the bytes cross IPC → iframe and may be consumed by emscripten).
+const pdfAssetCache = new Map<string, Buffer>();
+
 async function readPdfAsset(kind: string, filename: string): Promise<ArrayBuffer> {
   const subDir = PDF_ASSET_DIRS[kind];
   if (!subDir) {
@@ -1273,7 +1273,11 @@ async function readPdfAsset(kind: string, filename: string): Promise<ArrayBuffer
   }
   const safeName = path.basename(filename);
   const fullPath = path.join(getPdfjsRoot(), subDir, safeName);
-  const buf = await fsp.readFile(fullPath);
+  let buf = pdfAssetCache.get(fullPath);
+  if (!buf) {
+    buf = await fsp.readFile(fullPath);
+    pdfAssetCache.set(fullPath, buf);
+  }
   const out = new ArrayBuffer(buf.byteLength);
   new Uint8Array(out).set(buf);
   return out;
@@ -1286,6 +1290,9 @@ async function readPdfAsset(kind: string, filename: string): Promise<ArrayBuffer
  * `fetch('whale-extension://…')` path. Same root as the registry: the main
  * bundle lives in `dist/main/`, extensions in `dist/extensions/`.
  */
+// P3-5 (perf audit): the bundled wasm is immutable — cache the source bytes so
+// reopening a CAD file doesn't re-read from disk. Still returns a fresh copy.
+let _cadWasmBuf: Buffer | undefined;
 async function readCadWasm(): Promise<ArrayBuffer> {
   const fullPath = path.join(
     __dirname,
@@ -1294,9 +1301,9 @@ async function readCadWasm(): Promise<ArrayBuffer> {
     'cad-viewer',
     'occt-import-js.wasm'
   );
-  const buf = await fsp.readFile(fullPath);
-  const out = new ArrayBuffer(buf.byteLength);
-  new Uint8Array(out).set(buf);
+  if (!_cadWasmBuf) _cadWasmBuf = await fsp.readFile(fullPath);
+  const out = new ArrayBuffer(_cadWasmBuf.byteLength);
+  new Uint8Array(out).set(_cadWasmBuf);
   return out;
 }
 
@@ -1306,6 +1313,8 @@ async function readCadWasm(): Promise<ArrayBuffer> {
  * emscripten as `wasmBinary`, sidestepping the unreliable
  * `fetch('whale-extension://…')` path (same pattern as readCadWasm).
  */
+// P3-5 (perf audit): see readCadWasm — immutable bundled wasm, cached source.
+let _heicWasmBuf: Buffer | undefined;
 async function readHeicWasm(): Promise<ArrayBuffer> {
   const fullPath = path.join(
     __dirname,
@@ -1314,9 +1323,9 @@ async function readHeicWasm(): Promise<ArrayBuffer> {
     'heic-viewer',
     'libheif.wasm'
   );
-  const buf = await fsp.readFile(fullPath);
-  const out = new ArrayBuffer(buf.byteLength);
-  new Uint8Array(out).set(buf);
+  if (!_heicWasmBuf) _heicWasmBuf = await fsp.readFile(fullPath);
+  const out = new ArrayBuffer(_heicWasmBuf.byteLength);
+  new Uint8Array(out).set(_heicWasmBuf);
   return out;
 }
 

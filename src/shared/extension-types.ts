@@ -195,21 +195,21 @@ export interface OfficePdfContentMessage {
   error?: string;
 }
 
+/** Host -> Extension: a file's thumbnail as a `data:image/jpeg;base64,...` URL
+ *  (or `null` when no thumbnail has been generated yet). Used by office-viewer
+ *  as an instant first-page placeholder while LibreOffice cold-converts the
+ *  document to PDF (docs/15 P3-1). Same bytes the file-browser thumbnail
+ *  pipeline already cached at `<dir>/.whale/thumbs/<basename>.jpg`. */
+export interface ThumbnailContentMessage {
+  type: 'thumbnailContent';
+  requestId: string;
+  dataUrl: string | null;
+}
+
 /** Host -> Extension: EPUB bytes produced by converting a MOBI/AZW/AZW3 ebook
  *  with Calibre. `data` is null when conversion failed; `error` carries the reason. */
 export interface EbookConvertedContentMessage {
   type: 'ebookConvertedContent';
-  requestId: string;
-  data: ArrayBuffer | null;
-  error?: string;
-}
-
-/** Host -> Extension: Opus bytes produced by transcoding an audio file
- *  Chromium can't decode (APE/WMA/etc) via ffmpeg. The output is always Opus
- *  (format baked into the type name), so media-player hardcodes the blob MIME.
- *  `data` is null when transcode failed; `error` carries the reason. */
-export interface AudioConvertedContentMessage {
-  type: 'audioConvertedContent';
   requestId: string;
   data: ArrayBuffer | null;
   error?: string;
@@ -273,8 +273,8 @@ export type HostMessage =
   | HeicWasmMessage
   | DwgConvertedContentMessage
   | OfficePdfContentMessage
+  | ThumbnailContentMessage
   | EbookConvertedContentMessage
-  | AudioConvertedContentMessage
   | ArchiveListMessage
   | ArchiveEntryContentMessage
   | ArchiveExtractedMessage
@@ -382,6 +382,16 @@ export interface RequestOfficeConvertMessage {
   path: string;
 }
 
+/** Extension -> Host: office viewer requests the file's cached thumbnail (a
+ *  `data:` URL) to show as an instant placeholder during the LibreOffice→PDF
+ *  cold convert. The host answers with `thumbnailContent` (dataUrl null when
+ *  no thumbnail exists yet). docs/15 P3-1. */
+export interface RequestThumbnailMessage {
+  type: 'requestThumbnail';
+  requestId: string;
+  path: string;
+}
+
 /** Extension -> Host: ebook viewer requests the host convert a MOBI/AZW/AZW3
  *  file to EPUB bytes using Calibre. The host answers with `ebookConvertedContent`. */
 export interface RequestEbookConvertMessage {
@@ -390,19 +400,11 @@ export interface RequestEbookConvertMessage {
   path: string;
 }
 
-/** Extension -> Host: media-player requests the host transcode an audio file
- *  Chromium can't decode (APE/WMA/etc) into Opus bytes. The host answers with
- *  `audioConvertedContent` (serving from the `.whale/transcodes/` cache when
- *  fresh). Path-based: the host reads the file directly. */
-export interface RequestAudioConvertMessage {
-  type: 'requestAudioConvert';
-  requestId: string;
-  path: string;
-}
-
-/** Extension -> Host: media-player requests a streaming `whale-file://` URL for
- *  large video / native-playable audio files so the browser can request ranges
- *  instead of buffering the whole file in the renderer. */
+/** Extension -> Host: media-player requests a streaming URL for a media file
+ *  so the browser can request ranges instead of buffering the whole file in
+ *  the renderer. The host picks the scheme by extension: `whale-file://` for
+ *  video / native-playable audio, `whale-audio://` for transcode-only formats
+ *  (APE/WMA/etc) which the host live-transcodes to Opus and streams. */
 export interface RequestStreamingUrlMessage {
   type: 'requestStreamingUrl';
   path: string;
@@ -532,8 +534,8 @@ export type ExtensionMessage =
   | RequestHeicWasmMessage
   | RequestDwgConvertMessage
   | RequestOfficeConvertMessage
+  | RequestThumbnailMessage
   | RequestEbookConvertMessage
-  | RequestAudioConvertMessage
   | RequestStreamingUrlMessage
   | RequestArchiveListMessage
   | RequestArchiveEntryMessage

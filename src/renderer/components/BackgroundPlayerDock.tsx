@@ -9,7 +9,10 @@ import { useDirectoryContent } from '-/hooks/DirectoryContentContextProvider';
 import { ipcApi } from '-/services/ipc-api';
 import { useResolvedThemeMode } from '-/theme/useResolvedThemeMode';
 import { RootState } from '-/reducers';
-import { encodeWhaleFileUrl } from '../../shared/whale-file-url';
+import {
+  encodeWhaleAudioUrl,
+  encodeWhaleFileUrl,
+} from '../../shared/whale-file-url';
 import {
   EXT_PROTOCOL_VERSION,
   isValidEnvelope,
@@ -17,7 +20,7 @@ import {
   type HostMessage,
 } from '../../shared/extension-types';
 import type { DirEntry } from '../../shared/ipc-types';
-import { isAudioFile } from '../../shared/whale-meta';
+import { AUDIO_TRANSCODE_EXT, isAudioFile } from '../../shared/whale-meta';
 
 /**
  * Persistent 64px-tall audio dock anchored to the bottom of the main window.
@@ -202,33 +205,19 @@ export default function BackgroundPlayerDock() {
           break;
         }
         case 'requestStreamingUrl': {
-          const url = encodeWhaleFileUrl(msg.path);
+          // Pick the scheme by extension: transcode-only audio (APE/WMA/…)
+          // gets whale-audio:// (host live-transcodes); everything else gets
+          // whale-file://. Mirrors ExtensionHost's handler.
+          const dot = msg.path.lastIndexOf('.');
+          const ext = dot >= 0 ? msg.path.slice(dot + 1).toLowerCase() : '';
+          const url = AUDIO_TRANSCODE_EXT.has(ext)
+            ? encodeWhaleAudioUrl(msg.path)
+            : encodeWhaleFileUrl(msg.path);
           postToExtension({
             type: 'streamingUrl',
             path: msg.path,
             url: url ?? '',
           });
-          break;
-        }
-        case 'requestAudioConvert': {
-          const { requestId, path: audioPath } = msg;
-          ipcApi
-            .convertAudio(audioPath)
-            .then((data) =>
-              postToExtension({
-                type: 'audioConvertedContent',
-                requestId,
-                data,
-              })
-            )
-            .catch((e) =>
-              postToExtension({
-                type: 'audioConvertedContent',
-                requestId,
-                data: null,
-                error: e instanceof Error ? e.message : String(e),
-              })
-            );
           break;
         }
         case 'requestOpenInView': {
