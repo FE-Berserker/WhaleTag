@@ -23,7 +23,7 @@
 
 import globalJsdom from 'global-jsdom';
 
-import { before, describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { render, cleanup, fireEvent } from '@testing-library/react';
 import { I18nextProvider, initReactI18next } from 'react-i18next';
@@ -153,8 +153,17 @@ function renderMenu(
   );
 }
 
+// Capture global-jsdom's teardown so the `after()` hook can close the window
+// (cancelling its pending timers/observers). EntryContextMenu renders MUI Menu
+// (with a NoTransition slot) plus an inline editor; without a final unmount +
+// jsdom close, the last render's Modal portal / focus-trap kept a jsdom handle
+// alive that node's test runner doesn't expose via active handles — so this was
+// the only renderer test file whose process refused to exit, hanging the whole
+// single-process `npm test` run. (The 7 real assertions all passed.)
+let teardownJsdom: (() => void) | undefined;
+
 before(async () => {
-  globalJsdom();
+  teardownJsdom = globalJsdom();
 
   await i18next.use(initReactI18next).init({
     resources: {
@@ -200,6 +209,14 @@ before(async () => {
       dispatchEvent: () => false,
     });
   }
+});
+
+after(() => {
+  // Unmount the final rendered tree (the per-test `cleanup()` only runs at the
+  // START of the next test, so the last render's MUI Modal portal would
+  // otherwise survive), then close the jsdom window.
+  cleanup();
+  teardownJsdom?.();
 });
 
 // ---------------------------------------------------------------------

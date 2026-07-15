@@ -208,15 +208,25 @@ before(async () => {
 });
 
 describe('MapiqueView', () => {
-  it('renders tray filter toggle buttons', () => {
+  it('renders the tray filter Select with all / located / unlocated options', () => {
     cleanup();
     const props = makeProps([entry('a.jpg'), entry('b.jpg')]);
     const { container } = renderMapique(props);
-    const buttons = container.querySelectorAll('.MuiToggleButton-root');
-    assert.equal(buttons.length, 3);
-    assert.ok(Array.from(buttons).some((b) => b.textContent === 'mapiqueFilterAll'));
-    assert.ok(Array.from(buttons).some((b) => b.textContent === 'mapiqueFilterLocated'));
-    assert.ok(Array.from(buttons).some((b) => b.textContent === 'mapiqueFilterUnlocated'));
+    // The filter Select defaults to "all", so its trigger shows the "all" label
+    // (the sort Select next to it shows a different label). MUI Select opens on
+    // mouseDown of its `.MuiSelect-select` trigger; the options then portal to
+    // document.body (the same MuiMenuItem-root query the ctx-menu tests use).
+    const trigger = Array.from(container.querySelectorAll('.MuiSelect-select')).find(
+      (s) => s.textContent === 'mapiqueFilterAll'
+    ) as HTMLElement | undefined;
+    assert.ok(trigger, 'filter Select trigger should be present');
+    fireEvent.mouseDown(trigger as HTMLElement);
+    const optionTexts = Array.from(document.querySelectorAll('.MuiMenuItem-root')).map(
+      (o) => o.textContent
+    );
+    assert.ok(optionTexts.includes('mapiqueFilterAll'));
+    assert.ok(optionTexts.includes('mapiqueFilterLocated'));
+    assert.ok(optionTexts.includes('mapiqueFilterUnlocated'));
   });
 
   it('filters tray to located entries only', () => {
@@ -231,10 +241,15 @@ describe('MapiqueView', () => {
     );
     const { container } = renderMapique(props);
 
-    const locatedBtn = Array.from(
-      container.querySelectorAll('.MuiToggleButton-root')
-    ).find((b) => b.textContent === 'mapiqueFilterLocated') as HTMLElement;
-    fireEvent.click(locatedBtn);
+    // Open the filter Select and pick "located".
+    const trigger = Array.from(container.querySelectorAll('.MuiSelect-select')).find(
+      (s) => s.textContent === 'mapiqueFilterAll'
+    ) as HTMLElement;
+    fireEvent.mouseDown(trigger);
+    const locatedItem = Array.from(document.querySelectorAll('.MuiMenuItem-root')).find(
+      (o) => o.textContent === 'mapiqueFilterLocated'
+    ) as HTMLElement;
+    fireEvent.click(locatedItem);
 
     const rows = container.querySelectorAll('[data-entry-path]');
     assert.equal(rows.length, 1);
