@@ -217,6 +217,10 @@ const whaleApi: WhaleApi = {
     }>,
   isSofficeAvailable: () =>
     ipcRenderer.invoke('ext:isSofficeAvailable') as Promise<boolean>,
+  mapiqueGeocode: (query: string) =>
+    ipcRenderer.invoke('mapique:geocode', query) as Promise<{
+      results: { name: string; lat: number; lng: number }[];
+    }>,
 
   // Phase 4b — Archive viewer main-process decoder
   listArchive: (filePath: string, options?) =>

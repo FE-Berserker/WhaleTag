@@ -18,7 +18,11 @@ import {
   IconButton,
   InputAdornment,
   Link,
+  List,
+  ListItemButton,
+  ListItemText,
   MenuItem,
+  Paper,
   Select,
   Snackbar,
   Stack,
@@ -53,7 +57,7 @@ import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 
 import type { TFunction } from 'i18next';
-import type { DirEntry, ExifProcessedRecord } from '../../shared/ipc-types';
+import type { DirEntry, ExifProcessedRecord, GeoSearchResult } from '../../shared/ipc-types';
 import type { TagGroup } from '../../shared/tag-library';
 import { getTagColor, getGeoColor } from '../../shared/tag-colors';
 import {
@@ -300,6 +304,57 @@ export default function MapiqueView({
   // to the initial fitBounds centroid until the user actually pans.
   const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number } | null>(null);
   const selectAnchorRef = useRef<number | null>(null);
+
+  // docs/05 §10: place-name geocode search. Debounced 400ms (Nominatim ≤1 req/s);
+  // results are WGS-84, fed through `toDisplay` on flyTo (same as marker placement).
+  const [geoQuery, setGeoQuery] = useState('');
+  const [geoResults, setGeoResults] = useState<GeoSearchResult[]>([]);
+  const [geoLoading, setGeoLoading] = useState(false);
+  const [geoOpen, setGeoOpen] = useState(false);
+  const [geoError, setGeoError] = useState<string | null>(null);
+  const [flyTarget, setFlyTarget] = useState<{
+    lat: number;
+    lng: number;
+  } | null>(null);
+  const [flyNonce, setFlyNonce] = useState(0);
+  const geoReqRef = useRef(0);
+
+  useEffect(() => {
+    const q = geoQuery.trim();
+    if (!q) {
+      setGeoResults([]);
+      setGeoLoading(false);
+      setGeoError(null);
+      setGeoOpen(false);
+      return;
+    }
+    setGeoLoading(true);
+    setGeoError(null);
+    const mine = (geoReqRef.current += 1);
+    const timer = setTimeout(async () => {
+      try {
+        const { results } = await ipcApi.mapiqueGeocode(q);
+        // Drop stale responses: a newer keystroke supersedes this one.
+        if (geoReqRef.current !== mine) return;
+        setGeoResults(results);
+        setGeoOpen(true);
+      } catch (e) {
+        if (geoReqRef.current !== mine) return;
+        setGeoResults([]);
+        setGeoError(e instanceof Error ? e.message : String(e));
+        setGeoOpen(true);
+      } finally {
+        if (geoReqRef.current === mine) setGeoLoading(false);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [geoQuery]);
+
+  const handleSelectGeoResult = useCallback((r: GeoSearchResult) => {
+    setFlyTarget({ lat: r.lat, lng: r.lng });
+    setFlyNonce((n) => n + 1);
+    setGeoOpen(false);
+  }, []);
 
   // Re-render whenever the parent's `geoByName` / `tagsByName` props change
   // identity (TagMetaContextProvider re-derives them on every `setSidecars`,
@@ -1103,6 +1158,12 @@ export default function MapiqueView({
             subdomains={tileSubdomains}
           />
           <FitBounds geo={knownGeo} toDisplay={toDisplay} />
+          {/* docs/05 §10: fly to a geocode search result. */}
+          <FlyTo
+            target={flyTarget}
+            nonce={flyNonce}
+            toDisplay={toDisplay}
+          />
           <AutoResize />
           <InvalidateOnChange trigger={panelOpen} />
           {/* P3-5: push the live viewport center back to the parent so the
@@ -1145,6 +1206,90 @@ export default function MapiqueView({
             })}
           </MarkerClusterGroup>
         </MapContainer>
+
+        {/* docs/05 §10: place-name search overlay. Absolute over the map. */}
+        <Paper
+          elevation={3}
+          sx={{
+            position: 'absolute',
+            top: 8,
+            left: 8,
+            zIndex: 1000,
+            width: 280,
+            maxWidth: '70%',
+          }}
+        >
+          <TextField
+            value={geoQuery}
+            onChange={(e) => setGeoQuery(e.target.value)}
+            onFocus={() => {
+              if (geoResults.length || geoError) setGeoOpen(true);
+            }}
+            onBlur={() => {
+              // Defer so a result click (mousedown) registers before close.
+              setTimeout(() => setGeoOpen(false), 150);
+            }}
+            placeholder={t('mapiqueSearchPlaceholder')}
+            size="small"
+            fullWidth
+            slotProps={{
+              input: {
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon fontSize="small" sx={{ color: 'text.disabled' }} />
+                  </InputAdornment>
+                ),
+                endAdornment: geoQuery ? (
+                  <InputAdornment position="end">
+                    <IconButton
+                      size="small"
+                      aria-label={t('clear')}
+                      onClick={() => {
+                        setGeoQuery('');
+                        setGeoResults([]);
+                      }}
+                    >
+                      <ClearIcon fontSize="small" />
+                    </IconButton>
+                  </InputAdornment>
+                ) : null,
+              },
+            }}
+          />
+          {geoOpen ? (
+            <List dense disablePadding>
+              {geoLoading ? (
+                <ListItemButton disabled>
+                  <ListItemText primary={t('mapiqueSearching')} />
+                </ListItemButton>
+              ) : null}
+              {!geoLoading && geoError ? (
+                <ListItemButton disabled>
+                  <ListItemText
+                    primary={geoError}
+                    slotProps={{ primary: { color: 'error' } }}
+                  />
+                </ListItemButton>
+              ) : null}
+              {!geoLoading && !geoError && geoResults.length === 0 ? (
+                <ListItemButton disabled>
+                  <ListItemText primary={t('mapiqueSearchNoResults')} />
+                </ListItemButton>
+              ) : null}
+              {geoResults.map((r, i) => (
+                <ListItemButton
+                  key={`${r.lat},${r.lng},${i}`}
+                  onClick={() => handleSelectGeoResult(r)}
+                >
+                  <ListItemText
+                    primary={r.name}
+                    slotProps={{ primary: { variant: 'body2', noWrap: true } }}
+                  />
+                </ListItemButton>
+              ))}
+            </List>
+          ) : null}
+        </Paper>
 
         {/* Recursive scan progress. `pointer-events: none` so the chip doesn't
               swallow map clicks — same rationale as the EXIF progress
@@ -1791,6 +1936,32 @@ function FitBounds({
     prevCountRef.current = geo.length;
   }, [geo, map, toDisplay]);
 
+  return null;
+}
+
+/**
+ * docs/05 §10: fly the map to a geocode search result. `nonce` gates the effect
+ * so picking the same result twice still re-triggers the fly. `target` is
+ * WGS-84; `toDisplay` shifts it to the active tile datum (GCJ-02 for Gaode),
+ * exactly like marker placement, so the fly lands on the rendered location.
+ */
+function FlyTo({
+  target,
+  nonce,
+  toDisplay,
+}: {
+  target: { lat: number; lng: number } | null;
+  nonce: number;
+  toDisplay: (lat: number, lng: number) => [number, number];
+}) {
+  const map = useMap();
+  useEffect(() => {
+    if (!target) return;
+    const [dLat, dLng] = toDisplay(target.lat, target.lng);
+    map.flyTo([dLat, dLng], 13, { duration: 0.8 });
+    // `nonce` is the dep that re-triggers; `target` is read but eslint's
+    // exhaustive-deps would want it too — both are intentionally listed.
+  }, [target, nonce, map, toDisplay]);
   return null;
 }
 

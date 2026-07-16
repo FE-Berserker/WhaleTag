@@ -114,6 +114,14 @@ export interface GenerateThumbnailOptions {
   sofficePath?: string | null;
 }
 
+/** A geocoded place result (docs/05 §10). Coordinates are WGS-84 (internal
+ *  system) — MapiqueView shifts to the tile datum via `toDisplay`. */
+export interface GeoSearchResult {
+  name: string;
+  lat: number;
+  lng: number;
+}
+
 /**
  * The surface exposed on `window.whale` by preload.ts.
  * Mirrored here so both sides agree on the contract.
@@ -354,6 +362,9 @@ export interface WhaleApi {
    *  up front to show install guidance instead of a "not found" dead-end
    *  (docs/09 §16.16). */
   isSofficeAvailable: () => Promise<boolean>;
+  /** Mapique place-name search (geocoding) via Nominatim, run in the main
+   *  process (docs/05 §10). Returns WGS-84 results. */
+  mapiqueGeocode: (query: string) => Promise<{ results: GeoSearchResult[] }>;
   // Phase 4b — Archive viewer (main-process decoder)
   /** List the entries of a supported archive (zip/tar/tgz/7z/bz2/xz/gz).
    *  Throws if the format is unsupported or the archive is unreadable. */
