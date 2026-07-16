@@ -102,8 +102,7 @@ context 暴露:
 
 - 工具栏 Refresh 按钮旁 spinner(loading 状态)
 - FileList 容器半透明 Backdrop(loading 期间)
-- **FileList 顶部 `<Alert severity="warning">`**(`FileList.tsx:1373-1377`):context `recursiveTruncated` 触发
-- **仅 FileList 渲染**该 Alert;Gallery / Kanban / Matrix / Gantt / Calendar / Mapique / TagCloud / KG / FolderViz 各自的根组件不含此 Alert —— 用户切到这些视图时不会看见截断提示(`recursiveTruncated` 已在 context 中暴露,后续要让每个视角都显就移进 provider 渲染)
+- **FileList 内容区顶部 `<Alert severity="warning">`**([FileList.tsx](../src/renderer/components/FileList.tsx) ~L1433):context `recursiveTruncated` 触发,**在 header 之上、各视角 body 之上,对所有视角都显**(unconditional on viewMode——list / grid / gallery / Kanban / Matrix / Gantt / Calendar / Mapique / TagCloud / KG / FolderViz 全覆盖;各视角根组件不需要自带 Alert,因为它在共享的 FileList 容器顶部)。
 - Mapique 的 in-flight loading 经 FileList 新增 `loading` prop 透传
 
 ## 8. 工具栏 Slider
@@ -132,5 +131,5 @@ context 暴露:
 - 每文件夹深度覆盖(像视角 / 尺寸存 `wsm.json`)—— 不做,真需要再补 per-folder override
 - `useRecursiveEntries` hook(老)已删除,4 个原使用方(TagCloud / KG / Mapique / FolderViz)grep 不到 import(R4,2026-07-01)
 - `maxDepth` 从 `whale.folderViz.<id>` / `whale.tagCloud.<id>` / `whale.kg.<id>` 三处 localStorage 全清空
-- Truncated Alert 暂只 FileList 显(其他视角按需后续补 provider 内 portal)
+- Truncated Alert **已全视角共享**:在 FileList 内容区顶部(header 之上),切任何视角都显,无需 provider 内 portal。
 - 路径排序按 depth > 1 切换未实现(`compareEntries` 是 depth-blind)
