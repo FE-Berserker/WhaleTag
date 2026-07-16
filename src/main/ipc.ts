@@ -1136,11 +1136,31 @@ export function registerIpcHandlers(): void {
   // docs/05 §10: Mapique place-name search via Nominatim. Runs in main (renderer
   // CSP blocks external domains + Nominatim requires a User-Agent browser fetch
   // can't set). Returns WGS-84 — MapiqueView's toDisplay shifts to the tile datum.
-  ipcMain.handle('mapique:geocode', async (_event, query: string) => ({
-    results: await geocodeNominatim(query, {
-      userAgent: `WhaleTag/${app.getVersion()}`,
-    }),
-  }));
+  // 12s timeout: if Nominatim is unreachable (common behind the GFW), surface a
+  // clear error instead of hanging the search forever.
+  ipcMain.handle('mapique:geocode', async (_event, query: string) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
+    try {
+      return {
+        results: await geocodeNominatim(query, {
+          userAgent: `WhaleTag/${app.getVersion()}`,
+          signal: controller.signal,
+        }),
+      };
+    } catch (e) {
+      const aborted = e instanceof Error && e.name === 'AbortError';
+      throw new Error(
+        aborted
+          ? 'Geocode timed out — the Nominatim service may be unreachable from this network.'
+          : e instanceof Error
+            ? e.message
+            : String(e)
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+  });
 
 
   // Archive decoder for archive-viewer Phase 2+.
