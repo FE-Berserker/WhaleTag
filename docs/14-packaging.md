@@ -104,15 +104,16 @@ npm run build:ai-component
 - **根因**:中转/代理用 `ANTHROPIC_AUTH_TOKEN`(Bearer 头),而 WhaleTag 默认设 `ANTHROPIC_API_KEY`(x-api-key 头);新版 Claude Code(2.1+)只读环境变量,不读 `~/.claude/settings.json`。
 - **修法**:设置 → AI(claude-cli)加「认证字段」下拉(`ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN`,cc-switch 默认后者)+「Anthropic 基础地址」字段(`ANTHROPIC_BASE_URL`,中转端点);`buildQueryOptions` 按选择写对应 env。参考 cc-switch(`github.com/farion1231/cc-switch`)的 Claude Code 供应商配置。
 
-### 坑 9:任务栏显示 Electron 默认图标(不是 logo)
+### 坑 9:任务栏显示 Electron 默认图标(不是 logo)(✅ 已解决)
 - **症状**:任务栏图标是 Electron 的电子/原子图标,不是蓝色 W。
-- **根因**:`builder.json` 的 `win.signAndEditExecutable: false` → electron-builder 不用 rcedit 把 `.icon-ico/icon.ico`(蓝色 W,已生成)嵌入 exe,exe 保留 Electron 默认图标。
-- **修法**:改 `signAndEditExecutable: true` —— **但触发坑 10**。
+- **根因**:`builder.json` 的 `win.signAndEditExecutable: false` → electron-builder 不用 rcedit 把 `resources/icon.ico`(蓝色 W)嵌入 exe,exe 保留 Electron 默认图标。
+- **修法**:改 `signAndEditExecutable: true`。前提是坑 10 已解决(winCodeSign 离线缓存就位)—— 0.2.0 起两者都满足,`builder.json` 已不带该字段(默认 `true`),exe 正确嵌入蓝色 W。
 
-### 坑 10:signAndEditExecutable: true → rcedit 下载 winCodeSign 卡 GitHub(⚠️ 当前未解决)
-- **症状**:改 `signAndEditExecutable: true` 后,打包在 `editResources`(rcedit)步骤失败:`Get https://github.com/.../winCodeSign-2.6.0.7z: ... wsarecv: ... timeout`,最终 `ERR_ELECTRON_BUILDER_CANNOT_EXECUTE`。
-- **根因**:rcedit(app-builder 的 `pkg/rcedit`)需要 `winCodeSign` 包,从 GitHub 下载,国内卡。**这正是当初设 `signAndEditExecutable: false` 的原因** —— 避开 rcedit + winCodeSign 下载。
-- **待解**:winCodeSign 离线方案(类似 nsis-resources):下载 `winCodeSign-2.6.0.7z`(`tools/` 里已有),解压并让 app-builder 找到(放 `%LOCALAPPDATA%/electron-builder/Cache/winCodeSign/winCodeSign-2.6.0/`,或找 app-builder 的 env 变量)。**当前 exe 图标仍是 Electron 默认,任务栏/Alt+Tab 不显示 logo** —— 是已知的遗留问题。
+### 坑 10:signAndEditExecutable → rcedit 下载 winCodeSign 卡 GitHub(✅ 已解决)
+- **历史症状**:把 `signAndEditExecutable` 设 `true` 后,打包在 `editResources`(rcedit)步骤失败:`Get https://github.com/.../winCodeSign-2.6.0.7z: ... wsarecv: ... timeout`,最终 `ERR_ELECTRON_BUILDER_CANNOT_EXECUTE`。当初为此把 `builder.json` 的 `signAndEditExecutable` 设 `false` 绕开 rcedit —— 代价是 exe 保留 Electron 默认图标(任务栏/Alt+Tab 不显示蓝色 W)。
+- **根因**:rcedit(app-builder 的 `pkg/rcedit`)需要 `winCodeSign` 包,从 GitHub 下载,国内卡。
+- **已解决**:`winCodeSign-2.6.0` 现已离线缓存在 `%LOCALAPPDATA%/electron-builder/Cache/winCodeSign/winCodeSign-2.6.0/`,且 `resources/builder.json` **不再**带 `signAndEditExecutable: false`(回退默认 `true`)→ rcedit 跑通、把 `resources/icon.ico`(蓝色 W,多分辨率)嵌进 exe。**0.3.0 起验证**:从打包后的 `win-unpacked/WhaleTag.exe` 抽出的图标 MD5 与 Electron 默认图标不同 → 自定义 W 已嵌入。
+- **迁移注意**:换机器/清缓存后需重新落 `winCodeSign-2.6.0`(下载 `winCodeSign-2.6.0.7z` 解压到上述 Cache 目录);否则 `signAndEditExecutable:true` 又会在 editResources 卡 GitHub,或临时回退 `false`(图标退回默认)。
 
 ## 5. 关键文件
 
