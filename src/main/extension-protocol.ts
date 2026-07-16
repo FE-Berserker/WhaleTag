@@ -19,20 +19,21 @@
  */
 import path from 'path';
 import * as fsp from 'fs/promises';
+import { foldPath } from './path-fold';
 
 /**
- * Case-insensitive, separator-aware "is `child` inside `root`?" used by both
- * traversal guards. Exported for unit tests.
+ * Separator-aware "is `child` inside `root`?" used by both traversal guards.
+ * Exported for unit tests.
  *
- * On Windows, `realpath` (GetFinalPathNameByHandle) canonicalizes the prefix
- * of an asar path — prepending `\\?\` and possibly changing drive-letter case
- * — so a plain case-sensitive `startsWith` on mixed forms false-rejects every
- * packaged asset. Lowercasing both sides and matching on `root + path.sep`
- * (mirrors `assertWithinAllowedRoot` in allowed-roots.ts) is the robust check.
+ * Case-handling follows the filesystem via `foldPath` (path-fold.ts):
+ * case-fold on Windows/macOS (where `/Photos` and `/photos` are the same dir,
+ * and Windows `realpath` rewrites the asar `\\?\` prefix + drive-letter case),
+ * exact on Linux (where they are different dirs and folding would be too
+ * permissive). Mirrors `assertWithinAllowedRoot` in allowed-roots.ts.
  */
 export function isWithinRoot(child: string, root: string): boolean {
-  const c = child.toLowerCase();
-  const r = root.toLowerCase();
+  const c = foldPath(child);
+  const r = foldPath(root);
   return c === r || c.startsWith(r + path.sep);
 }
 

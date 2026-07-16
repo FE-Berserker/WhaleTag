@@ -21,6 +21,7 @@ import path from 'path';
 import os from 'os';
 import { promises as fsp } from 'fs';
 import { resolveExtensionRequest, isWithinRoot } from './extension-protocol';
+import { CASE_INSENSITIVE_FS } from './path-fold';
 
 let EXT_ROOT: string;
 let PARENT_DIR: string;
@@ -299,8 +300,13 @@ describe('isWithinRoot', () => {
     assert.equal(isWithinRoot(`C:${sep}ext`, `C:${sep}ext`), true);
   });
 
-  it('is case-insensitive (drive-letter / dir case)', () => {
-    assert.equal(isWithinRoot(`c:${sep}Ext${sep}f.js`, `C:${sep}eXt`), true);
+  it('honors filesystem case-sensitivity (fold on win/mac, exact on linux)', () => {
+    // Same path, different case. True on case-insensitive FS (same dir),
+    // false on case-sensitive FS (different dir).
+    assert.equal(
+      isWithinRoot(`c:${sep}Ext${sep}f.js`, `C:${sep}eXt`),
+      CASE_INSENSITIVE_FS
+    );
   });
 
   it('accepts a matching \\\\?\\ canonical prefix on BOTH sides (packaged asar case)', () => {

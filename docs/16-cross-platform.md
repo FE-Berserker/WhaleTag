@@ -54,13 +54,9 @@
 
 ## 🟠 需要改的代码(都不大)
 
-### C-1. Linux 大小写敏感路径守卫过宽(安全相关)
-- **现状**:
-  - [allowed-roots.ts](../src/main/allowed-roots.ts) ~L50-67:`assertWithinAllowedRoot` 把 target 和 root 都 `toLowerCase()` 再 `startsWith`。Windows / mac(默认大小写不敏感)没问题;**Linux ext4 大小写敏感**,注册 `/home/u/Photos` 会连 `/home/u/photos/...` 也放进写白名单——是不同路径,破坏 `assertWithinAllowedRoot` 的写保护语义。
-  - [extension-protocol.ts](../src/main/extension-protocol.ts) ~L33-37:`whale-extension://` 资源遍历守卫同样问题(symlinked 扩展目录仅大小写不同可能滑过)。
-- **修法**:把 `toLowerCase()` 门在 `process.platform === 'win32'` 后。[ai/utils/path.ts](../src/main/ai/utils/path.ts) ~L217 的 `normalizePathForComparison` 已是正确范式,照抄。**trivial**。
-
-- [ ] 实现
+### C-1. Linux 大小写敏感路径守卫过宽(安全相关)✅ 已解决
+- **原问题**:[allowed-roots.ts](../src/main/allowed-roots.ts) `assertWithinAllowedRoot` 与 [extension-protocol.ts](../src/main/extension-protocol.ts) `isWithinRoot` 都把 target 和 root 整体 `toLowerCase()` 再比。Windows/mac(默认大小写不敏感)没问题;**Linux ext4 大小写敏感**,注册 `/home/u/Photos` 会连 `/home/u/photos/...` 也放进写白名单——是不同路径,破坏写保护语义。
+- **修法**(2026-07-16):新增 [path-fold.ts](../src/main/path-fold.ts) 的 `foldPath(p)`——`win32`/`darwin` 小写、其它(linux)原样,两处守卫(allowed-roots 3 个位点 + extension-protocol `isWithinRoot`)都改用它。**为什么 darwin 也 fold**:mac 默认 APFS 大小写不敏感,且 `realpath` 已把 case 归一到磁盘真实大小写,故 fold 与 exact 在 mac 上结果一致(fold 是 no-op-after-realpath);只在罕见的 case-sensitive mac 上 fold 略宽(= 改前风险,可接受),linux 则从过宽修成精确。`better-sqlite3` 之类无关。测试:[path-fold.test.ts](../src/main/path-fold.test.ts) 覆盖两分支(经 test-seam param);allowed-roots / extension-protocol 的 case 断言改成平台条件(`CASE_INSENSITIVE_FS` ? 接受 : 拒绝),32/32 过。
 
 ### C-2. Linux 桌面环境 fallback 链缺失(易用性)
 - **现状**:
@@ -107,7 +103,7 @@
 | mac 签名 + 公证(B-1) | 1 天(证书到手后)+ $99/年 | 仅公开分发需要 |
 | 运行时前置文档(LibreOffice / calibre / LibreDWG `dwg2dxf`) | 文档 | 同 Windows 现状([docs/14](./14-packaging.md)),照搬一节 |
 
-**最短可跑路径**(dev / 自用即达标,不用签名):加 `.icns` + 修两个 Linux 大小写守卫(C-1)→ 在 mac 和 linux 各跑一次 `package:mac` / `package:linux` 冒烟,验证无崩。
+**最短可跑路径**(dev / 自用即达标,不用签名):加 `.icns`(C-3)+ 在 mac 和 linux 各跑一次 `package:mac` / `package:linux` 冒烟,验证无崩。Linux 大小写守卫(C-1)已修(2026-07-16)。
 
 **注意**:打包前同样要 `unset ELECTRON_RUN_AS_NODE`([docs/14 坑3](./14-packaging.md)),Claude Code host 注入该 env 是 OS 无关的。
 

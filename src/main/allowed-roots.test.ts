@@ -4,6 +4,7 @@ import path from 'path';
 import os from 'os';
 import { promises as fsp } from 'fs';
 import { assertWithinAllowedRoot, setAllowedRoots } from './allowed-roots';
+import { CASE_INSENSITIVE_FS } from './path-fold';
 
 /** Per-test scratch directory under the OS temp root. */
 async function tmpDir(): Promise<string> {
@@ -69,12 +70,19 @@ describe('allowed roots guard', () => {
     }
   });
 
-  it('is case-insensitive on Windows', async () => {
+  it('honors filesystem case-sensitivity (fold on win/mac, exact on linux)', async () => {
     const dir = await tmpDir();
     try {
       setAllowedRoots([dir]);
       const upper = dir.toUpperCase();
-      assert.doesNotThrow(() => assertWithinAllowedRoot(upper));
+      if (CASE_INSENSITIVE_FS) {
+        // Windows/macOS: /TMP/... is the same dir as the registered /tmp/...
+        assert.doesNotThrow(() => assertWithinAllowedRoot(upper));
+      } else {
+        // Linux/ext4: /TMP/... is a DIFFERENT path than registered /tmp/... —
+        // folding them together would let a case-colliding sibling slip in.
+        assert.throws(() => assertWithinAllowedRoot(upper), /Refused/);
+      }
     } finally {
       await fsp.rm(dir, { recursive: true, force: true });
     }

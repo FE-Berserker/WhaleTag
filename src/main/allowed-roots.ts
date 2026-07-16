@@ -1,5 +1,6 @@
 import path from 'path';
 import { realpathSync } from 'fs';
+import { foldPath } from './path-fold';
 
 /**
  * Roots the renderer has registered as configured locations. Destructive /
@@ -47,7 +48,9 @@ export function assertWithinAllowedRoot(target: string): void {
   if (allowedRoots.size === 0) {
     throw new Error(`Refused: no configured locations, cannot write ${target}`);
   }
-  const norm = resolveGuardPath(target).toLowerCase();
+  // foldPath: case-fold on case-insensitive FS (win/mac), exact on Linux —
+  // see path-fold.ts. Folding on ext4 would let /photos slip under /Photos.
+  const norm = foldPath(resolveGuardPath(target));
   for (const root of allowedRoots) {
     if (norm === root || norm.startsWith(root + path.sep)) return;
   }
@@ -61,10 +64,10 @@ export function setAllowedRoots(roots: string[]): void {
   allowedRoots.clear();
   for (const r of roots ?? []) {
     try {
-      allowedRoots.add(realpathSync(r).toLowerCase());
+      allowedRoots.add(foldPath(realpathSync(r)));
     } catch {
       // Fall back to resolved path if the location is temporarily unreachable.
-      allowedRoots.add(path.resolve(r).toLowerCase());
+      allowedRoots.add(foldPath(path.resolve(r)));
     }
   }
 }
