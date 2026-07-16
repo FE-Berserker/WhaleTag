@@ -191,7 +191,7 @@ src/extensions/
 
 13. **TOC / 大纲侧栏** ✅ 已修(2026-07-07 Week 5)— 抽 [`extractToc(markdown)`](../src/extensions/md-editor/md-render.ts) 纯函数(共享 `computeBlockLineNumbers` 跟 `parseMarkdown` 对齐行号)+ [`renderToc(container, entries, onSelect)`](../src/extensions/md-editor/md-render.ts) DOM 渲染;工具栏 `≡ TOC` 按钮 toggle `#toc-sidebar` hidden(240px 宽,按 `level` indent 12px/级);点击 anchor 调 `onSelect` 滚动 preview 到 `data-source-line` 块。`parseMarkdown` 同步给 heading 标 `id="md-h-{line}-{textLen}"` 跟 TOC 对齐。见 [docs/09 §18.3.1](./09-known-issues.md)
 14. **导出 HTML / PDF** ✅ 已修(2026-07-07 Week 5,HTML 部分)— [`wrapHtmlDocument(title, bodyHtml)`](../src/extensions/md-editor/md-render.ts) 包成完整 HTML 文档(~50 行 GitHub-风格 CSS,内联 `data-source-line` 保留) + [`triggerDownload(filename, content, mime)`](../src/extensions/md-editor/md-render.ts) 创 Blob + `<a download>` + synthetic click + 1s 后 `URL.revokeObjectURL`;工具栏 `⇩ HTML` 按钮,文件名 = path basename 去 `.md`/`.markdown` + `.html`。**PDF 部分**留二期(分页 + 字体嵌入复杂,价值低)。见 [docs/09 §18.3.2](./09-known-issues.md)
-15. **Mermaid / KaTeX** ✅ 已修(2026-07-07 Week 6,Mermaid 部分;KaTeX 留二期)— mermaid v11 内部用 `new Function(...)`,需要 `unsafe-eval`,但**不放宽主 CSP** — 改用**沙箱 iframe 隔离**([src/extensions/md-editor/mermaid-sandbox.html](../src/extensions/md-editor/mermaid-sandbox.html))。沙箱 CSP 单独允许 `unsafe-eval`;主 iframe 用 `<iframe sandbox="allow-scripts" src="mermaid-sandbox.html">`(无 `allow-same-origin`)创建 — mermaid 跑代码但拿不到父 DOM / cookies / localStorage。[src/extensions/md-editor/md-sandbox.ts](../src/extensions/md-editor/md-sandbox.ts) `createMermaidSandbox()` 工厂管理 postMessage 协议,`e.source === iframe.contentWindow` 拒伪造响应。`renderMermaid` 走沙箱路径:占位 div + RPC → SVG 替换,失败回退原始 source + red border。Build 脚本加 [scripts/build-extensions.js](../scripts/build-extensions.js) md-editor 分支 copy `mermaid.min.js`(静态 `<script src>` 加载,不能 bundle)。Bundle 影响:`bundle.js` 从 4.1MB(内联)降回 865KB,沙箱按需加载 3.4MB。手动测试文件 [Test/mermaid-demo.md](../../Test/mermaid-demo.md) 覆盖 7 种 diagram + 错误注入 + js 不误捕 + 图片不干扰。**KaTeX** 同思路(独立沙箱 iframe + postMessage),week 6+ 单独排期
+15. **Mermaid / KaTeX** ✅ 已修(Mermaid 2026-07-07;KaTeX 2026-07-14)— mermaid v11 内部用 `new Function(...)`,需要 `unsafe-eval`,但**不放宽主 CSP** — 改用**沙箱 iframe 隔离**([src/extensions/md-editor/mermaid-sandbox.html](../src/extensions/md-editor/mermaid-sandbox.html))。沙箱 CSP 单独允许 `unsafe-eval`;主 iframe 用 `<iframe sandbox="allow-scripts" src="mermaid-sandbox.html">`(无 `allow-same-origin`)创建 — mermaid 跑代码但拿不到父 DOM / cookies / localStorage。[src/extensions/md-editor/md-sandbox.ts](../src/extensions/md-editor/md-sandbox.ts) `createMermaidSandbox()` 工厂管理 postMessage 协议,`e.source === iframe.contentWindow` 拒伪造响应。`renderMermaid` 走沙箱路径:占位 div + RPC → SVG 替换,失败回退原始 source + red border。Build 脚本加 [scripts/build-extensions.js](../scripts/build-extensions.js) md-editor 分支 copy `mermaid.min.js`(静态 `<script src>` 加载,不能 bundle)。Bundle 影响:`bundle.js` 从 4.1MB(内联)降回 865KB,沙箱按需加载 3.4MB。手动测试文件 [Test/mermaid-demo.md](../../Test/mermaid-demo.md) 覆盖 7 种 diagram + 错误注入 + js 不误捕 + 图片不干扰。**KaTeX** ✅ 同沙箱思路(独立 KaTeX iframe + postMessage + KaTeX 字体),见 [docs/09 §18.3.3](./09-known-issues.md)
 16. **persist font-size / wrap mode** ✅ 已修(2026-07-06 Week 3 工具栏)— `md-editor-font-size` + `md-editor-wrap-mode` localStorage key,`clampFontSize` 范围 10-32
 17. **撤销/重做指示 + "Modified" 角标** ✅ 已修(2026-07-07 Week 5,Modified 角标部分)— 状态栏右侧 `#status-dirty` 元素(orange ● + Modified),`updateListener` docChanged 置 true,`savingFile` 消息置 false,`setContent` 置 false。**撤销/重做红点**未做(Week 6+ 候选)
 18. **阅读时长 / 字数实时统计** ✅ 已修(2026-07-07 Week 5)— 字数在 Week 3 #7 状态栏 `Words` 字段;阅读时长 [`estimateReadingMinutes(text)`](../src/extensions/md-editor/md-render.ts) CJK-aware(英文 200 wpm + CJK 400 cpm),`englishWords = countWords - cjkRuns`,空 0 非空至少 1。状态栏 `Words.title` 显示 "N min read"
@@ -211,7 +211,7 @@ src/extensions/
 | 2 | #1(splitter 拖拽) + #3(滚动同步精确化) + #4(代码块高亮) | 用户最直观感知 3 项 ✅ |
 | 3 | #6(工具栏) + #7(状态栏) + #8(本地图片 + `FileContentMessage.dirPath` 协议扩展) | 复制 text-editor 经验,工作小收益大 ✅ |
 | 4 | #10(theme 写死) + #9(innerHTML 节流) + #12(GFM) | 稳定性 + 渲染收尾 ✅ |
-| 6 | #15(Mermaid 沙箱架构)✅ | KaTeX 留二期(同思路) |
+| 6 | #15(Mermaid 沙箱架构)✅ | KaTeX ✅(2026-07-14,同沙箱思路) |
 
 **修法备注**:
 
@@ -285,7 +285,7 @@ src/extensions/
 - **Buffer → ArrayBuffer 双重拷贝**:`convertOfficeToPdf` 返回 Buffer,IPC handler 再拷成 ArrayBuffer,然后 renderer 又 `new Uint8Array(msg.data)`,典型几 MB~几十 MB 浪费
 - **临时目录无启动清理**:Electron 主进程在 soffice 运行中崩溃(断电 / kill -9),`whale-office-*` tmpDir 永久泄漏
 - **缺 pdf-viewer 同款 UX**:fit-width / fit-page / 旋转 / 跳页 input / 键盘导航(PageUp/Down/Home/End/←/→/Ctrl+0/Ctrl+9/+/-)/ ResizeObserver 重排 / 滚动同步 currentPage / 文件大小与页数 status 栏,office-viewer 全部没接
-- **缺缩略图占位**:thumbnail.ts 已经为 office 文件生成 256px JPEG 到 `.whale/thumbs/<basename>.jpg`,但 office-viewer 没用,转换 2–5s 期间空白
+- **缩略图占位** ✅ 已修(2026-07-15,P3-1):office-viewer 冷转码 2–5s 期间并行 `requestThumbnail` 取缓存 jpg 当首页占位,`renderPdf` 清占位画真页,不再空白
 - **缺 soffice 路径用户配置入口**:`options.sofficePath` 接受 override,但 UI 没暴露,非标准安装位置即失败
 
 **已修**(2026-07-06 改造):
