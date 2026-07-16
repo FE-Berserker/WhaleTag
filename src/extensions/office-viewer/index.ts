@@ -56,6 +56,28 @@ function requestThumbnail(path: string): Promise<string | null> {
   });
 }
 
+// --- LibreOffice availability probe (docs/09 §16.16) ---------------------
+// When LibreOffice is missing, the viewer shows install guidance + an "open
+// with system default" fallback instead of a bare "soffice not found"
+// dead-end. Probed up front so we never attempt the doomed convert.
+const pendingSofficeChecks = new Map<string, (available: boolean) => void>();
+let sofficeReqId = 0;
+const LIBREOFFICE_DOWNLOAD_URL =
+  'https://www.libreoffice.org/download/download-libreoffice/';
+
+function requestSofficeCheck(): Promise<boolean> {
+  const requestId = `s${(sofficeReqId += 1)}`;
+  return new Promise<boolean>((resolve) => {
+    pendingSofficeChecks.set(requestId, resolve);
+    window.whaleExt.postMessage({ type: 'requestSofficeCheck', requestId });
+  });
+}
+
+// Shared inline style for the guidance/fallback buttons.
+const BTN_STYLE =
+  'padding:8px 16px;border:1px solid currentColor;border-radius:4px;' +
+  'background:transparent;cursor:pointer;font:inherit;';
+
 // --- Shared pdfjs session -------------------------------------------------
 // Office-viewer's render loop has no per-page rotation / fit-mode, so it
 // uses the full `session.renderPdfBytes` flow.
@@ -97,6 +119,11 @@ interface Strings {
   zoomOut: string;
   converting: string;
   failedConvert: string;
+  /** docs/09 §16.16: shown when LibreOffice is not installed. */
+  sofficeMissing: string;
+  downloadLibreOffice: string;
+  /** docs/09 §16.21: open the file with the OS default app (fallback). */
+  openWithSystem: string;
 }
 
 const I18N: Record<string, Strings> = {
@@ -104,11 +131,18 @@ const I18N: Record<string, Strings> = {
     ...PDFJS_I18N.en,
     converting: 'Converting to PDF…',
     failedConvert: 'Office document conversion failed: {msg}',
+    sofficeMissing:
+      'LibreOffice is not installed. WhaleTag uses it to render Office documents.',
+    downloadLibreOffice: 'Download LibreOffice',
+    openWithSystem: 'Open with system default',
   },
   zh: {
     ...PDFJS_I18N.zh,
     converting: '正在转换为 PDF…',
     failedConvert: 'Office 文档转换失败:{msg}',
+    sofficeMissing: '未安装 LibreOffice。WhaleTag 需要它来渲染 Office 文档。',
+    downloadLibreOffice: '下载 LibreOffice',
+    openWithSystem: '用系统默认应用打开',
   },
 };
 
@@ -214,6 +248,16 @@ async function openOfficeFile(path: string) {
   zoomLevelEl.textContent = '100%';
   statusEl.textContent = T.converting;
 
+  // docs/09 §16.16: probe LibreOffice up front. If it's missing, show install
+  // guidance + an "open with system default" fallback instead of attempting a
+  // doomed convert that ends on a bare "soffice not found" dead-end.
+  const available = await requestSofficeCheck();
+  if (token !== renderToken) return;
+  if (!available) {
+    showOfficeMessage({ title: T.sofficeMissing, download: true, path });
+    return;
+  }
+
   // P3-1: fetch the cached thumbnail in parallel with the conversion. The
   // thumbnail (already generated for the file browser) lands almost instantly
   // and shows as a first-page placeholder during the 2-5s LibreOffice cold
@@ -231,10 +275,14 @@ async function openOfficeFile(path: string) {
     await renderPdf(pdfBytes);
   } catch (e) {
     if (token === renderToken) {
-      statusEl.textContent = T.failedConvert.replace(
-        '{msg}',
-        e instanceof Error ? e.message : String(e)
-      );
+      // docs/09 §16.21: conversion failed (LibreOffice present) — offer the
+      // open-with-system fallback so the user isn't stuck on a dead-end.
+      const msg = e instanceof Error ? e.message : String(e);
+      showOfficeMessage({
+        title: T.failedConvert.replace('{msg}', msg),
+        download: false,
+        path,
+      });
     }
   }
 }
@@ -254,6 +302,49 @@ function showThumbnailPlaceholder(dataUrl: string) {
     'display:block;max-width:100%;max-height:80vh;object-fit:contain;' +
     'margin:0 auto;opacity:0.85;box-shadow:0 1px 4px rgba(0,0,0,0.2);';
   pagesEl.appendChild(img);
+}
+
+/**
+ * Render an inline message screen for the LibreOffice-missing case (§16.16,
+ * with a download button) or a conversion failure (§16.21, fallback only),
+ * plus an "Open with system default" button so the user is never stuck on a
+ * dead-end. Replaces the page area.
+ */
+function showOfficeMessage(opts: {
+  title: string;
+  download: boolean;
+  path: string;
+}): void {
+  pagesEl.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.style.cssText =
+    'max-width:480px;margin:auto;padding:32px 24px;text-align:center;' +
+    'display:flex;flex-direction:column;gap:12px;align-items:center;';
+  const title = document.createElement('p');
+  title.style.cssText = 'margin:0;line-height:1.5;';
+  title.textContent = opts.title;
+  wrap.appendChild(title);
+  if (opts.download) {
+    const dl = document.createElement('button');
+    dl.textContent = T.downloadLibreOffice;
+    dl.setAttribute('style', BTN_STYLE);
+    dl.addEventListener('click', () =>
+      window.whaleExt.postMessage({
+        type: 'openLinkExternally',
+        url: LIBREOFFICE_DOWNLOAD_URL,
+      })
+    );
+    wrap.appendChild(dl);
+  }
+  const open = document.createElement('button');
+  open.textContent = T.openWithSystem;
+  open.setAttribute('style', BTN_STYLE);
+  open.addEventListener('click', () =>
+    window.whaleExt.postMessage({ type: 'openWithSystem', path: opts.path })
+  );
+  wrap.appendChild(open);
+  pagesEl.appendChild(wrap);
+  statusEl.textContent = '';
 }
 
 window.whaleExt.onMessage((msg) => {
@@ -282,6 +373,14 @@ window.whaleExt.onMessage((msg) => {
       if (resolve) {
         pendingThumbnails.delete(msg.requestId);
         resolve(msg.dataUrl ?? null);
+      }
+      break;
+    }
+    case 'sofficeCheckResult': {
+      const resolve = pendingSofficeChecks.get(msg.requestId);
+      if (resolve) {
+        pendingSofficeChecks.delete(msg.requestId);
+        resolve(msg.available);
       }
       break;
     }

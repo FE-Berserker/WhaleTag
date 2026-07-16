@@ -350,6 +350,10 @@ export interface WhaleApi {
    *  the settings UI can show whether MOBI/AZW/AZW3 preview will work without
    *  actually converting a file. */
   detectEbookConverter: () => Promise<{ calibre: string | null }>;
+  /** Whether LibreOffice (`soffice`) is installed — office-viewer probes this
+   *  up front to show install guidance instead of a "not found" dead-end
+   *  (docs/09 §16.16). */
+  isSofficeAvailable: () => Promise<boolean>;
   // Phase 4b — Archive viewer (main-process decoder)
   /** List the entries of a supported archive (zip/tar/tgz/7z/bz2/xz/gz).
    *  Throws if the format is unsupported or the archive is unreadable. */

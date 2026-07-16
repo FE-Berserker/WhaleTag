@@ -553,6 +553,26 @@ export default function ExtensionHost({
             });
           break;
         }
+        case 'requestSofficeCheck': {
+          // docs/09 §16.16: office-viewer probes LibreOffice availability so it
+          // can show install guidance instead of a bare "not found" dead-end.
+          const { requestId } = msg;
+          ipcApi
+            .isSofficeAvailable()
+            .then((available) =>
+              postToExtension({ type: 'sofficeCheckResult', requestId, available })
+            )
+            .catch(() =>
+              postToExtension({ type: 'sofficeCheckResult', requestId, available: false })
+            );
+          break;
+        }
+        case 'openWithSystem': {
+          // docs/09 §16.21: fallback — open the file with the OS default app
+          // when LibreOffice is missing or conversion fails. Fire-and-forget.
+          ipcApi.openNative(msg.path).catch(() => undefined);
+          break;
+        }
         case 'requestThumbnail': {
           // P3-1: office-viewer asks for the cached thumbnail (data URL) to
           // show as an instant first-page placeholder while LibreOffice

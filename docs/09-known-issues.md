@@ -244,7 +244,7 @@ Task reminder check failed: Error: Error invoking remote method 'index:build':
 - audio-convert 转码走 `whale-audio://` 实时流式([src/main/main.ts](../src/main/main.ts) `registerWhaleAudioProtocol`):ffmpeg stdout 边转边推给 `<audio>`,同步 tee 写 `.whale/transcodes/<basename>.opus`(缓存命中走 Range/206);`isTranscodeCached` mtime 失效 + `removeTranscode` / `moveTranscode` / `copyTranscode` 全套钩子在 [src/main/transcode-cache.ts](../src/main/transcode-cache.ts),inflight dedup + 信号量在协议层
 - pdf-viewer 渲染层有 fit-width / fit-page / 旋转 / 跳页 input / 键盘导航 / ResizeObserver 重排 / 滚动同步 currentPage / status 栏 / 主题初始猜测去白闪
 
-**进度**(2026-07-06 改造):§16.1 / §16.2 / §16.3 / §16.5 / §16.7 / §16.9 / §16.11 / §16.13 / §16.15 已修。新增代码:[src/main/office-cache.ts](../src/main/office-cache.ts) / [src/main/office-cache.test.ts](../src/main/office-cache.ts) / [src/main/office-convert.test.ts](../src/main/office-convert.test.ts) / [src/extensions/shared/pdfjs-in-iframe.ts](../src/extensions/shared/pdfjs-in-iframe.ts)。**还剩** §16.4 / §16.6 / §16.8 / §16.10 / §16.14 / §16.16 / §16.17 / §16.18 / §16.19 / §16.20 / §16.21 11 项遗留,按 ROI 排在下方。
+**进度**(2026-07-06 改造;§16.16/§16.21 补于 2026-07-16):§16.1 / §16.2 / §16.3 / §16.5 / §16.7 / §16.9 / §16.11 / §16.13 / §16.15 / §16.16 / §16.21 已修。新增代码:[src/main/office-cache.ts](../src/main/office-cache.ts) / [src/main/office-cache.test.ts](../src/main/office-cache.ts) / [src/main/office-convert.test.ts](../src/main/office-convert.test.ts) / [src/extensions/shared/pdfjs-in-iframe.ts](../src/extensions/shared/pdfjs-in-iframe.ts)。**还剩** §16.4 / §16.6 / §16.8 / §16.10 / §16.14 / §16.17 / §16.18 / §16.19 / §16.20 9 项遗留,按 ROI 排在下方。
 
 ### 16.1 PDF 无缓存(头号优化) ✅ 已修(2026-07-06)
 
@@ -326,11 +326,9 @@ office-viewer 当前只支持手动缩放(+/− 两按钮),**无**:
 
 [package.json test 脚本](../package.json) 没列 office-convert。兄弟 `ebook-convert.test.ts` / `audio-convert.test.ts` / `archive.test.ts` / `cad-convert.test.ts` 都覆盖 mtime 失效 / 原子写 / 损坏文件 / 跨卷 EXDEV / 加密文件等。office-convert 是高风险路径(soffice 失败模式多:字体缺 / Java 缺 / profile 锁 / OOM),无单测保护。**已修(2026-07-06)**:[src/main/office-convert.test.ts](../src/main/office-convert.test.ts)(8 cases)+ [src/main/office-cache.test.ts](../src/main/office-cache.test.ts)(11 cases)已挂 [package.json test 脚本](../package.json)。fake `soffice.cmd` shim 模式镜像 `ebook-convert.test.ts` 的 `makeFakeCalibre`。
 
-### 16.16 soffice 缺失败 / 缺失引导
+### 16.16 soffice 缺失败 / 缺失引导 ✅ 已修(2026-07-16)
 
-`isSofficeAvailable()` 探针存在,但 office-viewer 不主动查。**未装 LibreOffice 时双击任何 docx 直接报 `'LibreOffice (soffice) not found'`**,用户毫无头绪。
-
-修复:扩展 ready 后 `whaleExt.postMessage({type:'requestSofficeCheck'})`,主进程答 `{available: false}` → 弹一个"安装指引 + 用系统应用打开"按钮,避免死路。
+office-viewer `openOfficeFile` 先 `requestSofficeCheck` → host `ext:isSofficeAvailable`(`isSofficeAvailable()`)。**未装时不再尝试注定失败的 convert**,直接渲染引导屏:`T.sofficeMissing` 文案 + 「下载 LibreOffice」按钮(`openLinkExternally` → libreoffice.org)+ 「用系统默认应用打开」按钮(`openWithSystem` → `ipcApi.openNative` = `shell.openPath`)。新消息:`requestSofficeCheck`/`sofficeCheckResult`/`openWithSystem`([extension-types.ts](../src/shared/extension-types.ts))。
 
 ### 16.17 i18n 重复
 
@@ -352,9 +350,9 @@ office-viewer 当前只支持手动缩放(+/− 两按钮),**无**:
 
 [src/extensions/office-viewer/index.html:7](../src/extensions/office-viewer/index.html) `default-src 'self'` 兜底 `font-src`,太宽。host 已经把 cMap / standardFont 经 IPC 供给,显式设 `font-src 'self' data: whale-extension://*` 更精确。
 
-### 16.21 soffice 不存在 / 失败时无回退
+### 16.21 soffice 不存在 / 失败时无回退 ✅ 已修(2026-07-16)
 
-转换失败或 soffice 不存在,**用户卡死在错误页**,无"用系统应用打开"按钮。参照 pdf-viewer 失败时的 fallback 模式加一个按钮:经 `window.open()` 或 `ipcApi.openNative(path)` 直接走系统默认应用。
+转换失败(soffice 在但转不了)时,`openOfficeFile` 的 catch 不再只设 `statusEl` 文本,而是 `showOfficeMessage({ title: failedConvert, download: false, path })` —— 渲染错误文案 + 「用系统默认应用打开」按钮(`openWithSystem` → `shell.openPath`),不再卡死。soffice 缺失的回退见 §16.16(同按钮,外加下载链接)。
 
 ## 17. pdf-viewer 已知坑与已修复(Phase 1, 2026-07-06)
 

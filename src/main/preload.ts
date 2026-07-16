@@ -215,6 +215,8 @@ const whaleApi: WhaleApi = {
     ipcRenderer.invoke('ext:detectEbookConverter') as Promise<{
       calibre: string | null;
     }>,
+  isSofficeAvailable: () =>
+    ipcRenderer.invoke('ext:isSofficeAvailable') as Promise<boolean>,
 
   // Phase 4b — Archive viewer main-process decoder
   listArchive: (filePath: string, options?) =>

@@ -55,6 +55,7 @@ import {
   moveOfficePdf,
   copyOfficePdf,
 } from './office-cache';
+import { isSofficeAvailable } from './office-convert';
 import { loadRecursiveScan, invalidateRecursiveScan } from './recursive-cache';
 import { convertDwgToDxf, dwg2dxfBinary, odaConverterBinary } from './cad-convert';
 import { convertEbookToEpub, ebookConvertBinary } from './ebook-convert';
@@ -1125,6 +1126,11 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('ext:detectEbookConverter', async () => ({
     calibre: await ebookConvertBinary(),
   }));
+
+  // docs/09 §16.16: office-viewer probes LibreOffice availability up front so it
+  // can show install guidance (instead of a bare "soffice not found" dead-end)
+  // before even attempting the doomed convert.
+  ipcMain.handle('ext:isSofficeAvailable', () => isSofficeAvailable());
 
 
   // Archive decoder for archive-viewer Phase 2+.

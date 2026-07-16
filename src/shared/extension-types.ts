@@ -261,6 +261,16 @@ export interface StreamingUrlMessage {
   url: string;
 }
 
+/** Host -> Extension: answer to `requestSofficeCheck` — whether LibreOffice
+ *  (`soffice`) is installed. The office-viewer uses this to show install
+ *  guidance up front instead of a bare "soffice not found" dead-end
+ *  (docs/09 §16.16). */
+export interface SofficeCheckResultMessage {
+  type: 'sofficeCheckResult';
+  requestId: string;
+  available: boolean;
+}
+
 export type HostMessage =
   | FileContentMessage
   | SavingFileMessage
@@ -273,6 +283,7 @@ export type HostMessage =
   | HeicWasmMessage
   | DwgConvertedContentMessage
   | OfficePdfContentMessage
+  | SofficeCheckResultMessage
   | ThumbnailContentMessage
   | EbookConvertedContentMessage
   | ArchiveListMessage
@@ -389,6 +400,22 @@ export interface RequestOfficeConvertMessage {
 export interface RequestThumbnailMessage {
   type: 'requestThumbnail';
   requestId: string;
+  path: string;
+}
+
+/** Extension -> Host: office-viewer asks whether LibreOffice (`soffice`) is
+ *  installed, so it can show install guidance before attempting the doomed
+ *  convert (docs/09 §16.16). The host answers with `sofficeCheckResult`. */
+export interface RequestSofficeCheckMessage {
+  type: 'requestSofficeCheck';
+  requestId: string;
+}
+
+/** Extension -> Host: open `path` with the OS default application. Used as the
+ *  fallback when LibreOffice is missing or conversion fails, so the user is
+ *  never stuck on a dead-end error page (docs/09 §16.21). Fire-and-forget. */
+export interface OpenWithSystemMessage {
+  type: 'openWithSystem';
   path: string;
 }
 
@@ -534,6 +561,8 @@ export type ExtensionMessage =
   | RequestHeicWasmMessage
   | RequestDwgConvertMessage
   | RequestOfficeConvertMessage
+  | RequestSofficeCheckMessage
+  | OpenWithSystemMessage
   | RequestThumbnailMessage
   | RequestEbookConvertMessage
   | RequestStreamingUrlMessage
