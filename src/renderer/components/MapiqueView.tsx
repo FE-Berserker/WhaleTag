@@ -35,6 +35,7 @@ import {
   Marker,
   Popup,
   TileLayer,
+  ZoomControl,
   useMap,
   useMapEvents,
 } from 'react-leaflet';
@@ -319,6 +320,34 @@ export default function MapiqueView({
   const [flyNonce, setFlyNonce] = useState(0);
   const geoReqRef = useRef(0);
 
+  // Run the geocode request and update state. `geoReqRef` discards stale
+  // responses (a newer keystroke / Enter supersedes this one). Returns the
+  // results so the Enter handler can pick the first hit immediately.
+  const runGeocode = useCallback(
+    async (q: string): Promise<GeoSearchResult[]> => {
+      setGeoLoading(true);
+      setGeoError(null);
+      const mine = (geoReqRef.current += 1);
+      try {
+        const { results } = await ipcApi.mapiqueGeocode(q);
+        if (geoReqRef.current !== mine) return [];
+        setGeoResults(results);
+        setGeoOpen(true);
+        return results;
+      } catch (e) {
+        if (geoReqRef.current !== mine) return [];
+        setGeoResults([]);
+        setGeoError(e instanceof Error ? e.message : String(e));
+        setGeoOpen(true);
+        return [];
+      } finally {
+        if (geoReqRef.current === mine) setGeoLoading(false);
+      }
+    },
+    []
+  );
+
+  // Debounced search (Nominatim ≤1 req/s).
   useEffect(() => {
     const q = geoQuery.trim();
     if (!q) {
@@ -328,33 +357,31 @@ export default function MapiqueView({
       setGeoOpen(false);
       return;
     }
-    setGeoLoading(true);
-    setGeoError(null);
-    const mine = (geoReqRef.current += 1);
-    const timer = setTimeout(async () => {
-      try {
-        const { results } = await ipcApi.mapiqueGeocode(q);
-        // Drop stale responses: a newer keystroke supersedes this one.
-        if (geoReqRef.current !== mine) return;
-        setGeoResults(results);
-        setGeoOpen(true);
-      } catch (e) {
-        if (geoReqRef.current !== mine) return;
-        setGeoResults([]);
-        setGeoError(e instanceof Error ? e.message : String(e));
-        setGeoOpen(true);
-      } finally {
-        if (geoReqRef.current === mine) setGeoLoading(false);
-      }
+    const timer = setTimeout(() => {
+      void runGeocode(q);
     }, 400);
     return () => clearTimeout(timer);
-  }, [geoQuery]);
+  }, [geoQuery, runGeocode]);
 
   const handleSelectGeoResult = useCallback((r: GeoSearchResult) => {
     setFlyTarget({ lat: r.lat, lng: r.lng });
     setFlyNonce((n) => n + 1);
     setGeoOpen(false);
   }, []);
+
+  // Enter selects the first result. If none are loaded yet (user typed fast),
+  // search immediately — bypassing the 400ms debounce — and fly to the first
+  // hit, so Enter always does something for a typed query.
+  const handleGeoKeyDown = useCallback(
+    async (e: { key: string }) => {
+      if (e.key !== 'Enter') return;
+      const q = geoQuery.trim();
+      if (!q) return;
+      const results = geoResults.length > 0 ? geoResults : await runGeocode(q);
+      if (results.length > 0) handleSelectGeoResult(results[0]);
+    },
+    [geoQuery, geoResults, runGeocode, handleSelectGeoResult]
+  );
 
   // Re-render whenever the parent's `geoByName` / `tagsByName` props change
   // identity (TagMetaContextProvider re-derives them on every `setSidecars`,
@@ -1146,6 +1173,7 @@ export default function MapiqueView({
           <MapContainer
             center={center}
             zoom={zoom}
+            zoomControl={false}
           style={{
             height: '100%',
             width: '100%',
@@ -1157,6 +1185,9 @@ export default function MapiqueView({
             url={resolvedTileUrl}
             subdomains={tileSubdomains}
           />
+          {/* Zoom controls moved to top-right so they don't collide with the
+              geocode search box (top-left). */}
+          <ZoomControl position="topright" />
           <FitBounds geo={knownGeo} toDisplay={toDisplay} />
           {/* docs/05 §10: fly to a geocode search result. */}
           <FlyTo
@@ -1222,6 +1253,9 @@ export default function MapiqueView({
           <TextField
             value={geoQuery}
             onChange={(e) => setGeoQuery(e.target.value)}
+            onKeyDown={(e) => {
+              void handleGeoKeyDown(e);
+            }}
             onFocus={() => {
               if (geoResults.length || geoError) setGeoOpen(true);
             }}

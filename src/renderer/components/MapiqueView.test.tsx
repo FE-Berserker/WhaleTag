@@ -195,6 +195,7 @@ before(async () => {
       TileLayer: () => null,
       Marker: ({ children }: any) => <>{children}</>,
       Popup: ({ children }: any) => <>{children}</>,
+      ZoomControl: () => null,
       useMap: () => mapStub,
       useMapEvents: () => ({}),
     },
