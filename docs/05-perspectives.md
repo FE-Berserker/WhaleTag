@@ -313,11 +313,9 @@ Gallery 拖拽打标已实现 P0。
 
 ---
 
-## 10. Mapique 地名搜索(geocoding)— ✅ 已实现(2026-07-17)
+## 10. Mapique 地名搜索(geocoding)— 实现计划
 
-> 目标:mapique 地图视图加地名搜索(输入「北京天安门」→ 查坐标 → 地图 flyTo 定位 + 结果列表选)。已按 B 方案落地:统一 Nominatim 经主进程 IPC。
->
-> **实现**:[src/main/geocode.ts](../src/main/geocode.ts)(`geocodeNominatim`,注入式 fetch 便于测试)→ `mapique:geocode` IPC(主进程带 `User-Agent: WhaleTag/<ver>`,绕 renderer CSP + Nominatim UA 要求)。[MapiqueView.tsx](../src/renderer/components/MapiqueView.tsx):搜索框(地图左上角 absolute)+ 400ms 防抖 + `geoReqRef` 丢 stale 响应 + 结果下拉 + `FlyTo` 子组件(`map.flyTo([toDisplay(lat,lng)], 13)`,与 marker 放置同链路)。返 WGS-84 直喂 `toDisplay`。i18n 5 语言;测试 `geocode.test.ts` 4 case(解析 / 丢坏项 / HTTP 错 / 空查)。下面是原始设计,保留作参考。
+> 目标:mapique 地图视图加地名搜索(输入「北京天安门」→ 查坐标 → 地图 flyTo 定位 + 结果列表选)。本节是实现设计,review 后落地。
 
 > **决策(2026-07-11):B 方案** —— 不配高德 key,两种 mapProvider **统一用 Nominatim**(免费、无需 key)。代价:国内地址偏弱、英文/拼音友好。坐标系:Nominatim 返 WGS-84 → `toDisplay`(gaode 模式转 GCJ-02 显示,与 marker 放置同链路)。
 

@@ -259,10 +259,6 @@ export const ipcApi = {
   ): Promise<Uint8Array> => requireApi().convertOfficeToPdf(filePath, options),
   isSofficeAvailable: (): Promise<boolean> =>
     requireApi().isSofficeAvailable(),
-  mapiqueGeocode: (
-    query: string
-  ): Promise<{ results: { name: string; lat: number; lng: number }[] }> =>
-    requireApi().mapiqueGeocode(query),
   convertDwgToDxf: (
     filePath: string,
     options?: { dwg2dxfPath?: string | null; odaPath?: string | null }

@@ -1,7 +1,7 @@
 import path from 'path';
 import os from 'os';
 import { existsSync, promises as fsp } from 'fs';
-import { ipcMain, dialog, shell, nativeImage, BrowserWindow, app } from 'electron';
+import { ipcMain, dialog, shell, nativeImage, BrowserWindow } from 'electron';
 import { exec, execFile } from 'child_process';
 import { DirEntry } from '../shared/ipc-types';
 import { nextAvailableName } from '../shared/dedupe-name';
@@ -56,7 +56,6 @@ import {
   copyOfficePdf,
 } from './office-cache';
 import { isSofficeAvailable } from './office-convert';
-import { geocodeNominatim } from './geocode';
 import { loadRecursiveScan, invalidateRecursiveScan } from './recursive-cache';
 import { convertDwgToDxf, dwg2dxfBinary, odaConverterBinary } from './cad-convert';
 import { convertEbookToEpub, ebookConvertBinary } from './ebook-convert';
@@ -1132,35 +1131,6 @@ export function registerIpcHandlers(): void {
   // can show install guidance (instead of a bare "soffice not found" dead-end)
   // before even attempting the doomed convert.
   ipcMain.handle('ext:isSofficeAvailable', () => isSofficeAvailable());
-
-  // docs/05 §10: Mapique place-name search via Nominatim. Runs in main (renderer
-  // CSP blocks external domains + Nominatim requires a User-Agent browser fetch
-  // can't set). Returns WGS-84 — MapiqueView's toDisplay shifts to the tile datum.
-  // 12s timeout: if Nominatim is unreachable (common behind the GFW), surface a
-  // clear error instead of hanging the search forever.
-  ipcMain.handle('mapique:geocode', async (_event, query: string) => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12000);
-    try {
-      return {
-        results: await geocodeNominatim(query, {
-          userAgent: `WhaleTag/${app.getVersion()}`,
-          signal: controller.signal,
-        }),
-      };
-    } catch (e) {
-      const aborted = e instanceof Error && e.name === 'AbortError';
-      throw new Error(
-        aborted
-          ? 'Geocode timed out — the Nominatim service may be unreachable from this network.'
-          : e instanceof Error
-            ? e.message
-            : String(e)
-      );
-    } finally {
-      clearTimeout(timer);
-    }
-  });
 
 
   // Archive decoder for archive-viewer Phase 2+.
