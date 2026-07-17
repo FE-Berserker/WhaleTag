@@ -327,6 +327,10 @@ export default function MapiqueView({
     async (q: string): Promise<GeoSearchResult[]> => {
       setGeoLoading(true);
       setGeoError(null);
+      // Open the dropdown immediately so the user sees "searching…" instead of
+      // silence — the panel only updated on resolve before, which looked frozen
+      // while Nominatim was slow/unreachable.
+      setGeoOpen(true);
       const mine = (geoReqRef.current += 1);
       try {
         const { results } = await ipcApi.mapiqueGeocode(q);
