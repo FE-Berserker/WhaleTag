@@ -313,7 +313,13 @@ Gallery 拖拽打标已实现 P0。
 
 ---
 
-## 10. Mapique 地名搜索(geocoding)— 实现计划
+## 10. Mapique 地名搜索(geocoding)— ⚠️ 已尝试并回退(2026-07-17)
+
+> **不要照原样重试 B 方案(Nominatim)。** 本节原本的实现计划按 B 方案落地过(commits `f3e97e0` 等),但**在国内网络 Nominatim(`nominatim.openstreetmap.org`)被墙/超时**——搜索请求挂住、结果下拉框永不弹出,功能完全不可用。已 revert(commit `128c810`,−419 行)。
+>
+> **根因**:地图瓦片用高德(`autonavi.com`,国内通、免 key),但 geocoding 用 Nominatim(OSM,国内不通)——服务体系不一致。当初选 Nominatim 是为免 key,忽略了国内可达性。
+>
+> **若以后要做**:① 高德 geocoding(`restapi.amap.com`,国内通、与高德瓦片同坐标系 GCJ-02),但要一个免费 web key + 设置项;② 或**走 AI 助手**——让 AI 处理「找天安门、定位过去」这类自然语言地名查询,免 key、免自接 geocoder。下面的原设计保留作参考,但坐标系/provider 部分需按所选新方案重订。
 
 > 目标:mapique 地图视图加地名搜索(输入「北京天安门」→ 查坐标 → 地图 flyTo 定位 + 结果列表选)。本节是实现设计,review 后落地。
 
