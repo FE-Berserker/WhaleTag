@@ -1101,10 +1101,11 @@ export function registerIpcHandlers(): void {
       filePath: string,
       options?: { dwg2dxfPath?: string | null; odaPath?: string | null }
     ) => {
-      const buf = await convertDwgToDxf(filePath, options);
-      const out = new ArrayBuffer(buf.byteLength);
-      new Uint8Array(out).set(buf);
-      return out;
+      // Return the Buffer directly — Electron IPC serializes it as a Uint8Array
+      // on the renderer, so the previous `new ArrayBuffer + .set(buf)` was a
+      // redundant memcpy on every DWG open. The cad-viewer passes the DXF
+      // bytes to the TextDecoder without re-wrapping. See docs/15 P1-4.
+      return convertDwgToDxf(filePath, options);
     }
   );
 
@@ -1116,10 +1117,11 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     'ext:convertEbookToEpub',
     async (_event, filePath: string, options?: { calibrePath?: string | null }) => {
-      const buf = await convertEbookToEpub(filePath, options);
-      const out = new ArrayBuffer(buf.byteLength);
-      new Uint8Array(out).set(buf);
-      return out;
+      // Return the Buffer directly — Electron IPC serializes it as a Uint8Array
+      // on the renderer, so the previous `new ArrayBuffer + .set(buf)` was a
+      // redundant memcpy on every ebook open. The ebook-viewer passes the EPUB
+      // bytes to loadEpub without re-wrapping. See docs/15 P1-4.
+      return convertEbookToEpub(filePath, options);
     }
   );
 

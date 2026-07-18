@@ -325,12 +325,14 @@ export interface WhaleApi {
     options?: { sofficePath?: string | null }
   ) => Promise<Uint8Array>;
   /** Convert a DWG file to DXF bytes via an external converter (LibreDWG
-   *  `dwg2dxf`, or ODA File Converter as fallback). Returns the DXF as an
-   *  ArrayBuffer. Throws if no converter is installed or conversion fails. */
+   *  `dwg2dxf`, or ODA File Converter as fallback). Returns the DXF as a
+   *  Uint8Array (the main process returns a Buffer; Electron IPC serializes
+   *  it to a Uint8Array on the renderer — no intermediate ArrayBuffer copy).
+   *  Throws if no converter is installed or conversion fails. */
   convertDwgToDxf: (
     filePath: string,
     options?: { dwg2dxfPath?: string | null; odaPath?: string | null }
-  ) => Promise<ArrayBuffer>;
+  ) => Promise<Uint8Array>;
   /** Probe for the DWG converters used by {@link convertDwgToDxf}. Returns the
    *  detected binary paths (or null) so the settings UI can show whether DWG
    *  preview will work without actually converting a file. */
@@ -339,12 +341,14 @@ export interface WhaleApi {
     oda: string | null;
   }>;
   /** Convert a MOBI/AZW/AZW3 ebook to EPUB bytes using Calibre's ebook-convert.
-   *  Returns the EPUB as an ArrayBuffer. Throws if Calibre is missing or the
+   *  Returns the EPUB as a Uint8Array (the main process returns a Buffer;
+   *  Electron IPC serializes it to a Uint8Array on the renderer — no
+   *  intermediate ArrayBuffer copy). Throws if Calibre is missing or the
    *  conversion fails. */
   convertEbookToEpub: (
     filePath: string,
     options?: { calibrePath?: string | null }
-  ) => Promise<ArrayBuffer>;
+  ) => Promise<Uint8Array>;
   /** Probe for the Calibre `ebook-convert` binary used by
    *  {@link convertEbookToEpub}. Returns the detected binary path (or null) so
    *  the settings UI can show whether MOBI/AZW/AZW3 preview will work without

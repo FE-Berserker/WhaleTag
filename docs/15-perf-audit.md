@@ -37,13 +37,16 @@
 [recursive-cache.ts](../src/main/recursive-cache.ts)(镜像 office-cache):缓存 `<dir>/.whale/index-recursive/d<depth>.json` 的 scan(`DirEntry[]`);**双守卫失效**(`dirPath` 挡文件夹移动 + `folderMtime` 挡子项增删);`invalidateRecursiveScan` 清祖先 ≤5 层,挂 6 个 fs-op 钩(含原先无钩的 mkdir)。sidecar 读更便宜且耦合 `wsd.json`,留后续。
 
 ### P1-4. office→PDF bytes IPC 双拷贝 ✅
-端到端改 `Uint8Array`:[ipc.ts](../src/main/ipc.ts) `ext:convertOfficeToPdf` 直返 Buffer 删拷贝;types + viewer 直传。净省 1 次 memcpy/文档。**同类未做**:`convertDwgToDxf`/`convertEbookToEpub`/`convertAudio` 同形拷贝,可照改。
+端到端改 `Uint8Array`:[ipc.ts](../src/main/ipc.ts) `ext:convertOfficeToPdf` 直返 Buffer 删拷贝;types + viewer 直传。净省 1 次 memcpy/文档。**同类已照改(2026-07-18)**:`convertDwgToDxf` / `convertEbookToEpub` 两 handler 同形改完(handler 直返 Buffer;ipc-types / extension-types / ipc-api 链 `ArrayBuffer`→`Uint8Array`;cad-viewer 去 `new Uint8Array` 包裹、ebook-viewer `loadEpub(data)` 直传)。**`convertAudio` 不适用**:走 `whale-audio://` 协议流式(无 IPC bytes 往返),其 stdout chunk 的 `ArrayBuffer.slice` 是 load-bearing(Node 池化 buffer 防 `'data'` 覆盖),不能删。
 
 ### P1-5. GanttRow memo 解锁 ✅
 GanttView→GanttTimeline 6 个内联闭包稳定(纯转发直传 `data.*`,其余 `useCallback`);**真正 spoiler**:GanttTimeline per-row `onCommit` adapter 每行新函数——把 entry-binding 下沉到 GanttRow 内部(同 `onClick` 模式),GanttTimeline 直传。
 
 ### P1-6. 文件夹缩略图并发上限 ✅
 [concurrency.ts](../src/main/concurrency.ts) 加 `thumbnailSemaphore = Semaphore(4)`;`doGenerateThumbnail` 把 encode+write 包进 `run`(便宜 kind/stat/reuse 短路留 permit 外)。所有调用方(file IPC / folder thumb / setFolder)自动覆盖。
+
+### P1-7. pdf-viewer 大文件字节桥(去 base64 整文件)✅
+打开大 PDF 卡顿根因:host 把整份文件 base64 后跨 IPC→postMessage 进 iframe([ExtensionContextProvider.tsx](../src/renderer/hooks/ExtensionContextProvider.tsx) 逐字节 O(n²) 拼接 + 33% 膨胀 + iframe 再解码,峰值 ~3× 内存、主线程长阻塞)。**原计划复刻 media-player 走 `whale-file://` 流式 URL + pdfjs Range,实测被挡**:pdfjs `getDocument({url})` 内部 fetch 触发 CORS,Chromium 协议级硬限制「跨源 fetch 仅限 http/https/data/chrome」,自定义协议 `whale-file://` 从 `whale-extension://` origin 被拒(`net::ERR_FAILED`);`<video>` 能用 whale-file 是因 media 管线不经 fetch CORS。**改走字节桥**(学 office-viewer `officePdfContent`):host 经 `requestFileBytes`/`fileBytes`([extension-types](../src/shared/extension-types.ts))读文件回传 `Uint8Array`,postMessage 结构化克隆(一次 memcpy,无 base64、无 O(n²) 解码)→ `session.renderPdfBytes`。[shared/pdfjs-in-iframe.ts](../src/extensions/shared/pdfjs-in-iframe.ts) 抽 `runRender` 共享循环,`renderPdfBytes` 入参不变(office-viewer 回归零改);`renderPdfUrl` 接口保留并标注 CORS 未用。meta CSP 加 `worker-src whale-extension://*`;`build-extensions.js` 复制 `pdf.worker.mjs`。**真 worker 默认关**(`USE_PDFJS_WORKER=false`):字节桥已消除主因;真 worker 依赖 `new Worker()` 接受 `whale-extension://` 特权协议(repo 内无 Electron 先例),实测确认 spawn 后改一行开启。
 
 ---
 
@@ -80,8 +83,8 @@ office-viewer `openOfficeFile` 并行 fire `requestThumbnail` + `requestOfficeCo
 ### P3-2. office-viewer scroll-sync ✅
 给 session 加 `onAfterPageRender` 盖 `data-page-num` + rAF scroll handler(「top ≤ 视口 25% 且最接近」),`pageInfoEl` 从静态 `N/N` 改 `cur/total`。**resize 半边 N/A**:office 画布固定 px 宽,无 fit-mode,resize 不重栅格化。
 
-### P3-3. UNO/soffice 常驻后台进程 ⬜ 长期
-每次 convert 仍付全新 `soffice` spawn 成本;保活 UNO listener 是根本解(P1-1/P3-1 的根因)。结构性大改,留长期。见 [docs/09 §16.2](./09-known-issues.md)。
+### P3-3. UNO/soffice 常驻后台进程 ✅
+保活一个 LibreOffice UNO listener,后续 office→PDF 转换复用已初始化进程(~200–500ms),冷启动只一次。Node 无原生 UNO 客户端,故 bundle 一个 Python worker(借用 LO 自带 `python`+`pythonuno`)做桥接,worker 起不来时带 cooldown 自动回退现有 `execFile`(**零 regression**)。详见 [docs/17](./17-office-worker.md)。顺带把 `convertOfficeToPdf` 与 `encodeOfficeThumb` 两处重复的 spawn body 合并成共享 `convertOfficeToPdfVia`(worker 优先 + execFile 兜底,`sofficeSemaphore` 包两路)。
 
 ### P3-4. AI 流式 boolean 兜底 ⬜ 需诊断
 per-uuid `streamedMsgs` 去重疑似 partial/complete uuid 不匹配,现用 per-turn boolean 兜底(能用,每轮多一次渲染)。删 boolean 需先记 uuid 流向日志确诊。见 [docs/09 §23](./09-known-issues.md)。
@@ -126,4 +129,4 @@ per-uuid `streamedMsgs` 去重疑似 partial/complete uuid 不匹配,现用 per-
 
 ## 剩余
 
-仅 **P3-3**(UNO 常驻,长期)与 **P3-4**(AI 流式,需运行时诊断)未做。Tier 0–2 + P3-1/2/5 已全部完成(2026-07-12 ~ 07-15)。
+仅 **P3-4**(AI 流式,需运行时诊断)未做。Tier 0–2 + P3-1/2/3/5 已全部完成(2026-07-12 ~ 07-18)。

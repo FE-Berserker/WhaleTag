@@ -257,7 +257,7 @@ Task reminder check failed: Error: Error invoking remote method 'index:build':
 `execFile(bin, ['--headless', '--convert-to', 'pdf', '--outdir', tmpDir, srcPath], {timeout: 120000})` 未加 `--norestore --nologo --nofirststartwizard`,Windows 首屏 2–5s。
 
 短期:加三个 flag,实测启动快 30–50%。
-**短期已修**:`sofficeConvertArgs()` 统一定义在 [src/main/thumbnail.ts](../src/main/thumbnail.ts),`encodeOfficeThumb` 与 `convertOfficeToPdf` 都改用它;三个 flag 已加。长期 UNO 后台进程仍是 follow-up。
+**短期已修**:`sofficeConvertArgs()` 统一定义在 [src/main/thumbnail.ts](../src/main/thumbnail.ts),`encodeOfficeThumb` 与 `convertOfficeToPdf` 都改用它;三个 flag 已加。**长期已修(2026-07-18)**:常驻 UNO listener —— [src/main/office-worker/uno-worker.py](../src/main/office-worker/uno-worker.py)(Python 桥接)+ [office-worker-host.ts](../src/main/office-worker/office-worker-host.ts)(Node host,惰性 spawn / 崩溃重 spawn / before-quit tree-kill / cooldown 自动回退 execFile)。首次开档仍含 2–6s listener boot,后续同进程转换 ~200–500ms。详见 [docs/17](./17-office-worker.md)。
 
 ### 16.3 无 inflight 去重 ✅ 已修(2026-07-06,随 §16.1)
 

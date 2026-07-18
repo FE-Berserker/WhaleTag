@@ -41,13 +41,16 @@
  */
 import * as pdfjsLibDefault from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { TextLayer } from 'pdfjs-dist/legacy/build/pdf.mjs';
-// Fake-worker trick: importing pdfjs.worker for its side effect exposes
-// WorkerMessageHandler on globalThis, letting pdfjs run its document parser
-// on the iframe's main thread (no separate Worker, no worker-src CSP).
+// pdfjs worker: this import registers `WorkerMessageHandler` for its side
+// effect. Whether pdfjs then runs it as a *fake* worker (on the iframe's
+// main thread, by assigning `globalThis.pdfjsWorker`) or as a *real* Worker
+// (off the main thread, by setting `GlobalWorkerOptions.workerSrc`) is
+// decided per-session in `createPdfjsSession` from the `useWorker` option
+// (see the worker-config block there). Real-worker mode moves the document
+// parse off the main thread, which is what keeps large-PDF open from
+// freezing the iframe.
 import * as pdfjsWorker from 'pdfjs-dist/legacy/build/pdf.worker.mjs';
 import type { HostMessage, PdfAssetMessage } from '../../shared/extension-types';
-
-(globalThis as unknown as { pdfjsWorker: unknown }).pdfjsWorker = pdfjsWorker;
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -161,6 +164,17 @@ export interface PdfjsSessionOptions {
   /** Number of extra pages to render ahead of / behind the current viewport
    *  when `virtualize` is true. Default 5. */
   virtualizeBuffer?: number;
+  /** Run pdfjs's document parser on a real Worker instead of the fake-worker
+   *  main-thread path, so parsing a large PDF doesn't block the iframe's
+   *  main thread. When true, `workerSrc` MUST point at a copy of
+   *  `pdfjs-dist/legacy/build/pdf.worker.mjs` the iframe can load
+   *  (pdf-viewer ships one at `whale-extension://pdf-viewer/pdf.worker.mjs`,
+   *  copied by `scripts/build-extensions.js`) and the iframe's CSP
+   *  `worker-src` must allow that origin. Default false keeps the legacy
+   *  fake-worker behavior used by office-viewer. */
+  useWorker?: boolean;
+  /** URL to the pdf.worker module; used only when `useWorker` is true. */
+  workerSrc?: string;
 }
 
 export interface PdfjsSession {
@@ -170,6 +184,16 @@ export interface PdfjsSession {
    *  Resolves when the entire document has been rendered (or rejects on
    *  decode / render error). */
   renderPdfBytes(bytes: Uint8Array): Promise<void>;
+  /** Stream + render a PDF from a URL via pdfjs's Range path (pdfjs pulls
+   *  bytes on demand). Currently UNUSED at the call sites: pdf-viewer tried
+   *  `getDocument({url: 'whale-file://…'})` but Chromium's CORS policy
+   *  blocks cross-origin fetch to custom schemes (only http/https/data/
+   *  chrome are allowed), so it failed with `net::ERR_FAILED` from the
+   *  `whale-extension://` origin. pdf-viewer instead uses `renderPdfBytes`
+   *  with bytes shipped via postMessage (Uint8Array structured clone — see
+   *  `requestFileBytes`/`fileBytes`). Kept + unit-tested for the day a
+   *  fetch-able scheme exists; lifecycle matches `renderPdfBytes`. */
+  renderPdfUrl(url: string): Promise<void>;
   /** Re-render a single page at a new rotation (Phase 1 §B1). The session
    *  tears down the existing canvas and paints a fresh one. */
   rerenderPage(pageNum: number, newRotation: number): Promise<void>;
@@ -359,7 +383,28 @@ export function createPdfjsSession(opts: PdfjsSessionOptions): PdfjsSession {
     pdfjsLib = pdfjsLibDefault,
     virtualize = false,
     virtualizeBuffer = 5,
+    useWorker = false,
+    workerSrc,
   } = opts;
+
+  // Worker configuration (once per session). Real-worker mode sets
+  // `GlobalWorkerOptions.workerSrc` so pdfjs spawns a dedicated Worker for
+  // the document parse, moving the heavy CPU work off the iframe's main
+  // thread (the large-PDF freeze). Fake-worker mode (the default, used by
+  // office-viewer) instead pins `globalThis.pdfjsWorker` so pdfjs runs the
+  // parser inline — no `worker-src` CSP needed. pdf-viewer and office-viewer
+  // live in separate iframes with separate bundles, so their
+  // `GlobalWorkerOptions` / `globalThis.pdfjsWorker` don't interfere.
+  if (useWorker && workerSrc) {
+    const lib = pdfjsLib as unknown as {
+      GlobalWorkerOptions?: { workerSrc?: string };
+    };
+    if (lib.GlobalWorkerOptions) {
+      lib.GlobalWorkerOptions.workerSrc = workerSrc;
+    }
+  } else {
+    (globalThis as unknown as { pdfjsWorker: unknown }).pdfjsWorker = pdfjsWorker;
+  }
 
   let destroyed = false;
   let currentToken = -1;
@@ -499,41 +544,44 @@ export function createPdfjsSession(opts: PdfjsSessionOptions): PdfjsSession {
     }
   }
 
-  async function renderPdfBytes(bytes: Uint8Array): Promise<void> {
-    currentToken = getToken();
-    const myToken = currentToken;
-    pagesEl.innerHTML = '';
-    onStatus?.({ kind: 'progress', text: '' });
+  /**
+   * Build the `getDocument` loading task. Base params (cmap / font / wasm /
+   * `BinaryDataFactory`) are constant; `extra` carries the data source:
+   * `{data: bytes}` for the in-memory path (office-viewer's LibreOffice
+   * conversion) or `{url, rangeChunkSize, disableRange}` for the streaming
+   * path (pdf-viewer's `whale-file://` URL).
+   */
+  function buildLoadingTask(extra: Record<string, unknown>): {
+    promise: Promise<unknown>;
+  } {
+    return pdfjsLib.getDocument({
+      cMapPacked: true,
+      cMapUrl: 'cmap/',
+      standardFontDataUrl: 'font/',
+      wasmUrl: 'wasm/',
+      isEvalSupported: false,
+      BinaryDataFactory: HostBinaryDataFactory,
+      ...getDocumentExtras,
+      ...extra,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+  }
 
-    let loadingTask;
-    try {
-      loadingTask = pdfjsLib.getDocument({
-        data: bytes,
-        cMapPacked: true,
-        cMapUrl: 'cmap/',
-        standardFontDataUrl: 'font/',
-        wasmUrl: 'wasm/',
-        isEvalSupported: false,
-        BinaryDataFactory: HostBinaryDataFactory,
-        ...getDocumentExtras,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } as any);
-    } catch (e) {
-      if (myToken === currentToken) {
-        onStatus?.({
-          kind: 'error',
-          text:
-            e instanceof Error
-              ? e.message
-              : String(e),
-        });
-      }
-      throw e;
-    }
-
+  /**
+   * Shared render lifecycle from the resolved `PDFDocumentProxy` onward:
+   * cancellation check → metadata (/Info + /Lang) → onDocumentLoaded →
+   * virtualized or full pre-render loop → finally `doc.cleanup()`. Used by
+   * both `renderPdfBytes` (in-memory bytes) and `renderPdfUrl` (streaming
+   * URL). Errors from `loadingTask.promise` are surfaced via `onStatus`
+   * (when this call is still current) and re-thrown for the caller.
+   */
+  async function runRender(
+    loadingTask: { promise: Promise<unknown> },
+    myToken: number,
+  ): Promise<void> {
     let doc: pdfjsLibDefault.PDFDocumentProxy;
     try {
-      doc = await loadingTask.promise;
+      doc = (await loadingTask.promise) as pdfjsLibDefault.PDFDocumentProxy;
     } catch (e) {
       if (myToken === currentToken) {
         onStatus?.({
@@ -606,11 +654,71 @@ export function createPdfjsSession(opts: PdfjsSessionOptions): PdfjsSession {
     } finally {
       // Phase 1 §A2 + §B2: release worker references + ensure the doc is
       // cleaned up even if the loop throws. The original error is NOT
-      // swallowed here — `renderPdfBytes` lets it bubble up to the caller
+      // swallowed here — `runRender` lets it bubble up to the caller
       // (which surfaces it via `onStatus({kind:'error'})`).
       await doc.cleanup().catch(() => undefined);
       if (currentDoc === doc) currentDoc = null;
     }
+  }
+
+  async function renderPdfBytes(bytes: Uint8Array): Promise<void> {
+    currentToken = getToken();
+    const myToken = currentToken;
+    pagesEl.innerHTML = '';
+    onStatus?.({ kind: 'progress', text: '' });
+
+    let loadingTask: { promise: Promise<unknown> };
+    try {
+      loadingTask = buildLoadingTask({ data: bytes });
+    } catch (e) {
+      if (myToken === currentToken) {
+        onStatus?.({
+          kind: 'error',
+          text:
+            e instanceof Error
+              ? e.message
+              : String(e),
+        });
+      }
+      throw e;
+    }
+    await runRender(loadingTask, myToken);
+  }
+
+  /**
+   * Stream + render a PDF from a URL via pdfjs's Range path. UNUSED at the
+   * call sites — pdf-viewer hit Chromium's CORS block on
+   * `fetch(whale-file://)` (custom schemes aren't in the cross-origin
+   * fetch allow-list) and fell back to `renderPdfBytes` with postMessage
+   * bytes. Kept for a future fetch-able scheme; see `renderPdfUrl` on
+   * `PdfjsSession`.
+   */
+  async function renderPdfUrl(url: string): Promise<void> {
+    currentToken = getToken();
+    const myToken = currentToken;
+    pagesEl.innerHTML = '';
+    onStatus?.({ kind: 'progress', text: '' });
+
+    let loadingTask: { promise: Promise<unknown> };
+    try {
+      loadingTask = buildLoadingTask({
+        url,
+        rangeChunkSize: 65536,
+        disableRange: false,
+      });
+    } catch (e) {
+      if (myToken === currentToken) {
+        onStatus?.({
+          kind: 'error',
+          text:
+            e instanceof Error
+              ? e.message
+              : String(e),
+        });
+      }
+      throw e;
+    }
+    await runRender(loadingTask, myToken);
   }
 
   /**
@@ -779,6 +887,7 @@ export function createPdfjsSession(opts: PdfjsSessionOptions): PdfjsSession {
 
   return {
     renderPdfBytes,
+    renderPdfUrl,
     rerenderPage,
     cancel,
     destroy,

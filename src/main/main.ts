@@ -11,6 +11,10 @@ import { registerAiCoreHandlers, maybeRegisterAiRuntimeHandlers } from './ai/ipc
 // first IPC request and torn down here on app quit (best-effort kill;
 // graceful shutdown with WAL flush is a follow-up).
 import { killIndexWorker } from './index-worker-host';
+// P3-3: office→PDF persistent UNO worker. Lazy-spawned on the first office
+// conversion; torn down here on app quit (kills the python worker AND its
+// soffice listener grandchild via tree-kill).
+import { killOfficeWorker } from './office-worker/office-worker-host';
 import { buildMenu } from './menu';
 import { assertWithinAllowedRoot, getAllowedRoots } from './allowed-roots';
 import { mediaConvertSemaphore } from './concurrency';
@@ -262,6 +266,8 @@ function bootstrap(): void {
   app.on('before-quit', () => {
     killIndexWorker();
     killAllAudioTranscodes();
+    // P3-3: persistent office→PDF UNO worker + its soffice listener grandchild.
+    killOfficeWorker();
   });
 
   // ABI/availability probe for the bundled ffmpeg (video thumbnails). Logged

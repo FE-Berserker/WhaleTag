@@ -15,9 +15,10 @@ import {
 } from '../shared/whale-meta';
 import type { GenerateThumbnailOptions } from '../shared/ipc-types';
 import { atomicWriteBytes } from './atomic-write';
-import { sofficeSemaphore, thumbnailSemaphore } from './concurrency';
+import { thumbnailSemaphore } from './concurrency';
 import { extractEbookCover } from './ebook-cover';
 import { renderFontToPng } from './font-thumb';
+import { convertOfficeToPdfVia } from './office-convert';
 import { getSharp, getCanvas } from './lazy-native';
 
 /**
@@ -188,57 +189,35 @@ export function sofficeConvertArgs(tmpDir: string, srcPath: string): string[] {
 }
 
 /**
- * Converts an Office document to a temporary PDF via LibreOffice, then reuses
- * `encodePdfThumb` on that PDF. Cleans up the temporary PDF and its directory
- * afterwards. Throws if LibreOffice is missing or conversion fails.
+ * Converts an Office document to a temporary PDF, then reuses `encodePdfThumb`
+ * on that PDF. Cleans up the temporary PDF and its directory afterwards.
+ *
+ * Delegates the doc→PDF step to `convertOfficeToPdfVia` (shared with
+ * office-viewer's `convertOfficeToPdf`) — which tries the persistent UNO
+ * worker first and falls back to a one-shot `soffice --convert-to pdf`. This
+ * deletes the ~30 lines of duplicated soffice spawn body that used to live
+ * here, and lets the worker benefit office thumbnails too (P3-3).
  */
 async function encodeOfficeThumb(
   srcPath: string,
   sofficePath?: string | null
 ): Promise<Buffer> {
-  const bin = await sofficeBinary(sofficePath);
-  if (!bin) throw new Error('LibreOffice (soffice) not found');
-
   const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-office-'));
   const baseName = path.basename(srcPath, path.extname(srcPath));
-  const expectedPdf = path.join(tmpDir, `${baseName}.pdf`);
-
+  const outPdfPath = path.join(tmpDir, `${baseName}.pdf`);
   try {
-    // Serialize soffice with the office-viewer path (profile-lock contention —
-    // see office-convert.ts). Hold the permit only for the soffice subprocess,
-    // not the subsequent pdfjs/sharp thumbnail render.
-    await sofficeSemaphore.run(
-      () =>
-        new Promise<void>((resolve, reject) => {
-          const isCmd = process.platform === 'win32' && /\.(cmd|bat|ps1)$/i.test(bin);
-          execFile(
-            bin,
-            sofficeConvertArgs(tmpDir, srcPath),
-            {
-              timeout: 120000,
-              stdio: ['ignore', 'pipe', 'pipe'] as const,
-              shell: isCmd,
-            } as import('child_process').ExecFileOptions,
-            (err, stdout, stderr) => {
-              if (err) {
-                reject(
-                  new Error(
-                    `soffice failed: ${err.message}\n${stderr || stdout || ''}`
-                  )
-                );
-                return;
-              }
-              resolve();
-            }
-          );
-        })
-    );
-    if (!existsSync(expectedPdf)) {
+    // The semaphore + worker-vs-fallback decision live inside
+    // convertOfficeToPdfVia; the subsequent pdfjs/sharp render stays outside
+    // any permit (as before).
+    await convertOfficeToPdfVia(srcPath, outPdfPath, { sofficePath });
+    if (!existsSync(outPdfPath)) {
       throw new Error('LibreOffice did not produce a PDF');
     }
-    return await encodePdfThumb(expectedPdf);
+    return await encodePdfThumb(outPdfPath);
   } finally {
-    await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
+    await fsp.rm(tmpDir, { recursive: true, force: true }).catch(
+      () => undefined
+    );
   }
 }
 

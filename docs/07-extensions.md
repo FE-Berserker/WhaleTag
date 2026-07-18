@@ -234,7 +234,7 @@ src/extensions/
 |---|---|
 | image-viewer | 原生 `<img>` + Lightbox 缩放 / pan / 旋转 / `flipH` / `flipV`;`<` `>` `Space` 等快捷键 |
 | heic-viewer | libheif-js wasm 解码;大文件同步阻塞 → iframe 显示 "Decoding…" |
-| pdf-viewer | 扩展 iframe 内 pdfjs 浏览器版 + 线程内 fake worker + `HostBinaryDataFactory`(经 host IPC 拿 cmap / 标准字体 / wasm)+ `<canvas>` 渲染 + fit W/P + 旋转 + 状态栏;CJK 字体自动回退系统 |
+| pdf-viewer | 扩展 iframe 内 pdfjs 浏览器版 + `HostBinaryDataFactory`(经 host IPC 拿 cmap / 标准字体 / wasm)+ `<canvas>` 渲染 + fit W/P + 旋转 + 状态栏;CJK 字体自动回退系统。**大文件字节桥**(2026-07-18):host 不再 base64 整份 PDF(旧路径渲染进程逐字节 O(n²) 拼接 + IPC 膨胀 33% + iframe 再解码,峰值 ~3× 内存、主线程长阻塞),改为 host 经 `requestFileBytes`/`fileBytes` 读文件回传 `Uint8Array`(postMessage 结构化克隆,一次 memcpy,无 base64)→ `session.renderPdfBytes`;可选真 worker(`USE_PDFJS_WORKER`,`pdf.worker.mjs` 经 `whale-extension://` 加载)把解析移出主线程。office-viewer 仍走内存 bytes(LibreOffice 转换产物) |
 | media-player | `<video>` / `<audio>` 流式播放;10 视频 + 16 音频。原生 / 视频 → `whale-file://`(主进程 Range 206 响应);**APE/WMA/AIFF/AMR/AC3/DTS/MPC/WV/DSF → `whale-audio://`**:主进程实时 ffmpeg → Opus 流式推给 `<audio>`(首播 ~1s 出声,不先把整份转码完),输出同步 tee 写入 `.whale/transcodes/<basename>.opus`,播完后即缓存,再开秒开 + 可拖动;`.opus` MIME `audio/opus`;playlist + 循环 + 速度 + 随机 + 进度记忆 |
 | office-viewer | `requestOfficeConvert` → 主进程 `soffice --headless --convert-to pdf` → `officePdfContent` 推回 → iframe 内 pdfjs 浏览器版渲染到 `<canvas>`;fake worker + `HostBinaryDataFactory` 与 pdf-viewer 同款;**每次开档冷启动 soffice**(P3-1:冷转码 2-5s 期间并行 `requestThumbnail` 取缓存 jpg 当首页占位,不再空白);手动缩放 + rAF scroll 同步「当前页 / 总页」(P3-2),无 fit / 旋转 / 跳页 / 键盘导航 |
 | archive-viewer | 主进程 `archive.ts` + `7zip-bin` 二进制解码 9 种格式(zip / tar / tgz / tbz2 / txz / gz / bz2 / xz / 7z);双栏(文件树 + 预览);文本 utf-8 + 1MB 截断;图片 Blob URL;HTML 沙箱 iframe(无 `allow-same-origin`);二进制 hex head + 字节数;`__MACOSX/` 与 `.DS_Store` 过滤;> 50,000 entries 视为 zip-bomb 拒绝 |
@@ -428,7 +428,7 @@ src/extensions/
 - drawio `export` action event(不是 `autosave`/`save`)→ bridge 必须三事件统一映射
 - drawio `editor.modified` 默认 false → Save 按钮不能依赖 dirty
 - drawio embed 默认 `parent.postMessage('ready', '*')` 字符串握手 → 加 `?proto=json` 切到结构化协议
-- pdf-viewer iframe 内不碰主进程 CSP;fake worker + 自定义 `BinaryDataFactory` 绕 `connect-src` 与 `registerFileProtocol` fetch 限制
+- pdf-viewer 大文件字节桥(2026-07-18):host 经 `requestFileBytes`/`fileBytes` 读文件回传 `Uint8Array`(postMessage 结构化克隆)→ `session.renderPdfBytes`,消除 base64 整文件(渲染进程 O(n²) 拼接 + 33% 膨胀 + iframe 再解码)。**不用 whale-file:// 流式**:`<video>` 能用(media 管线不经 CORS),但 pdfjs `getDocument({url})` 内部 fetch 触发 CORS,Chromium 协议级硬限制「跨源 fetch 仅限 http/https/data/chrome」,自定义协议被拒(`net::ERR_FAILED`)。`HostBinaryDataFactory` 仍经 host IPC 拿 cmap/字体/wasm。真 worker 可选(`USE_PDFJS_WORKER`,meta CSP `worker-src` 加 `whale-extension://*`,`build-extensions.js` 复制 `pdf.worker.mjs`);fake worker 默认(office-viewer 内存 bytes 不经此路径)
 - `pdfjs-dist` `cMapUrl` / `standardFontDataUrl` 必须是**纯文件系统路径 + 结尾 `/`**(主进程路径,不是 `file://` URL)
 - `pdfjs-dist` `cmaps/ standard_fonts/ wasm/` 已加进 `builder.json` `asarUnpack`
 - 编辑器(CodeMirror) Compartment 切换不触发 `contentChangedInEditor`(vs. drawio 教训)

@@ -141,7 +141,7 @@ export interface HeicWasmMessage {
 export interface DwgConvertedContentMessage {
   type: 'dwgConvertedContent';
   requestId: string;
-  data: ArrayBuffer | null;
+  data: Uint8Array | null;
   error?: string;
 }
 
@@ -211,7 +211,7 @@ export interface ThumbnailContentMessage {
 export interface EbookConvertedContentMessage {
   type: 'ebookConvertedContent';
   requestId: string;
-  data: ArrayBuffer | null;
+  data: Uint8Array | null;
   error?: string;
 }
 
@@ -261,6 +261,20 @@ export interface StreamingUrlMessage {
   url: string;
 }
 
+/** Host -> Extension: raw file bytes requested by pdf-viewer via
+ *  `requestFileBytes`. pdf-viewer can't `fetch(whale-file://)` — Chromium's
+ *  CORS policy blocks cross-origin fetch to custom schemes (only http/https/
+ *  data/chrome are allowed), which rules out pdfjs's `getDocument({url})`
+ *  Range path. Instead the host reads the file and ships the bytes through
+ *  postMessage, which structured-clones the `Uint8Array` (one memcpy, no
+ *  base64, no O(n²) decode). `data` is null on read failure (see `error`). */
+export interface FileBytesMessage {
+  type: 'fileBytes';
+  requestId: string;
+  data: Uint8Array | null;
+  error?: string;
+}
+
 /** Host -> Extension: answer to `requestSofficeCheck` — whether LibreOffice
  *  (`soffice`) is installed. The office-viewer uses this to show install
  *  guidance up front instead of a bare "soffice not found" dead-end
@@ -293,6 +307,7 @@ export type HostMessage =
   | ExternalDragMessage
   | FileEmbedMessage
   | SiblingsMessage
+  | FileBytesMessage
   | EbookAnnotationsMessage
   | RequestSelectionMessage
   | ApplyReplacementMessage
@@ -437,6 +452,15 @@ export interface RequestStreamingUrlMessage {
   path: string;
 }
 
+/** Extension -> Host: pdf-viewer requests the raw bytes of `path`. See
+ *  `FileBytesMessage` for why pdf-viewer can't stream via `whale-file://`
+ *  (Chromium CORS blocks fetch to custom schemes). */
+export interface RequestFileBytesMessage {
+  type: 'requestFileBytes';
+  requestId: string;
+  path: string;
+}
+
 /** Extension -> Host: request the main-process archive decoder list entries. */
 export interface RequestArchiveListMessage {
   type: 'requestArchiveList';
@@ -566,6 +590,7 @@ export type ExtensionMessage =
   | RequestThumbnailMessage
   | RequestEbookConvertMessage
   | RequestStreamingUrlMessage
+  | RequestFileBytesMessage
   | RequestArchiveListMessage
   | RequestArchiveEntryMessage
   | RequestArchiveExtractMessage

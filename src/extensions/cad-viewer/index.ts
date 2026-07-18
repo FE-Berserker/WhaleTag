@@ -574,12 +574,12 @@ function buildDxfGroup(dxf: IDxf): THREE.Group {
 let dwgReqId = 0;
 const pendingDwgConversions = new Map<
   string,
-  { resolve: (data: ArrayBuffer) => void; reject: (err: Error) => void }
+  { resolve: (data: Uint8Array) => void; reject: (err: Error) => void }
 >();
 
-function requestDwgConvert(filePath: string): Promise<ArrayBuffer> {
+function requestDwgConvert(filePath: string): Promise<Uint8Array> {
   const requestId = `d${(dwgReqId += 1)}`;
-  return new Promise<ArrayBuffer>((resolve, reject) => {
+  return new Promise<Uint8Array>((resolve, reject) => {
     pendingDwgConversions.set(requestId, { resolve, reject });
     window.whaleExt.postMessage({ type: 'requestDwgConvert', requestId, path: filePath });
   });
@@ -707,7 +707,10 @@ function parseModel(
   if (ext === 'dwg') {
     // External converter (main process) → DXF bytes → reuse the DXF renderer.
     return requestDwgConvert(path).then((data) => {
-      const text = new TextDecoder().decode(new Uint8Array(data));
+      // `data` arrives as a Uint8Array (main returns Buffer; Electron IPC
+      // serializes it) — decode directly, wrapping with `new Uint8Array(...)`
+      // would copy. See docs/15 P1-4.
+      const text = new TextDecoder().decode(data);
       const dxf = new DxfParser().parseSync(text);
       if (!dxf) throw new Error('DWG converter produced an unreadable DXF');
       return buildDxfGroup(dxf);

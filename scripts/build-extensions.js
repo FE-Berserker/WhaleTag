@@ -304,6 +304,32 @@ function copyExtensionRuntimeAssets(id) {
     }
     return;
   }
+
+  if (id === 'pdf-viewer') {
+    // pdfjs real-Worker module (Tier 3 of the large-PDF perf fix): when
+    // pdf-viewer opts into `useWorker`, pdfjs spawns this as a module Worker
+    // to run the document parser off the iframe's main thread. Served at
+    // `whale-extension://pdf-viewer/pdf.worker.mjs`; the iframe CSP
+    // `worker-src` allows that origin (index.html). Must NOT be bundled
+    // (keeps bundle.js small; pdfjs loads it lazily via
+    // GlobalWorkerOptions.workerSrc).
+    const destDir = path.join(DIST_EXTENSIONS, id);
+    if (!fs.existsSync(destDir)) return;
+    const workerSrc = path.join(
+      ROOT,
+      'node_modules',
+      'pdfjs-dist',
+      'legacy',
+      'build',
+      'pdf.worker.mjs'
+    );
+    if (fs.existsSync(workerSrc)) {
+      fs.copyFileSync(workerSrc, path.join(destDir, 'pdf.worker.mjs'));
+    } else {
+      console.warn(`pdf-viewer: pdf.worker.mjs not found at ${workerSrc}`);
+    }
+    return;
+  }
 }
 
 function main() {

@@ -1190,7 +1190,7 @@ function requestEbookConversion(path: string) {
   });
 }
 
-function handleConvertedEpub(data: ArrayBuffer | null, error?: string) {
+function handleConvertedEpub(data: Uint8Array | null, error?: string) {
   const path = pendingConvertPath;
   pendingConvertPath = null;
   pendingConvertRequestId = null;
@@ -1208,7 +1208,10 @@ function handleConvertedEpub(data: ArrayBuffer | null, error?: string) {
     cleanup();
     currentPath = path;
     currentFormat = 'epub';
-    currentBook = loadEpub(new Uint8Array(data));
+    // `data` arrives as a Uint8Array (main returns Buffer; Electron IPC
+    // serializes it) — pass straight to loadEpub, wrapping with
+    // `new Uint8Array(...)` would copy. See docs/15 P1-4.
+    currentBook = loadEpub(data);
     if (annotations.prefs.scrollMode === 'continuous') renderEpubContinuous();
     else renderEpubPage();
     searchIndex = new SearchIndex(

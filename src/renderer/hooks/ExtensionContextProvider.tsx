@@ -152,12 +152,23 @@ export function ExtensionContextProvider({
       setLoading(true);
       setError(null);
       try {
-        // media-player 的视频和原生可解码音频直接走 whale-file:// 流式 URL，
-        // 避免把整份文件 base64 进渲染进程（大视频会卡死 / OOM）。
+        // These viewers stream their file via `whale-file://` (Range-served by
+        // the main process) instead of receiving the whole file base64-encoded
+        // through IPC + postMessage. The iframe asks the host for a streaming
+        // URL via `requestStreamingUrl` and feeds it to its player/viewer.
+        // Avoids freezing the renderer on large files — a 50 MB PDF → ~67 MB
+        // base64 + O(n²) `binary += String.fromCharCode(...)` string concat on
+        // the main thread; same shape for big APE rips that media-player
+        // throws away after transcoding. `isAudioTranscodeFile` is handled by
+        // `readFileContent`'s own short-circuit (returns empty), so it stays
+        // on the non-streamed branch.
+        const isStreamed =
+          manifest.id === 'pdf-viewer' ||
+          (manifest.id === 'media-player' && !isAudioTranscodeFile(entry.name));
         let content: string;
         let encoding: ExtensionEncoding;
         let size: number;
-        if (manifest.id === 'media-player' && !isAudioTranscodeFile(entry.name)) {
+        if (isStreamed) {
           content = '';
           encoding = 'base64';
           size = entry.size;
@@ -209,7 +220,28 @@ export function ExtensionContextProvider({
 
   const reloadContent = useCallback(async () => {
     if (!activeView) return;
-    const { content, encoding, size } = await readFileContent(activeView.filePath);
+    // Streamed viewers (pdf-viewer / non-transcode media-player) don't carry
+    // file bytes in `fileContent` — they re-request a `whale-file://` URL on
+    // every content push. Keep them on the empty-content path so a reload
+    // doesn't base64 a 50 MB PDF back into the renderer (same freeze the
+    // initial open avoids — see openWithExtension).
+    const manifestId = activeView.manifest.id;
+    const isStreamed =
+      manifestId === 'pdf-viewer' ||
+      (manifestId === 'media-player' && !isAudioTranscodeFile(activeView.filePath));
+    let content: string;
+    let encoding: ExtensionEncoding;
+    let size: number;
+    if (isStreamed) {
+      content = '';
+      encoding = 'base64';
+      size = activeView.fileSize ?? 0;
+    } else {
+      const result = await readFileContent(activeView.filePath);
+      content = result.content;
+      encoding = result.encoding;
+      size = result.size;
+    }
     setActiveView({ ...activeView, fileContent: content, encoding, fileSize: size });
   }, [activeView, readFileContent]);
 

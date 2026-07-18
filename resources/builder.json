@@ -24,6 +24,13 @@
     "**/node_modules/pdfjs-dist/wasm/**/*",
     "**/node_modules/7zip-bin/**/*"
   ],
+  "extraResources": [
+    {
+      "from": "src/main/office-worker",
+      "to": "office-worker",
+      "filter": ["**/*.py"]
+    }
+  ],
   "mac": {
     "category": "public.app-category.utilities",
     "target": ["dmg"]

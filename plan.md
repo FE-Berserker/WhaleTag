@@ -28,6 +28,7 @@
 | [docs/14-packaging.md](docs/14-packaging.md) | `npm run package:win` 完整流程、nsis-resources 离线、打包/AI 调试排坑(国内网络环境) |
 | [docs/15-perf-audit.md](docs/15-perf-audit.md) | **性能审计与待办清单**(2026-07-12);Tier 0–3 可勾选优化项 + 已接受取舍 + 可复用范式;plan.md §F 的例外追踪文档 |
 | [docs/16-cross-platform.md](docs/16-cross-platform.md) | **macOS / Linux 跨平台打包可行性**(2026-07-12);已就绪代码清单 + 硬阻塞(mac 签名)+ 需改项(Linux 大小写守卫/DE fallback/图标);§F 例外评估文档 |
+| [docs/17-office-worker.md](docs/17-office-worker.md) | **Office→PDF 常驻 UNO worker**(P3-3,2026-07-18);Python 桥接 + 常驻 soffice listener + cooldown 回退 execFile;UNO gotcha / stale-child race / 打包 extraResources |
 | [docs/UI.md](docs/UI.md) | 设计语言(从 Pencil `.pen` 导出,主题 token;源文件描述比代码实际少 2 个策划主题) |
 
 > 找不到某模块的现状?直接从对应 `docs/0X-*.md` 入口找,不必翻 git 历史。

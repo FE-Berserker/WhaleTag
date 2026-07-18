@@ -262,12 +262,12 @@ export const ipcApi = {
   convertDwgToDxf: (
     filePath: string,
     options?: { dwg2dxfPath?: string | null; odaPath?: string | null }
-  ): Promise<ArrayBuffer> => requireApi().convertDwgToDxf(filePath, options),
+  ): Promise<Uint8Array> => requireApi().convertDwgToDxf(filePath, options),
   detectDwgConverters: () => requireApi().detectDwgConverters(),
   convertEbookToEpub: (
     filePath: string,
     options?: { calibrePath?: string | null }
-  ): Promise<ArrayBuffer> => requireApi().convertEbookToEpub(filePath, options),
+  ): Promise<Uint8Array> => requireApi().convertEbookToEpub(filePath, options),
   detectEbookConverter: (): Promise<{ calibre: string | null }> =>
     requireApi().detectEbookConverter(),
 

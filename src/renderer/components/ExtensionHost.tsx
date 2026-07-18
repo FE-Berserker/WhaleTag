@@ -653,6 +653,33 @@ export default function ExtensionHost({
           });
           break;
         }
+        case 'requestFileBytes': {
+          // pdf-viewer can't `fetch(whale-file://)` — Chromium CORS blocks
+          // cross-origin fetch to custom schemes (only http/https/data/chrome
+          // are allowed) — so it asks the host to read the file and ship the
+          // raw bytes back. Electron structured-clones the Uint8Array through
+          // postMessage (one memcpy, no base64, no O(n²) decode). Mirrors
+          // office-viewer's officePdfContent path.
+          const { requestId, path: bytesPath } = msg;
+          ipcApi
+            .readFile(bytesPath)
+            .then((buf: ArrayBuffer) => {
+              postToExtension({
+                type: 'fileBytes',
+                requestId,
+                data: new Uint8Array(buf),
+              });
+            })
+            .catch((e: unknown) => {
+              postToExtension({
+                type: 'fileBytes',
+                requestId,
+                data: null,
+                error: e instanceof Error ? e.message : String(e),
+              });
+            });
+          break;
+        }
         case 'requestReadEbookAnnotations': {
           const { requestId, path: annoPath } = msg;
           ipcApi

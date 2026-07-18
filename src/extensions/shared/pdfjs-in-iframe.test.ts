@@ -852,3 +852,143 @@ describe('createPdfjsSession: destroy-and-recreate layout (Phase 2 §A3 fix)', (
     }
   });
 });
+
+// ── renderPdfUrl (streaming / Tier 1+2) ────────────────────────────────
+//
+// pdf-viewer switched from `renderPdfBytes(base64-decoded Uint8Array)` to
+// `renderPdfUrl(whale-file:// URL)`: pdfjs reads bytes on demand via Range
+// requests instead of materializing the whole file. These tests pin the
+// session contract: `renderPdfUrl` passes `url` (never `data`) plus the
+// range params to `getDocument`, while `renderPdfBytes` is unchanged
+// (office-viewer regression guard — its PDF comes from an in-memory
+// LibreOffice conversion).
+
+describe('createPdfjsSession: renderPdfUrl (streaming)', () => {
+  it('passes `url` (not `data`) to getDocument with range params + shared base', async () => {
+    const doc = new FakeDoc(1);
+    let capturedOpts: Record<string, unknown> | null = null;
+    const session = createPdfjsSession({
+      pagesEl: new FakePagesEl() as any,
+      getToken: () => 0,
+      pdfjsLib: {
+        getDocument: (opts: Record<string, unknown>) => {
+          capturedOpts = opts;
+          return { promise: Promise.resolve(doc) };
+        },
+      },
+    });
+    await session.renderPdfUrl('whale-file:///x/test.pdf');
+    assert.ok(capturedOpts, 'getDocument should have been called');
+    assert.equal(capturedOpts!.url, 'whale-file:///x/test.pdf');
+    assert.equal(
+      capturedOpts!.data,
+      undefined,
+      'url mode must not pass `data`',
+    );
+    assert.equal(capturedOpts!.disableRange, false);
+    assert.equal(capturedOpts!.rangeChunkSize, 65536);
+    // Shared base params still present (same as the bytes path).
+    assert.equal(capturedOpts!.BinaryDataFactory, HostBinaryDataFactory);
+    assert.equal(capturedOpts!.isEvalSupported, false);
+    assert.equal(capturedOpts!.cMapPacked, true);
+  });
+
+  it('renderPdfBytes still passes `data` and no `url` (office-viewer regression)', async () => {
+    const doc = new FakeDoc(1);
+    let capturedOpts: Record<string, unknown> | null = null;
+    const session = createPdfjsSession({
+      pagesEl: new FakePagesEl() as any,
+      getToken: () => 0,
+      pdfjsLib: {
+        getDocument: (opts: Record<string, unknown>) => {
+          capturedOpts = opts;
+          return { promise: Promise.resolve(doc) };
+        },
+      },
+    });
+    const bytes = new Uint8Array([1, 2, 3]);
+    await session.renderPdfBytes(bytes);
+    assert.ok(capturedOpts);
+    assert.deepEqual(
+      Array.from(capturedOpts!.data as Uint8Array),
+      [1, 2, 3],
+    );
+    assert.equal(capturedOpts!.url, undefined);
+    // Range params are not injected on the bytes path.
+    assert.equal(capturedOpts!.disableRange, undefined);
+  });
+
+  it('renderPdfUrl surfaces a load error via onStatus and re-throws', async () => {
+    let status: { kind: string; text: string } | null = null;
+    const session = createPdfjsSession({
+      pagesEl: new FakePagesEl() as any,
+      getToken: () => 0,
+      pdfjsLib: {
+        getDocument: () => ({
+          promise: Promise.reject(new Error('range request denied')),
+        }),
+      },
+      onStatus: (msg) => {
+        status = msg;
+      },
+    });
+    await assert.rejects(
+      session.renderPdfUrl('whale-file:///x/broken.pdf'),
+      /range request denied/,
+    );
+    assert.ok(status);
+    assert.equal(status!.kind, 'error');
+    assert.match(status!.text, /range request denied/);
+  });
+});
+
+// ── Worker mode (Tier 3) ────────────────────────────────────────────────
+//
+// `useWorker` decides whether pdfjs runs its parser on a real Worker
+// (`GlobalWorkerOptions.workerSrc` set, `globalThis.pdfjsWorker` NOT pinned)
+// or the legacy fake-worker main-thread path (`globalThis.pdfjsWorker`
+// pinned). Both branches touch module-global state, so each test resets
+// `globalThis.pdfjsWorker` first.
+
+describe('createPdfjsSession: worker mode', () => {
+  it('useWorker=true sets GlobalWorkerOptions.workerSrc and does not pin the fake worker', () => {
+    (globalThis as any).pdfjsWorker = undefined;
+    const workerOpts: { workerSrc?: string } = {};
+    const session = createPdfjsSession({
+      pagesEl: new FakePagesEl() as any,
+      getToken: () => 0,
+      pdfjsLib: {
+        getDocument: () => ({ promise: Promise.resolve(new FakeDoc(1)) }),
+        GlobalWorkerOptions: workerOpts,
+      } as any,
+      useWorker: true,
+      workerSrc: 'whale-extension://pdf-viewer/pdf.worker.mjs',
+    });
+    assert.equal(
+      workerOpts.workerSrc,
+      'whale-extension://pdf-viewer/pdf.worker.mjs',
+    );
+    assert.equal(
+      (globalThis as any).pdfjsWorker,
+      undefined,
+      'globalThis.pdfjsWorker must not be pinned in real-worker mode',
+    );
+    assert.ok(session);
+  });
+
+  it('useWorker=false (default) pins globalThis.pdfjsWorker (fake-worker path)', () => {
+    (globalThis as any).pdfjsWorker = undefined;
+    createPdfjsSession({
+      pagesEl: new FakePagesEl() as any,
+      getToken: () => 0,
+      pdfjsLib: {
+        getDocument: () => ({ promise: Promise.resolve(new FakeDoc(1)) }),
+      } as any,
+    });
+    assert.notEqual(
+      (globalThis as any).pdfjsWorker,
+      undefined,
+      'globalThis.pdfjsWorker should be pinned in fake-worker mode',
+    );
+  });
+});

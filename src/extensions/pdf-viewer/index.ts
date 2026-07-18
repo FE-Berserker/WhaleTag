@@ -7,6 +7,26 @@ import {
   type PdfjsSession,
 } from '../shared/pdfjs-in-iframe';
 
+/**
+ * Tier 3 (Phase §B) switch: run pdfjs's document parser on a real Worker so
+ * parsing a large PDF doesn't block the iframe's main thread. The worker
+ * module is copied next to the bundle by `scripts/build-extensions.js`
+ * (`pdf.worker.mjs`, served at `whale-extension://pdf-viewer/pdf.worker.mjs`)
+ * and the iframe CSP `worker-src` allows that origin (index.html).
+ *
+ * Default `false`: Tier 1+2 (whale-file:// streaming + pdfjs Range reads)
+ * already eliminate the large-PDF freeze by removing the base64 round-trip
+ * and loading bytes on demand. The real Worker is an additional improvement
+ * (CPU parse off the main thread) but depends on `new Worker()` accepting
+ * the `whale-extension://` privileged scheme — no prior art in this repo
+ * (cad/heic fetch wasm, they don't spawn a Worker). Verify by opening a PDF
+ * with this set to `true` and checking the browser Workers tab + console for
+ * load/CSP errors. If the worker fails to spawn pdfjs rejects the load;
+ * flip back to `false` to restore the fake-worker path (Tier 1+2 still apply).
+ */
+const USE_PDFJS_WORKER = false;
+const PDFJS_WORKER_SRC = 'whale-extension://pdf-viewer/pdf.worker.mjs';
+
 // --- DOM refs -------------------------------------------------------------
 const pagesEl = document.getElementById('pages') as HTMLDivElement;
 
@@ -88,6 +108,8 @@ const session: PdfjsSession = createPdfjsSession({
   computeDisplayScale: (baseVp, rotation = 0) =>
     computeDisplayScale(baseVp.width, baseVp.height, rotation),
   virtualize: true,
+  useWorker: USE_PDFJS_WORKER,
+  workerSrc: PDFJS_WORKER_SRC,
   onStatus: ({ kind, text }) => {
     // The session drives its own per-page progress text (`'2 / 10'`); we
     // surface it through our localised "Rendering N of M…" template.
@@ -476,15 +498,39 @@ function rotateCurrentPage(direction: 1 | -1) {
 }
 
 // --- Wiring ---------------------------------------------------------------
-function base64ToBytes(b64: string): Uint8Array {
-  const binary = window.atob(b64);
-  const len = binary.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i += 1) bytes[i] = binary.charCodeAt(i);
-  return bytes;
+// --- File-bytes bridge ----------------------------------------------------
+// The host sends an empty `fileContent` blob + path + size; we ask it to
+// read the file and post the raw bytes back (Uint8Array via structured
+// clone — one memcpy, no base64, no O(n²) decode). We can't `fetch(whale-
+// file://)` here: Chromium's CORS policy blocks cross-origin fetch to
+// custom schemes (only http/https/data/chrome are allowed), which rules out
+// pdfjs's `getDocument({url})` Range path. Mirrors office-viewer's
+// `requestOfficeConvert` → `officePdfContent` byte-bridge pattern.
+let fileBytesReqId = 0;
+const pendingFileBytes = new Map<
+  string,
+  (data: Uint8Array | null, error?: string) => void
+>();
+
+function requestFileBytes(path: string): Promise<Uint8Array | null> {
+  const requestId = `pb${(fileBytesReqId += 1)}`;
+  return new Promise<Uint8Array | null>((resolve) => {
+    pendingFileBytes.set(requestId, (data, error) => {
+      if (error) {
+        setLoadingBar(T.failedRender.replace('{msg}', error), 'error');
+      }
+      resolve(data ?? null);
+    });
+    window.whaleExt.postMessage({ type: 'requestFileBytes', requestId, path });
+  });
 }
 
-async function renderPdf(b64: string, fileSize: number | undefined) {
+/**
+ * Render a PDF from raw bytes the host ships back in response to our
+ * `requestFileBytes`. `fileSize` is set in the `fileContent` handler (the
+ * host sends size but an empty content blob).
+ */
+async function renderPdfBytes(bytes: Uint8Array) {
   const token = (state.loadToken += 1);
   // Reset transient state
   state.pageRotations.clear();
@@ -492,7 +538,6 @@ async function renderPdf(b64: string, fileSize: number | undefined) {
   state.currentPage = 1;
   state.manualZoom = 1;
   state.zoomMode = 'manual';
-  state.fileSize = fileSize;
   pageInput.value = '1';
   zoomLevelEl.textContent = '100%';
   fitWidthBtn.classList.remove('active');
@@ -502,21 +547,12 @@ async function renderPdf(b64: string, fileSize: number | undefined) {
   updatePageUi();
   setLoadingBar(T.loading, 'progress');
 
-  let bytes: Uint8Array;
-  try {
-    bytes = base64ToBytes(b64);
-  } catch {
-    setLoadingBar(T.failedDecode, 'error');
-    return;
-  }
-
-  // Phase 1 §B1: the session drives the per-page render loop now. The hook
-  // we registered at session creation handles per-canvas data-* stamping
-  // and CSS layout; `onDocumentLoaded` sets `state.pageCount` from
-  // `doc.numPages` before the first page renders; `onStatus` surfaces the
-  // session's per-page progress text through the localised loading-bar
-  // template. We still re-check the load token at every `await` boundary
-  // via the session's `getToken` plumbing.
+  // The session drives the per-page render loop. The hook we registered at
+  // session creation handles per-canvas data-* stamping and CSS layout;
+  // `onDocumentLoaded` sets `state.pageCount` from `doc.numPages` before the
+  // first page renders; `onStatus` surfaces the session's per-page progress
+  // text through the localised loading-bar template. We re-check the load
+  // token after the await via the session's `getToken` plumbing.
   try {
     await session.renderPdfBytes(bytes);
     if (token !== state.loadToken) return;
@@ -703,8 +739,36 @@ window.addEventListener('keydown', (e) => {
 window.whaleExt.onMessage((msg) => {
   switch (msg.type) {
     case 'fileContent':
-      renderPdf(msg.content, msg.size).catch(() => undefined);
+      // The host no longer base64-encodes the whole PDF into `content` (that
+      // froze the renderer on large files — a 50 MB PDF → O(n²)
+      // `binary += String.fromCharCode(...)` on the main thread). It sends an
+      // empty content blob + the path + size; we ask it to read the file and
+      // ship the raw bytes back via postMessage (Uint8Array structured clone
+      // — no base64, no O(n²) decode). We can't fetch(whale-file://) here:
+      // Chromium's CORS policy blocks cross-origin fetch to custom schemes,
+      // so pdfjs's getDocument({url}) Range path is out. Bytes-in is what
+      // works.
+      state.fileSize = msg.size;
+      updateStatusBar();
+      requestFileBytes(msg.path).then((bytes) => {
+        if (bytes) {
+          renderPdfBytes(bytes).catch(() => undefined);
+        } else {
+          setLoadingBar(
+            T.failedRender.replace('{msg}', 'file read failed'),
+            'error',
+          );
+        }
+      });
       break;
+    case 'fileBytes': {
+      const pending = pendingFileBytes.get(msg.requestId);
+      if (pending) {
+        pendingFileBytes.delete(msg.requestId);
+        pending(msg.data ?? null, msg.error);
+      }
+      break;
+    }
     case 'pdfAsset':
       // Shared session handles the cmap / font / wasm reply (with 30s timeout).
       if (session.handleHostMessage(msg)) break;
