@@ -71,6 +71,16 @@ body[data-theme='dark'] #splitter {
   line-height: 1.6;
 }
 
+/* Skip layout/paint for off-screen blocks. The preview re-renders wholesale
+ * on every edit (full innerHTML swap), so letting Chromium skip off-screen
+ * children is a free win on big docs. `contain-intrinsic-size` holds a
+ * placeholder height so the scrollbar doesn't thrash; `auto` lets the browser
+ * remember each block's real size once it has been rendered once. */
+#preview-pane > * {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 200px;
+}
+
 #preview-pane h1,
 #preview-pane h2,
 #preview-pane h3,

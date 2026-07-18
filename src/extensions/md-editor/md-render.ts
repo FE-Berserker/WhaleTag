@@ -567,7 +567,15 @@ export function resolveLocalImages(
     const resolved = resolveRelativeImagePath(currentDir, src);
     if (resolved === null) return;
     const url = encodeWhaleFileUrl(resolved);
-    if (url) el.setAttribute('src', url);
+    if (url) {
+      el.setAttribute('src', url);
+      // Lazy-load + async decode. The preview re-renders on every edit (full
+      // innerHTML swap → brand-new img nodes), so without these the browser
+      // requests + decodes every image at once — a storm on the whale-file://
+      // Range handler and main-thread decode jank for image-heavy notes.
+      el.setAttribute('loading', 'lazy');
+      el.setAttribute('decoding', 'async');
+    }
   });
 }
 
@@ -1786,9 +1794,6 @@ const MERMAID_SANDBOX_SRC = 'mermaid-sandbox.html';
  * selectors (cleaner than splitting by class name, since the
  * sandbox renderer needs to know `displayMode`).
  */
-const KATEX_INLINE_SELECTOR = '.katex.katex-inline[data-katex-source]';
-const KATEX_BLOCK_SELECTOR = '.katex.katex-block[data-katex-source]';
-
 /**
  * Walk the container and return every KaTeX placeholder (inline +
  * block, in document order). Pure DOM operation — no KaTeX
@@ -1808,16 +1813,9 @@ export interface KatexPlaceholder {
 }
 export function extractKatexBlocks(container: HTMLElement): KatexPlaceholder[] {
   const out: KatexPlaceholder[] = [];
-  // Order matters: query inline first, then block, then merge.
-  // `.katex-inline` and `.katex-block` are mutually exclusive via the
-  // extension's renderer, so this won't double-count.
-  const inline = Array.from(
-    container.querySelectorAll(KATEX_INLINE_SELECTOR)
-  ) as HTMLElement[];
-  const block = Array.from(
-    container.querySelectorAll(KATEX_BLOCK_SELECTOR)
-  ) as HTMLElement[];
-  // Walk in document order using a unified pass.
+  // Single unified pass in document order. (The old code queried inline and
+  // block selectors into locals that were never read, then re-queried with a
+  // unified selector — triple querySelectorAll per render.)
   const all = container.querySelectorAll(
     '.katex[data-katex-source]'
   ) as NodeListOf<HTMLElement>;
@@ -1827,11 +1825,6 @@ export function extractKatexBlocks(container: HTMLElement): KatexPlaceholder[] {
     const displayMode = el.hasAttribute('data-katex-display');
     out.push({ el, source, displayMode });
   }
-  // Reference the typed lists so TS doesn't complain about unused
-  // locals; the explicit split is kept for future callers that want
-  // just one form.
-  void inline;
-  void block;
   return out;
 }
 
@@ -1948,9 +1941,6 @@ export async function renderMermaid(container: HTMLElement): Promise<void> {
   );
   if (blocks.length === 0) return;
 
-  // eslint-disable-next-line no-console
-  console.log(`[md-editor] renderMermaid: ${blocks.length} block(s) to render`);
-
   const sb = await getSandbox();
   // Surface sandbox load failures (404, CSP reject, 5s timeout) to
   // the user instead of hanging silently. The sandbox's `ready`
@@ -1958,15 +1948,12 @@ export async function renderMermaid(container: HTMLElement): Promise<void> {
   // We don't await `ready` per render — the `render` calls just
   // queue and the sandbox dispatches them once `ready` resolves.
   // If `ready` is already settled (resolved), nothing changes.
-  sb.ready
-    .then(() => {
-      // eslint-disable-next-line no-console
-      console.log('[md-editor] renderMermaid: sandbox ready');
-    })
-    .catch((err) => {
-      // eslint-disable-next-line no-console
-      console.warn('[md-editor] mermaid sandbox failed to start', err);
-    });
+  // Surface sandbox load failures (404, CSP reject, 5s timeout) to the user
+  // instead of hanging silently. The success path needs no logging.
+  sb.ready.catch((err) => {
+    // eslint-disable-next-line no-console
+    console.warn('[md-editor] mermaid sandbox failed to start', err);
+  });
 
   // Mint one id per block so the sandbox's `rendered` / `error`
   // response can be matched back to the DOM placeholder.

@@ -129,10 +129,6 @@ export function createMermaidSandbox(opts: SandboxOptions): SandboxRenderer {
       data.type === 'ready' ||
       (data.type === 'rendered' && typeof data.svg === 'string') ||
       (data.type === 'error' && typeof data.message === 'string');
-    // eslint-disable-next-line no-console
-    console.log(
-      `[md-editor] sandbox msg: type=${data.type} id=${data.id} sourceMatch=${isFromOurSandbox}`
-    );
     if (!isFromOurSandbox && !isOursByShape) return;
 
     if (data.type === 'ready') {
@@ -144,10 +140,6 @@ export function createMermaidSandbox(opts: SandboxOptions): SandboxRenderer {
     if (!rpc) return;
     pending.delete(data.id);
     if (data.type === 'rendered' && typeof data.svg === 'string') {
-      // eslint-disable-next-line no-console
-      console.log(
-        `[md-editor] mermaid sandbox: rendered id=${data.id} svg.length=${data.svg.length}`
-      );
       rpc.resolve(data.svg);
     } else if (data.type === 'error') {
       // eslint-disable-next-line no-console
