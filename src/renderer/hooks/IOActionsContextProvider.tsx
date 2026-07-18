@@ -179,10 +179,28 @@ export function IOActionsContextProvider({
   const deleteEntry = useCallback(
     (targetPath: string) =>
       runAndRefresh(async () => {
-        await ipcApi.deletePath(targetPath, deleteToTrash);
+        try {
+          await ipcApi.deletePath(targetPath, deleteToTrash);
+        } catch (e) {
+          // shell.trashItem fails on UNC/network shares (Windows has no local
+          // Recycle Bin for them) and other trash-unsupported locations. The
+          // main process intentionally re-throws instead of silently escalating
+          // to a permanent delete — but the user asked for recoverable removal
+          // and it isn't available here, so offer a permanent delete with an
+          // explicit confirm (still user-consented, never silent).
+          if (!deleteToTrash) throw e;
+          if (
+            !window.confirm(
+              t('confirmDeleteTrashFailed', { name: basename(targetPath) })
+            )
+          ) {
+            throw e;
+          }
+          await ipcApi.deletePath(targetPath, false);
+        }
         refreshTree(parentDir(targetPath));
       }),
-    [runAndRefresh, deleteToTrash, refreshTree]
+    [runAndRefresh, deleteToTrash, refreshTree, t]
   );
 
   const createFolder = useCallback(

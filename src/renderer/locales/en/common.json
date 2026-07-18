@@ -540,6 +540,7 @@
   "tagsLibraryHint": "The full searchable tag library lives in the Tags panel on the left sidebar.",
   "tagsSmartTagsHint": "Smart tags (priority quadrants, ratings, dates, geo) are computed automatically; they cannot be renamed.",
   "confirmDeleteTrash": "Move \"{{name}}\" to trash?",
+  "confirmDeleteTrashFailed": "Moving to trash failed (network shares have no Recycle Bin). Permanently delete \"{{name}}\"? This cannot be undone.",
   "movedToTrash": "Moved to trash — recover from the system Recycle Bin / Trash.",
   "deletedPermanently": "Deleted permanently (not recoverable).",
   "openTrash": "Open Trash",

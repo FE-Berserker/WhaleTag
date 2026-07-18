@@ -523,6 +523,7 @@
   "tagsLibraryHint": "전체 검색 가능한 태그 라이브러리는 왼쪽 사이드바의 태그 패널에 있습니다.",
   "tagsSmartTagsHint": "스마트 태그(우선순위 사분면, 평점, 날짜, 지리)는 자동으로 계산되며 이름을 바꿀 수 없습니다.",
   "confirmDeleteTrash": "\"{{name}}\"을(를) 휴지통으로 이동하시겠습니까?",
+  "confirmDeleteTrashFailed": "휴지통 이동에 실패했습니다 (네트워크 공유 등은 휴지통이 없습니다). \"{{name}}\"을(를) 영구 삭제하시겠습니까? 되돌릴 수 없습니다.",
   "movedToTrash": "휴지통으로 이동했습니다 — 시스템 휴지통에서 복구하세요.",
   "deletedPermanently": "영구적으로 삭제되었습니다 (복구 불가).",
   "openTrash": "휴지통 열기",

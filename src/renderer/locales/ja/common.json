@@ -523,6 +523,7 @@
   "tagsLibraryHint": "検索可能な完全なタグライブラリーは、左サイドバーのタグパネルにあります。",
   "tagsSmartTagsHint": "スマートタグ (優先度の象限、評価、日付、位置情報) は自動的に計算されます。名前は変更できません。",
   "confirmDeleteTrash": "\"{{name}}\" をごみ箱に移動しますか?",
+  "confirmDeleteTrashFailed": "ゴミ箱への移動に失敗しました(ネットワーク共有などにはゴミ箱がありません)。完全に「{{name}}」を削除しますか?この操作は元に戻せません。",
   "movedToTrash": "ごみ箱に移動しました — システムのごみ箱から復元できます。",
   "deletedPermanently": "完全に削除しました (復元不可)。",
   "openTrash": "ごみ箱を開く",

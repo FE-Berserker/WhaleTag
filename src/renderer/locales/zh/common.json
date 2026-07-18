@@ -530,6 +530,7 @@
   "tagsLibraryHint": "完整可搜索的标签库也位于左侧栏的「标签」面板。",
   "tagsSmartTagsHint": "智能标签（象限、评分、日期、坐标）由系统自动计算,无法重命名。",
   "confirmDeleteTrash": "将「{{name}}」移到回收站？",
+  "confirmDeleteTrashFailed": "移到回收站失败(网络共享等位置没有回收站)。是否永久删除「{{name}}」?此操作不可撤销。",
   "movedToTrash": "已移到回收站 —— 可在系统回收站中恢复。",
   "deletedPermanently": "已永久删除（不可恢复）。",
   "openTrash": "打开回收站",

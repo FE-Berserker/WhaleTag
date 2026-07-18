@@ -530,6 +530,7 @@
   "tagsLibraryHint": "完整可搜尋的標籤庫也位於左側邊欄的「標籤」面板。",
   "tagsSmartTagsHint": "智慧標籤(象限、評分、日期、座標)由系統自動計算,無法重新命名。",
   "confirmDeleteTrash": "將「{{name}}」移到資源回收桶?",
+  "confirmDeleteTrashFailed": "移到資源回收桶失敗(網路共用等位置沒有資源回收桶)。是否永久刪除「{{name}}」?此操作無法復原。",
   "movedToTrash": "已移到資源回收桶 — 可在系統資源回收桶中還原。",
   "deletedPermanently": "已永久刪除(無法復原)。",
   "openTrash": "開啟資源回收桶",
