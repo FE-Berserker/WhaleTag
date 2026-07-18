@@ -48,7 +48,6 @@ import {
   extractMermaidBlocks,
   extractKatexBlocks,
   parseLineInput,
-  exportPreviewAsPdf,
   _resetSandboxForTest,
 } from './md-render';
 import { EditorState } from '@codemirror/state';
@@ -1224,76 +1223,6 @@ describe('extractKatexBlocks', () => {
       found.map((f) => f.displayMode),
       [false, true, false]
     );
-  });
-});
-
-// --- exportPreviewAsPdf (§18.3.2) -----------------------------------------
-
-describe('exportPreviewAsPdf', () => {
-  // PDF byte streams always start with `%PDF-` (the magic bytes).
-  // pdf-lib returns a Uint8Array; the Blob's `.arrayBuffer()`
-  // yields the same bytes via `new Uint8Array(buf)`.
-  async function pdfBytesOf(blob: Blob): Promise<Uint8Array> {
-    return new Uint8Array(await blob.arrayBuffer());
-  }
-
-  it('produces a valid PDF (starts with %PDF- magic bytes)', async () => {
-    const blob = await exportPreviewAsPdf('test.pdf', '<p>Hello</p>');
-    assert.ok(blob instanceof Blob, 'expected a Blob back');
-    const bytes = await pdfBytesOf(blob!);
-    const magic = String.fromCharCode(...bytes.slice(0, 5));
-    assert.equal(magic, '%PDF-', 'PDF files must start with %PDF-');
-  });
-
-  it('produces a non-trivial PDF for a real document with headings + lists + code', async () => {
-    const md = [
-      '# Title',
-      '',
-      'A paragraph with **bold** and *italic* text.',
-      '',
-      '## A heading',
-      '',
-      '- one',
-      '- two',
-      '- three',
-      '',
-      '```js',
-      'const x = 1;',
-      '```',
-      '',
-      '> blockquote',
-    ].join('\n');
-    const html = parseMarkdown(md);
-    const blob = await exportPreviewAsPdf('doc.pdf', html);
-    assert.ok(blob);
-    const bytes = await pdfBytesOf(blob!);
-    // Real PDF for this content is at least 1KB; tiny values mean
-    // the layout pipeline bailed early (e.g. empty body walk).
-    assert.ok(bytes.length > 1000, `PDF too small (${bytes.length}b)`);
-  });
-
-  it('handles empty input gracefully (produces a valid but minimal PDF)', async () => {
-    const blob = await exportPreviewAsPdf('empty.pdf', '');
-    assert.ok(blob);
-    const bytes = await pdfBytesOf(blob!);
-    const magic = String.fromCharCode(...bytes.slice(0, 5));
-    assert.equal(magic, '%PDF-');
-  });
-
-  it('emits mermaid placeholder text instead of SVG', async () => {
-    // The preview's mermaid blocks are <div class="mermaid"> with a
-    // <svg> child. The PDF exporter should NOT try to render the
-    // SVG; it emits a `[Mermaid diagram — see the source markdown]`
-    // stub instead (PDF can't render SVG without a heavy pipeline).
-    const html =
-      '<div class="mermaid"><svg><rect width="100" height="50"/></svg></div>';
-    const blob = await exportPreviewAsPdf('m.pdf', html);
-    assert.ok(blob);
-    const bytes = await pdfBytesOf(blob!);
-    // Just verify it's a valid PDF — the actual text content is
-    // encoded in pdf-lib's content streams (compressed / binary),
-    // so we don't try to grep for the placeholder text here.
-    assert.ok(bytes.length > 500);
   });
 });
 

@@ -29,7 +29,6 @@ import {
   renderMermaid,
   renderKatex,
   parseLineInput,
-  exportPreviewAsPdf as exportPreviewAsPdfBlob,
 } from './md-render';
 import { setupSplitter } from './md-splitter';
 
@@ -105,7 +104,6 @@ const wrapStateEl = document.getElementById('wrap-state') as HTMLSpanElement;
 const toggleTocBtn = document.getElementById('btn-toggle-toc') as HTMLButtonElement;
 const gotoLineBtn = document.getElementById('btn-goto-line') as HTMLButtonElement;
 const exportHtmlBtn = document.getElementById('btn-export-html') as HTMLButtonElement;
-const exportPdfBtn = document.getElementById('btn-export-pdf') as HTMLButtonElement;
 
 // §18.3.1 — TOC sidebar elements. The sidebar is a 4th flex child in
 // `#main-row`, hidden by default via the `hidden` attribute; the toolbar
@@ -610,43 +608,6 @@ function exportPreviewAsHtml(): void {
   triggerDownload(outName, wrapHtmlDocument(title, previewPane.innerHTML), 'text/html');
 }
 
-/**
- * §18.3.2 — export the current preview as a PDF. Wraps the
- * preview's current `innerHTML` (sanitized + highlighted + image-
- * resolved + mermaid-rendered + katex-rendered) and converts to a
- * PDF via `pdf-lib` (dynamically imported inside the helper). Same
- * filename pattern as the HTML export.
- *
- * Async because pdf-lib awaits font loads internally. The browser
- * download fires as soon as the Blob is ready; if the user clicks
- * the button twice in quick succession, the second invocation
- * races the first — last write wins on the download side, no
- * corruption because each `exportPreviewAsPdf` produces a complete
- * PDF independently.
- *
- * No toast UI yet — the user sees the browser's download
- * notification (chrome download bar / firefox download panel /
- * save dialog). §18.3.2 二期 could add an inline "rendering…"
- * state on the button.
- */
-async function exportPreviewAsPdf(): Promise<void> {
-  const sep = currentPath
-    ? Math.max(currentPath.lastIndexOf('/'), currentPath.lastIndexOf('\\'))
-    : -1;
-  const baseName =
-    currentPath && sep >= 0
-      ? currentPath.slice(sep + 1)
-      : currentPath ?? 'untitled';
-  const dot = baseName.lastIndexOf('.');
-  const stem = dot > 0 ? baseName.slice(0, dot) : baseName;
-  const outName = `${stem || 'untitled'}.pdf`;
-  const blob = await exportPreviewAsPdfBlob(outName, previewPane.innerHTML);
-  if (!blob) return;
-  // Re-use `triggerDownload` by writing the Blob to a synthetic
-  // string route — it accepts `Blob` directly (md-render.ts:1068).
-  triggerDownload(outName, blob, 'application/pdf');
-}
-
 function renderPreview(content: string) {
   // §18.2.4 — content-equality short-circuit. The expensive pipeline
   // (parseMarkdown + DOMPurify + innerHTML + hljs + image resolve) is
@@ -919,15 +880,6 @@ function createEditor(container: HTMLElement) {
   // innerHTML (which has been sanitized + highlighted + image-resolved).
   exportHtmlBtn.addEventListener('click', () => {
     exportPreviewAsHtml();
-  });
-  // §18.3.2 — Export Preview as PDF. Same source as the HTML
-  // export; converted to PDF via pdf-lib (dynamically imported
-  // inside `exportPreviewAsPdf` to keep the bundle small). Shows
-  // a confirmation toast via the button's `title` on hover; no
-  // inline alert / toast UI to keep this simple (§18.3.2 二期
-  // could add a real progress indicator).
-  exportPdfBtn.addEventListener('click', () => {
-    void exportPreviewAsPdf();
   });
 
   // Initial toolbar state indicator.
