@@ -211,8 +211,113 @@ export function computeBlockLineNumbers(tokens: Token[]): number[] {
  * test environment without `global-jsdom`) — the line attributes are
  * skipped but the HTML is still valid.
  */
+// --- Callout (Obsidian / GitHub Alerts) -----------------------------------
+
+/** Emoji icon per callout type. Unknown types fall back to the note icon. */
+const CALLOUT_ICON: Record<string, string> = {
+  note: '📝',
+  tip: '💡',
+  important: '❗',
+  warning: '⚠️',
+  caution: '🚫',
+  info: 'ℹ️',
+  success: '✅',
+  question: '❓',
+  danger: '🔥',
+  bug: '🐛',
+  example: '📋',
+  quote: '💬',
+  abstract: '📄',
+  failure: '❌',
+  todo: '✔️',
+};
+const DEFAULT_CALLOUT_ICON = '📝';
+
+/**
+ * Remove `prefix` from the start of `el`'s leading text node, if that node
+ * is a text node beginning with exactly `prefix`. Used to strip the
+ * `[!TYPE]` marker line off a callout's first paragraph.
+ */
+function stripLeadingText(el: Element, prefix: string): void {
+  const node = el.firstChild;
+  if (!node || node.nodeType !== Node.TEXT_NODE) return;
+  const t = node.textContent || '';
+  if (!t.startsWith(prefix)) return;
+  const rest = t.slice(prefix.length);
+  if (rest) node.textContent = rest;
+  else node.remove();
+}
+
+/**
+ * Turn `> [!TYPE]` / `> [!TYPE]: title` / `> [!TYPE]+|-` blockquotes into
+ * callout boxes — Obsidian callout syntax (a superset of GitHub Alerts: the
+ * parser recognises GitHub's 5 types plus custom titles, folding, and any
+ * `[!custom-type]`). Plain blockquotes are left untouched. Runs inside the
+ * `parseMarkdown` DOMParser phase so the callout inherits the blockquote's
+ * `data-source-line` (TOC / scroll-sync still land correctly).
+ *
+ * Layout:
+ *   - non-fold → `<div class="callout callout-{type}">` with a `.callout-title`
+ *     header and `.callout-content` body.
+ *   - fold (`-` / `+`) → same shape but `<details>`/`<summary>`, with `open`
+ *     set for `+` (expanded) and omitted for `-` (collapsed). Native `<details>`
+ *     folding needs no JS.
+ */
+function transformCallouts(root: Element): void {
+  // Static snapshot — we mutate the tree (replaceWith) inside the loop.
+  const quotes = Array.from(root.querySelectorAll('blockquote'));
+  for (const bq of quotes) {
+    const firstP = bq.querySelector('p');
+    if (!firstP) continue;
+    const text = firstP.textContent || '';
+    // `[!TYPE]` then optional fold (+/-) then optional `: title` to end of line.
+    const m = /^\[!([\w-]+)\][ \t]*([+-]?)(?::[ \t]*([^\n]*))?(?:\r?\n|$)/.exec(
+      text
+    );
+    if (!m) continue;
+    const [, typeRaw, fold, titleRaw] = m;
+    const type = typeRaw.toLowerCase();
+    const icon = CALLOUT_ICON[type] ?? DEFAULT_CALLOUT_ICON;
+    const title = (titleRaw && titleRaw.trim()) || typeRaw.toUpperCase();
+
+    // Strip the `[!TYPE]...` marker line off firstP so it isn't duplicated
+    // in the rendered content.
+    stripLeadingText(firstP, m[0]);
+    if (!firstP.textContent?.trim()) firstP.remove();
+
+    const isFold = fold === '-' || fold === '+';
+    const container = document.createElement(isFold ? 'details' : 'div');
+    container.className = `callout callout-${type}`;
+    if (fold === '+') container.setAttribute('open', '');
+    const line = bq.getAttribute('data-source-line');
+    if (line) container.setAttribute('data-source-line', line);
+
+    const titleEl = document.createElement(isFold ? 'summary' : 'div');
+    titleEl.className = 'callout-title';
+    const iconEl = document.createElement('span');
+    iconEl.className = 'callout-icon';
+    iconEl.textContent = icon;
+    titleEl.appendChild(iconEl);
+    titleEl.appendChild(document.createTextNode(` ${title}`));
+    container.appendChild(titleEl);
+
+    const content = document.createElement('div');
+    content.className = 'callout-content';
+    while (bq.firstChild) content.appendChild(bq.firstChild);
+    container.appendChild(content);
+
+    bq.replaceWith(container);
+  }
+}
+
 export function parseMarkdown(content: string): string {
-  const tokens = md.lexer(content);
+  // Protect `> [!TYPE]` from being parsed as a link reference definition.
+  // marked consumes `[!info]: title` as a link def (label `!info`, url `title`),
+  // stripping the marker before transformCallouts can see it. Escape the
+  // leading `[` on blockquote lines that start with `[!` so it survives as a
+  // literal `[`; transformCallouts then turns the blockquote into a callout.
+  const src = content.replace(/^(\s*>+\s*)\[!/gm, '$1\\[!');
+  const tokens = md.lexer(src);
   const html = md.parser(tokens) as string;
   const lineNumbers = computeBlockLineNumbers(tokens);
 
@@ -244,6 +349,7 @@ export function parseMarkdown(content: string): string {
       blocks[i].setAttribute('id', `md-h-${lineForId}-${text.length}`);
     }
   }
+  transformCallouts(root);
   return root.innerHTML;
 }
 
@@ -295,6 +401,15 @@ export const DOMPURIFY_CONFIG = {
     'dl',
     'dt',
     'dd',
+    // Extra flow / inline tags for rich embedded HTML and callout folding:
+    'details',
+    'summary',
+    'kbd',
+    'mark',
+    'sub',
+    'sup',
+    'ins',
+    'del',
   ],
   ALLOWED_ATTR: [
     'href',

@@ -196,6 +196,8 @@ src/extensions/
 17. **撤销/重做指示 + "Modified" 角标** ✅ 已修(2026-07-07 Week 5,Modified 角标部分)— 状态栏右侧 `#status-dirty` 元素(orange ● + Modified),`updateListener` docChanged 置 true,`savingFile` 消息置 false,`setContent` 置 false。**撤销/重做红点**未做(Week 6+ 候选)
 18. **阅读时长 / 字数实时统计** ✅ 已修(2026-07-07 Week 5)— 字数在 Week 3 #7 状态栏 `Words` 字段;阅读时长 [`estimateReadingMinutes(text)`](../src/extensions/md-editor/md-render.ts) CJK-aware(英文 200 wpm + CJK 400 cpm),`englishWords = countWords - cjkRuns`,空 0 非空至少 1。状态栏 `Words.title` 显示 "N min read"
 
+**callout(Obsidian / GitHub Alerts)+ 内嵌 HTML 标签**(2026-07-18 新增)— `> [!TYPE]` 渲染成带图标 / 颜色 / 可折叠的提示框(`note` / `tip` / `warning` / `danger` / `info` / `success` / `question` / `bug` / `important` / `caution` / `example` / `quote` / `abstract` / `failure` / `todo` 共 15 种 + 未知类型 fallback 到默认图标 + `callout-{type}` class)。支持 `> [!TYPE]: 自定义标题` 和折叠(`> [!info]-` 收起 / `+` 展开,用原生 `<details>` 无需 JS)。由 [`transformCallouts`](../src/extensions/md-editor/md-render.ts) 在 `parseMarkdown` 阶段把 `> [!TYPE]` blockquote 转成 callout(复用 DOMParser,保留 `data-source-line` 供 TOC / 滚动同步定位)。DOMPurify allow-list 同时扩展 `details` / `summary` / `kbd` / `mark` / `sub` / `sup` / `ins` / `del`,内嵌 HTML 渲染更丰富(`<style>` 仍禁)。
+
 **🛠️ 代码质量 & 安全**
 
 19. **DOMPurify `style` 白名单太宽** ✅ 已修(2026-07-06 Week 1)— `DOMPURIFY_CONFIG` 拆到 [md-render.ts](../src/extensions/md-editor/md-render.ts),`ALLOWED_ATTR` 删 `style` **并加 `FORBID_ATTR: ['style']` belt-and-suspenders**(`USE_PROFILES: { html: true }` 默认放行 style,单删 `ALLOWED_ATTR` 不够)。见 [docs/09 §18.4.1](./09-known-issues.md)

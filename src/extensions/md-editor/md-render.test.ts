@@ -169,6 +169,65 @@ describe('parseMarkdown', () => {
   });
 });
 
+// --- callout (Obsidian / GitHub Alerts) -----------------------------------
+
+describe('callout (Obsidian / GitHub Alerts)', () => {
+  it('renders > [!NOTE] as a callout box (replaces blockquote)', () => {
+    const html = parseMarkdown('> [!NOTE]\n> This is a note.');
+    assert.match(html, /<div class="callout callout-note"/);
+    assert.match(html, /callout-icon">📝/);
+    assert.match(html, /NOTE/);
+    assert.match(html, /This is a note\./);
+    assert.equal(/blockquote/.test(html), false, 'blockquote should be replaced');
+  });
+
+  it('maps known types to icons + classes', () => {
+    assert.match(parseMarkdown('> [!warning]\n> x'), /callout-warning/);
+    assert.match(parseMarkdown('> [!warning]\n> x'), /⚠️/);
+    assert.match(parseMarkdown('> [!tip]\n> x'), /callout-tip/);
+    assert.match(parseMarkdown('> [!tip]\n> x'), /💡/);
+    assert.match(parseMarkdown('> [!danger]\n> x'), /callout-danger/);
+    assert.match(parseMarkdown('> [!danger]\n> x'), /🔥/);
+  });
+
+  it('uses a custom title after `: title`', () => {
+    const html = parseMarkdown('> [!info]: My Heading\n> body');
+    assert.match(html, /My Heading/);
+    assert.equal(/INFO/.test(html), false, 'custom title replaces the TYPE word');
+  });
+
+  it('folds with - (collapsed) and + (expanded) via <details>', () => {
+    const collapsed = parseMarkdown('> [!info]-\n> hidden');
+    assert.match(collapsed, /<details class="callout callout-info"/);
+    assert.equal(/open=""/.test(collapsed), false);
+    const expanded = parseMarkdown('> [!info]+\n> shown');
+    assert.match(expanded, /<details class="callout callout-info" open=""/);
+  });
+
+  it('falls back to default icon + custom-type class for unknown types', () => {
+    const html = parseMarkdown('> [!my-fancy-type]\n> x');
+    assert.match(html, /callout-my-fancy-type/);
+    assert.match(html, /📝/); // default
+  });
+
+  it('leaves plain blockquotes untouched', () => {
+    const html = parseMarkdown('> just a quote');
+    // Match the tag open — the blockquote carries data-source-line.
+    assert.match(html, /<blockquote\b/);
+    assert.equal(/callout/.test(html), false);
+  });
+
+  it('survives sanitizeMarkdownHtml (class + details/summary kept, style dropped)', () => {
+    const clean = sanitizeMarkdownHtml(parseMarkdown('> [!warning]: T\n> body'));
+    assert.match(clean, /<div class="callout callout-warning"/);
+    assert.match(clean, /callout-title/);
+    assert.equal(/style=/.test(clean), false);
+    const folded = sanitizeMarkdownHtml(parseMarkdown('> [!info]-\n> x'));
+    assert.match(folded, /<details class="callout callout-info"/);
+    assert.match(folded, /<summary class="callout-title"/);
+  });
+});
+
 // --- DOMPURIFY_CONFIG (§18.4.1) -------------------------------------------
 
 describe('DOMPURIFY_CONFIG', () => {
@@ -242,6 +301,20 @@ describe('sanitizeMarkdownHtml', () => {
     const clean = sanitizeMarkdownHtml(raw);
     assert.match(clean, /<h1>Title<\/h1>/);
     assert.match(clean, /<code>code<\/code>/);
+  });
+
+  it('allows embedded HTML tags: kbd / mark / details / summary / ins / del / sub / sup (still strips <script>)', () => {
+    const raw =
+      '<kbd>Ctrl</kbd><mark>hl</mark><details><summary>t</summary>b</details>' +
+      '<ins>add</ins><del>rm</del><sub>2</sub><sup>2</sup>' +
+      '<script>alert(1)</script>';
+    const clean = sanitizeMarkdownHtml(raw);
+    assert.match(clean, /<kbd>Ctrl<\/kbd>/);
+    assert.match(clean, /<mark>hl<\/mark>/);
+    assert.match(clean, /<details><summary>t<\/summary>b<\/details>/);
+    assert.match(clean, /<ins>add<\/ins>/);
+    assert.match(clean, /<del>rm<\/del>/);
+    assert.equal(clean.includes('<script'), false);
   });
 });
 
