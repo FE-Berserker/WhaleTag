@@ -69,6 +69,42 @@ describe('encodeWhaleFileUrl', () => {
       'whale-file:///home/foo/100%2525.mp4'
     );
   });
+
+  it('encodes a UNC share (\\\\server\\share\\...) as host + path', () => {
+    // WHATWG file:// UNC semantics: the server becomes the URL host. The old
+    // four-slash `whale-file:////server/...` form was mangled by Chromium's
+    // GURL (server folded into a lowercased host) and the server was lost on
+    // decode, producing a 403.
+    assert.equal(
+      encodeWhaleFileUrl('\\\\server\\share\\file.flac'),
+      'whale-file://server/share/file.flac'
+    );
+  });
+
+  it('lowercases the UNC server (URL host semantics)', () => {
+    assert.equal(
+      encodeWhaleFileUrl('\\\\FE-cat\\share\\file.flac'),
+      'whale-file://fe-cat/share/file.flac'
+    );
+  });
+
+  it('percent-encodes UNC share/path segments (CJK, spaces)', () => {
+    assert.equal(
+      encodeWhaleFileUrl('\\\\FE-cat\\003_文档\\久石让\\The Best Collection.flac'),
+      'whale-file://fe-cat/003_%E6%96%87%E6%A1%A3/%E4%B9%85%E7%9F%B3%E8%AE%A9/The%20Best%20Collection.flac'
+    );
+  });
+
+  it('returns null for a UNC share with a non-ASCII server', () => {
+    // A CJK server would be Punycode-mangled by Chromium's host parser into
+    // a name SMB can't reach. Reject explicitly so the caller shows
+    // 'streaming URL unavailable' instead of a silent bad URL.
+    assert.equal(encodeWhaleFileUrl('\\\\服务器\\share\\file.flac'), null);
+  });
+
+  it('returns null for a bare UNC server with no share', () => {
+    assert.equal(encodeWhaleFileUrl('\\\\server'), null);
+  });
 });
 
 describe('decodeWhaleFileUrl', () => {
@@ -113,6 +149,16 @@ describe('decodeWhaleFileUrl', () => {
     // and the path resolution / allowed-roots check fails naturally with 404.
     const result = decodeWhaleFileUrl('whale-file:///home/foo/%ZZ.mp4');
     assert.equal(result, '/home/foo/%ZZ.mp4');
+  });
+
+  it('decodes a UNC URL back to //server/share (recovers the host)', () => {
+    // Chromium normalizes the host to lowercase. The decoder MUST read
+    // `url.hostname` (not just `pathname`) or the server is lost — the exact
+    // regression that caused 403 on UNC shares.
+    assert.equal(
+      decodeWhaleFileUrl('whale-file://fe-cat/003_%E6%96%87%E6%A1%A3/file.flac'),
+      '//fe-cat/003_文档/file.flac'
+    );
   });
 });
 
@@ -159,6 +205,34 @@ describe('encode/decode round-trip', () => {
       // those on Windows), but the segment content is preserved.
       const decoded = decodeWhaleFileUrl(encoded);
       const expected = tc.path.replace(/\\/g, '/');
+      assert.equal(decoded, expected);
+    });
+  }
+
+  // UNC shares (\\server\share\...). The URL host parser lowercases the
+  // server (Windows SMB is case-insensitive), so the round-trip lowercases
+  // the whole path for the assertion; share/path segment content is preserved.
+  const uncCases: Array<{ name: string; path: string }> = [
+    { name: 'simple UNC share', path: '\\\\server\\share\\file.flac' },
+    { name: 'UNC with uppercase server', path: '\\\\FE-cat\\share\\file.flac' },
+    {
+      name: 'UNC with CJK share/path',
+      path: '\\\\FE-cat\\003_文档\\久石让\\track.flac',
+    },
+    { name: 'UNC with spaces', path: '\\\\server\\my share\\foo bar.flac' },
+    { name: 'UNC with literal percent', path: '\\\\server\\share\\100%file.flac' },
+    {
+      name: 'UNC deep nesting',
+      path: '\\\\server\\share\\a\\b\\c\\d\\file.flac',
+    },
+  ];
+
+  for (const tc of uncCases) {
+    it(`round-trips: ${tc.name}`, () => {
+      const encoded = encodeWhaleFileUrl(tc.path);
+      assert.ok(encoded, `encoder must accept ${tc.path}`);
+      const decoded = decodeWhaleFileUrl(encoded);
+      const expected = tc.path.replace(/\\/g, '/').toLowerCase();
       assert.equal(decoded, expected);
     });
   }
@@ -226,5 +300,23 @@ describe('whale-file vs whale-audio scheme isolation', () => {
     const p = '/home/foo/中文 track.ape';
     assert.equal(decodeWhaleAudioUrl(encodeWhaleAudioUrl(p)), p);
     assert.equal(decodeWhaleFileUrl(encodeWhaleFileUrl(p)), p);
+  });
+
+  it('both schemes round-trip a UNC path', () => {
+    const p = '\\\\FE-cat\\share\\中文 track.ape';
+    const expected = p.replace(/\\/g, '/').toLowerCase();
+    assert.equal(decodeWhaleFileUrl(encodeWhaleFileUrl(p)), expected);
+    assert.equal(decodeWhaleAudioUrl(encodeWhaleAudioUrl(p)), expected);
+  });
+
+  it('decodeWhaleAudioUrl rejects whale-file UNC URLs (and vice versa)', () => {
+    assert.equal(
+      decodeWhaleAudioUrl('whale-file://server/share/track.ape'),
+      null
+    );
+    assert.equal(
+      decodeWhaleFileUrl('whale-audio://server/share/track.ape'),
+      null
+    );
   });
 });
