@@ -11,14 +11,29 @@ import { registerAiCoreHandlers, maybeRegisterAiRuntimeHandlers } from './ai/ipc
 // first IPC request and torn down here on app quit (best-effort kill;
 // graceful shutdown with WAL flush is a follow-up).
 import { killIndexWorker } from './index-worker-host';
+// Thumbnail-render utilityProcess (pdf/ebook/font pure-JS CPU, docs/06 §8).
+// Lazy-spawned on the first pdf/ebook/font thumbnail; torn down here on app
+// quit (best-effort kill).
+import { killThumbWorker } from './thumb-worker-host';
 // P3-3: office→PDF persistent UNO worker. Lazy-spawned on the first office
 // conversion; torn down here on app quit (kills the python worker AND its
 // soffice listener grandchild via tree-kill).
 import { killOfficeWorker } from './office-worker/office-worker-host';
+// Phase 6: application auto-update via electron-updater + GitHub Releases.
+// The IPC handlers + startup-delayed check + dev-mode short-circuit all
+// live in this module. See docs/18-auto-update.md for the full flow.
+import {
+  initAutoUpdater,
+  scheduleStartupCheck,
+  checkForUpdates,
+  downloadUpdate,
+  quitAndInstall,
+  subscribe as subscribeAutoUpdate,
+} from './auto-update';
 import { buildMenu } from './menu';
-import { assertWithinAllowedRoot, getAllowedRoots } from './allowed-roots';
+import { assertWithinAllowedRoot } from './allowed-roots';
+import { getWhaleAppVersion } from './app-version';
 import { mediaConvertSemaphore } from './concurrency';
-import { runMigration } from './migrate-date-tags';
 import { decodeWhaleAudioUrl, decodeWhaleFileUrl } from '../shared/whale-file-url';
 import { createFileRangeResponse } from './protocol-range';
 import { spawnTranscodeStream } from './audio-convert';
@@ -35,6 +50,19 @@ import {
  */
 const isDev = process.env.NODE_ENV === 'development';
 const DEV_SERVER_URL = 'http://localhost:4002';
+
+// Console logging must never crash the app. In dev, Electron's stdio is a
+// pipe owned by the spawning tool (electronmon / concurrently); once that
+// parent dies — routine with accumulated dev instances (docs/01 §8) — any
+// `console.*` write raises EPIPE as an *uncaught* exception (seen in the
+// field as a Mapique crash from extractGps' per-file console.debug,
+// docs/09 §27). Swallow EPIPE on both streams: a GUI app losing log output
+// beats crashing.
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on('error', (err: NodeJS.ErrnoException) => {
+    if (err?.code !== 'EPIPE') throw err;
+  });
+}
 
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
@@ -204,6 +232,51 @@ function configureCsp(): void {
   });
 }
 
+/**
+ * Register IPC channels for application auto-update. Each `webContents.send`
+ * broadcast targets the channel the renderer is listening on
+ * (`onAppUpdateEvent`). The renderer is responsible for surfacing UI; main
+ * just normalises the wire shape and keeps a single source of truth in
+ * `auto-update.ts`.
+ *
+ * Concurrency: `checkForUpdates()` dedupes itself in `auto-update.ts`; the
+ * download / quit channels are idempotent.
+ */
+function registerAutoUpdateHandlers(): void {
+  // App metadata — not auto-update, but the same `app:` channel family, so it
+  // rides along here. Used by Settings → About. Read from the real
+  // package.json (not Electron's `app.getVersion()` which can report the
+  // Electron runtime version when the app is launched via a script path).
+  ipcMain.handle('app:getVersion', () => getWhaleAppVersion());
+  ipcMain.handle('app:update-check', () => checkForUpdates());
+  ipcMain.handle('app:update-download', () => downloadUpdate());
+  ipcMain.on('app:update-quit-and-install', () => quitAndInstall());
+
+  // Bridge the in-process subscriber Set to the per-window push channel.
+  // `auto-update.ts` already calls `subscribe()` on its own events; we
+  // forward every event payload to all live BrowserWindows.
+  subscribeAutoUpdate('available', (info) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send('app:update-available', info);
+    }
+  });
+  subscribeAutoUpdate('progress', (p) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send('app:update-progress', p);
+    }
+  });
+  subscribeAutoUpdate('downloaded', (info) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send('app:update-downloaded', info);
+    }
+  });
+  subscribeAutoUpdate('error', (msg) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send('app:update-error', msg);
+    }
+  });
+}
+
 function bootstrap(): void {
   Menu.setApplicationMenu(buildMenu());
   registerIpcHandlers();
@@ -212,30 +285,22 @@ function bootstrap(): void {
   // is installed (user-installed .whaleai → <userData>/components/ai). Core
   // handlers — keys, CLI discovery, component install/state — always register.
   void maybeRegisterAiRuntimeHandlers();
+  // Application auto-update (electron-updater + GitHub Releases). Wire the
+  // `electron-updater` event bus into our local listener Set; the IPC
+  // handlers below (app:update-check / app:update-download / etc.) and the
+  // startup-delayed check piggyback on this. See docs/18-auto-update.md.
+  initAutoUpdater();
+  registerAutoUpdateHandlers();
+  scheduleStartupCheck();
 
-  // Phase 4 (§8): one-shot migration of legacy smart-tag storage form
-  // (`today-20251223` → `20251223` etc.) across every allowed location.
-  // Background fire-and-forget: never blocks startup, never throws — the
-  // result is logged for diagnostics. The migration is idempotent so it's
-  // safe to run on every boot (subsequent runs find nothing to do and
-  // skip the backup-once flag write).
-  void runMigration(getAllowedRoots())
-    .then((res) => {
-      // eslint-disable-next-line no-console
-      console.log(
-        `[migrate-date-tags] scanned=${res.totalScanned} ` +
-          `migrated=${res.totalMigrated} backups=${res.totalBackups} ` +
-          `errors=${res.totalErrors}`
-      );
-    })
-    .catch((err) => {
-      // eslint-disable-next-line no-console
-      console.error('[migrate-date-tags] unexpected error', err);
-    });
+  // Phase 4 date-tag migration is NOT launched here: it is triggered by the
+  // first non-empty `fs:setAllowedRoots` push (see ipc.ts) — at bootstrap the
+  // renderer hasn't mounted yet, so the root set would always be empty and
+  // the migration would silently no-op (docs/09 §26).
 
   // Renderer has finished flushing redux-persist; finish closing the window.
-  // The storage adapter now writes synchronously in the main process, so no
-  // additional Chromium storage flush is required.
+  // The storage adapter is async (invoke), so this handshake drains in-flight
+  // persist writes before the window is destroyed — it must stay.
   ipcMain.on('app:flush-complete', () => {
     if (closeFallback) {
       clearTimeout(closeFallback);
@@ -265,6 +330,9 @@ function bootstrap(): void {
   // keep the cache `.tmp` handle locked).
   app.on('before-quit', () => {
     killIndexWorker();
+    // Thumbnail-render utilityProcess (pdf/ebook/font); same best-effort
+    // semantics as the index worker above.
+    killThumbWorker();
     killAllAudioTranscodes();
     // P3-3: persistent office→PDF UNO worker + its soffice listener grandchild.
     killOfficeWorker();

@@ -38,7 +38,7 @@ import {
   tagOrModifiedDateKey,
   yearMonths,
   isDateTypedTag,
-} from '../../shared/calendar';
+} from '../domain/calendar';
 
 /** i18n stub: returns the key (or key|opts format). See tag-display.test.ts. */
 function makeT(): FileCellData['t'] {
@@ -248,7 +248,7 @@ before(async () => {
 // Test #1: pure-function isDateTypedTag (already covered in calendar.test.ts
 // but listed in PA-1 as one of the 8 tests so we re-assert the contract here).
 // ---------------------------------------------------------------------
-describe('CalendarView PA-1 #1: isDateTypedTag via shared/calendar', () => {
+describe('CalendarView PA-1 #1: isDateTypedTag via renderer/domain/calendar', () => {
   it('returns true for date-typed tags and false otherwise', () => {
     assert.ok(isDateTypedTag('today-20260628'));
     assert.ok(isDateTypedTag('20260628'));

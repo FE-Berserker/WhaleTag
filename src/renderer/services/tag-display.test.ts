@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { TFunction } from 'i18next';
 import { geoTagDisplayLabel, tagDisplayLabel, chipSx, outlinedTagChipSx } from './tag-display';
-import { TAG_SHAPES } from '../../shared/tag-colors';
+import { TAG_SHAPES } from '../domain/tag-colors';
 
 /**
  * The label helpers don't need a real i18next instance: each one returns the

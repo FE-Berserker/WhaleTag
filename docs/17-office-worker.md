@@ -41,7 +41,7 @@ PDF 走 **write-to-path**(worker `storeToURL` 直接写到 caller 指定的 `out
 |---|---|
 | [uno-worker.py](../src/main/office-worker/uno-worker.py) | Python 桥接端:启动 listener、UNO 连接、Desktop 缓存、转换、stdin JSON 协议、graceful teardown |
 | [office-worker-host.ts](../src/main/office-worker/office-worker-host.ts) | Node host:惰性 spawn、reqId 关联、ready 握手、cooldown FSM、崩溃重 spawn、shutdown tree-kill。照搬 [index-worker-host.ts](../src/main/index-worker-host.ts) 骨架,改用 `child_process.spawn` + 行 JSON |
-| [office-worker-python.ts](../src/main/office-worker/office-worker-python.ts) | 发现能 `import uno` 的解释器(LO 自带 python 优先,系统 `python3-uno` 兜底),镜像 [sofficeBinary()](../src/main/thumbnail.ts) 的 inflight+memo 形状 |
+| [office-worker-python.ts](../src/main/office-worker/office-worker-python.ts) | 发现能 `import uno` 的解释器(LO 自带 python 优先,系统 `python3-uno` 兜底),镜像 [sofficeBinary()](../src/main/office-binary.ts) 的 inflight+memo 形状 |
 | [office-worker-script.ts](../src/main/office-worker/office-worker-script.ts) | 脚本路径 resolver(packaged 走 `extraResources`,dev 走源码) |
 
 接入点:`convertOfficeToPdfVia`([office-convert.ts](../src/main/office-convert.ts))是两调用点合并的共享核心 —— worker 优先,execFile 兜底,`sofficeSemaphore.run` 包两路。`convertOfficeToPdf`(office-viewer)与 `encodeOfficeThumb`(thumbnail)都改成它的薄壳,顺便删掉重复的 spawn body。

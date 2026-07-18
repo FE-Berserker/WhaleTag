@@ -40,6 +40,7 @@ import {
   setFileEditState,
   clearFileEditState,
 } from '-/reducers/extensions';
+import { setMdRenderTheme } from '-/reducers/settings';
 
 interface ExtensionHostProps {
   manifest: ExtensionManifest;
@@ -166,6 +167,12 @@ export default function ExtensionHost({
   const calibrePath = useSelector(
     (s: RootState) => s.settings?.calibrePath ?? null
   );
+  const mdRenderTheme = useSelector(
+    (s: RootState) => s.settings?.mdEditorRenderTheme ?? 'auto'
+  );
+  const customCallouts = useSelector(
+    (s: RootState) => s.settings?.customCallouts ?? []
+  );
   const dirty = editState?.dirty ?? false;
 
   const postToExtension = useCallback(
@@ -251,6 +258,20 @@ export default function ExtensionHost({
       postToExtension({ type: 'setTheme', theme });
     }
   }, [theme, ready, postToExtension]);
+
+  // md-editor render-theme preset + custom callouts (host → ext). Only
+  // md-editor acts on these; other extensions ignore them (onMessage default).
+  useEffect(() => {
+    if (ready) {
+      postToExtension({ type: 'setMdRenderTheme', theme: mdRenderTheme });
+    }
+  }, [mdRenderTheme, ready, postToExtension]);
+
+  useEffect(() => {
+    if (ready) {
+      postToExtension({ type: 'setCustomCallouts', callouts: customCallouts });
+    }
+  }, [customCallouts, ready, postToExtension]);
 
   useEffect(() => {
     if (ready) {
@@ -675,6 +696,35 @@ export default function ExtensionHost({
                 type: 'fileBytes',
                 requestId,
                 data: null,
+                error: e instanceof Error ? e.message : String(e),
+              });
+            });
+          break;
+        }
+        case 'mdRenderThemeChanged': {
+          // md-editor toolbar <select> changed the preset → sync back into
+          // redux so Settings stays in sync (bidirectional). This dispatch
+          // triggers the setMdRenderTheme useEffect above, which re-posts
+          // the same value the iframe just told us — no loop (the iframe's
+          // onMessage for setMdRenderTheme is a no-op when the value matches
+          // its current mdThemePref).
+          dispatch(setMdRenderTheme(msg.theme));
+          break;
+        }
+        case 'requestSaveImage': {
+          // §paste-image (md-editor): save the pasted clipboard image into the
+          // .md's directory, return the absolute path so the editor can link it.
+          const { requestId, dataURL, ext, dirPath } = msg;
+          ipcApi
+            .saveImageToFile(dataURL, dirPath, ext)
+            .then((savedPath: string) => {
+              postToExtension({ type: 'imageSaved', requestId, path: savedPath });
+            })
+            .catch((e: unknown) => {
+              postToExtension({
+                type: 'imageSaved',
+                requestId,
+                path: null,
                 error: e instanceof Error ? e.message : String(e),
               });
             });

@@ -13,8 +13,8 @@ import {
   moveThumbnail,
   copyThumbnail,
   thumbPathFor,
-  isSofficeAvailable,
 } from './thumbnail';
+import { isSofficeAvailable } from './office-binary';
 import { THUMBS_DIR } from '../shared/whale-meta';
 
 /** Per-test scratch directory under the OS temp root. */

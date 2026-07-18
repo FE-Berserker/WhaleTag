@@ -45,8 +45,11 @@ import SmartToyIcon from '@mui/icons-material/SmartToy';
 import TerminalIcon from '@mui/icons-material/Terminal';
 import TuneIcon from '@mui/icons-material/Tune';
 import { AiComponentSection } from './AiComponentSection';
+import UpdateSection from './UpdateSection';
 import UserCommandsSection from './UserCommandsSection';
+import CustomCalloutsSection from './CustomCalloutsSection';
 import VisibilityIcon from '@mui/icons-material/Visibility';
+import StickyNote2Icon from '@mui/icons-material/StickyNote2';
 import MapIcon from '@mui/icons-material/Map';
 import StyleIcon from '@mui/icons-material/Style';
 import NotificationsIcon from '@mui/icons-material/Notifications';
@@ -63,6 +66,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import HelpIcon from '@mui/icons-material/Help';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import SearchIcon from '@mui/icons-material/Search';
 
 import { RootState } from '-/reducers';
@@ -93,32 +97,34 @@ import {
   setKeybinding,
   resetKeybindings,
   setAiSettings,
+  setMdRenderTheme,
   DEFAULT_ENTRY_SIZE,
   normalizeFsPath,
   type ThemeMode,
   type MapProvider,
 } from '-/reducers/settings';
 import { setExtensionEnabled, setDefaultExtension } from '-/reducers/extensions';
+import type { MdRenderThemePref } from '../../shared/extension-types';
 import type { ViewMode } from '../../shared/whale-meta';
 import {
   type TagShape,
   TAG_SHAPES,
   tagShapeSx,
   TAG_SHAPE_PREVIEW_COLORS,
-} from '../../shared/tag-colors';
+} from '../domain/tag-colors';
 import {
   MAPPABLE_KEYS,
   KEYBOARD_ACTIONS,
   type KeyAction,
-} from '../../shared/keybindings';
+} from '../domain/keybindings';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { ipcApi } from '-/services/ipc-api';
 import AiMcpSection from '-/components/ai/AiMcpSection';
 import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '-/i18n';
 import { THEME_MODE_PRESET_MAP } from '-/theme/presets';
 import { tagDisplayLabel } from '-/services/tag-display';
-import { readableTextOn } from '../../shared/tag-colors';
-import { getDefaultPendingStageIds } from '../../shared/task-reminder';
+import { readableTextOn } from '../domain/tag-colors';
+import { getDefaultPendingStageIds } from '../domain/task-reminder';
 import type { ExtensionManifest } from '../../shared/extension-types';
 import WorkflowManagerDialog from '-/components/WorkflowManagerDialog';
 
@@ -141,6 +147,8 @@ export type SettingsSectionId =
   | 'notifications'
   | 'ai'
   | 'commands'
+  | 'callouts'
+  | 'about'
   | 'advanced';
 
 interface SettingsDialogProps {
@@ -556,6 +564,9 @@ function GeneralSection() {
   const { t } = useTranslation();
   const dispatch = useDispatch();
   const themeMode = useSelector((s: RootState) => s.settings.themeMode);
+  const mdRenderTheme = useSelector(
+    (s: RootState) => s.settings.mdEditorRenderTheme ?? 'auto'
+  );
   const language = useSelector((s: RootState) => s.settings?.language ?? 'en');
   const fontSize = useSelector((s: RootState) => s.settings?.fontSize ?? 13);
   const defaultLocationId = useSelector(
@@ -619,6 +630,27 @@ function GeneralSection() {
                 </Stack>
               </MenuItem>
             ))}
+          </Select>
+        </FormControl>
+      </Field>
+
+      <Field label={t('mdRenderTheme')}>
+        <FormControl size="small" sx={{ minWidth: 180 }}>
+          <Select
+            value={mdRenderTheme}
+            onChange={(e) =>
+              dispatch(setMdRenderTheme(e.target.value as MdRenderThemePref))
+            }
+          >
+            <MenuItem value="auto">{t('mdRenderThemeAuto')}</MenuItem>
+            <MenuItem value="github-light">GitHub Light</MenuItem>
+            <MenuItem value="github-dark">GitHub Dark</MenuItem>
+            <MenuItem value="solarized-light">Solarized Light</MenuItem>
+            <MenuItem value="solarized-dark">Solarized Dark</MenuItem>
+            <MenuItem value="dracula">Dracula</MenuItem>
+            <MenuItem value="nord">Nord</MenuItem>
+            <MenuItem value="gruvbox">Gruvbox</MenuItem>
+            <MenuItem value="one-dark">One Dark</MenuItem>
           </Select>
         </FormControl>
       </Field>
@@ -1817,6 +1849,8 @@ const SECTIONS: {
   },
   { id: 'ai', labelKey: 'settingsSectionAi', Icon: SmartToyIcon },
   { id: 'commands', labelKey: 'settingsSectionCommands', Icon: TerminalIcon },
+  { id: 'callouts', labelKey: 'settingsSectionCallouts', Icon: StickyNote2Icon },
+  { id: 'about', labelKey: 'settingsSectionAbout', Icon: InfoOutlinedIcon },
   { id: 'advanced', labelKey: 'settingsSectionAdvanced', Icon: SettingsIcon },
 ];
 
@@ -1863,6 +1897,10 @@ export default function SettingsDialog({
         return <AiSection />;
       case 'commands':
         return <UserCommandsSection />;
+      case 'callouts':
+        return <CustomCalloutsSection />;
+      case 'about':
+        return <UpdateSection />;
       case 'advanced':
         return <AdvancedSection />;
       default:

@@ -13,14 +13,364 @@ body {
     Cantarell, sans-serif;
 }
 
-body {
-  background-color: #ffffff;
-  color: #1f2328;
+/* --- Render-theme variable system (md-editor multi-preset themes) ---------
+ *
+ * Every color in this file reads from a `--md-*` CSS variable. The variable
+ * VALUES are defined per preset, keyed off `body[data-theme='<preset>']`:
+ *
+ *   - `:root`                 = `github-light` (the default / fallback)
+ *   - `body[data-theme='...']`= each shipped preset (github-dark today;
+ *                                solarized-light/dark + dracula in Phase 2)
+ *
+ * Adding a preset = appending one variable block — no selector duplication.
+ * The 35 variables group into: base (8) · chrome interaction (3) · code (1)
+ * · mark (1) · callout (6 groups × {border,bg} = 12) · hljs (10).
+ *
+ * md-editor's render theme is INDEPENDENT of WhaleTag's global MUI theme:
+ * the host still sends `setTheme('light'|'dark')`, which maps to
+ * github-light / github-dark unless the user pinned a preset from the
+ * toolbar <select> (persisted as `md-editor-theme` in localStorage). See
+ * index.ts `applyTheme` / `applyPreset`.
+ */
+:root {
+  /* base */
+  --md-bg: #ffffff;
+  --md-text: #1f2328;
+  --md-muted: #57606a;
+  --md-faint: #6a737d;
+  --md-border: #d0d7de;
+  --md-accent: #0969da;
+  --md-surface: #f6f8fa;
+  --md-warn: #bf8700;
+  /* chrome interaction */
+  --md-hover-bg: rgba(175, 184, 193, 0.2);
+  --md-active-bg: rgba(175, 184, 193, 0.4);
+  --md-splitter-hover: #b1b6c0;
+  /* code */
+  --md-inline-code-bg: rgba(175, 184, 193, 0.2);
+  /* mark */
+  --md-mark-bg: #fff8c5;
+  /* callout (6 hue groups; mapped from type -> group in the rules below) */
+  --md-callout-blue-border: #0969da;
+  --md-callout-blue-bg: #ddf4ff;
+  --md-callout-green-border: #1a7f37;
+  --md-callout-green-bg: #dafbe1;
+  --md-callout-orange-border: #9a6700;
+  --md-callout-orange-bg: #fff8c5;
+  --md-callout-red-border: #cf222e;
+  --md-callout-red-bg: #ffebe9;
+  --md-callout-purple-border: #8250df;
+  --md-callout-purple-bg: #fbefff;
+  --md-callout-gray-border: #57606a;
+  --md-callout-gray-bg: #f6f8fa;
+  /* highlight.js (GitHub light) */
+  --md-hljs-base: #24292e;
+  --md-hljs-comment: #6a737d;
+  --md-hljs-keyword: #d73a49;
+  --md-hljs-string: #032f62;
+  --md-hljs-title: #6f42c1;
+  --md-hljs-number: #005cc5;
+  --md-hljs-deletion-fg: #b31d28;
+  --md-hljs-deletion-bg: #ffeef0;
+  --md-hljs-addition-fg: #22863a;
+  --md-hljs-addition-bg: #f0fff4;
 }
 
-body[data-theme='dark'] {
-  background-color: #0d1117;
-  color: #c9d1d9;
+/* github-dark preset. Variable-only override — no per-selector dark rules. */
+body[data-theme='github-dark'] {
+  --md-bg: #0d1117;
+  --md-text: #c9d1d9;
+  --md-muted: #8b949e;
+  --md-faint: #6e7681;
+  --md-border: #30363d;
+  --md-accent: #58a6ff;
+  --md-surface: #161b22;
+  --md-warn: #d29922;
+  --md-hover-bg: rgba(110, 118, 129, 0.2);
+  --md-active-bg: rgba(110, 118, 129, 0.4);
+  --md-splitter-hover: #484f58;
+  /* inline-code bg has no dark override in the original — keep the light tint. */
+  --md-inline-code-bg: rgba(175, 184, 193, 0.2);
+  --md-mark-bg: rgba(187, 128, 9, 0.4);
+  --md-callout-blue-border: #2f81f7;
+  --md-callout-blue-bg: rgba(56, 139, 253, 0.15);
+  --md-callout-green-border: #3fb950;
+  --md-callout-green-bg: rgba(46, 160, 67, 0.15);
+  --md-callout-orange-border: #d29922;
+  --md-callout-orange-bg: rgba(187, 128, 9, 0.15);
+  --md-callout-red-border: #f85149;
+  --md-callout-red-bg: rgba(248, 81, 73, 0.15);
+  --md-callout-purple-border: #a371f7;
+  --md-callout-purple-bg: rgba(163, 113, 247, 0.15);
+  --md-callout-gray-border: #8b949e;
+  --md-callout-gray-bg: #161b22;
+  --md-hljs-base: #c9d1d9;
+  --md-hljs-comment: #8b949e;
+  --md-hljs-keyword: #ff7b72;
+  --md-hljs-string: #a5d6ff;
+  --md-hljs-title: #d2a8ff;
+  --md-hljs-number: #79c0ff;
+  --md-hljs-deletion-fg: #ffdcd7;
+  --md-hljs-deletion-bg: #67060c;
+  --md-hljs-addition-fg: #aff5b4;
+  --md-hljs-addition-bg: #033a16;
+}
+
+/* solarized-light preset. Palette: Ethan Schoonover's Solarized (base3 page /
+ * base2 surface / base01 text). Accent hues are the same 8 Solarized colors
+ * Solarized uses in both modes — only the grays mirror between light/dark. */
+body[data-theme='solarized-light'] {
+  --md-bg: #fdf6e3;
+  --md-text: #586e75;
+  --md-muted: #657b83;
+  --md-faint: #93a1a1;
+  --md-border: #eee8d5;
+  --md-accent: #268bd2;
+  --md-surface: #eee8d5;
+  --md-warn: #b58900;
+  --md-hover-bg: rgba(101, 123, 131, 0.1);
+  --md-active-bg: rgba(101, 123, 131, 0.2);
+  --md-splitter-hover: #cdc7b8;
+  --md-inline-code-bg: rgba(101, 123, 131, 0.1);
+  --md-mark-bg: #eee8d5;
+  --md-callout-blue-border: #268bd2;
+  --md-callout-blue-bg: rgba(38, 139, 210, 0.12);
+  --md-callout-green-border: #859900;
+  --md-callout-green-bg: rgba(133, 153, 0, 0.12);
+  --md-callout-orange-border: #b58900;
+  --md-callout-orange-bg: rgba(181, 137, 0, 0.12);
+  --md-callout-red-border: #dc322f;
+  --md-callout-red-bg: rgba(220, 50, 47, 0.12);
+  --md-callout-purple-border: #6c71c4;
+  --md-callout-purple-bg: rgba(108, 113, 196, 0.12);
+  --md-callout-gray-border: #93a1a1;
+  --md-callout-gray-bg: rgba(147, 161, 161, 0.12);
+  --md-hljs-base: #586e75;
+  --md-hljs-comment: #93a1a1;
+  --md-hljs-keyword: #859900;
+  --md-hljs-string: #2aa198;
+  --md-hljs-title: #268bd2;
+  --md-hljs-number: #2aa198;
+  --md-hljs-deletion-fg: #dc322f;
+  --md-hljs-deletion-bg: rgba(220, 50, 47, 0.1);
+  --md-hljs-addition-fg: #859900;
+  --md-hljs-addition-bg: rgba(133, 153, 0, 0.1);
+}
+
+/* solarized-dark preset. Solarized grays mirrored from the light preset
+ * (base03 page / base02 surface / base1 text); the 8 accent hues stay the
+ * same. Code-token assignment follows hljs's Solarized mapping (number
+ * shares cyan with string, per upstream). */
+body[data-theme='solarized-dark'] {
+  --md-bg: #002b36;
+  --md-text: #93a1a1;
+  --md-muted: #839496;
+  --md-faint: #586e75;
+  --md-border: #073642;
+  --md-accent: #268bd2;
+  --md-surface: #073642;
+  --md-warn: #b58900;
+  --md-hover-bg: rgba(131, 148, 150, 0.15);
+  --md-active-bg: rgba(131, 148, 150, 0.25);
+  --md-splitter-hover: #1c4a5c;
+  --md-inline-code-bg: rgba(131, 148, 150, 0.15);
+  --md-mark-bg: rgba(181, 137, 0, 0.25);
+  --md-callout-blue-border: #268bd2;
+  --md-callout-blue-bg: rgba(38, 139, 210, 0.18);
+  --md-callout-green-border: #859900;
+  --md-callout-green-bg: rgba(133, 153, 0, 0.18);
+  --md-callout-orange-border: #b58900;
+  --md-callout-orange-bg: rgba(181, 137, 0, 0.18);
+  --md-callout-red-border: #dc322f;
+  --md-callout-red-bg: rgba(220, 50, 47, 0.18);
+  --md-callout-purple-border: #6c71c4;
+  --md-callout-purple-bg: rgba(108, 113, 196, 0.18);
+  --md-callout-gray-border: #93a1a1;
+  --md-callout-gray-bg: rgba(147, 161, 161, 0.18);
+  --md-hljs-base: #93a1a1;
+  --md-hljs-comment: #657b83;
+  --md-hljs-keyword: #859900;
+  --md-hljs-string: #2aa198;
+  --md-hljs-title: #268bd2;
+  --md-hljs-number: #2aa198;
+  --md-hljs-deletion-fg: #dc322f;
+  --md-hljs-deletion-bg: rgba(220, 50, 47, 0.15);
+  --md-hljs-addition-fg: #859900;
+  --md-hljs-addition-bg: rgba(133, 153, 0, 0.15);
+}
+
+/* dracula preset. Palette: the official Dracula theme (bg #282a36 / fg
+ * #f8f8f2 / comment #6272a4 + the 8 Dracula accents). Code-token assignment
+ * follows hljs's Dracula mapping (keyword pink / string yellow / title green
+ * / number purple). */
+body[data-theme='dracula'] {
+  --md-bg: #282a36;
+  --md-text: #f8f8f2;
+  --md-muted: #c5c8d6;
+  --md-faint: #6272a4;
+  --md-border: #44475a;
+  --md-accent: #bd93f9;
+  --md-surface: #21222c;
+  --md-warn: #ffb86c;
+  --md-hover-bg: rgba(248, 248, 242, 0.08);
+  --md-active-bg: rgba(248, 248, 242, 0.15);
+  --md-splitter-hover: #44475a;
+  --md-inline-code-bg: rgba(248, 248, 242, 0.08);
+  --md-mark-bg: rgba(255, 184, 108, 0.25);
+  --md-callout-blue-border: #8be9fd;
+  --md-callout-blue-bg: rgba(139, 233, 253, 0.12);
+  --md-callout-green-border: #50fa7b;
+  --md-callout-green-bg: rgba(80, 250, 123, 0.12);
+  --md-callout-orange-border: #ffb86c;
+  --md-callout-orange-bg: rgba(255, 184, 108, 0.12);
+  --md-callout-red-border: #ff5555;
+  --md-callout-red-bg: rgba(255, 85, 85, 0.12);
+  --md-callout-purple-border: #bd93f9;
+  --md-callout-purple-bg: rgba(189, 147, 249, 0.12);
+  --md-callout-gray-border: #6272a4;
+  --md-callout-gray-bg: rgba(98, 114, 164, 0.18);
+  --md-hljs-base: #f8f8f2;
+  --md-hljs-comment: #6272a4;
+  --md-hljs-keyword: #ff79c6;
+  --md-hljs-string: #f1fa8c;
+  --md-hljs-title: #50fa7b;
+  --md-hljs-number: #bd93f9;
+  --md-hljs-deletion-fg: #ff5555;
+  --md-hljs-deletion-bg: rgba(255, 85, 85, 0.15);
+  --md-hljs-addition-fg: #50fa7b;
+  --md-hljs-addition-bg: rgba(80, 250, 123, 0.15);
+}
+
+/* nord preset. Palette: the official Nord arctic scheme (nord0 bg / nord4 fg /
+ * the frost blues + the aurora accents). Code-token assignment follows Nord's
+ * syntax theme (keyword frost-blue / function frost-cyan / string green /
+ * number purple). */
+body[data-theme='nord'] {
+  --md-bg: #2e3440;
+  --md-text: #e5e9f0;
+  --md-muted: #c7d0dc;
+  --md-faint: #8b94a5;
+  --md-border: #3b4252;
+  --md-accent: #88c0d0;
+  --md-surface: #3b4252;
+  --md-warn: #ebcb8b;
+  --md-hover-bg: rgba(216, 222, 233, 0.08);
+  --md-active-bg: rgba(216, 222, 233, 0.15);
+  --md-splitter-hover: #434c5e;
+  --md-inline-code-bg: rgba(216, 222, 233, 0.08);
+  --md-mark-bg: rgba(235, 203, 139, 0.25);
+  --md-callout-blue-border: #81a1c1;
+  --md-callout-blue-bg: rgba(94, 129, 172, 0.18);
+  --md-callout-green-border: #a3be8c;
+  --md-callout-green-bg: rgba(163, 190, 140, 0.15);
+  --md-callout-orange-border: #d08770;
+  --md-callout-orange-bg: rgba(208, 135, 112, 0.15);
+  --md-callout-red-border: #bf616a;
+  --md-callout-red-bg: rgba(191, 97, 106, 0.15);
+  --md-callout-purple-border: #b48ead;
+  --md-callout-purple-bg: rgba(180, 142, 173, 0.15);
+  --md-callout-gray-border: #616e88;
+  --md-callout-gray-bg: rgba(97, 110, 136, 0.18);
+  --md-hljs-base: #d8dee9;
+  --md-hljs-comment: #616e88;
+  --md-hljs-keyword: #81a1c1;
+  --md-hljs-string: #a3be8c;
+  --md-hljs-title: #88c0d0;
+  --md-hljs-number: #b48ead;
+  --md-hljs-deletion-fg: #bf616a;
+  --md-hljs-deletion-bg: rgba(191, 97, 106, 0.15);
+  --md-hljs-addition-fg: #a3be8c;
+  --md-hljs-addition-bg: rgba(163, 190, 140, 0.15);
+}
+
+/* gruvbox preset. Palette: the official Gruvbox dark (bg0 #282828 / fg0
+ * #ebdbb2 + the 8 Gruvbox accents). Code-token assignment follows Gruvbox's
+ * syntax theme (keyword red / string green / function yellow / number purple). */
+body[data-theme='gruvbox'] {
+  --md-bg: #282828;
+  --md-text: #ebdbb2;
+  --md-muted: #d5c4a1;
+  --md-faint: #928374;
+  --md-border: #3c3836;
+  --md-accent: #fe8019;
+  --md-surface: #3c3836;
+  --md-warn: #fabd2f;
+  --md-hover-bg: rgba(235, 219, 178, 0.08);
+  --md-active-bg: rgba(235, 219, 178, 0.15);
+  --md-splitter-hover: #504945;
+  --md-inline-code-bg: rgba(235, 219, 178, 0.08);
+  --md-mark-bg: rgba(250, 189, 47, 0.25);
+  --md-callout-blue-border: #83a598;
+  --md-callout-blue-bg: rgba(131, 165, 152, 0.15);
+  --md-callout-green-border: #b8bb26;
+  --md-callout-green-bg: rgba(184, 187, 38, 0.15);
+  --md-callout-orange-border: #fe8019;
+  --md-callout-orange-bg: rgba(254, 128, 25, 0.15);
+  --md-callout-red-border: #fb4934;
+  --md-callout-red-bg: rgba(251, 73, 52, 0.15);
+  --md-callout-purple-border: #d3869b;
+  --md-callout-purple-bg: rgba(211, 134, 155, 0.15);
+  --md-callout-gray-border: #928374;
+  --md-callout-gray-bg: rgba(146, 131, 116, 0.18);
+  --md-hljs-base: #ebdbb2;
+  --md-hljs-comment: #928374;
+  --md-hljs-keyword: #fb4934;
+  --md-hljs-string: #b8bb26;
+  --md-hljs-title: #fabd2f;
+  --md-hljs-number: #d3869b;
+  --md-hljs-deletion-fg: #fb4934;
+  --md-hljs-deletion-bg: rgba(251, 73, 52, 0.15);
+  --md-hljs-addition-fg: #b8bb26;
+  --md-hljs-addition-bg: rgba(184, 187, 38, 0.15);
+}
+
+/* one-dark preset. Palette: Atom One Dark (bg #282c34 / fg #abb2bf + the 8 One
+ * Dark accents). Code-token assignment follows One Dark's syntax theme
+ * (keyword purple / function blue / string green / number orange). Because
+ * one-dark is a dark preset, the EDITOR's CodeMirror tokens come from the
+ * bundled oneDark theme (presetMode → themeExtension) — so editor + preview
+ * tokens match here exactly (oneDark is the source of both). */
+body[data-theme='one-dark'] {
+  --md-bg: #282c34;
+  --md-text: #abb2bf;
+  --md-muted: #848a97;
+  --md-faint: #5c6370;
+  --md-border: #3e4451;
+  --md-accent: #61afef;
+  --md-surface: #1d1f23;
+  --md-warn: #e5c07b;
+  --md-hover-bg: rgba(171, 178, 191, 0.08);
+  --md-active-bg: rgba(171, 178, 191, 0.15);
+  --md-splitter-hover: #3b4048;
+  --md-inline-code-bg: rgba(171, 178, 191, 0.08);
+  --md-mark-bg: rgba(229, 192, 123, 0.25);
+  --md-callout-blue-border: #61afef;
+  --md-callout-blue-bg: rgba(97, 175, 239, 0.12);
+  --md-callout-green-border: #98c379;
+  --md-callout-green-bg: rgba(152, 195, 121, 0.12);
+  --md-callout-orange-border: #d19a66;
+  --md-callout-orange-bg: rgba(209, 154, 102, 0.12);
+  --md-callout-red-border: #e06c75;
+  --md-callout-red-bg: rgba(224, 108, 117, 0.12);
+  --md-callout-purple-border: #c678dd;
+  --md-callout-purple-bg: rgba(198, 120, 221, 0.12);
+  --md-callout-gray-border: #5c6370;
+  --md-callout-gray-bg: rgba(92, 99, 112, 0.18);
+  --md-hljs-base: #abb2bf;
+  --md-hljs-comment: #5c6370;
+  --md-hljs-keyword: #c678dd;
+  --md-hljs-string: #98c379;
+  --md-hljs-title: #61afef;
+  --md-hljs-number: #d19a66;
+  --md-hljs-deletion-fg: #e06c75;
+  --md-hljs-deletion-bg: rgba(224, 108, 117, 0.15);
+  --md-hljs-addition-fg: #98c379;
+  --md-hljs-addition-bg: rgba(152, 195, 121, 0.15);
+}
+
+body {
+  background-color: var(--md-bg);
+  color: var(--md-text);
 }
 
 #app {
@@ -50,36 +400,34 @@ body[data-theme='dark'] {
 #splitter {
   width: 4px;
   flex-shrink: 0;
-  background-color: #d0d7de;
+  background-color: var(--md-border);
   cursor: col-resize;
-}
-
-body[data-theme='dark'] #splitter {
-  background-color: #30363d;
 }
 
 #preview-pane {
   flex: 1;
   min-width: 0;
-  /* overflow hidden — the editor pane (`.cm-scroller`) is the sole scroll
-   * source. `index.ts` mirrors its scrollTop proportionally so the preview
-   * follows. We keep `overflow: hidden` (not `auto`) to suppress the
-   * preview's own scrollbar + wheel-scroll so only the editor scrolls. */
+  /* overflow hidden — the editor pane (`.cm-scroller`) is the SOLE scroll
+   * source (one scrollbar, like Typora's single view). `syncPreviewScroll` in
+   * index.ts mirrors the editor's scrollTop onto the preview, AND pins the
+   * preview to its own bottom when the editor nears its bottom — so content at
+   * the end (footnotes) stays reachable without a second scrollbar. */
   overflow: hidden;
   padding: 24px 32px;
   font-size: 14px;
   line-height: 1.6;
 }
 
-/* Skip layout/paint for off-screen blocks. The preview re-renders wholesale
- * on every edit (full innerHTML swap), so letting Chromium skip off-screen
- * children is a free win on big docs. `contain-intrinsic-size` holds a
- * placeholder height so the scrollbar doesn't thrash; `auto` lets the browser
- * remember each block's real size once it has been rendered once. */
-#preview-pane > * {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 200px;
-}
+/* content-visibility: auto was here as a perf optimization (skip layout/paint
+ * for off-screen blocks), but it broke two things, so it's removed:
+ *  1. Off-screen blocks don't render (contain: strict) → their checkboxes /
+ *     links aren't interactive until scrolled into view, and task-list ticks
+ *     outside the initial viewport were dead.
+ *  2. contain-intrinsic-size made scrollHeight an estimate, so syncPreviewScroll
+ *     computed a too-small previewMax and the wheel couldn't reach the real
+ *     bottom (footnotes, etc.).
+ * Preview docs are small enough to render fully; if a huge doc ever needs this,
+ * gate it behind a size check instead of applying it unconditionally. */
 
 #preview-pane h1,
 #preview-pane h2,
@@ -95,22 +443,14 @@ body[data-theme='dark'] #splitter {
 
 #preview-pane h1 {
   font-size: 2em;
-  border-bottom: 1px solid #d0d7de;
+  border-bottom: 1px solid var(--md-border);
   padding-bottom: 8px;
-}
-
-body[data-theme='dark'] #preview-pane h1 {
-  border-bottom-color: #30363d;
 }
 
 #preview-pane h2 {
   font-size: 1.5em;
-  border-bottom: 1px solid #d0d7de;
+  border-bottom: 1px solid var(--md-border);
   padding-bottom: 6px;
-}
-
-body[data-theme='dark'] #preview-pane h2 {
-  border-bottom-color: #30363d;
 }
 
 #preview-pane p {
@@ -130,24 +470,20 @@ body[data-theme='dark'] #preview-pane h2 {
 #preview-pane blockquote {
   margin: 0 0 12px;
   padding: 4px 16px;
-  color: #57606a;
-  border-left: 4px solid #d0d7de;
-}
-
-body[data-theme='dark'] #preview-pane blockquote {
-  color: #8b949e;
-  border-left-color: #30363d;
+  color: var(--md-muted);
+  border-left: 4px solid var(--md-border);
 }
 
 /* Callout (Obsidian / GitHub Alerts) — generated by transformCallouts from
  * `> [!TYPE]` blockquotes. Left border + tinted background per type; folding
- * uses native <details>/<summary> (no JS). */
+ * uses native <details>/<summary> (no JS). Colors read from the callout
+ * group variables so they follow the active render theme. */
 #preview-pane .callout {
   margin: 0 0 12px;
-  border: 1px solid #d0d7de;
-  border-left: 4px solid #d0d7de;
+  border: 1px solid var(--md-border);
+  border-left: 4px solid var(--md-border);
   border-radius: 6px;
-  background: #f6f8fa;
+  background: var(--md-surface);
   overflow: hidden;
 }
 #preview-pane .callout-title {
@@ -183,85 +519,48 @@ body[data-theme='dark'] #preview-pane blockquote {
 #preview-pane details.callout[open] > summary::before {
   transform: rotate(90deg);
 }
-/* Type colors — group same-hue types. */
+/* Type colors — group same-hue types onto one callout variable pair.
+ * note/info/question/todo → blue · tip/success → green · warning → orange ·
+ * caution/danger/failure/bug → red · important/example/abstract → purple ·
+ * quote → gray. */
 #preview-pane .callout-note,
 #preview-pane .callout-info,
 #preview-pane .callout-question,
 #preview-pane .callout-todo {
-  border-color: #0969da;
-  border-left-color: #0969da;
-  background: #ddf4ff;
+  border-color: var(--md-callout-blue-border);
+  border-left-color: var(--md-callout-blue-border);
+  background: var(--md-callout-blue-bg);
 }
 #preview-pane .callout-tip,
 #preview-pane .callout-success {
-  border-color: #1a7f37;
-  border-left-color: #1a7f37;
-  background: #dafbe1;
+  border-color: var(--md-callout-green-border);
+  border-left-color: var(--md-callout-green-border);
+  background: var(--md-callout-green-bg);
 }
 #preview-pane .callout-warning {
-  border-color: #9a6700;
-  border-left-color: #9a6700;
-  background: #fff8c5;
+  border-color: var(--md-callout-orange-border);
+  border-left-color: var(--md-callout-orange-border);
+  background: var(--md-callout-orange-bg);
 }
 #preview-pane .callout-caution,
 #preview-pane .callout-danger,
 #preview-pane .callout-failure,
 #preview-pane .callout-bug {
-  border-color: #cf222e;
-  border-left-color: #cf222e;
-  background: #ffebe9;
+  border-color: var(--md-callout-red-border);
+  border-left-color: var(--md-callout-red-border);
+  background: var(--md-callout-red-bg);
 }
 #preview-pane .callout-important,
 #preview-pane .callout-example,
 #preview-pane .callout-abstract {
-  border-color: #8250df;
-  border-left-color: #8250df;
-  background: #fbefff;
+  border-color: var(--md-callout-purple-border);
+  border-left-color: var(--md-callout-purple-border);
+  background: var(--md-callout-purple-bg);
 }
 #preview-pane .callout-quote {
-  border-color: #57606a;
-  border-left-color: #57606a;
-  background: #f6f8fa;
-}
-/* Dark theme callouts. */
-body[data-theme='dark'] #preview-pane .callout {
-  border-color: #30363d;
-  border-left-color: #30363d;
-  background: #161b22;
-}
-body[data-theme='dark'] #preview-pane .callout-note,
-body[data-theme='dark'] #preview-pane .callout-info,
-body[data-theme='dark'] #preview-pane .callout-question,
-body[data-theme='dark'] #preview-pane .callout-todo {
-  border-color: #2f81f7;
-  border-left-color: #2f81f7;
-  background: rgba(56, 139, 253, 0.15);
-}
-body[data-theme='dark'] #preview-pane .callout-tip,
-body[data-theme='dark'] #preview-pane .callout-success {
-  border-color: #3fb950;
-  border-left-color: #3fb950;
-  background: rgba(46, 160, 67, 0.15);
-}
-body[data-theme='dark'] #preview-pane .callout-warning {
-  border-color: #d29922;
-  border-left-color: #d29922;
-  background: rgba(187, 128, 9, 0.15);
-}
-body[data-theme='dark'] #preview-pane .callout-caution,
-body[data-theme='dark'] #preview-pane .callout-danger,
-body[data-theme='dark'] #preview-pane .callout-failure,
-body[data-theme='dark'] #preview-pane .callout-bug {
-  border-color: #f85149;
-  border-left-color: #f85149;
-  background: rgba(248, 81, 73, 0.15);
-}
-body[data-theme='dark'] #preview-pane .callout-important,
-body[data-theme='dark'] #preview-pane .callout-example,
-body[data-theme='dark'] #preview-pane .callout-abstract {
-  border-color: #a371f7;
-  border-left-color: #a371f7;
-  background: rgba(163, 113, 247, 0.15);
+  border-color: var(--md-callout-gray-border);
+  border-left-color: var(--md-callout-gray-border);
+  background: var(--md-callout-gray-bg);
 }
 
 /* Embedded HTML tags now allowed by the DOMPurify allow-list. */
@@ -271,56 +570,39 @@ body[data-theme='dark'] #preview-pane .callout-abstract {
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 0.85em;
   line-height: 1;
-  color: #1f2328;
-  background: #f6f8fa;
-  border: 1px solid #d0d7de;
+  color: var(--md-text);
+  background: var(--md-surface);
+  border: 1px solid var(--md-border);
   border-bottom-width: 2px;
   border-radius: 4px;
 }
 #preview-pane mark {
-  background: #fff8c5;
+  background: var(--md-mark-bg);
   padding: 1px 2px;
   border-radius: 2px;
 }
 #preview-pane ins {
   text-decoration: underline;
-  color: #1a7f37;
+  color: var(--md-callout-green-border);
 }
 #preview-pane del {
   text-decoration: line-through;
-  color: #cf222e;
-}
-body[data-theme='dark'] #preview-pane kbd {
-  color: #c9d1d9;
-  background: #21262d;
-  border-color: #30363d;
-}
-body[data-theme='dark'] #preview-pane mark {
-  background: rgba(187, 128, 9, 0.4);
-}
-body[data-theme='dark'] #preview-pane ins {
-  color: #3fb950;
-}
-body[data-theme='dark'] #preview-pane del {
-  color: #f85149;
+  color: var(--md-callout-red-border);
 }
 
 #preview-pane pre {
-  background-color: #f6f8fa;
+  position: relative;
+  background-color: var(--md-surface);
   border-radius: 6px;
   padding: 12px;
   overflow: auto;
   margin: 0 0 12px;
 }
 
-body[data-theme='dark'] #preview-pane pre {
-  background-color: #161b22;
-}
-
 #preview-pane code {
   font-family: ui-monospace, SFMono-Regular, 'SF Mono', Consolas, monospace;
   font-size: 0.9em;
-  background-color: rgba(175, 184, 193, 0.2);
+  background-color: var(--md-inline-code-bg);
   padding: 2px 4px;
   border-radius: 3px;
 }
@@ -338,31 +620,18 @@ body[data-theme='dark'] #preview-pane pre {
 
 #preview-pane th,
 #preview-pane td {
-  border: 1px solid #d0d7de;
+  border: 1px solid var(--md-border);
   padding: 6px 12px;
 }
 
-body[data-theme='dark'] #preview-pane th,
-body[data-theme='dark'] #preview-pane td {
-  border-color: #30363d;
-}
-
 #preview-pane th {
-  background-color: #f6f8fa;
+  background-color: var(--md-surface);
   font-weight: 600;
 }
 
-body[data-theme='dark'] #preview-pane th {
-  background-color: #161b22;
-}
-
 #preview-pane a {
-  color: #0969da;
+  color: var(--md-accent);
   text-decoration: none;
-}
-
-body[data-theme='dark'] #preview-pane a {
-  color: #58a6ff;
 }
 
 #preview-pane a:hover {
@@ -383,25 +652,83 @@ body[data-theme='dark'] #preview-pane a {
   overflow: auto;
 }
 
-/* highlight.js — GitHub (light) + GitHub-Dark (dark) themes.
- * Compact subset of the upstream themes inlined here so the extension
- * bundle has them built-in (no extra CSS import in production). Source:
- * node_modules/highlight.js/styles/{github,github-dark}.css. See §18.1.4.
+/* --- CodeMirror editor chrome — follows the render theme via --md-* -------
+ *
+ * oneDark (applied on dark presets via themeExtension / presetMode) supplies
+ * the markdown TOKEN colors (.cm-header / .cm-emphasis / .cm-link / …); these
+ * rules override its STRUCTURE colors — background, gutters, cursor, selection,
+ * active line, search panel — so the editor pane matches the active preset
+ * instead of oneDark's hard-coded #282c34 palette. The `body[data-theme]`
+ * prefix raises specificity above oneDark's plain `.cm-*` rules (every preset
+ * sets a data-theme, so it always matches). This closes the left/right split
+ * where the editor stayed github-light/oneDark while the preview followed the
+ * selected preset. */
+body[data-theme] .cm-editor {
+  background: var(--md-bg);
+  color: var(--md-text);
+}
+body[data-theme] .cm-gutters {
+  background: var(--md-surface);
+  color: var(--md-faint);
+  border-right: 1px solid var(--md-border);
+}
+body[data-theme] .cm-activeLine {
+  background-color: var(--md-hover-bg);
+}
+body[data-theme] .cm-activeLineGutter {
+  background-color: var(--md-hover-bg);
+}
+body[data-theme] .cm-cursor {
+  border-left-color: var(--md-accent);
+}
+body[data-theme] .cm-selectionBackground,
+body[data-theme] .cm-line::selection,
+body[data-theme] .cm-content::selection {
+  background: var(--md-active-bg);
+}
+body[data-theme] .cm-panels {
+  background: var(--md-surface);
+  color: var(--md-text);
+  border-top: 1px solid var(--md-border);
+}
+body[data-theme] .cm-searchMatch {
+  background-color: var(--md-mark-bg);
+}
+body[data-theme] .cm-searchMatch-selected {
+  background-color: var(--md-warn);
+}
+body[data-theme] .cm-selectionMatch {
+  background-color: var(--md-hover-bg);
+}
+
+/* Fold gutter (see §fold). Clickable markers in the gutter; the fill color
+ * tracks the theme via currentColor (inherits .cm-gutters color). */
+body[data-theme] .cm-foldGutter .cm-gutterElement {
+  cursor: pointer;
+  color: var(--md-faint);
+}
+body[data-theme] .cm-foldGutter .cm-gutterElement:hover {
+  color: var(--md-accent);
+}
+
+/* highlight.js — token colors read from the theme variables so the code
+ * blocks follow the active render theme. Compact subset of the upstream
+ * GitHub / GitHub-Dark themes inlined here (source:
+ * node_modules/highlight.js/styles/{github,github-dark}.css). See §18.1.4.
  *
  * Only the most common token classes are covered (comments, keywords,
  * strings, numbers, functions, types, builtins, regex). Languages with
- * additional token classes (e.g. JSX, Rust attribute spans) inherit
- * hljs's default colors. The themes are deliberately compatible with
- * our existing <pre> background / border / padding in #preview-pane pre
- * above. */
+ * additional token classes (e.g. JSX, Rust attribute spans) inherit the
+ * base color. The themes are deliberately compatible with our existing
+ * <pre> background / padding in #preview-pane pre above. */
 .hljs {
-  color: #24292e;
+  color: var(--md-hljs-base);
   background: transparent;
 }
 
 .hljs-comment,
 .hljs-quote {
-  color: #6a737d;
+  color: var(--md-hljs-comment);
   font-style: italic;
 }
 
@@ -412,16 +739,16 @@ body[data-theme='dark'] #preview-pane a {
 .hljs-link,
 .hljs-doctag,
 .hljs-strong {
-  color: #d73a49;
+  color: var(--md-hljs-keyword);
   font-weight: bold;
 }
 
 .hljs-function .hljs-keyword {
-  color: #d73a49;
+  color: var(--md-hljs-keyword);
 }
 
 .hljs-subst {
-  color: #24292e;
+  color: var(--md-hljs-base);
   font-weight: normal;
 }
 
@@ -431,7 +758,7 @@ body[data-theme='dark'] #preview-pane a {
 .hljs-bullet,
 .hljs-addition,
 .hljs-meta-string {
-  color: #032f62;
+  color: var(--md-hljs-string);
 }
 
 .hljs-title,
@@ -441,7 +768,7 @@ body[data-theme='dark'] #preview-pane a {
 .hljs-built_in,
 .hljs-class .hljs-title,
 .hljs-tag {
-  color: #6f42c1;
+  color: var(--md-hljs-title);
 }
 
 .hljs-number,
@@ -450,17 +777,17 @@ body[data-theme='dark'] #preview-pane a {
 .hljs-variable,
 .hljs-selector-attr,
 .hljs-selector-pseudo {
-  color: #005cc5;
+  color: var(--md-hljs-number);
 }
 
 .hljs-deletion {
-  color: #b31d28;
-  background-color: #ffeef0;
+  color: var(--md-hljs-deletion-fg);
+  background-color: var(--md-hljs-deletion-bg);
 }
 
 .hljs-addition {
-  color: #22863a;
-  background-color: #f0fff4;
+  color: var(--md-hljs-addition-fg);
+  background-color: var(--md-hljs-addition-bg);
 }
 
 .hljs-emphasis {
@@ -468,65 +795,7 @@ body[data-theme='dark'] #preview-pane a {
 }
 
 .hljs-params {
-  color: #24292e;
-}
-
-/* --- Dark theme: GitHub-Dark palette ------------------------------- */
-body[data-theme='dark'] .hljs {
-  color: #c9d1d9;
-}
-
-body[data-theme='dark'] .hljs-comment,
-body[data-theme='dark'] .hljs-quote {
-  color: #8b949e;
-}
-
-body[data-theme='dark'] .hljs-keyword,
-body[data-theme='dark'] .hljs-selector-tag,
-body[data-theme='dark'] .hljs-literal,
-body[data-theme='dark'] .hljs-section,
-body[data-theme='dark'] .hljs-link,
-body[data-theme='dark'] .hljs-doctag {
-  color: #ff7b72;
-}
-
-body[data-theme='dark'] .hljs-string,
-body[data-theme='dark'] .hljs-attr,
-body[data-theme='dark'] .hljs-symbol,
-body[data-theme='dark'] .hljs-bullet,
-body[data-theme='dark'] .hljs-meta-string {
-  color: #a5d6ff;
-}
-
-body[data-theme='dark'] .hljs-title,
-body[data-theme='dark'] .hljs-name,
-body[data-theme='dark'] .hljs-type,
-body[data-theme='dark'] .hljs-attribute,
-body[data-theme='dark'] .hljs-built_in,
-body[data-theme='dark'] .hljs-class .hljs-title,
-body[data-theme='dark'] .hljs-tag {
-  color: #d2a8ff;
-}
-
-body[data-theme='dark'] .hljs-number,
-body[data-theme='dark'] .hljs-regexp,
-body[data-theme='dark'] .hljs-template-variable,
-body[data-theme='dark'] .hljs-variable {
-  color: #79c0ff;
-}
-
-body[data-theme='dark'] .hljs-deletion {
-  color: #ffdcd7;
-  background-color: #67060c;
-}
-
-body[data-theme='dark'] .hljs-addition {
-  color: #aff5b4;
-  background-color: #033a16;
-}
-
-body[data-theme='dark'] .hljs-params {
-  color: #c9d1d9;
+  color: var(--md-hljs-base);
 }
 
 /* Splitter hover / drag affordance (a11y + visual feedback). The base
@@ -534,28 +803,16 @@ body[data-theme='dark'] .hljs-params {
  * adds a subtle hover tint and a stronger color while dragging. The
  * drag state is set on document.body by md-splitter.ts. */
 #splitter:hover {
-  background-color: #b1b6c0;
-}
-
-body[data-theme='dark'] #splitter:hover {
-  background-color: #484f58;
+  background-color: var(--md-splitter-hover);
 }
 
 body[data-editor-dragging='true'] #splitter {
-  background-color: #0969da;
-}
-
-body[data-theme='dark'][data-editor-dragging='true'] #splitter {
-  background-color: #58a6ff;
+  background-color: var(--md-accent);
 }
 
 #splitter:focus-visible {
-  outline: 2px solid #0969da;
+  outline: 2px solid var(--md-accent);
   outline-offset: -2px;
-}
-
-body[data-theme='dark'] #splitter:focus-visible {
-  outline-color: #58a6ff;
 }
 
 /* Status bar — mirrors text-editor's layout (left: cursor/len/sel;
@@ -568,9 +825,9 @@ body[data-theme='dark'] #splitter:focus-visible {
   flex-shrink: 0;
   height: 22px;
   padding: 0 12px;
-  border-top: 1px solid #d0d7de;
-  background-color: #f6f8fa;
-  color: #57606a;
+  border-top: 1px solid var(--md-border);
+  background-color: var(--md-surface);
+  color: var(--md-muted);
   font-family:
     ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono',
     Menlo, monospace;
@@ -578,12 +835,6 @@ body[data-theme='dark'] #splitter:focus-visible {
   line-height: 22px;
   user-select: none;
   gap: 16px;
-}
-
-body[data-theme='dark'] #status {
-  border-top-color: #30363d;
-  background-color: #161b22;
-  color: #8b949e;
 }
 
 .status-left,
@@ -600,11 +851,7 @@ body[data-theme='dark'] #status {
 }
 
 .status-label {
-  color: #6a737d;
-}
-
-body[data-theme='dark'] .status-label {
-  color: #6e7681;
+  color: var(--md-faint);
 }
 
 .status-sep {
@@ -612,19 +859,15 @@ body[data-theme='dark'] .status-label {
 }
 
 #status-readonly {
-  color: #bf8700;
+  color: var(--md-warn);
   font-weight: 600;
-}
-
-body[data-theme='dark'] #status-readonly {
-  color: #d29922;
 }
 
 /* §18.3.5 — modified indicator. Orange dot + "Modified" text, only
  * visible when the host hasn't acknowledged the latest contentChangedInEditor
  * (i.e. file has unsaved changes). */
 #status-dirty {
-  color: #bf8700;
+  color: var(--md-warn);
   font-weight: 600;
   cursor: default;
 }
@@ -636,10 +879,6 @@ body[data-theme='dark'] #status-readonly {
   vertical-align: middle;
 }
 
-body[data-theme='dark'] #status-dirty {
-  color: #d29922;
-}
-
 /* §18.3.5 — undo/redo availability dots. Mirrors #status-dirty's
  * color palette (amber/orange) so the three "history" indicators
  * read as one family. `hidden` attribute is toggled from index.ts
@@ -649,7 +888,7 @@ body[data-theme='dark'] #status-dirty {
  * shift gives visual confirmation that the keystroke fired. */
 #status-undo,
 #status-redo {
-  color: #57606a;
+  color: var(--md-muted);
   font-weight: 500;
   cursor: default;
 }
@@ -672,18 +911,8 @@ body[data-theme='dark'] #status-dirty {
 
 #status-undo.status-flash,
 #status-redo.status-flash {
-  color: #bf8700;
+  color: var(--md-warn);
   font-weight: 700;
-}
-
-body[data-theme='dark'] #status-undo,
-body[data-theme='dark'] #status-redo {
-  color: #8b949e;
-}
-
-body[data-theme='dark'] #status-undo.status-flash,
-body[data-theme='dark'] #status-redo.status-flash {
-  color: #d29922;
 }
 
 /* Toolbar (see §18.2.1) — sits between #app and #main-row. Mirrors
@@ -697,18 +926,12 @@ body[data-theme='dark'] #status-redo.status-flash {
   flex-shrink: 0;
   height: 32px;
   padding: 0 8px;
-  background-color: #f6f8fa;
-  border-bottom: 1px solid #d0d7de;
-  color: #57606a;
+  background-color: var(--md-surface);
+  border-bottom: 1px solid var(--md-border);
+  color: var(--md-muted);
   font-size: 12px;
   gap: 4px;
   user-select: none;
-}
-
-body[data-theme='dark'] #toolbar {
-  background-color: #161b22;
-  border-bottom-color: #30363d;
-  color: #8b949e;
 }
 
 #toolbar button {
@@ -725,42 +948,73 @@ body[data-theme='dark'] #toolbar {
 }
 
 #toolbar button:hover {
-  background-color: rgba(175, 184, 193, 0.2);
+  background-color: var(--md-hover-bg);
 }
 
 #toolbar button:active,
 #toolbar button.active {
-  background-color: rgba(175, 184, 193, 0.4);
-}
-
-body[data-theme='dark'] #toolbar button:hover {
-  background-color: rgba(110, 118, 129, 0.2);
-}
-
-body[data-theme='dark'] #toolbar button:active,
-body[data-theme='dark'] #toolbar button.active {
-  background-color: rgba(110, 118, 129, 0.4);
+  background-color: var(--md-active-bg);
 }
 
 #toolbar button:focus-visible {
-  outline: 2px solid #0969da;
+  outline: 2px solid var(--md-accent);
   outline-offset: -2px;
 }
 
-body[data-theme='dark'] #toolbar button:focus-visible {
-  outline-color: #58a6ff;
+/* Render-theme <select> (see index.ts applyPreset). Native control styled to
+ * match the toolbar buttons: same hover/active tint, inherits font + color.
+ * md-editor has no i18n chrome (host only localizes pdf/office-viewer), so
+ * the option labels stay English. */
+#toolbar select {
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 18px 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  line-height: 1;
+  /* Native dropdown arrow replaced with a CSS-drawn one tinted by currentColor
+   * so it tracks the theme. The <option> list still renders with the OS native
+   * palette (unavoidable for <select>), but the closed control blends in. */
+  background-image: linear-gradient(
+      45deg,
+      transparent 50%,
+      currentColor 50%,
+      currentColor 60%,
+      transparent 60%
+    ),
+    linear-gradient(
+      -45deg,
+      transparent 50%,
+      currentColor 50%,
+      currentColor 60%,
+      transparent 60%
+    );
+  background-position:
+    calc(100% - 12px) calc(50% + 1px),
+    calc(100% - 7px) calc(50% + 1px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+#toolbar select:hover {
+  background-color: var(--md-hover-bg);
+}
+
+#toolbar select:focus-visible {
+  outline: 2px solid var(--md-accent);
+  outline-offset: -2px;
 }
 
 .toolbar-separator {
   display: inline-block;
   width: 1px;
   height: 16px;
-  background-color: #d0d7de;
+  background-color: var(--md-border);
   margin: 0 4px;
-}
-
-body[data-theme='dark'] .toolbar-separator {
-  background-color: #30363d;
 }
 
 .toolbar-spacer {
@@ -775,12 +1029,8 @@ body[data-theme='dark'] .toolbar-separator {
     ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono',
     Menlo, monospace;
   font-size: 11px;
-  color: #6a737d;
+  color: var(--md-faint);
   padding: 0 4px;
-}
-
-body[data-theme='dark'] #wrap-state {
-  color: #6e7681;
 }
 
 /* TOC / Outline sidebar (see §18.3.1). Hidden by default via the
@@ -796,8 +1046,8 @@ body[data-theme='dark'] #wrap-state {
 #toc-sidebar {
   flex-shrink: 0;
   width: 240px;
-  background-color: #f6f8fa;
-  border-left: 1px solid #d0d7de;
+  background-color: var(--md-surface);
+  border-left: 1px solid var(--md-border);
   overflow-y: auto;
   user-select: none;
   display: none;
@@ -808,27 +1058,17 @@ body[data-theme='dark'] #wrap-state {
   display: flex;
 }
 
-body[data-theme='dark'] #toc-sidebar {
-  background-color: #161b22;
-  border-left-color: #30363d;
-}
-
 .toc-header {
   padding: 8px 12px;
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #6a737d;
-  border-bottom: 1px solid #d0d7de;
+  color: var(--md-faint);
+  border-bottom: 1px solid var(--md-border);
   position: sticky;
   top: 0;
   background-color: inherit;
-}
-
-body[data-theme='dark'] .toc-header {
-  color: #6e7681;
-  border-bottom-color: #30363d;
 }
 
 #toc-list {
@@ -839,19 +1079,15 @@ body[data-theme='dark'] .toc-header {
 
 .toc-empty {
   padding: 12px;
-  color: #6a737d;
+  color: var(--md-faint);
   font-size: 12px;
   font-style: italic;
-}
-
-body[data-theme='dark'] .toc-empty {
-  color: #6e7681;
 }
 
 a.toc-entry {
   display: block;
   padding: 4px 12px;
-  color: #57606a;
+  color: var(--md-muted);
   text-decoration: none;
   font-size: 13px;
   line-height: 1.4;
@@ -862,8 +1098,8 @@ a.toc-entry {
 }
 
 a.toc-entry:hover {
-  background-color: rgba(175, 184, 193, 0.15);
-  color: #0969da;
+  background-color: var(--md-hover-bg);
+  color: var(--md-accent);
 }
 
 /* §18.3.1 — active heading highlight. Applied to the entry whose
@@ -872,23 +1108,9 @@ a.toc-entry:hover {
  * index.ts). The active entry gets a stronger color + a left border
  * accent matching the editor cursor / selection accent. */
 a.toc-entry.toc-active {
-  color: #0969da;
+  color: var(--md-accent);
   font-weight: 600;
-  border-left-color: #0969da;
-}
-
-body[data-theme='dark'] a.toc-entry {
-  color: #8b949e;
-}
-
-body[data-theme='dark'] a.toc-entry:hover {
-  background-color: rgba(110, 118, 129, 0.2);
-  color: #58a6ff;
-}
-
-body[data-theme='dark'] a.toc-entry.toc-active {
-  color: #58a6ff;
-  border-left-color: #58a6ff;
+  border-left-color: var(--md-accent);
 }
 
 a.toc-h1 {
@@ -909,19 +1131,19 @@ a.toc-h4 {
   --toc-indent: 36px;
   padding-left: calc(12px + var(--toc-indent));
   font-size: 12px;
-  color: #6a737d;
+  color: var(--md-faint);
 }
 a.toc-h5 {
   --toc-indent: 48px;
   padding-left: calc(12px + var(--toc-indent));
   font-size: 12px;
-  color: #6a737d;
+  color: var(--md-faint);
 }
 a.toc-h6 {
   --toc-indent: 60px;
   padding-left: calc(12px + var(--toc-indent));
   font-size: 12px;
-  color: #6a737d;
+  color: var(--md-faint);
 }
 
 /* Mermaid diagrams (see §18.3.3). The pending state is a slightly
@@ -933,13 +1155,13 @@ a.toc-h6 {
   text-align: center;
   margin: 0 0 12px;
   padding: 16px;
-  background-color: #f6f8fa;
+  background-color: var(--md-surface);
   border-radius: 6px;
   overflow-x: auto;
 }
 
 #preview-pane .mermaid-pending {
-  color: #6a737d;
+  color: var(--md-faint);
   font-family:
     ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono',
     Menlo, monospace;
@@ -949,26 +1171,162 @@ a.toc-h6 {
 }
 
 #preview-pane .mermaid-error {
-  color: #cf222e;
-  background-color: #ffebe9;
+  color: var(--md-callout-red-border);
+  background-color: var(--md-callout-red-bg);
+  /* Same red in both presets — not theme-dependent, so not a variable. */
   border: 1px solid #ff8182;
-}
-
-body[data-theme='dark'] #preview-pane .mermaid {
-  background-color: #161b22;
-}
-
-body[data-theme='dark'] #preview-pane .mermaid-pending {
-  color: #8b949e;
-}
-
-body[data-theme='dark'] #preview-pane .mermaid-error {
-  color: #ff7b72;
-  background-color: #67060c;
-  border-color: #ff8182;
 }
 
 #preview-pane .mermaid svg {
   max-width: 100%;
   height: auto;
+}
+
+/* Language badge on each fenced code block (top-left), read from the inner
+ * <code>'s language-X class. Also feeds the fold-collapsed placeholder via
+ * the pre's data-lang attribute. */
+.code-lang {
+  position: absolute;
+  top: 0;
+  left: 0;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Consolas, monospace;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--md-faint);
+  background: var(--md-surface);
+  padding: 4px 8px;
+  border-right: 1px solid var(--md-border);
+  border-bottom: 1px solid var(--md-border);
+  border-radius: 6px 0 6px 0;
+  pointer-events: none;
+  user-select: none;
+  z-index: 1;
+}
+/* Make room for the badge so it doesn't overlap the first code line. Only
+ * affects <pre> that actually has a badge (Electron 42 supports :has). */
+#preview-pane pre:has(> .code-lang) {
+  padding-top: 30px;
+}
+
+/* Line-number gutter on multi-line code blocks. Absolute-positioned next to
+ * the code; line-height matches the code so the numbers align with each line. */
+.code-linenumbers {
+  position: absolute;
+  left: 8px;
+  top: 12px;
+  color: var(--md-faint);
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Consolas, monospace;
+  font-size: 0.9em;
+  line-height: 1.6;
+  text-align: right;
+  user-select: none;
+  pointer-events: none;
+  white-space: pre;
+  opacity: 0.6;
+}
+/* Shift the gutter below the language badge when one is present. */
+#preview-pane pre:has(> .code-lang) .code-linenumbers {
+  top: 30px;
+}
+/* Make room for the gutter on the left. */
+#preview-pane pre:has(> .code-linenumbers) {
+  padding-left: 48px;
+}
+
+/* Code block "Copy" button (§copy). Fades in on <pre> hover; the click is
+ * wired in md-render.ts via the Clipboard API. Colors track the theme. */
+.code-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  appearance: none;
+  border: 1px solid var(--md-border);
+  background: var(--md-surface);
+  color: var(--md-muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+#preview-pane pre:hover .code-copy-btn {
+  opacity: 1;
+}
+.code-copy-btn:hover {
+  color: var(--md-accent);
+  border-color: var(--md-accent);
+}
+.code-copy-btn.copied {
+  color: var(--md-hljs-addition-fg);
+  border-color: var(--md-hljs-addition-fg);
+}
+
+/* Image lightbox overlay (§lightbox). Fixed full-viewport, above everything.
+ * Backdrop click / Esc closes; wheel zooms; R rotates (JS in md-render.ts). */
+.lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+}
+.lightbox-img {
+  max-width: 90vw;
+  max-height: 90vh;
+  object-fit: contain;
+  cursor: default;
+  transition: transform 0.08s ease;
+}
+
+/* Footnotes section (marked-footnote extension) — sits at the end of the
+ * preview, separated by a top border. Refs are superscript links; back-links
+ * return to the reference. */
+#preview-pane .footnotes {
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid var(--md-border);
+  font-size: 0.9em;
+  color: var(--md-muted);
+}
+#preview-pane .footnotes ol {
+  padding-left: 20px;
+  margin: 0;
+}
+#preview-pane .footnotes li {
+  margin-bottom: 6px;
+}
+#preview-pane .footnotes a,
+#preview-pane sup a {
+  color: var(--md-accent);
+  text-decoration: none;
+}
+
+/* §fold-sync — preview blocks hidden to mirror an editor fold (the heading
+ * stays visible; the section body under it is hidden via JS class toggle). */
+#preview-pane .fold-hidden {
+  display: none;
+}
+
+/* §fold-sync — a folded CODE BLOCK collapses to a one-line placeholder instead
+ * of vanishing, so the reader sees it's there (and expands it from the editor).
+ * The <code> + copy button hide; a "▸ 折叠的代码块" bar shows in their place. */
+#preview-pane pre.fold-collapsed {
+  padding: 8px 12px;
+}
+#preview-pane pre.fold-collapsed > code,
+#preview-pane pre.fold-collapsed > .code-copy-btn,
+#preview-pane pre.fold-collapsed > .code-lang {
+  display: none;
+}
+#preview-pane pre.fold-collapsed::before {
+  content: '▸ ' attr(data-lang) ' · collapsed';
+  color: var(--md-faint);
+  font-style: italic;
+  font-size: 0.9em;
 }

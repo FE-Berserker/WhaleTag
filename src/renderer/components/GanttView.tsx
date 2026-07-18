@@ -43,7 +43,7 @@
  * Triage:
  *   Unchanged — same react-dnd `useDrop(DND_TYPE_FILE)` pattern. Drop
  *   still calls `data.onRemoveEntryDateTag?.(e)` per source (NOT
- *   `onMoveToColumn(null, …)` — distinct path; see `shared/gantt.ts`
+ *   `onMoveToColumn(null, …)` — distinct path; see `renderer/domain/gantt.ts`
  *   invariant #3).
  *
  * Right-click menu:
@@ -89,12 +89,12 @@ import SaveIcon from '@mui/icons-material/Save';
 import TodayIcon from '@mui/icons-material/Today';
 
 import type { DirEntry } from '../../shared/ipc-types';
-import type { WorkflowStage } from '../../shared/workflow';
+import type { WorkflowStage } from '../domain/workflow';
 import {
   QUADRANT_COLORS,
   QUADRANT_VALUES,
 } from '../../shared/smart-tags';
-import { getTagColor } from '../../shared/tag-colors';
+import { getTagColor } from '../domain/tag-colors';
 import {
   PX_PER_DAY,
   chartRowsFromEntries,
@@ -106,7 +106,7 @@ import {
   todayKey,
   type GanttPeriod,
   type GanttZoom,
-} from '../../shared/gantt';
+} from '../domain/gantt';
 import { DND_TYPE_FILE, type FileDragItem } from '-/services/dnd';
 import { NativeTypes } from 'react-dnd-html5-backend';
 import type { FileCellData } from '-/components/file-cell';
@@ -414,7 +414,7 @@ export default function GanttView({ data, stages, onMoveToColumn }: GanttViewPro
   );
 
   // ── Triage drop — clears period (NOT onMoveToColumn). Invariant #3
-  // in shared/gantt.ts ─
+  // in renderer/domain/gantt.ts ─
   // Also accepts native OS files: import them into the current directory
   // WITHOUT stamping a date tag (Triage = "no schedule", which matches the
   // internal-card semantics of clearing the period tag).

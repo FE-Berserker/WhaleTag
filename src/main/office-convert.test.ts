@@ -5,9 +5,12 @@ import os from 'os';
 import { promises as fsp } from 'fs';
 import {
   convertOfficeToPdf,
-  isSofficeAvailable,
 } from './office-convert';
-import { sofficeConvertArgs, sofficeBinary } from './thumbnail';
+import {
+  isSofficeAvailable,
+  sofficeConvertArgs,
+  sofficeBinary,
+} from './office-binary';
 
 /**
  * Creates a fake `soffice` script that mimics LibreOffice's CLI:

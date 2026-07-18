@@ -10,18 +10,18 @@
  *   `{ "zoom": "day" }`
  *
  * Reads swallow quota / disabled-storage errors via `readPrefs` /
- * `writePrefs` (see `src/shared/perspective-prefs.ts`) — a failed save
+ * `writePrefs` (see `src/renderer/domain/perspective-prefs.ts`) — a failed save
  * never surfaces.
  *
  * Scale derivation (`startKey` / `endKey`) is handled by `scaleForRange`
- * in `shared/gantt.ts` and is composed by the timeline — keeping this
+ * in `renderer/domain/gantt.ts` and is composed by the timeline — keeping this
  * hook narrowly scoped to zoom + persistence makes it unit-testable and
  * lets the timeline dictate the padding/anchoring policy.
  */
 import { useCallback, useEffect, useState } from 'react';
 
-import { readPrefs, writePrefs } from '../../../shared/perspective-prefs';
-import type { GanttZoom } from '../../../shared/gantt';
+import { readPrefs, writePrefs } from '../../domain/perspective-prefs';
+import type { GanttZoom } from '../../domain/gantt';
 
 const PREFS_KEY = 'whale-task-gantt-zoom';
 

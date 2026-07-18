@@ -18,7 +18,7 @@ import {
   GANTT_RANGE_DAYS,
   type GanttRangePreset,
 } from './useGanttRange';
-import { daysBetween } from '../../../shared/gantt';
+import { daysBetween } from '../../domain/gantt';
 
 before(async () => {
   globalJsdom();

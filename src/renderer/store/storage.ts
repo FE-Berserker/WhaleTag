@@ -1,20 +1,23 @@
 /**
- * Redux-persist storage adapter backed by synchronous main-process file IO.
+ * Redux-persist storage adapter backed by main-process file IO (async IPC).
  *
  * Electron's localStorage is asynchronously flushed to disk by Chromium and
  * can lose data on process exit. This adapter routes every read/write through
- * `window.whale` synchronous IPC to the main process, which performs
- * synchronous file IO so the data is committed before the call returns.
+ * `window.whale` async IPC (`invoke`) to the main process, which commits the
+ * JSON file (atomic tmp + rename) before the invoke resolves — the durability
+ * guarantee of the old `sendSync` adapter, but without blocking the renderer
+ * main thread or the main-process event loop (2026-07-18 migration; the
+ * `persist:*Sync` channels were removed).
  *
- * The methods still return Promises because redux-persist v5 calls `.catch()`
- * on the result; we resolve immediately after the synchronous IPC completes.
+ * Rehydration is async: `PersistGate` (index.tsx) already gates first render
+ * on it. Pending writes are drained on window close via `persistor.flush()`
+ * in configureStore.ts — that handshake is load-bearing and must stay,
+ * otherwise the last in-flight write could be lost when the window closes.
  *
  * Robustness (H.25 — settings reverting to defaults):
  *  - The getItem path is **defensive** about what the main process hands back.
- *    A non-null, non-undefined, non-string value (which would happen if
- *    `ipcRenderer.sendSync` ever lost its type contract) is treated as a
- *    read failure rather than fed into `JSON.parse` and corrupting the
- *    rehydrated state.
+ *    A non-null, non-undefined, non-string value is treated as a read failure
+ *    rather than fed into `JSON.parse` and corrupting the rehydrated state.
  *  - Errors are logged so a corrupt/missing file surfaces in DevTools
  *    instead of silently downgrading the user to defaults.
  *  - The legacy localStorage migration is still here, but it now logs
@@ -30,15 +33,15 @@ function assertWhale(): void {
 }
 
 const mainProcessStorage: Storage = {
-  getItem: (key: string): Promise<string | null> => {
+  getItem: async (key: string): Promise<string | null> => {
     assertWhale();
     let value: unknown;
     try {
-      value = window.whale.persistReadSync(key);
+      value = await window.whale.persistRead(key);
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error('[persist-storage-adapter] read IPC failed for', key, e);
-      return Promise.resolve(null);
+      return null;
     }
     if (value === null || value === undefined) {
       // One-time migration from the old localStorage-backed storage. If the new
@@ -53,7 +56,7 @@ const mainProcessStorage: Storage = {
             key
           );
           try {
-            window.whale.persistWriteSync(key, legacy);
+            await window.whale.persistWrite(key, legacy);
           } catch (e) {
             // eslint-disable-next-line no-console
             console.error(
@@ -61,12 +64,12 @@ const mainProcessStorage: Storage = {
               key,
               e
             );
-            return Promise.resolve(null);
+            return null;
           }
-          return Promise.resolve(legacy);
+          return legacy;
         }
       }
-      return Promise.resolve(null);
+      return null;
     }
     if (typeof value !== 'string') {
       // eslint-disable-next-line no-console
@@ -77,14 +80,14 @@ const mainProcessStorage: Storage = {
         typeof value,
         ') — discarding'
       );
-      return Promise.resolve(null);
+      return null;
     }
-    return Promise.resolve(value);
+    return value;
   },
-  setItem: (key: string, value: string): Promise<void> => {
+  setItem: async (key: string, value: string): Promise<void> => {
     assertWhale();
     try {
-      window.whale.persistWriteSync(key, value);
+      await window.whale.persistWrite(key, value);
     } catch (e) {
       // Surface the failure: the previous file is still intact, but the
       // renderer's `setItem` Promise now rejects, so redux-persist logs
@@ -92,20 +95,18 @@ const mainProcessStorage: Storage = {
       // losing changes on next launch.
       // eslint-disable-next-line no-console
       console.error('[persist-storage-adapter] write IPC failed for', key, e);
-      return Promise.reject(e);
+      throw e;
     }
-    return Promise.resolve();
   },
-  removeItem: (key: string): Promise<void> => {
+  removeItem: async (key: string): Promise<void> => {
     assertWhale();
     try {
-      window.whale.persistDeleteSync(key);
+      await window.whale.persistDelete(key);
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error('[persist-storage-adapter] delete IPC failed for', key, e);
-      return Promise.reject(e);
+      throw e;
     }
-    return Promise.resolve();
   },
 };
 

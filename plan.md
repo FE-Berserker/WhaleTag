@@ -18,7 +18,7 @@
 | [docs/04-search-index.md](docs/04-search-index.md) | SQLite FTS5 即时搜索、目录索引、全文索引、高级查询、保存搜索 |
 | [docs/05-perspectives.md](docs/05-perspectives.md) | 9 类有效视角 + ViewMode 联合 + Task 第三档(Kanban/Matrix/Gantt)与全局递归深度 |
 | [docs/06-thumbnails.md](docs/06-thumbnails.md) | 缩略图管线(image/svg/video/pdf/office/ebook/font)、文件夹缩略图、39 类回退图标 |
-| [docs/07-extensions.md](docs/07-extensions.md) | 扩展协议、17 个内置扩展(viewer/editor)、修订历史、双层 iframe 拓扑 |
+| [docs/07-extensions.md](docs/07-extensions.md) | 扩展协议、15 个内置扩展(viewer/editor)、修订历史、双层 iframe 拓扑 |
 | [docs/08-data-depth.md](docs/08-data-depth.md) | `DirectoryContentContextProvider` 单一数据源、全局 `viewDepth`、path-keyed 投影、截断与防抖 |
 | [docs/09-known-issues.md](docs/09-known-issues.md) | 已修过的关键 bug 摘要与反复踩过的坑(冷启动黑魔法、redux-persist 引用一致性等) |
 | [docs/10-ui.md](docs/10-ui.md) | 11 种主题模式(3 经典 + 8 策划)、12 套 `PRESETS` token、`'system'` 必须经过解析、8 分类设置面板 |
@@ -29,6 +29,7 @@
 | [docs/15-perf-audit.md](docs/15-perf-audit.md) | **性能审计与待办清单**(2026-07-12);Tier 0–3 可勾选优化项 + 已接受取舍 + 可复用范式;plan.md §F 的例外追踪文档 |
 | [docs/16-cross-platform.md](docs/16-cross-platform.md) | **macOS / Linux 跨平台打包可行性**(2026-07-12);已就绪代码清单 + 硬阻塞(mac 签名)+ 需改项(Linux 大小写守卫/DE fallback/图标);§F 例外评估文档 |
 | [docs/17-office-worker.md](docs/17-office-worker.md) | **Office→PDF 常驻 UNO worker**(P3-3,2026-07-18);Python 桥接 + 常驻 soffice listener + cooldown 回退 execFile;UNO gotcha / stale-child race / 打包 extraResources |
+| [docs/18-auto-update.md](docs/18-auto-update.md) | **应用自动更新**(Phase 6,2026-07-18);electron-updater + GitHub Releases;5s 启动延迟检查 + 手动按钮;dev-mode 短路由 `unsupported`;macOS 公证与 Linux AppImage 见 `docs/16` 硬阻塞 |
 | [docs/UI.md](docs/UI.md) | 设计语言(从 Pencil `.pen` 导出,主题 token;源文件描述比代码实际少 2 个策划主题) |
 
 > 找不到某模块的现状?直接从对应 `docs/0X-*.md` 入口找,不必翻 git 历史。
@@ -51,14 +52,14 @@
 - **Main**(Node/Electron):所有 FS IO、缩略图、索引、扩展转换、修订历史、AI CLI 子进程;`electron-builder` 打包。
 - **Preload**:`contextBridge` 暴露 `window.whale` —— 渲染层唯一接触文件/系统能力的桥。
 - **Renderer**(React):web target,webpack 5 多目标打包;`src/renderer` 编译到 `release/app/dist/renderer`。
-- **Shared**:`src/shared/` 是两进程共享的纯逻辑(类型 + 纯函数,无 Electron/React 依赖)。
+- **Shared**:`src/shared/` 仅保留**真正跨进程**(main + renderer 都引用)的契约与常量:`ipc-types` / `extension-types` / `ai-types` / `whale-meta` / `whale-file-url` / `search-query` / `archive-types` / `ebook-annotations` / `tags`(`mergeTags`,主进程索引聚合)/ `shell-types` / `smart-tags`(main 用来迁移 / 规范化日期 tag)/ `dedupe-name`。**纯渲染层**的视角计算 / 标签规范化 / GPS 转换 / 大纲布局等独立逻辑都改放 `src/renderer/domain/`(零 main 引用)。改 shared/ 新文件前先确认 main 是否真要用 —— 否则丢 renderer/domain。
 
 **协议**:
 
 - `whale-extension://<ext-id>/...` — 沙箱扩展 iframe (特权协议 `standard+secure`,Electron 42 必需)。
 - `whale-file://<encoded-path>` — 支持 Range 的流式文件服务(MediaLightbox 与 `whaleExt.fetch` 媒体)。
 
-**持久化**:redux-persist 走主进程同步 IPC(Chromium localStorage 异步会被 3s close-fallback 丢数据),`app.setPath('userData', ...)` 在 `whenReady` 之前 pin 到 `<productName>`,详见 [docs/02-file-io.md](docs/02-file-io.md)。
+**持久化**:redux-persist 走主进程 IPC(async invoke,tmp+rename 落盘;Chromium localStorage 异步会被 3s close-fallback 丢数据),`app.setPath('userData', ...)` 在 `whenReady` 之前 pin 到 `<productName>`,详见 [docs/02-file-io.md](docs/02-file-io.md)。
 
 **`.whale/` 元数据目录**(每个被管理的目录下都建):
 ```
@@ -90,7 +91,7 @@
 | 搜索 | SQLite FTS5 文件名 + 标签模糊匹配;`files_fts` (trigram) + `fulltext_fts`;高级查询 `SearchQuery` 10 字段;保存搜索 |
 | 缩略图 | image / svg / video / pdf / office / ebook / font(7 种 ThumbKind)+ 文件夹;Excalidraw / Drawio / CAJ / MIDI 不出场景缩略图走品牌图标或系统应用 |
 | 主题 | **11 种**(3 经典 + 8 策划 = `warm-paper` / `midnight-plum` / `frosted-mint` / `deep-ocean` / `dawn-blush` / `forest-ink` / `soft-amber` / `high-contrast`);`PRESETS` 数组含 12 项(再加 4 个老 `ocean/forest/sunset/mono`);`'system'` 不流入 MUI,工厂签名收窄为 `mode: 'light' \| 'dark'` |
-| 扩展 | **17 个内置**(viewer / editor),主进程 IPC + iframe `postMessage` 桥;修订历史 + 右键 Open With;archive-viewer 解码 9 种(7z 通过 7zip-bin);cad-viewer 4 tier;pdf-viewer iframe 内 pdfjs 浏览器版 + fake worker + 二进制工厂 |
+| 扩展 | **15 个内置**(viewer / editor),主进程 IPC + iframe `postMessage` 桥;修订历史 + 右键 Open With;archive-viewer 解码 9 种(7z 通过 7zip-bin);cad-viewer 4 tier;pdf-viewer iframe 内 pdfjs 浏览器版 + fake worker + 二进制工厂 |
 | AI 助手 | Claude Code CLI(**可选 AI 组件**,用户安装 `.whaleai` 7z 包;非主安装包内置,见 [docs/11 §12](docs/11-ai.md))+ HTTP provider(`ollama` / `openai` 共享 runtime);**3 个 IPC 推送通道**(`ai:chunk` / `ai:error` / `ai:approvalRequest`)+ **16 个 invoke 通道**(13 个原 AI 通道 + 3 个组件生命周期 `ai:getComponentState` / `ai:installComponent` / `ai:uninstallComponent`);安全 storage 存 key;统一闸门 `decideToolCall` |
 | 自定义命令 | 右键文件/文件夹 → "命令" 子菜单运行用户预置命令(单行模板 + `${path}` / `${dir}` / `${name}` 占位,弹新终端窗口显示输出);设置 → 命令 管理;主进程安全引号([shell-quote.ts](src/main/shell-quote.ts))+ `assertWithinAllowedRoot` 闸 + Windows `%` 拒绝;详见 [docs/13 §11](docs/13-security.md) |
 

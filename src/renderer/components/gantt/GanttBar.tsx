@@ -28,7 +28,7 @@ import {
   EDGE_HIT_ZONE,
   periodStatus,
   type GanttPeriod,
-} from '../../../shared/gantt';
+} from '../../domain/gantt';
 
 import { useBarDrag } from './useBarDrag';
 
@@ -120,7 +120,7 @@ export default function GanttBar({
   });
 
   // P0 #2: classify the bar against today. Pure read; the helper lives
-  // in shared/gantt.ts so tests can pin the boundaries (overdue vs
+  // in renderer/domain/gantt.ts so tests can pin the boundaries (overdue vs
   // in-progress at the inclusive boundaries, etc.) without standing up
   // a render tree. Recompute each render — period/todayKey change at
   // most once per "Today" click or per drag-commit.

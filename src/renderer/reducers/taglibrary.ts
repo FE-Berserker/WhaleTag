@@ -1,12 +1,12 @@
 import type { AnyAction } from 'redux';
-import type { TagGroup } from '../../shared/tag-library';
+import type { TagGroup } from '../domain/tag-library';
 
 export type { TagGroup };
 
 /**
  * User-defined, persisted collections of reusable tags. A tag's color comes
  * from its own settings.tagColors entry, OR — as a fallback — its group's
- * color (see getTagColor in shared/tag-colors.ts).
+ * color (see getTagColor in renderer/domain/tag-colors.ts).
  */
 export interface TagLibraryState {
   groups: TagGroup[];

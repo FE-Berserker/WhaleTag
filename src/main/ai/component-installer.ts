@@ -97,7 +97,7 @@ export async function installAiComponent(packageFilePath: string): Promise<Insta
   if (!fs.existsSync(packageFilePath)) {
     return { ok: false, error: `文件不存在:${packageFilePath}` };
   }
-  const sevenZip = sevenZipBinary();
+  const sevenZip = await sevenZipBinary();
   if (!sevenZip) {
     return { ok: false, error: '未找到 7za 解压工具(7zip-bin 缺失)' };
   }

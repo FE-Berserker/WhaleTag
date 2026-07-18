@@ -32,14 +32,39 @@ export interface CommandValues {
  * fully shell-quoted for the platform. Pure; exported for unit tests. Uses a
  * replacer FUNCTION so a `$` inside a path isn't mis-read as a backreference.
  */
+/**
+ * On Windows, UNC paths (`\\server\share\…`) carry backslashes that some
+ * programs parse less robustly than the forward-slash form. The forward-slash
+ * UNC (`//server/share/…`) is accepted by the Windows API and virtually all
+ * programs, and is the form verified to actually work in the spawned cmd
+ * window — backslash UNC has been observed to fail in real command templates.
+ * Local drive paths (`C:\…`) keep their backslashes. No-op on POSIX.
+ *
+ * Applied to `${path}` / `${dir}` only — `${name}` is a basename (no `\\`).
+ */
+function toShellFriendlyPath(
+  value: string,
+  platform: NodeJS.Platform
+): string {
+  if (platform === 'win32' && value.startsWith('\\\\')) {
+    return value.replace(/\\/g, '/');
+  }
+  return value;
+}
+
+/**
+ * Substitute `${path}` / `${dir}` / `${name}` into the template, each value
+ * fully shell-quoted for the platform. Pure; exported for unit tests. Uses a
+ * replacer FUNCTION so a `$` inside a path isn't mis-read as a backreference.
+ */
 export function substituteAndQuote(
   template: string,
   values: CommandValues,
   platform: NodeJS.Platform = process.platform
 ): string {
   const quoted = {
-    path: quotePathForShell(values.path, platform),
-    dir: quotePathForShell(values.dir, platform),
+    path: quotePathForShell(toShellFriendlyPath(values.path, platform), platform),
+    dir: quotePathForShell(toShellFriendlyPath(values.dir, platform), platform),
     name: quotePathForShell(values.name, platform),
   };
   return template

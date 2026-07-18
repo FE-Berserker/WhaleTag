@@ -23,7 +23,7 @@
 | 项 | 位置 | 状态 |
 |---|---|---|
 | AI 密钥存储 | [secretStore.ts](../src/main/ai/security/secretStore.ts) | `safeStorage` 全平台;非 DPAPI 直调,无 `powershell.exe` |
-| soffice (LibreOffice) | [thumbnail.ts](../src/main/thumbnail.ts) `sofficeBinary` ~L116-159(async,P1-1) | 三平台候选路径全有(Win Program Files / mac `/Applications/LibreOffice.app/...` / linux `/usr/bin/soffice`、`/usr/lib/libreoffice/...`);`soffice.exe` vs `soffice` 已处理;PATH 探针走异步 `execFile` 不冻主进程 |
+| soffice (LibreOffice) | [office-binary.ts](../src/main/office-binary.ts) `sofficeBinary`(从 thumbnail.ts 抽出,async,P1-1) | 三平台候选路径全有(Win Program Files / mac `/Applications/LibreOffice.app/...` / linux `/usr/bin/soffice`、`/usr/lib/libreoffice/...`);`soffice.exe` vs `soffice` 已处理;PATH 探针走异步 `execFile` 不冻主进程 |
 | ffmpeg | [thumbnail.ts](../src/main/thumbnail.ts) ~L96 | `ffmpeg-static` 包自带各平台二进制,asarUnpack 已含 |
 | 7zip | [archive.ts](../src/main/archive.ts) ~L34 | `7zip-bin` 自带 win/mac/linux 全部二进制,按 `process.platform` + `arch` 选 |
 | ebook-convert (calibre) | [ebook-convert.ts](../src/main/ebook-convert.ts) ~L24-55 | 三平台候选路径全有 |

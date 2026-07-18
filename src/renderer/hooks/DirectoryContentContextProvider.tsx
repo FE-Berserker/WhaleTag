@@ -19,8 +19,8 @@ import {
 } from '../../shared/whale-meta';
 import type { SidecarMeta } from '../../shared/whale-meta';
 import { extractTags } from '-/services/tags';
-import { geoPointFromTags } from '../../shared/geo-tag';
-import { MAX_RECURSIVE_ENTRIES } from '../../shared/recursive-entries';
+import { geoPointFromTags } from '../domain/geo-tag';
+import { MAX_RECURSIVE_ENTRIES } from '../domain/recursive-entries';
 import type { RootState } from '-/reducers';
 import { ipcApi } from '-/services/ipc-api';
 import { useCurrentLocationContext } from './CurrentLocationContextProvider';
@@ -452,7 +452,7 @@ export function DirectoryContentContextProvider({
 
 // Re-export the constant for tests / external callers; not part of the
 // public context value shape.
-export { MAX_RECURSIVE_ENTRIES } from '../../shared/recursive-entries';
+export { MAX_RECURSIVE_ENTRIES } from '../domain/recursive-entries';
 // Re-export EMPTY_MAPS so legacy callers (e.g. TagMetaContext during the
 // cut-over window) can fall back to the same shape without a new allocation.
 export { EMPTY_MAPS };

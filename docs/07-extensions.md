@@ -196,7 +196,24 @@ src/extensions/
 17. **撤销/重做指示 + "Modified" 角标** ✅ 已修(2026-07-07 Week 5,Modified 角标部分)— 状态栏右侧 `#status-dirty` 元素(orange ● + Modified),`updateListener` docChanged 置 true,`savingFile` 消息置 false,`setContent` 置 false。**撤销/重做红点**未做(Week 6+ 候选)
 18. **阅读时长 / 字数实时统计** ✅ 已修(2026-07-07 Week 5)— 字数在 Week 3 #7 状态栏 `Words` 字段;阅读时长 [`estimateReadingMinutes(text)`](../src/extensions/md-editor/md-render.ts) CJK-aware(英文 200 wpm + CJK 400 cpm),`englishWords = countWords - cjkRuns`,空 0 非空至少 1。状态栏 `Words.title` 显示 "N min read"
 
-**callout(Obsidian / GitHub Alerts)+ 内嵌 HTML 标签**(2026-07-18 新增)— `> [!TYPE]` 渲染成带图标 / 颜色 / 可折叠的提示框(`note` / `tip` / `warning` / `danger` / `info` / `success` / `question` / `bug` / `important` / `caution` / `example` / `quote` / `abstract` / `failure` / `todo` 共 15 种 + 未知类型 fallback 到默认图标 + `callout-{type}` class)。支持 `> [!TYPE]: 自定义标题` 和折叠(`> [!info]-` 收起 / `+` 展开,用原生 `<details>` 无需 JS)。由 [`transformCallouts`](../src/extensions/md-editor/md-render.ts) 在 `parseMarkdown` 阶段把 `> [!TYPE]` blockquote 转成 callout(复用 DOMParser,保留 `data-source-line` 供 TOC / 滚动同步定位)。DOMPurify allow-list 同时扩展 `details` / `summary` / `kbd` / `mark` / `sub` / `sup` / `ins` / `del`,内嵌 HTML 渲染更丰富(`<style>` 仍禁)。
+**callout(Obsidian / GitHub Alerts)+ 内嵌 HTML 标签**(2026-07-18 新增)— `> [!TYPE]` 渲染成带图标 / 颜色 / 可折叠的提示框(`note` / `tip` / `warning` / `danger` / `info` / `success` / `question` / `bug` / `important` / `caution` / `example` / `quote` / `abstract` / `failure` / `todo` 共 15 种 + 未知类型 fallback 到默认图标 + `callout-{type}` class)。支持自定义标题(空格 `> [!TYPE] 标题` Obsidian 风格,或冒号 `> [!TYPE]: 标题`)+ 折叠(`> [!info]-` 收起 / `+` 展开,标记须紧跟 `]`,故 `[!note] -5 度` 是标题而非折叠;用原生 `<details>` 无需 JS)。由 [`transformCallouts`](../src/extensions/md-editor/md-render.ts) 在 `parseMarkdown` 阶段把 `> [!TYPE]` blockquote 转成 callout(复用 DOMParser,保留 `data-source-line` 供 TOC / 滚动同步定位)。DOMPurify allow-list 同时扩展 `details` / `summary` / `kbd` / `mark` / `sub` / `sup` / `ins` / `del`,内嵌 HTML 渲染更丰富(`<style>` 仍禁)。
+
+**渲染主题预设**(2026-07-18)— [editor.css](../src/extensions/md-editor/editor.css) 全量变量化(35 个 `--md-*` 变量,6 组:基础 / chrome 交互 / code / mark / callout / hljs),`body[data-theme]` = 预设名。**8 个预设**:`github-light`(`:root` 默认)/ `github-dark` / `solarized-light` / `solarized-dark` / `dracula` / `nord` / `gruvbox` / `one-dark`,每个 = 一个纯变量覆盖块(Solarized / Dracula / Nord / Gruvbox / One-Dark 取各自官方调色板;hljs token 映射手填,因 highlight.js 只装了 github 系)。md-editor 主题**独立于 WhaleTag 全局 MUI 主题**:host `setTheme('light'|'dark')` 经 [index.ts `applyTheme`](../src/extensions/md-editor/index.ts) 记 `hostMode` → `resolvePreset()`/`applyPreset()`(默认映射 github-light/dark);工具栏 `<select id="select-theme">` 让用户固定预设(localStorage `md-editor-theme`,`auto` = 删 key)。`presetMode`:github-light / solarized-light → light(默认 CM token),其余 → dark(CodeMirror `oneDark` token)。callout 6 组 + hljs token 随主题变量自动切换,无独立配置 UI。
+
+**编辑区 CodeMirror 跟主题**(2026-07-18)— 两层:
+- **结构色**(`.cm-editor` / `.cm-gutters` / `.cm-cursor` / `.cm-selectionBackground` / `.cm-activeLine` / `.cm-panels` / `.cm-searchMatch`)由 editor.css 的 `body[data-theme] .cm-*` 段用 `--md-*` 变量驱动(`body[data-theme]` 前缀盖过 oneDark 硬编码)。
+- **markdown / 代码 token 色**(标题 / 链接 / 强调 / 引用 / keyword / string / number / comment)由 [`buildMdHighlightFromCss`](../src/extensions/md-editor/index.ts) 在运行时 `getComputedStyle` 读当前预设的 `--md-*` 值生成 `HighlightStyle.define`,`highlightCompartment` 在每次 `applyPreset` 重建(`data-theme` 设定后再读,拿到新预设的值)。`themeExtension` 因此改用 `oneDarkTheme`(只结构,不再用 oneDark 自带的 highlight)。此版 `@codemirror/language` 无 `classHighlightStyle`,故用动态 HighlightStyle(读 CSS 变量)代替语义 class + CSS 覆盖。
+消除"选 Solarized/Dracula 时预览换色、左侧编辑区仍 github/oneDark"的左右割裂(token 也跟主题)。
+
+**导出 HTML 跟主题**(同日)— [`wrapHtmlDocument`](../src/extensions/md-editor/md-render.ts) 的 `EXPORT_CSS` 全变量化(含 callout + hljs),签名加可选 `themeRootVars`;`exportPreviewAsHtml` 经 `readMdThemeVars()`(`getComputedStyle(document.body)` 读 35 变量)注入 `:root{...}` 块 → 导出文档带当前主题(移除原 `prefers-color-scheme` 媒体查询,导出固定为选中预设)。
+
+**代码折叠**(2026-07-18)— `foldGutter()` + `foldKeymap`(`Mod-Alt-[` 折叠 / `Mod-Alt-]` 展开;Win/Linux = Ctrl-Alt、Mac = Cmd-Alt)+ 自定义 markdown heading `foldService`([`foldMarkdownHeading`](../src/extensions/md-editor/index.ts):折叠 `#` 标题到下一同级/更高级标题前;`lang-markdown` 不自带 heading fold)。markdown 总可折叠(无需 text-editor 的 `supportsFolding` 按文件判断)。无 Fold All 按钮(工具栏空间有限),靠 gutter marker + 快捷键。
+
+**折叠预览联动**(2026-07-18)— [`applyFoldToPreview`](../src/extensions/md-editor/index.ts) 把编辑区的折叠同步到预览:`updateListener` 监听 CodeMirror `foldState` 变化(前后 `field` 引用 `!==`)→ 读 folded ranges 的起止行 → 预览区按 `data-source-line` 给**严格落在范围内**的 top-level block 加 `.fold-hidden`(`display:none`);标题 block 本身(`fromLine`)保留,折叠章节标题仍可见。`renderPreview` 末尾也调,新内容应用当前 fold 状态。TOC 不联动(保持全条目供导航)。
+
+**代码块复制按钮**(2026-07-18)— [`addCodeCopyButtons`](../src/extensions/md-editor/md-render.ts) 给预览区每个 `<pre>` 加 hover 显示的 Copy 按钮,点击经 `navigator.clipboard.writeText` 复制代码(`whale-extension://` 是 privileged secure scheme,Clipboard API 在 iframe 内可用),1.5s "Copied!" 反馈。幂等(`:scope > .code-copy-btn` 去重,防重渲染双加)。`renderPreview` 在 `highlightCodeBlocks` 后调用。
+
+**图片 Lightbox**(2026-07-18)— [`attachImageLightbox`](../src/extensions/md-editor/md-render.ts) 给预览区 `<img>` 加 click → [`openImageLightbox`](../src/extensions/md-editor/md-render.ts) 全屏暗色 overlay 放大查看;滚轮缩放(0.2–8×)、`R` 旋转 90°、`Esc` / 点 backdrop 关闭。自建 DOM + 自管 listener(关闭时 teardown)。幂等(`data-lightbox="1"` flag)。`renderPreview` 在 `resolveLocalImages` 后调用(此时 `img.src` 已是 `whale-file://`)。
 
 **🛠️ 代码质量 & 安全**
 
@@ -229,6 +246,32 @@ src/extensions/
 - #12 GFM:`marked.use({ gfm: true, breaks: false })`
 - #19 DOMPurify ✅ → `ALLOWED_ATTR` 删 `style` + `FORBID_ATTR: ['style']`
 - #20 事件委托 ✅ → 见 `setupLinkDelegation`
+
+**深度审查待优化(2026-07-18)** — 通读 index.ts(1459 行)/ md-render.ts(1883 行)/ md-sandbox.ts + katex-sandbox.ts / md-splitter.ts 后的待办清单(逐项对照过源码,非臆测;按收益排序):
+
+> **进度(2026-07-18)**:🔴 四项已修 —— #1(`setContent` 加 `Transaction.addToHistory.of(false)`,切文件不进 undo 栈)、#2(状态栏拆 `updateCursorStatus` O(1) + `updateWordCount` debounced,光标移动不再跑全文词数)、#3(`countWords` CJK 按字符算 + 抽 `countCjkAndLatin` 与 `estimateReadingMinutes` 共用)、#4(mermaid / katex / hljs 全按 source 缓存:mermaid 用 `MERMAID_CACHE`,katex 用 inline/block 两个 Map,hljs 用 `JSON([className, source])` → 高亮 outerHTML;均 LRU cap 200)。**第二批**:🟠 #5(滚动同步 `scheduleSyncPreviewScroll` rAF 节流 + `previewLineMap` O(1) 查,`renderPreview` 末尾建图;配合预览区 wheel 转发到编辑区 scroller)、#6(`applyTheme` default 回退 `detectInitialTheme` + warn,删 `assertNever`,host 传坏值不再崩);🟡 #11(删 `md-sandbox.ts` + `katex-sandbox.ts` 死代码 `idCounter`)、#9(`editor.css` `'已折叠'` → `'collapsed'`,chrome 文案统一英文)。md-render 123 测试 + build:extensions 通过(type-check 仅剩 pre-existing 的 `src/renderer/domain/*.test.ts` import 路径错,与 md-editor 无关)。
+
+**🔴 高(真 bug / 真 bottleneck)**
+
+- **切文件 undo 跨文件泄漏**:[index.ts `setContent`:1339](../src/extensions/md-editor/index.ts#L1339) `view.dispatch({changes})` 没加 `Transaction.addToHistory.of(false)`,该 transaction 进 history;`fileContent` 复用 view([:1378](../src/extensions/md-editor/index.ts#L1378))。编辑 A → 切 B → 在 B 里 Ctrl+Z 会一路退回 A 内容。**修**:setContent 的 dispatch 加 `addToHistory.of(false)`,或 path 变化时 `view.setState(EditorState.create({...}))` 重建 state。
+- **状态栏光标移动跑全文词数**:[index.ts:1106](../src/extensions/md-editor/index.ts#L1106) `selectionSet` 也触发 `updateStatus`;[md-render.ts `getStatusInfo`:748](../src/extensions/md-editor/md-render.ts#L748) 里 `doc.toString()` + `countWords` + `estimateReadingMinutes` 全 O(n) 全文扫描。大文档按方向键每次重扫。**修**:`selectionSet` 只更新 line/col/selection(廉价),`docChanged` 走 debounce 跑 word count。
+- **CJK 词数不工作**:[md-render.ts `countWords`:743](../src/extensions/md-editor/md-render.ts#L743) 纯 `split(/\s+/)`,中文连续段落整段算 1 词(5000 字笔记状态栏 "Words: 1")。`estimateReadingMinutes` 已 CJK-aware,只有词数错(注释自标 §18.3.6 follow-up)。**修**:`countWords` 给 CJK 按字符算,阅读时间复用同一 helper 消重复正则。
+- **预览每次编辑全量重跑 hljs/mermaid/katex**:[index.ts `renderPreview`:1012](../src/extensions/md-editor/index.ts#L1012) innerHTML swap 后节点全新,mermaid `data-mermaid="processed"` / katex marker / hljs `data-highlighted` 全丢 → 每个 debounce 停顿全量重发 sandbox;20 张 mermaid 图每次停 300ms 全量重渲染。**修**:按 source hash 缓存 `Map<hash, svg/html>`(WeakMap 键到节点),命中直接 innerHTML 缓存、不发 sandbox;沙箱端无需改。
+
+**🟠 中**
+
+- **滚动同步未 rAF 节流 + 强制布局抖动**:[index.ts `syncPreviewScroll`:552](../src/extensions/md-editor/index.ts#L552) scroll 回调里 `querySelector`(O(blocks))+ 两次 `getBoundingClientRect`(强制 layout),大文档掉帧。**修**:scroll 进 rAF + 渲染后建 `Map<lineNo, blockEl>` O(1) 查 + 用 `offsetTop` 替代 getBoundingClientRect。
+- **`applyTheme` 未知值 `assertNever` 抛错**:[index.ts:849](../src/extensions/md-editor/index.ts#L849) host 传非 `light|dark|system`(运行时类型不保证)整个 md-editor iframe 崩、文件打不开。**修**:`default` 回退 `detectInitialTheme()` + `console.warn`;exhaustiveness 只做 TS 编译期、运行时不抛。零风险。
+- **架构债**:[index.ts](../src/extensions/md-editor/index.ts) 1459 行混主题/状态栏/工具栏/折叠/TOC/消息路由 6 类关注点;[md-sandbox.ts](../src/extensions/md-editor/md-sandbox.ts) 与 [katex-sandbox.ts](../src/extensions/md-editor/katex-sandbox.ts) 镜像重复 ~80 行(含需同步维护的安全检查)。**修**:抽 `md-toolbar.ts` / `md-statusbar.ts` / `md-theme.ts` / `md-fold.ts` + `createPostMessageSandbox` 工厂,跑现有 99 个测试兜底。
+
+**🟡 低 / 加固**
+
+- **沙箱 postMessage 用 OR 而非 AND**(安全加固,非紧急)— [md-sandbox.ts:127](../src/extensions/md-editor/md-sandbox.ts#L127) `!isFromOurSandbox && !isOursByShape` 是 OR,注释说为兼容某些 Chromium `e.source` 比对不可靠。**实际风险有限**:`data.id` 还须匹配 pending RPC(id = `Date.now()+Math.random` 不可预测),不是"任意窗口可伪造";改 AND 更严格(现代 Chromium `e.source` 已可靠),顺手配合上面的 sandbox 工厂一起改。
+- **CSS 硬编码中文 "已折叠"**:[editor.css:1328](../src/extensions/md-editor/editor.css#L1328) `content: '▸ ' attr(data-lang) ' · 已折叠'`,其他 chrome 全英文,不一致 → 改 `' · collapsed'`。
+- **缺 Markdown 格式化快捷键**:[index.ts keymap:1091](../src/extensions/md-editor/index.ts#L1091) 只有 Mod-S/F/G/0/-/=,缺 Mod-B/I/K(加粗/斜体/链接);CodeMirror `lang-markdown` 不带,需自写 `markdownFormattingKeymap`(围绕选区包裹标记)。
+- **死代码**:[md-sandbox.ts:92](../src/extensions/md-editor/md-sandbox.ts#L92) + [katex-sandbox.ts:73](../src/extensions/md-editor/katex-sandbox.ts#L73) `const idCounter = 0` 从不引用(实际用 `newMermaidId()` / `newKatexId()`),直接删。
+
+**推荐落地**:先 🔴 #1(undo)+ #3(CJK)+ #2(状态栏)—— 真问题、改动小、纯函数好测;再 🔴 #4(预览缓存,收益最大工作量也最大,单独一轮);🟠 架构重构 + 🟡 安全加固最后。
 
 ## 5. 媒体与文档类
 
@@ -265,7 +308,7 @@ src/extensions/
 
 - `convertOfficeToPdf(srcPath, options)` 走 `execFile(bin, ['--headless','--convert-to','pdf','--outdir',tmpDir, srcPath], {timeout: 120000})`
 - `tmpDir` 用 `fsp.mkdtemp(os.tmpdir() + '/whale-office-')`,转换完 `fsp.rm(tmpDir, {recursive, force})`
-- `bin` 来自 [src/main/thumbnail.ts:111-159](../src/main/thumbnail.ts) 的 `await sofficeBinary(override)`(`Promise<string|null>`,async — P1-1):`override` > `C:\Program Files\LibreOffice\program\soffice.exe` (Win) / `/Applications/LibreOffice.app/Contents/MacOS/soffice` (Mac) / `/usr/bin/soffice` / `/usr/lib/libreoffice/program/soffice` (Linux) > PATH `soffice --version` 异步探针(并发首调用 inflight 去重)
+- `bin` 来自 [src/main/office-binary.ts](../src/main/office-binary.ts) 的 `await sofficeBinary(override)`(`Promise<string|null>`,async — P1-1;从 `thumbnail.ts` 抽出,以解开原 `thumbnail.ts` ↔ `office-convert.ts` 循环依赖):`override` > `C:\Program Files\LibreOffice\program\soffice.exe` (Win) / `/Applications/LibreOffice.app/Contents/MacOS/soffice` (Mac) / `/usr/bin/soffice` / `/usr/lib/libreoffice/program/soffice` (Linux) > PATH `soffice --version` 异步探针(并发首调用 inflight 去重)
 - `await isSofficeAvailable()` 探针同上,扩展不主动调,缺 soffice 时报 `'LibreOffice (soffice) not found'`
 
 **iframe**([src/extensions/office-viewer/index.ts](../src/extensions/office-viewer/index.ts)):
@@ -293,7 +336,7 @@ src/extensions/
 **已修**(2026-07-06 改造):
 
 - ✅ PDF 已缓存到 `.whale/transcodes/<basename>.pdf`(仿 transcode-cache,详见 [src/main/office-cache.ts](../src/main/office-cache.ts));inflight 去重 / move/copy/remove 钩子齐全
-- ✅ soffice 参数已加 `--norestore --nologo --nofirststartwizard`(统一定义在 [thumbnail.ts](../src/main/thumbnail.ts) 的 `sofficeConvertArgs`)
+- ✅ soffice 参数已加 `--norestore --nologo --nofirststartwizard`(统一定义在 [office-binary.ts](../src/main/office-binary.ts) 的 `sofficeConvertArgs`)
 - ✅ soffice stderr 已捕获并入 error message(`stdio: ['ignore', 'pipe', 'pipe']`)
 - ✅ iframe 与 pdf-viewer 重复代码已抽到 [shared/pdfjs-in-iframe.ts](../src/extensions/shared/pdfjs-in-iframe.ts);`requestAsset` 30s 超时,`doc.destroy()` 在 render 末尾调用
 - ✅ office-viewer 启动已用 `detectInitialTheme()`(消除深色用户白闪)
@@ -355,7 +398,7 @@ src/extensions/
 **未做(Phase 3,本 PR 明确不做)**:
 
 - **缩略图侧栏**:复用 `.whale/thumbs/<basename>.jpg`(主进程 `thumbnail.ts` 已生成)。
-- **PDF Outline**:`PDFOutline` 不在 6.0.227,需要手动解析或升级,Phase 3 或 skip。
+- **PDF Outline** ✅ 已做(2026-07-18):底层 `doc.getOutline()` 数据 API 一直在(当年"PDFOutline 不在 6.0.227"指 pdfjs 的 viewer **组件**,非数据 API)。session 新增 `getOutline()` / `resolveDest(dest)`([shared/pdfjs-in-iframe.ts](../src/extensions/shared/pdfjs-in-iframe.ts));pdf-viewer 加左侧栏 `<aside id="outline-sidebar">` + toolbar `☰` 按钮切换,点击条目 `resolveDest`→页码→`gotoPage`(`gotoPage` 改查 `data-page-container`,虚拟化离屏页也命中,IO 自动补渲染);外部链接走 `openLinkExternally`。无 outline 时按钮禁用。单测 5 case 覆盖。
 - **`PDFFindController`**:仅 `web` build 有,不在 `legacy`,Phase 3 或 skip。
 - **CJK 字体显式注册**:Chromium `@font-face local()` 兜底够用,Phase 2 再考虑显式。
 - **`session.destroy()` 主动 teardown**:`ExtensionHost` 销毁 iframe 时调用(目前只有 `beforeunload` 兜),Phase 2 集成。
@@ -435,3 +478,9 @@ src/extensions/
 - `pdfjs-dist` `cmaps/ standard_fonts/ wasm/` 已加进 `builder.json` `asarUnpack`
 - 编辑器(CodeMirror) Compartment 切换不触发 `contentChangedInEditor`(vs. drawio 教训)
 - Edit 工具在 Windows 偶发写入 `\0` null 字节 → grep 报 binary file → 用 Write 重写干净
+
+## 10. 架构审阅遗留(2026-07-18)
+
+- **`ExtensionHost.tsx` god-switch**:1039 行、~30 case 单 switch,每个 case 手写 ipcApi 调用 + requestId 关联 + postToExtension 回包;可抽 request/response 关联通用 helper,case 下沉注册表。
+- **postMessage `targetOrigin: '*'`**(ExtensionHost / extension-api.js 双向):接收端有 `event.source === iframe.contentWindow` 校验所以不算漏洞,但 `whale-extension://` 是特权 scheme,发往 iframe 的消息对同窗口任何 message 监听者可见,应收窄为具体 origin。
+- **`archive.ts` `execFileSync('7za', timeout:3000)` 探测残留**:一次性最多冻结主进程 3s(已 memoize,仅首次压缩包操作触发)。

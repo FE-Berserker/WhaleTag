@@ -78,6 +78,53 @@ describe('substituteAndQuote', () => {
       'echo hello'
     );
   });
+
+  it('on Windows converts a backslash UNC ${path} to forward slashes', () => {
+    // Backslash UNC (\\server\share\…) fails in some real command templates;
+    // forward-slash UNC (//server/share/…) is accepted by the Windows API and
+    // verified to work. Local drive paths keep backslashes (covered above).
+    assert.equal(
+      substituteAndQuote(
+        'echo ${path}',
+        { path: '\\\\server\\share\\dir\\file.pdf', dir: '\\\\server\\share\\dir', name: 'file.pdf' },
+        'win32'
+      ),
+      'echo //server/share/dir/file.pdf'
+    );
+  });
+
+  it('on Windows quotes a UNC with spaces AFTER converting to forward slashes', () => {
+    assert.equal(
+      substituteAndQuote(
+        'echo ${path}',
+        { path: '\\\\server\\my share\\file.pdf', dir: '\\\\server\\my share', name: 'file.pdf' },
+        'win32'
+      ),
+      'echo "//server/my share/file.pdf"'
+    );
+  });
+
+  it('on Windows converts ${dir} too (UNC → forward slashes)', () => {
+    assert.equal(
+      substituteAndQuote(
+        'pushd ${dir}',
+        { path: '\\\\server\\share\\file.pdf', dir: '\\\\server\\share', name: 'file.pdf' },
+        'win32'
+      ),
+      'pushd //server/share'
+    );
+  });
+
+  it('does NOT convert backslashes on POSIX (single-quote wraps verbatim)', () => {
+    assert.equal(
+      substituteAndQuote(
+        'echo ${path}',
+        { path: '\\\\server\\share\\file.pdf', dir: '\\\\server\\share', name: 'file.pdf' },
+        'linux'
+      ),
+      "echo '\\\\server\\share\\file.pdf'"
+    );
+  });
 });
 
 describe('runUserCommand — validation', () => {

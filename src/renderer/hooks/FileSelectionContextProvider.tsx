@@ -1,6 +1,7 @@
 import {
   createContext,
   useContext,
+  useMemo,
   useState,
   type ReactNode,
 } from 'react';
@@ -25,8 +26,15 @@ const FileSelectionContext = createContext<FileSelectionContextValue | null>(
 
 export function FileSelectionProvider({ children }: { children: ReactNode }) {
   const [selectedEntries, setSelectedEntries] = useState<DirEntry[]>([]);
+  // Memoize the context value: setSelectedEntries is stable (useState), so
+  // consumers (FileList / AiPanel) only re-render when the selection actually
+  // changes — not on every MainLayout render.
+  const value = useMemo(
+    () => ({ selectedEntries, setSelectedEntries }),
+    [selectedEntries]
+  );
   return (
-    <FileSelectionContext.Provider value={{ selectedEntries, setSelectedEntries }}>
+    <FileSelectionContext.Provider value={value}>
       {children}
     </FileSelectionContext.Provider>
   );

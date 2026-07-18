@@ -10,8 +10,8 @@ import { Box, Typography } from '@mui/material';
 import { Grid as VirtualGrid, useGridRef } from 'react-window';
 
 import type { DirEntry } from '../../shared/ipc-types';
-import type { TagGroup } from '../../shared/tag-library';
-import { mediaPlaylist } from '../../shared/gallery';
+import type { TagGroup } from '../domain/tag-library';
+import { mediaPlaylist } from '../domain/gallery';
 import GalleryCell from './GalleryCell';
 
 interface GalleryViewProps {

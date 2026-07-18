@@ -196,6 +196,35 @@ describe('callout (Obsidian / GitHub Alerts)', () => {
     assert.equal(/INFO/.test(html), false, 'custom title replaces the TYPE word');
   });
 
+  it('supports Obsidian space-form title (`[!t] Title`)', () => {
+    const html = parseMarkdown('> [!note] My Heading\n> body');
+    assert.match(html, /<div class="callout callout-note"/);
+    assert.match(html, /My Heading/);
+    assert.equal(/NOTE/.test(html), false, 'space-form title replaces the TYPE word');
+  });
+
+  it('supports Obsidian fold + space-form title (`[!t]- Title`)', () => {
+    const html = parseMarkdown('> [!info]- Collapsed Title\n> hidden');
+    assert.match(html, /<details class="callout callout-info"/);
+    assert.equal(/open=""/.test(html), false, '`-` collapses');
+    assert.match(html, /Collapsed Title/);
+  });
+
+  it('supports Obsidian fold + space-form title (`[!t]+ Title`)', () => {
+    const html = parseMarkdown('> [!info]+ Expanded Title\n> shown');
+    assert.match(html, /<details class="callout callout-info" open=""/);
+    assert.match(html, /Expanded Title/);
+  });
+
+  it('does not treat a spaced `-` as a fold marker (`[!t] - text`)', () => {
+    // The fold marker must be flush against `]`; `[!note] -5 degrees` is a
+    // title starting with `-5`, NOT a collapsed callout.
+    const html = parseMarkdown('> [!note] -5 degrees\n> body');
+    assert.match(html, /<div class="callout callout-note"/);
+    assert.equal(/<details/.test(html), false, 'spaced minus is NOT a fold');
+    assert.match(html, /-5 degrees/);
+  });
+
   it('folds with - (collapsed) and + (expanded) via <details>', () => {
     const collapsed = parseMarkdown('> [!info]-\n> hidden');
     assert.match(collapsed, /<details class="callout callout-info"/);
@@ -581,10 +610,13 @@ describe('countWords', () => {
     assert.equal(countWords('a\tb\nc'), 3);
   });
 
-  it('treats CJK runs as a single token (no whitespace between chars)', () => {
-    // CJK is not space-separated; one run = one "word" in this heuristic.
-    assert.equal(countWords('你好世界'), 1);
-    assert.equal(countWords('你好 world'), 2);
+  it('counts each CJK character as one word (§18.3.6 — 字数 convention)', () => {
+    // CJK has no whitespace between words; we count each character as one
+    // (matches Chinese word processors' 字数), plus Latin tokens. A Latin
+    // word glued to CJK ("hello你好") still counts as one Latin word.
+    assert.equal(countWords('你好世界'), 4);
+    assert.equal(countWords('你好 world'), 3); // 2 CJK + 1 Latin
+    assert.equal(countWords('hello你好'), 3); // 1 Latin (glued) + 2 CJK
   });
 });
 

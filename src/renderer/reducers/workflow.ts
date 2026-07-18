@@ -1,6 +1,6 @@
 import type { AnyAction } from 'redux';
-import type { WorkflowStage } from '../../shared/workflow';
-import { DEFAULT_WORKFLOW_STAGES } from '../../shared/workflow';
+import type { WorkflowStage } from '../domain/workflow';
+import { DEFAULT_WORKFLOW_STAGES } from '../domain/workflow';
 
 export type { WorkflowStage };
 

@@ -17,6 +17,13 @@ const chains = new Map<string, Promise<void>>();
  * task's own caller (via the returned promise) but does NOT poison the queue
  * for tasks queued after it. Without this, one rejected write would leave all
  * later writes pending forever.
+ *
+ * Bounded memory: each entry is dropped from `chains` once the *latest*
+ * task for that key has settled — confirmed by comparing the stored tail to
+ * `chains.get(key)` on the tail's own microtask. A still-pending successor
+ * (e.g. a withLock call that chained onto us) keeps its own replacement
+ * entry, so memory never grows past the number of keys that have *active*
+ * in-flight work.
  */
 export function withLock<T>(
   key: string,
@@ -27,12 +34,18 @@ export function withLock<T>(
   // outcome (handed back to the caller); the swallowed version is what we store
   // so the next task always starts from a settled, fulfilled predecessor.
   const run = prev.then(task);
-  chains.set(
-    key,
-    run.then(
-      () => undefined,
-      () => undefined
-    )
+  const tail = run.then(
+    () => undefined,
+    () => undefined
   );
+  chains.set(key, tail);
+  // Drop the entry once we know no successor replaced us. The check fires on
+  // the tail's microtask — by then any immediately-chained withLock has
+  // already installed its own entry into `chains`, so a stale delete would
+  // break the chain. Comparing against `tail` lets us only delete when the
+  // entry that's still there is *our* tail.
+  void tail.then(() => {
+    if (chains.get(key) === tail) chains.delete(key);
+  });
   return run;
 }

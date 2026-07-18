@@ -1,6 +1,6 @@
 import type { TFunction } from 'i18next';
 import type { DirEntry } from '../../shared/ipc-types';
-import type { TagGroup } from '../../shared/tag-library';
+import type { TagGroup } from '../domain/tag-library';
 
 /**
  * Everything a single file cell needs to render and act — shared by the list
@@ -80,7 +80,7 @@ export interface FileCellData {
    * `targetValue` (null = the untagged column → strip the whole group). The
    * caller supplies `groupTags` (the full stage axis) so the column target can
    * be resolved independently of the current state's group membership.
-   * Mutually-exclusive semantics live in `tagsAfterMove` (shared/kanban.ts).
+   * Mutually-exclusive semantics live in `tagsAfterMove` (renderer/domain/kanban.ts).
    * Optional: only the Kanban view uses it.
    */
   onMoveToColumn?: (

@@ -41,7 +41,7 @@ import {
   periodWithShift,
   periodsEqual,
   type GanttPeriod,
-} from '../../../shared/gantt';
+} from '../../domain/gantt';
 
 // Why this is a bug fix worth calling out:
 // The original hook stored the three-state machine in a ref and tried to
@@ -367,7 +367,7 @@ export function useBarDrag(args: UseBarDragArgs): UseBarDragResult {
 
 /**
  * Whole-day offset from `anchor` to `target`. DST-safe via UTC math;
- * mirrors `daysBetween` in `shared/gantt.ts` but uses `target - anchor`
+ * mirrors `daysBetween` in `renderer/domain/gantt.ts` but uses `target - anchor`
  * ordering (matches "days since the scale started").
  */
 function daysSince(anchor: string, target: string): number {

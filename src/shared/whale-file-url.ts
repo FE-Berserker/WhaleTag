@@ -130,7 +130,15 @@ function decodeForScheme(rawUrl: string, scheme: string): string | null {
   // already lowercased by the URL parser, matching the encoder's toLowerCase,
   // so the round-trip is byte-exact for ASCII servers.
   if (url.hostname) {
+    // Chromium normalizes `whale-file:///C:/...` to `whale-file://c/...` — the
+    // standard-scheme URL parser treats the Windows drive letter as the host
+    // (lowercased). A single-letter host is a drive letter, NOT an SMB server:
+    // rebuild `C:/path` instead of the UNC `//c/path` (which would lstat
+    // `\\c\...` and fail). Multi-char hosts are real UNC servers.
     const segs = url.pathname.split('/').map(decodeURIComponentSafe);
+    if (/^[a-zA-Z]$/.test(url.hostname)) {
+      return `${url.hostname.toUpperCase()}:` + segs.join('/');
+    }
     return `//${url.hostname}${segs.join('/')}`;
   }
   // `url.pathname` already percent-decodes for us, but per-segment is

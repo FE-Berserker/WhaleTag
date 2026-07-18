@@ -28,7 +28,6 @@
 import path from 'path';
 import os from 'os';
 import { spawn, type ChildProcess } from 'child_process';
-import { randomUUID } from 'crypto';
 import { rmSync, promises as fsp } from 'fs';
 import { terminateSpawnedProcess } from '../ai/utils/windowsCmdShim';
 import { resolveOfficeWorkerScriptPath } from './office-worker-script';
@@ -36,7 +35,14 @@ import {
   resolveOfficePython,
   resetOfficePythonCache,
 } from './office-worker-python';
-import { sofficeBinary } from '../thumbnail';
+import { sofficeBinary } from '../office-binary';
+import {
+  newRequest,
+  completeRequest,
+  failRequest,
+  rejectAllPending,
+  type Pending,
+} from '../worker-protocol';
 
 /** Thrown when the worker can't service a request — callers fall back to execFile. */
 export class WorkerUnavailableError extends Error {
@@ -72,11 +78,6 @@ interface ErrMsg {
   error: { name: string; message: string; stack?: string };
 }
 type WorkerMessage = ReadyMsg | FatalMsg | LogMsg | OkMsg | ErrMsg;
-
-interface Pending {
-  resolve: () => void;
-  reject: (e: Error) => void;
-}
 
 // --- child state ---
 
@@ -130,11 +131,6 @@ function writeStdin(obj: unknown): void {
   child.stdin.write(JSON.stringify(obj) + '\n');
 }
 
-function rejectAllPending(err: Error): void {
-  for (const p of pending.values()) p.reject(err);
-  pending.clear();
-}
-
 function finishBoot(): void {
   if (readyTimer) {
     clearTimeout(readyTimer);
@@ -166,7 +162,7 @@ function handleFatal(reason: string, detail?: string): void {
     spawnReject = null;
     r(new WorkerUnavailableError(msg));
   }
-  rejectAllPending(new WorkerUnavailableError(msg));
+  rejectAllPending(pending, new WorkerUnavailableError(msg));
   if (child) {
     try {
       child.kill('SIGTERM');
@@ -192,17 +188,14 @@ function handleMessage(msg: WorkerMessage): void {
   // Per-request response (has reqId). A failure here is a per-DOC error —
   // reject just this request, do NOT mark the worker unavailable.
   if (!('reqId' in msg)) return;
-  const p = pending.get(msg.reqId);
-  if (!p) return; // late reply after a crash — drop
-  pending.delete(msg.reqId);
   if ('error' in msg) {
     // ErrMsg — per-doc conversion failure (do NOT mark unavailable).
     const e = new Error(msg.error.message);
     e.name = msg.error.name;
     if (msg.error.stack) e.stack = msg.error.stack;
-    p.reject(e);
+    failRequest(pending, msg.reqId, e);
   } else {
-    p.resolve();
+    completeRequest(pending, msg.reqId, undefined);
   }
 }
 
@@ -352,7 +345,7 @@ async function doSpawn(): Promise<void> {
         spawnReject = null;
         r(err);
       }
-      rejectAllPending(err);
+      rejectAllPending(pending, err);
       child = null;
       consecutiveBootFailures += 1;
       if (consecutiveBootFailures >= MAX_BOOT_FAILURES) {
@@ -391,11 +384,9 @@ export async function request(
   if (!child || dying) {
     throw new WorkerUnavailableError('office worker not running');
   }
-  const reqId = randomUUID();
-  return new Promise<void>((resolve, reject) => {
-    pending.set(reqId, { resolve, reject });
-    writeStdin({ reqId, srcPath, outPdfPath });
-  });
+  const { reqId, promise } = newRequest(pending);
+  writeStdin({ reqId, srcPath, outPdfPath });
+  return promise as Promise<void>;
 }
 
 /** Best-effort stderr tail (last ~64KB) for diagnostics. */
@@ -422,7 +413,7 @@ const spawnIgnoreStdio = (
 export function killOfficeWorker(): void {
   if (pending.size > 0) {
     const e = new Error('office worker killed at app shutdown');
-    rejectAllPending(e);
+    rejectAllPending(pending, e);
   }
   dying = true;
   if (readyTimer) {

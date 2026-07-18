@@ -40,7 +40,7 @@ type DirectoryContentContextValue = DirectoryContentMetaValue & DirectoryUIValue
 
 **Map 全部以 `entry.path` 作 key**(取代 basename),同名跨目录文件互不污染。`FileList`、`PropertiesTray`、`EntryCard`、`GridCell`、`MapiqueView`、`TagCloudView`、`KnowledgeGraphView`、`kanban.ts` 的 `bucketEntries` 等所有消费方都用 `e.path` 查。
 
-`aggregateRecursiveEntries(visible, sidecars)` 纯函数保留在 [src/shared/recursive-entries.ts](../src/shared/recursive-entries.ts),可单测。
+`aggregateRecursiveEntries(visible, sidecars)` 纯函数保留在 [src/renderer/domain/recursive-entries.ts](../src/renderer/domain/recursive-entries.ts),可单测。
 
 ## 2. 全局递归深度 `viewDepth`
 

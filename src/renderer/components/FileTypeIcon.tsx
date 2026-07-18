@@ -39,8 +39,8 @@ import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import excalidrawIcon from '../assets/excalidraw-icon.svg';
 import drawioIcon from '../assets/drawio-icon.png';
 
-import { fileIconCategory } from '../../shared/file-icon';
-import type { FileIconCategory } from '../../shared/file-icon';
+import { fileIconCategory } from '../domain/file-icon';
+import type { FileIconCategory } from '../domain/file-icon';
 
 type IconComponent = ComponentType<SvgIconProps>;
 

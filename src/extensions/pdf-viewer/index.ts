@@ -5,6 +5,7 @@ import {
   applyTheme as sessionApplyTheme,
   PDFJS_I18N,
   type PdfjsSession,
+  type OutlineNode,
 } from '../shared/pdfjs-in-iframe';
 
 /**
@@ -47,6 +48,8 @@ const statusPagesEl = document.getElementById('status-pages') as HTMLSpanElement
 const sizeLbl = document.getElementById('size-lbl') as HTMLSpanElement;
 const pagesLbl = document.getElementById('pages-lbl') as HTMLSpanElement;
 const loadingBarEl = document.getElementById('loading-bar') as HTMLDivElement;
+const outlineToggleBtn = document.getElementById('outline-toggle') as HTMLButtonElement;
+const outlineSidebarEl = document.getElementById('outline-sidebar') as HTMLDivElement;
 
 // --- Shared pdfjs session -------------------------------------------------
 // Phase 1 §B1: pdf-viewer no longer runs its own render loop. It delegates
@@ -81,6 +84,7 @@ const session: PdfjsSession = createPdfjsSession({
     }
     updateStatusBar();
     updatePageUi();
+    void loadOutline();
   },
   onAfterPageRender: (pageNum, canvas, baseVp) => {
     canvas.setAttribute('data-page-num', String(pageNum));
@@ -96,8 +100,7 @@ const session: PdfjsSession = createPdfjsSession({
     // canvas's CSS height was collapsing to its intrinsic ratio scaled
     // by the CSS width. Setting both CSS `width` and `height` explicitly
     // cuts that fallback out.
-    const rotation = state.pageRotations.get(pageNum) ?? 0;
-    const ds = computeDisplayScale(baseVp.width, baseVp.height, rotation);
+    const ds = computeDisplayScale(baseVp.width, baseVp.height);
     canvas.style.width = `${baseVp.width * ds}px`;
     canvas.style.height = `${baseVp.height * ds}px`;
   },
@@ -105,8 +108,8 @@ const session: PdfjsSession = createPdfjsSession({
   // CSS layout so the invisible text spans align with the canvas. We
   // must pass rotation here too (renderOnePage is always rotation=0,
   // rerenderPage passes the actual rotation).
-  computeDisplayScale: (baseVp, rotation = 0) =>
-    computeDisplayScale(baseVp.width, baseVp.height, rotation),
+  computeDisplayScale: (baseVp) =>
+    computeDisplayScale(baseVp.width, baseVp.height),
   virtualize: true,
   useWorker: USE_PDFJS_WORKER,
   workerSrc: PDFJS_WORKER_SRC,
@@ -181,12 +184,17 @@ interface Strings {
   pageNumber: string; // input aria-label / title
   fitWidth: string;
   fitPage: string;
+  /** Short button label (the tooltip uses the longer `fitWidth`/`fitPage`). */
+  fitWidthLabel: string;
+  fitPageLabel: string;
   rotateLeft: string;
   rotateRight: string;
   size: string;
   pages: string;
   noValue: string;
   currentPage: string; // status: "Page X of Y"
+  outlineToggle: string; // outline button title / aria-label
+  outlineEmpty: string; // sidebar empty state
   pageOf: (cur: number, total: number) => string;
 }
 
@@ -200,12 +208,16 @@ const I18N: Record<string, Omit<Strings, 'pageOf'>> = {
     pageNumber: 'Page number',
     fitWidth: 'Fit width',
     fitPage: 'Fit page',
+    fitWidthLabel: 'Fit W',
+    fitPageLabel: 'Fit P',
     rotateLeft: 'Rotate left',
     rotateRight: 'Rotate right',
     size: 'Size',
     pages: 'Pages',
     noValue: '—',
     currentPage: 'Page {cur} of {total}',
+    outlineToggle: 'Outline',
+    outlineEmpty: 'No outline',
   },
   zh: {
     ...PDFJS_I18N.zh,
@@ -214,12 +226,16 @@ const I18N: Record<string, Omit<Strings, 'pageOf'>> = {
     pageNumber: '页码',
     fitWidth: '适应宽度',
     fitPage: '适应页面',
+    fitWidthLabel: '适应宽度',
+    fitPageLabel: '适应页面',
     rotateLeft: '向左旋转',
     rotateRight: '向右旋转',
     size: '大小',
     pages: '页数',
     noValue: '—',
     currentPage: '第 {cur} 页 / 共 {total} 页',
+    outlineToggle: '目录',
+    outlineEmpty: '无目录',
   },
 };
 
@@ -244,12 +260,24 @@ function applyLocale() {
   pageInput.setAttribute('aria-label', T.pageNumber);
   fitWidthBtn.title = T.fitWidth;
   fitWidthBtn.setAttribute('aria-label', T.fitWidth);
+  fitWidthBtn.textContent = T.fitWidthLabel;
   fitPageBtn.title = T.fitPage;
   fitPageBtn.setAttribute('aria-label', T.fitPage);
+  fitPageBtn.textContent = T.fitPageLabel;
   rotateLeftBtn.title = T.rotateLeft;
   rotateLeftBtn.setAttribute('aria-label', T.rotateLeft);
   rotateRightBtn.title = T.rotateRight;
   rotateRightBtn.setAttribute('aria-label', T.rotateRight);
+  outlineToggleBtn.title = T.outlineToggle;
+  outlineToggleBtn.setAttribute('aria-label', T.outlineToggle);
+  // If the sidebar is open but empty (no outline / not yet loaded), keep its
+  // placeholder text in sync with the current locale.
+  if (
+    outlineEntries.length === 0 &&
+    outlineSidebarEl.getAttribute('data-open') === 'true'
+  ) {
+    outlineSidebarEl.textContent = T.outlineEmpty;
+  }
   // Status labels
   sizeLbl.textContent = T.size;
   pagesLbl.textContent = T.pages;
@@ -301,13 +329,11 @@ function updateStatusBar() {
 function computeDisplayScale(
   baseWidth: number,
   baseHeight: number,
-  rotation: number
 ): number {
-  // PDF rotation 90/270 swaps width/height for layout.
-  const swapped = rotation === 90 || rotation === 270;
-  const layoutWidth = swapped ? baseHeight : baseWidth;
-  const layoutHeight = swapped ? baseWidth : baseHeight;
-
+  // `baseWidth`/`baseHeight` are already the page's DISPLAYED dimensions:
+  // session.renderPageContent builds baseVp with the full rotation (page
+  // /Rotate + user rotation) applied, so no width/height swap is needed
+  // here. The old swap was for when baseVp carried the un-rotated size.
   if (state.zoomMode === 'manual') {
     return state.manualZoom;
   }
@@ -315,11 +341,11 @@ function computeDisplayScale(
   const containerWidth = Math.max(0, pagesEl.clientWidth - 32);
   const containerHeight = Math.max(0, pagesEl.clientHeight - 32);
   if (state.zoomMode === 'fit-width') {
-    return containerWidth > 0 ? containerWidth / layoutWidth : 1;
+    return containerWidth > 0 ? containerWidth / baseWidth : 1;
   }
   // fit-page
   if (containerWidth <= 0 || containerHeight <= 0) return 1;
-  return Math.min(containerWidth / layoutWidth, containerHeight / layoutHeight);
+  return Math.min(containerWidth / baseWidth, containerHeight / baseHeight);
 }
 
 function effectiveZoom(): number {
@@ -354,8 +380,7 @@ function relayoutPages() {
     const pageNum = Number(canvas.getAttribute('data-page-num'));
     const baseVp = canvasToBaseVp(canvas);
     if (!baseVp) return;
-    const rotation = state.pageRotations.get(pageNum) ?? 0;
-    const displayScale = computeDisplayScale(baseVp.width, baseVp.height, rotation);
+    const displayScale = computeDisplayScale(baseVp.width, baseVp.height);
     const targetWidth = baseVp.width * displayScale;
     const targetHeight = baseVp.height * displayScale;
     canvas.style.width = `${targetWidth}px`;
@@ -430,11 +455,15 @@ function updatePageUi() {
 function gotoPage(pageNum: number) {
   if (!state.pageCount) return;
   setCurrentPage(pageNum);
-  const canvas = pagesEl.querySelector<HTMLCanvasElement>(
-    `canvas[data-page-num="${state.currentPage}"]`
+  // Query the page container (not the canvas) so this also works for pages
+  // the virtualizer hasn't rendered yet — the placeholder div carries the
+  // same `data-page-container` attribute, and scrolling it into view trips
+  // the IntersectionObserver to render that page on demand.
+  const container = pagesEl.querySelector<HTMLElement>(
+    `div[data-page-container="${state.currentPage}"]`
   );
-  if (canvas) {
-    canvas.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (container) {
+    container.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 }
 
@@ -543,6 +572,12 @@ async function renderPdfBytes(bytes: Uint8Array) {
   fitWidthBtn.classList.remove('active');
   fitPageBtn.classList.remove('active');
   statusPagesEl.textContent = T.noValue;
+  // Clear any outline from the previous document; onDocumentLoaded refills.
+  outlineEntries = [];
+  outlineSidebarEl.textContent = '';
+  outlineSidebarEl.setAttribute('data-open', 'false');
+  outlineToggleBtn.disabled = true;
+  outlineToggleBtn.classList.remove('active');
   updateStatusBar();
   updatePageUi();
   setLoadingBar(T.loading, 'progress');
@@ -586,6 +621,64 @@ function setLoadingBar(
   }
 }
 
+// --- Outline (bookmark tree) sidebar --------------------------------------
+// Flattened list parallel to the rendered <li data-idx> nodes. Each outline
+// node gets an index when rendered; click looks the entry up by idx instead
+// of serializing dest/url into the DOM.
+interface OutlineEntry {
+  dest: string | Array<unknown> | null;
+  url: string | null;
+}
+let outlineEntries: OutlineEntry[] = [];
+
+async function loadOutline(): Promise<void> {
+  const token = state.loadToken;
+  const nodes = await session.getOutline();
+  // A newer file load may have bumped the token while we awaited; bail so we
+  // don't paint a stale outline over the freshly-reset sidebar.
+  if (token !== state.loadToken) return;
+  outlineEntries = [];
+  outlineToggleBtn.disabled = nodes.length === 0;
+  if (nodes.length === 0) {
+    outlineSidebarEl.textContent = T.outlineEmpty;
+    return;
+  }
+  outlineSidebarEl.textContent = '';
+  outlineSidebarEl.appendChild(buildOutlineList(nodes));
+}
+
+function buildOutlineList(nodes: OutlineNode[]): HTMLUListElement {
+  const ul = document.createElement('ul');
+  for (const node of nodes) {
+    const idx = outlineEntries.length;
+    outlineEntries.push({ dest: node.dest, url: node.url });
+    const li = document.createElement('li');
+    li.setAttribute('data-idx', String(idx));
+    li.classList.add('outline-item');
+    if (node.url) li.classList.add('outline-link');
+    li.textContent = node.title; // textContent auto-escapes the title
+    li.addEventListener('click', () => void onOutlineClick(idx));
+    if (node.items.length > 0) {
+      li.appendChild(buildOutlineList(node.items));
+    }
+    ul.appendChild(li);
+  }
+  return ul;
+}
+
+async function onOutlineClick(idx: number): Promise<void> {
+  const entry = outlineEntries[idx];
+  if (!entry) return;
+  if (entry.url) {
+    window.whaleExt.postMessage({ type: 'openLinkExternally', url: entry.url });
+    return;
+  }
+  if (entry.dest) {
+    const pageIndex = await session.resolveDest(entry.dest);
+    if (pageIndex != null) gotoPage(pageIndex + 1); // pageIndex is 0-based
+  }
+}
+
 // --- Resize observer for fit modes ----------------------------------------
 let resizeRaf = 0;
 function scheduleRefit() {
@@ -616,6 +709,11 @@ fitWidthBtn.addEventListener('click', () => setZoomMode('fit-width'));
 fitPageBtn.addEventListener('click', () => setZoomMode('fit-page'));
 rotateLeftBtn.addEventListener('click', () => rotateCurrentPage(-1));
 rotateRightBtn.addEventListener('click', () => rotateCurrentPage(1));
+outlineToggleBtn.addEventListener('click', () => {
+  const open = outlineSidebarEl.getAttribute('data-open') === 'true';
+  outlineSidebarEl.setAttribute('data-open', open ? 'false' : 'true');
+  outlineToggleBtn.classList.toggle('active', !open);
+});
 
 pageInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {

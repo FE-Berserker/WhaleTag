@@ -17,10 +17,10 @@ import {
   isStaleDateTag,
   smartFunctionalityOfTag,
 } from '../../shared/smart-tags';
-import { isGeoTag } from '../../shared/geo-tag';
+import { isGeoTag } from '../domain/geo-tag';
 import { RootState } from '-/reducers';
 import { setTagColors } from '-/reducers/settings';
-import { pickTagColor } from '../../shared/tag-colors';
+import { pickTagColor } from '../domain/tag-colors';
 import { useCurrentLocationContext } from './CurrentLocationContextProvider';
 import { useDirectoryContentContext } from './DirectoryContentContextProvider';
 import { useNow } from './useNow';

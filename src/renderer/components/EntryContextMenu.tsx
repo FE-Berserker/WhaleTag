@@ -32,13 +32,13 @@ import QueueMusicIcon from '@mui/icons-material/QueueMusic';
 
 import type { DirEntry } from '../../shared/ipc-types';
 import type { ExtensionManifest, ExtensionRegistry } from '../../shared/extension-types';
-import type { TagGroup } from '../../shared/tag-library';
+import type { TagGroup } from '../domain/tag-library';
 import type { UserCommand } from '../../shared/shell-types';
 import type { RootState } from '-/reducers';
 import { tagDisplayLabel } from '-/services/tag-display';
 import { isAudioFile, isImageFile, isVideoFile } from '../../shared/whale-meta';
 import { isPeriodTag } from '../../shared/smart-tags';
-import { dateTagRangeKey } from '../../shared/calendar';
+import { dateTagRangeKey } from '../domain/calendar';
 import { usePeriodTagDialog } from './PeriodTagDialog';
 import { useTagMetaContext } from '-/hooks/TagMetaContextProvider';
 import { useDirectoryContent } from '-/hooks/DirectoryContentContextProvider';

@@ -148,10 +148,7 @@ export interface PdfjsSessionOptions {
    *  The TextLayer (added Phase 2) uses `display` directly so its span
    *  coordinates match the visible canvas. pdf-viewer passes its
    *  `computeDisplayScale`; office-viewer returns the current zoom. */
-  computeDisplayScale?: (
-    baseVp: { width: number; height: number },
-    rotation?: number,
-  ) => number;
+  computeDisplayScale?: (baseVp: { width: number; height: number }) => number;
   /** Inject a pdfjs module stub. Default = the real `pdfjs-dist` import.
    *  Tests pass a hand-rolled mock that satisfies `PdfjsLike`. */
   pdfjsLib?: PdfjsLike;
@@ -175,6 +172,16 @@ export interface PdfjsSessionOptions {
   useWorker?: boolean;
   /** URL to the pdf.worker module; used only when `useWorker` is true. */
   workerSrc?: string;
+}
+
+/** Subset of pdfjs's outline node that pdf-viewer consumes. The full pdfjs
+ *  object also carries `bold` / `italic` / `color` / `newWindow` / `count`,
+ *  which we ignore. `items` is the recursive child list. */
+export interface OutlineNode {
+  title: string;
+  dest: string | Array<unknown> | null;
+  url: string | null;
+  items: OutlineNode[];
 }
 
 export interface PdfjsSession {
@@ -207,6 +214,15 @@ export interface PdfjsSession {
    *  `pdfAsset` reply consumed). Callers should `if (session.handleHostMessage(msg)) break;`
    *  at the top of their `pdfAsset` case in onMessage. */
   handleHostMessage(msg: HostMessage): boolean;
+  /** Returns the PDF's outline (bookmark tree) — `{title, dest, url, items[]}`
+   *  recursive, exactly as pdfjs's `getOutline()` gives it. Empty array when
+   *  the PDF has no outline or no doc is loaded. Use `resolveDest` to turn a
+   *  node's `dest` into a 0-based page number for navigation. */
+  getOutline(): Promise<OutlineNode[]>;
+  /** Resolve an outline node's `dest` (a named string or an explicit dest
+   *  array) to a 0-based page index. Returns null when the dest is missing,
+   *  malformed, or no doc is loaded. */
+  resolveDest(dest: string | Array<unknown> | null): Promise<number | null>;
 }
 
 type PendingResolver = {
@@ -441,8 +457,15 @@ export function createPdfjsSession(opts: PdfjsSessionOptions): PdfjsSession {
       page = await doc.getPage(pageNum);
       if (isCancelled()) return;
       const scale = outputScale();
-      const baseVp = page.getViewport({ scale: 1 });
-      const rotation = newRotation ?? 0;
+      // Apply the page's own /Rotate (e.g. landscape slides exported with
+      // /Rotate=90) PLUS any user rotation, using the SAME rotation for both
+      // baseVp (CSS box) and viewport (canvas bitmap). A previous bug left
+      // baseVp on the default (page.rotate) while forcing the viewport to 0,
+      // so the bitmap and its CSS box had swapped aspect ratios — pages
+      // looked rotated + stretched (ppt→PDF was the worst case).
+      const rotation =
+        (((page.rotate ?? 0) + (newRotation ?? 0)) % 360 + 360) % 360;
+      const baseVp = page.getViewport({ scale: 1, rotation });
       const viewport = page.getViewport({ scale, rotation });
 
       // Recycle: drop the placeholder (or stale) container entirely and
@@ -524,7 +547,7 @@ export function createPdfjsSession(opts: PdfjsSessionOptions): PdfjsSession {
           const textContent = await page.getTextContent();
           if (isCancelled()) return;
           const display =
-            computeDisplayScale?.({ width: baseVp.width, height: baseVp.height }, rotation) ?? 1;
+            computeDisplayScale?.({ width: baseVp.width, height: baseVp.height }) ?? 1;
           const textVp = page.getViewport({ scale: display, rotation });
           const textLayerDiv = document.createElement('div');
           textLayerDiv.className = 'textLayer';
@@ -885,10 +908,55 @@ export function createPdfjsSession(opts: PdfjsSessionOptions): PdfjsSession {
     return false;
   }
 
+  async function getOutline(): Promise<OutlineNode[]> {
+    if (!currentDoc) return [];
+    try {
+      const raw = await currentDoc.getOutline();
+      // pdfjs returns its full node shape (bold/italic/color/…); we only
+      // consume the title/dest/url/items subset declared in OutlineNode.
+      return (raw ?? []) as unknown as OutlineNode[];
+    } catch {
+      // Malformed outline / trailer — treat as "no outline".
+      return [];
+    }
+  }
+
+  async function resolveDest(
+    dest: string | Array<unknown> | null,
+  ): Promise<number | null> {
+    const doc = currentDoc;
+    if (!doc || !dest) return null;
+    // Named destinations (string) must be looked up first to get the explicit
+    // array; explicit arrays (already [ref, …]) are used directly.
+    let explicit: unknown = dest;
+    if (typeof dest === 'string') {
+      try {
+        explicit = await doc.getDestination(dest);
+      } catch {
+        return null;
+      }
+      if (!explicit) return null;
+    }
+    if (!Array.isArray(explicit)) return null;
+    // The first element of an explicit dest is the page reference.
+    const ref = explicit[0];
+    if (ref === undefined || ref === null) return null;
+    try {
+      // `ref` is `any` (Array.isArray narrowed `explicit` to any[]). pdfjs's
+      // getPageIndex expects a RefProxy ({num, gen}) but accepts any matching
+      // object — the real ref comes straight from pdfjs's dest array.
+      return await doc.getPageIndex(ref);
+    } catch {
+      return null;
+    }
+  }
+
   return {
     renderPdfBytes,
     renderPdfUrl,
     rerenderPage,
+    getOutline,
+    resolveDest,
     cancel,
     destroy,
     handleHostMessage,

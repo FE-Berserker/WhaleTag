@@ -9,6 +9,11 @@ import { foldPath } from './path-fold';
  * location. Move/copy DESTINATIONS are exempt (a user may move files into a
  * folder that isn't a location), but their sources are still checked.
  *
+ * Since 2026-07-18 the same assert also gates the sensitive read/exec
+ * channels (`fs:readFile`, `fs:readTextFile`, `fs:openNative`) — reading or
+ * OS-launching a path outside every configured location is refused as well
+ * (docs/13 §13).
+ *
  * Security default: when no roots are registered, all destructive writes are
  * refused. The previous "first run allows everything" behavior made it possible
  * for a compromised renderer to call `fs:setAllowedRoots([])` and disable the

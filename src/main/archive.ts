@@ -1,7 +1,7 @@
 import path from 'path';
 import os from 'os';
 import fs, { existsSync, promises as fsp } from 'fs';
-import { execFile, execFileSync } from 'child_process';
+import { execFile } from 'child_process';
 import { unzipSync, gunzipSync } from 'fflate';
 import { assertWithinAllowedRoot } from './allowed-roots';
 import { atomicWriteBytes } from './atomic-write';
@@ -19,19 +19,26 @@ import {
 // 7zip-bin detection
 // ---------------------------------------------------------------------------
 
-// Memoized PATH-probe result for the bare `7za` command (spawns a child,
-// up to 3s). Cached so repeated archive operations don't re-probe PATH; the
-// override / env / bundled checks above still run per-call (cheap existsSync).
+// Memoized PATH-probe result for the bare `7za` command. The probe runs as
+// an asynchronous `execFile` so the main process never blocks on a cold PATH
+// lookup (the prior `execFileSync` form could freeze every window / IPC for
+// up to 3s on first call — the same problem P1-1 fixed for `sofficeBinary`).
+// First-callers share a single in-flight probe via `_sevenZipInflight`; the
+// override / env / bundled checks above still run synchronously (cheap
+// existsSync) on every call.
 let _sevenZipOnPath: boolean | undefined;
+let _sevenZipInflight: Promise<boolean> | null = null;
 
 /**
  * Locates the 7za binary. Priority:
  *  1. explicit override
  *  2. WHALE_7ZA_PATH environment variable
  *  3. 7zip-bin bundled binary
- *  4. system PATH (7za --version)
+ *  4. system PATH (async `7za --version` probe)
  */
-export function sevenZipBinary(override?: string | null): string | null {
+export async function sevenZipBinary(
+  override?: string | null
+): Promise<string | null> {
   if (override) return override;
 
   const env = process.env.WHALE_7ZA_PATH;
@@ -48,18 +55,22 @@ export function sevenZipBinary(override?: string | null): string | null {
   }
 
   if (_sevenZipOnPath === undefined) {
-    try {
-      execFileSync('7za', ['--version'], { timeout: 3000, stdio: 'ignore' });
-      _sevenZipOnPath = true;
-    } catch {
-      _sevenZipOnPath = false;
+    if (!_sevenZipInflight) {
+      _sevenZipInflight = new Promise<boolean>((resolve) => {
+        execFile('7za', ['--version'], { timeout: 3000 }, (err) => {
+          _sevenZipOnPath = !err;
+          _sevenZipInflight = null;
+          resolve(_sevenZipOnPath);
+        });
+      });
     }
+    await _sevenZipInflight;
   }
   return _sevenZipOnPath ? '7za' : null;
 }
 
-export function isSevenZipAvailable(): boolean {
-  return sevenZipBinary(null) !== null;
+export async function isSevenZipAvailable(): Promise<boolean> {
+  return (await sevenZipBinary(null)) !== null;
 }
 
 // ---------------------------------------------------------------------------
@@ -578,7 +589,7 @@ export async function listArchive(
   } else if (fmt === 'gz') {
     entries = listGzEntries(srcPath);
   } else {
-    const bin = sevenZipBinary(null);
+    const bin = await sevenZipBinary(null);
     if (!bin) throw new Error('7za not found');
     entries = await runSevenZipList(bin, srcPath, options.password);
   }
@@ -614,7 +625,7 @@ export async function readArchiveEntry(
     const data = new Uint8Array(await fsp.readFile(srcPath));
     bytes = readGzEntry(data);
   } else {
-    const bin = sevenZipBinary(null);
+    const bin = await sevenZipBinary(null);
     if (!bin) throw new Error('7za not found');
     bytes = new Uint8Array(await runSevenZipReadEntry(bin, srcPath, entryPath, options.password));
   }
@@ -655,7 +666,7 @@ export async function extractArchive(
     return result;
   }
 
-  const bin = sevenZipBinary(null);
+  const bin = await sevenZipBinary(null);
   if (!bin) throw new Error('7za not found');
   return runSevenZipExtract(bin, srcPath, destDir, options.password);
 }

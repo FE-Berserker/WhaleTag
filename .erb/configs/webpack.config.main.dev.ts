@@ -17,6 +17,9 @@ export default merge(createBase(), {
     preload: path.resolve(SRC_PATH, 'main', 'preload.ts'),
     // P0-2: utilityProcess entry that owns <root>/.whale/index.db.
     'index-worker': path.resolve(SRC_PATH, 'main', 'index-worker.ts'),
+    // utilityProcess entry for the pure-JS CPU-heavy thumbnail renders
+    // (pdf / ebook / font), off the main event loop (docs/06 §8).
+    'thumb-worker': path.resolve(SRC_PATH, 'main', 'thumb-worker.ts'),
   },
   output: {
     path: MAIN_DIST,

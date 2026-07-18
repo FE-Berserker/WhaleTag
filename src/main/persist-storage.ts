@@ -6,9 +6,12 @@
  * can be lost, which is why settings appeared to disappear after restart.
  *
  * This module keeps the redux-persist blob in a plain JSON file inside
- * `app.getPath('userData')` and uses synchronous file IO, so a write is on
- * disk before the IPC call returns. The path is scoped under `persist/` so it
- * can coexist with other user-data files.
+ * `app.getPath('userData')` and uses async file IO with an atomic tmp+rename
+ * commit, so the bytes are on disk before the IPC invoke resolves — the same
+ * durability guarantee as the old `sendSync` + `writeFileSync` version, but
+ * without blocking the renderer main thread or the main-process event loop
+ * (2026-07-18 migration). The path is scoped under `persist/` so it can
+ * coexist with other user-data files.
  *
  * Robustness (H.25 — settings reverting to defaults):
  *  - `persistDir()` is **lazy** — resolved on first call, not at import time.
@@ -30,7 +33,7 @@
 
 import { app } from 'electron';
 import path from 'path';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'fs';
+import { promises as fsp } from 'fs';
 
 let _persistDir: string | null = null;
 
@@ -55,48 +58,49 @@ function tmpPathForKey(key: string): string {
   return `${filePathForKey(key)}.tmp`;
 }
 
-export function persistRead(key: string): string | null {
-  const filePath = filePathForKey(key);
-  if (!existsSync(filePath)) return null;
+export async function persistRead(key: string): Promise<string | null> {
   try {
-    return readFileSync(filePath, 'utf8');
+    return await fsp.readFile(filePathForKey(key), 'utf8');
   } catch (e) {
-    console.error('[persist-storage] read failed for', key, e);
+    // A missing file is the normal first-run case, not an error.
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.error('[persist-storage] read failed for', key, e);
+    }
     return null;
   }
 }
 
-export function persistWrite(key: string, value: string): void {
+export async function persistWrite(key: string, value: string): Promise<void> {
   const filePath = filePathForKey(key);
   const tmpPath = tmpPathForKey(key);
   try {
-    mkdirSync(persistDir(), { recursive: true });
+    await fsp.mkdir(persistDir(), { recursive: true });
     // Atomic write: write to .tmp, then rename over the final path. A crash
     // before the rename leaves the previous (intact) file in place.
-    writeFileSync(tmpPath, value, 'utf8');
-    renameSync(tmpPath, filePath);
+    await fsp.writeFile(tmpPath, value, 'utf8');
+    await fsp.rename(tmpPath, filePath);
   } catch (e) {
     console.error('[persist-storage] write failed for', key, e);
     // Best-effort cleanup of the leftover .tmp so it doesn't accumulate.
     try {
-      unlinkSync(tmpPath);
+      await fsp.unlink(tmpPath);
     } catch {
       // ignore
     }
     // Re-throw so the renderer's adapter sees the failure and can surface it
-    // (instead of silently keeping stale state on disk). The IPC handler
-    // uses `sendSync` so the renderer's `setItem` call throws and redux-
-    // persist logs the error; the previous on-disk file is still intact.
+    // (instead of silently keeping stale state on disk): the `setItem`
+    // promise rejects, redux-persist logs the error, and the previous
+    // on-disk file is still intact.
     throw e;
   }
 }
 
-export function persistDelete(key: string): void {
-  const filePath = filePathForKey(key);
-  if (!existsSync(filePath)) return;
+export async function persistDelete(key: string): Promise<void> {
   try {
-    unlinkSync(filePath);
+    await fsp.unlink(filePathForKey(key));
   } catch (e) {
-    console.error('[persist-storage] delete failed for', key, e);
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.error('[persist-storage] delete failed for', key, e);
+    }
   }
 }

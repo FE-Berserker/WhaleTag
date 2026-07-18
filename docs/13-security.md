@@ -103,3 +103,11 @@
 | **安全审计日志** | ⏳ 未做 | 用户没强需求 |
 
 > 任何"安全加强"需求先列到对应模块文档的"已知取舍 / 遗留"或新章节,不开"未来加密"段。
+
+## 13. 读侧边界(2026-07-18 审阅 + 修复)
+
+写操作 33 处过 `assertWithinAllowedRoot`(§2)。审阅发现读路径完全不受限、与威胁模型不一致;**通道闸已修(同日)**:
+
+- ✅ `fs:readFile` / `fs:readTextFile` handler 入口加 `assertWithinAllowedRoot`([ipc.ts](../src/main/ipc.ts));扩展 `requestFileBytes` 汇到 `fs:readFile`,同步被闸。渲染层调用方全部为用户动作驱动(打开文件 / AI 附件 / 灯箱 / 搜索命中,均在位置内),fail-closed 不伤启动路径;AiPanel 附件读取带 try/catch 降级(读不到就只发路径)。
+- ✅ `fs:openNative` 同闸;扩展 `openLinkExternally`(http(s) 分流 `window.open` 后)与 `openNative` 消息汇到它,"任意路径启动 OS 程序"的面被封。
+- ⏳ **遗留**:能力授予"全有或全无"——manifest 无 permissions / capabilities 字段,pdf-viewer 与 text-editor 拥有完全相同的宿主能力面。目前 15 个扩展全是内置自研,威胁面可控;引入第三方 / 用户扩展机制前须补"按 manifest 声明能力白名单放行 `request*` 消息类型"。

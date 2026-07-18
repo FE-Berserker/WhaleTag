@@ -21,7 +21,7 @@
  * On confirm, the resulting `YYYYMMDD-YYYYMMDD` token flows through
  * `onSetEntryDateTag`, which already runs `withSinglePeriodTag` to drop any
  * prior period — Gantt never invents new metadata (see the invariants
- * header in `shared/gantt.ts`).
+ * header in `renderer/domain/gantt.ts`).
  *
  * `onMoreFileActions` delegates to the generic `EntryContextMenu` so the
  * user can reach rename / move / copy / reveal / etc. without losing the
@@ -49,14 +49,14 @@ import ViewColumnIcon from '@mui/icons-material/ViewColumn';
 
 import type { TFunction } from 'i18next';
 import type { DirEntry } from '../../shared/ipc-types';
-import type { TagGroup } from '../../shared/tag-library';
+import type { TagGroup } from '../domain/tag-library';
 import {
   QUADRANT_COLORS,
   QUADRANT_VALUES,
   isQuadrantTag,
 } from '../../shared/smart-tags';
-import { isPeriodTag } from '../../shared/calendar';
-import { getTagColor } from '../../shared/tag-colors';
+import { isPeriodTag } from '../domain/calendar';
+import { getTagColor } from '../domain/tag-colors';
 import { tagDisplayLabel } from '-/services/tag-display';
 import InlineTagInput from '-/components/InlineTagInput';
 import { usePeriodTagDialog } from './PeriodTagDialog';
@@ -195,7 +195,7 @@ export default function GanttEntryMenu({
     stageValues.find((sv) => currentTags.includes(sv)) ?? null;
   const currentPeriod = currentTags.find(isPeriodTag) ?? null;
   // Period tags are independent of smart-date tags (see `isPeriodTag` in
-  // shared/calendar.ts). The "Clear period" entry below is gated on the
+  // renderer/domain/calendar.ts). The "Clear period" entry below is gated on the
   // entry actually carrying a period — if there's none the button does
   // nothing useful.
   const hasPeriod = currentPeriod !== null;

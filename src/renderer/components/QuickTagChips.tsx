@@ -5,7 +5,7 @@ import type { TFunction } from 'i18next';
 
 import { DND_TYPE_TAG, type TagDragItem } from '-/services/dnd';
 import { smartTagI18nKey, type SmartTagDef } from '../../shared/smart-tags';
-import { PERIOD_COLOR } from '../../shared/tag-colors';
+import { PERIOD_COLOR } from '../domain/tag-colors';
 
 /**
  * Shared quick-tag chips used by the tag-library surfaces AND the file tray's

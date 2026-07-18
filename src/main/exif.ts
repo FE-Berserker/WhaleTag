@@ -111,10 +111,11 @@ export function buildExifSummary(raw: unknown): ExifSummary {
  * Extract GPS coordinates from an image or video file using exifr.
  * Returns null when the file has no GPS data or cannot be parsed.
  *
- * Logging stays at `console.debug` for the routine "no GPS" path — the renderer
- * already surfaces failures through the standard notice channel, and a folder
- * with hundreds of EXIF-less photos would otherwise drown the main-process log
- * (plan §H.21 P3 cleanup, exif.ts noise reduction).
+ * No per-file logging: batch scans would drown the main-process log, and any
+ * `console.*` write is an EPIPE crash vector once the parent process owning
+ * the stdio pipe has died (docs/09 §27). Real parse failures still log via
+ * `console.error` below; the renderer surfaces routine "no GPS" through the
+ * standard notice channel.
  */
 export async function extractGps(
   filePath: string
@@ -128,10 +129,8 @@ export async function extractGps(
       Number.isNaN(gps.latitude) ||
       Number.isNaN(gps.longitude)
     ) {
-      console.debug(`[exif] no GPS: ${filePath}`);
       return null;
     }
-    console.debug(`[exif] GPS found: ${filePath} → ${gps.latitude}, ${gps.longitude}`);
     return { lat: gps.latitude, lng: gps.longitude };
   } catch (err) {
     console.error(`[exif] failed to extract GPS from ${filePath}:`, err);

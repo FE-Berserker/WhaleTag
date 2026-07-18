@@ -159,7 +159,7 @@ Gallery 拖拽打标已实现 P0。
 
 #### #1 接 swim lanes — 沿用现有 `groupRowsByWorkflow` ✅ 已实现,2026-07-05
 
-- [src/shared/gantt.ts:248-290](../src/shared/gantt.ts) 已实现完整 helper(按 stage 分泳道 + 排序 + 末尾 `no stage` 行);[src/shared/gantt.test.ts:203-262](../src/shared/gantt.test.ts) 有 4 个单测
+- [src/renderer/domain/gantt.ts:248-290](../src/renderer/domain/gantt.ts) 已实现完整 helper(按 stage 分泳道 + 排序 + 末尾 `no stage` 行);[src/renderer/domain/gantt.test.ts:203-262](../src/renderer/domain/gantt.test.ts) 有 4 个单测
 - 接线方式:`GanttTimeline` 内部用 `groupRowsByWorkflow` 把 `scheduled` 拍平到 lane 数组,每条 lane 单独过滤,过滤后为空的 lane 折叠成占位
 - 改动:
   - `GanttTimeline` 新增 `stages: WorkflowStage[]` + `tagsByName: Map<string, string[]>` props;内部派生 `swimLanes` / `displayRows`(flat 化 + 每行带 laneIndex)/ `laneBoundaryIndices` / `hiddenLaneCount`
@@ -178,12 +178,12 @@ Gallery 拖拽打标已实现 P0。
 
 #### #2 过期 / 今天视觉强化 ✅ 已实现,2026-07-05
 
-- 状态分类由 `shared/gantt.ts:periodStatus(period, todayKey)` 统一计算,返回 `overdue | inProgress | normal`
+- 状态分类由 `renderer/domain/gantt.ts:periodStatus(period, todayKey)` 统一计算,返回 `overdue | inProgress | normal`
 - `overdue`(`endKey < today`):柱加红色描边 `outline: 2px solid #ef4444; outlineOffset: 1px`,用 `outline` 而不用 `border` 是为了不撑开内容盒(避免 drag 数学依赖的 `width` 被吃掉)
 - `inProgress`(`startKey ≤ today ≤ endKey`):柱左侧加绿色圆形角标(`PlayArrowIcon`,14×14 px,`pointer-events: none`),tooltip 显示 `ganttInProgress`
 - today 竖线已存在,不动
-- 测试覆盖:[src/shared/gantt.test.ts](../src/shared/gantt.test.ts) 有 `periodStatus` 边界 case(`overdue` / `inProgress` / `normal` 及包含边界)
-- 影响面:`GanttBar` 加状态分支 + `shared/gantt.ts` 加 `periodStatus` helper + i18n 2 key(`ganttOverdue` / `ganttInProgress`),约 50 行
+- 测试覆盖:[src/renderer/domain/gantt.test.ts](../src/renderer/domain/gantt.test.ts) 有 `periodStatus` 边界 case(`overdue` / `inProgress` / `normal` 及包含边界)
+- 影响面:`GanttBar` 加状态分支 + `renderer/domain/gantt.ts` 加 `periodStatus` helper + i18n 2 key(`ganttOverdue` / `ganttInProgress`),约 50 行
 
 #### #3 空态引导文案 ✅ 已实现,2026-07-05
 
@@ -307,7 +307,7 @@ Gallery 拖拽打标已实现 P0。
 
 1. 把对应小节标题的 🟡 改成 ✅ `已实现,commit=<sha>`
 2. 把"改动"清单与"影响面"的最终数字收敛进 §2c Gantt 章节的对应位置
-3. 在共享层 / hook 实现的项,在 [src/shared/gantt.test.ts](../src/shared/gantt.test.ts) 或新 test 文件里补测试覆盖
+3. 在共享层 / hook 实现的项,在 [src/renderer/domain/gantt.test.ts](../src/renderer/domain/gantt.test.ts) 或新 test 文件里补测试覆盖
 4. 新增 i18n key 同步 en/zh 两份 [src/renderer/locales/{en,zh}/common.json](../src/renderer/locales/)
 5. 一次性把这节最后更新于 `<YYYY-MM-DD>` 标在文头
 
@@ -329,7 +329,7 @@ Gallery 拖拽打标已实现 P0。
 
 - **mapProvider**:二元 `'gaode' | 'osm'`([settings.ts:46](../src/renderer/reducers/settings.ts#L46)),默认 `'gaode'`。**无 baidu/google**。
 - **tile**:二元 if/else([MapiqueView.tsx:226-229](../src/renderer/components/MapiqueView.tsx#L226)),gaode = GCJ-02(`webrd0{1-4}.is.autonavi.com`),osm = WGS-84(`tile.openstreetmap.org`)。
-- **坐标系**:内部/存储统一 **WGS-84**;GCJ-02 只在 gaode 显示层。`toDisplay`(WGS-84→显示,233)/ `fromDisplay`(显示→WGS-84,241)是组件内闭包,调 [src/shared/gcj02.ts](../src/shared/gcj02.ts)。
+- **坐标系**:内部/存储统一 **WGS-84**;GCJ-02 只在 gaode 显示层。`toDisplay`(WGS-84→显示,233)/ `fromDisplay`(显示→WGS-84,241)是组件内闭包,调 [src/renderer/domain/gcj02.ts](../src/renderer/domain/gcj02.ts)。
 - **flyTo**:**无现成 flyTo/setView**(只有 `FitBounds` 1627)。需加 `FlyTo` 子组件(同款 useMap 模板)。
 - **nameQuery**(203):文件名搜索(detail panel 文件筛选),**非地名**,不能复用。
 

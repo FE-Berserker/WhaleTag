@@ -1,5 +1,5 @@
 import './editor.css';
-import { EditorState, Extension, Compartment } from '@codemirror/state';
+import { EditorState, EditorSelection, Extension, Compartment, Transaction } from '@codemirror/state';
 import {
   EditorView,
   keymap,
@@ -7,9 +7,11 @@ import {
   highlightActiveLineGutter,
 } from '@codemirror/view';
 import { defaultKeymap, history, historyField, historyKeymap, redo, undo } from '@codemirror/commands';
-import { oneDark } from '@codemirror/theme-one-dark';
+import { oneDarkTheme } from '@codemirror/theme-one-dark';
 import { markdown } from '@codemirror/lang-markdown';
 import { openSearchPanel, search, searchKeymap } from '@codemirror/search';
+import { foldGutter, foldKeymap, HighlightStyle, syntaxHighlighting, foldState, foldEffect, unfoldEffect, codeFolding } from '@codemirror/language';
+import { tags } from '@lezer/highlight';
 import type { HostMessage } from '../../shared/extension-types';
 import {
   parseMarkdown,
@@ -29,6 +31,12 @@ import {
   renderMermaid,
   renderKatex,
   parseLineInput,
+  addCodeCopyButtons,
+  attachImageLightbox,
+  addLanguageLabels,
+  addCodeLineNumbers,
+  addTaskInteractivity,
+  setCustomCallouts,
 } from './md-render';
 import { setupSplitter } from './md-splitter';
 
@@ -204,8 +212,85 @@ function persistMdWrapMode(mode: 'wrap' | 'nowrap'): void {
   }
 }
 
+// --- Render-theme presets (md-editor multi-preset themes) ----------------
+//
+// md-editor ships several render-theme presets (GitHub Light / GitHub Dark
+// today; Solarized Light/Dark + Dracula in Phase 2), INDEPENDENT of
+// WhaleTag's global MUI theme. The host still sends `setTheme('light'|
+// 'dark')`; we map that to github-light / github-dark unless the user pinned
+// a preset from the toolbar <select>, persisted as `md-editor-theme` in
+// localStorage (same key/prefix convention as font-size / wrap-mode above).
+//
+// `data-theme` on <body> carries the preset name; the CSS variable blocks
+// in editor.css key off it. CodeMirror's own theme only distinguishes light
+// vs dark, so we collapse the preset to that via presetMode().
+
+const MD_THEME_KEY = 'md-editor-theme';
+const MD_PRESETS = [
+  'github-light',
+  'github-dark',
+  'solarized-light',
+  'solarized-dark',
+  'dracula',
+  'nord',
+  'gruvbox',
+  'one-dark',
+] as const;
+type MdRenderPreset = (typeof MD_PRESETS)[number];
+type MdThemePref = 'auto' | MdRenderPreset;
+
+function isRenderPreset(v: string | null): v is MdRenderPreset {
+  return v !== null && (MD_PRESETS as readonly string[]).includes(v);
+}
+
+function loadMdThemePref(): MdThemePref {
+  try {
+    const raw = window.localStorage.getItem(MD_THEME_KEY);
+    if (raw === 'auto') return 'auto';
+    if (isRenderPreset(raw)) return raw;
+    return 'auto';
+  } catch {
+    return 'auto';
+  }
+}
+
+function persistMdThemePref(pref: MdThemePref): void {
+  try {
+    // 'auto' = follow the host → drop the override key entirely (rather than
+    // store 'auto') so a stale pinned value can't survive a future preset
+    // list change. Matches the "absent = default" reading in loadMdThemePref.
+    if (pref === 'auto') window.localStorage.removeItem(MD_THEME_KEY);
+    else window.localStorage.setItem(MD_THEME_KEY, pref);
+  } catch {
+    /* privacy mode — ignore */
+  }
+}
+
+/** Map a host light/dark mode to the default preset for that mode. */
+function presetForMode(mode: 'light' | 'dark'): MdRenderPreset {
+  return mode === 'dark' ? 'github-dark' : 'github-light';
+}
+
+/**
+ * CodeMirror only distinguishes light vs dark; collapse a preset to that.
+ * Light presets are the explicit minority (github-light / solarized-light);
+ * default to dark so a newly-added preset isn't accidentally rendered with
+ * the light CodeMirror theme.
+ */
+function presetMode(preset: MdRenderPreset): 'light' | 'dark' {
+  return preset === 'github-light' || preset === 'solarized-light'
+    ? 'light'
+    : 'dark';
+}
+
 let mdFontSize = loadMdFontSize();
 let mdWrapMode: 'wrap' | 'nowrap' = loadMdWrapMode();
+let mdThemePref: MdThemePref = loadMdThemePref();
+// The host's last announced light/dark mode. Used to resolve the preset when
+// the user hasn't pinned one (`mdThemePref === 'auto'`). Seeded from the OS
+// preference so the very first paint (before the host's setTheme lands)
+// matches the user's system; applyTheme() overwrites it on every setTheme.
+let hostMode: 'light' | 'dark' = detectInitialTheme();
 
 function applyFontSize(px: number, view: EditorView): void {
   const clamped = clampFontSize(px);
@@ -250,6 +335,32 @@ function applyWrap(mode: 'wrap' | 'nowrap', view: EditorView): void {
  * Empty input / invalid input → no-op (we don't throw or toast — the
  * prompt()'s own OK button click just cancels).
  */
+/**
+ * §task — toggle the `[ ]`/`[x]` of the Nth task-list line in the editor doc.
+ * Dispatches a doc change → the updateListener fires schedulePreview (so the
+ * preview checkbox re-renders in the new state) + marks dirty; the user
+ * saves (Ctrl+S) to persist. `index` matches the preview checkbox order.
+ */
+function toggleTaskInEditor(target: EditorView, index: number): void {
+  const doc = target.state.doc;
+  const taskRe = /^(\s*[-*+] \[)([ x])(\])/i;
+  let count = 0;
+  for (let lineNo = 1; lineNo <= doc.lines; lineNo += 1) {
+    const line = doc.line(lineNo);
+    const m = taskRe.exec(line.text);
+    if (!m) continue;
+    if (count === index) {
+      const isChecked = m[2].toLowerCase() === 'x';
+      const from = line.from + m[1].length;
+      target.dispatch({
+        changes: { from, to: from + 1, insert: isChecked ? ' ' : 'x' },
+      });
+      return;
+    }
+    count += 1;
+  }
+}
+
 function promptForLine(view: EditorView): void {
   const total = view.state.doc.lines;
   const raw = window.prompt(`Go to line (1–${total}):`, String(getStatusInfo(view.state).line));
@@ -283,49 +394,113 @@ function gotoLine(view: EditorView, line: number): void {
 }
 
 /**
+ * Wrap the current selection with `before`/`after` markdown markers (e.g.
+ * `**`/`**` for bold, `*`/`*` for italic). With no selection the markers are
+ * inserted side by side and the cursor lands between them. §fmt — used by
+ * the Mod-B / Mod-I keymap. Returns true (CodeMirror command handled).
+ */
+function wrapSelection(v: EditorView, before: string, after: string): boolean {
+  if (v.state.readOnly) return false;
+  const sel = v.state.selection.main;
+  if (sel.to <= sel.from) {
+    // No selection: insert empty markers + place cursor between.
+    v.dispatch({
+      changes: { from: sel.from, insert: before + after },
+      selection: EditorSelection.cursor(sel.from + before.length),
+    });
+  } else {
+    const selected = v.state.sliceDoc(sel.from, sel.to);
+    v.dispatch({
+      changes: { from: sel.from, to: sel.to, insert: before + selected + after },
+      selection: EditorSelection.range(sel.from + before.length, sel.to + before.length),
+    });
+  }
+  v.focus();
+  return true;
+}
+
+/**
+ * Insert a `[text](url)` link template. The selected text becomes the link
+ * text; with no selection `text` is the placeholder. The cursor then selects
+ * `url` so the user can type the URL right away. §fmt — used by Mod-K.
+ */
+function insertLink(v: EditorView): boolean {
+  if (v.state.readOnly) return false;
+  const sel = v.state.selection.main;
+  const selected = sel.to > sel.from ? v.state.sliceDoc(sel.from, sel.to) : 'text';
+  const insert = `[${selected}](url)`;
+  // `url` starts after `[${selected}](` = selected.length + 3 chars.
+  const urlStart = sel.from + selected.length + 3;
+  v.dispatch({
+    changes: { from: sel.from, to: sel.to, insert },
+    selection: EditorSelection.range(urlStart, urlStart + 3),
+  });
+  v.focus();
+  return true;
+}
+
+/**
  * Recompute status bar from the current `EditorView.state` and patch the
  * DOM. Called from the `EditorView.updateListener` on every doc or
  * selection change. Also called once after `createEditor` to seed the bar
  * with the initial state (the listener doesn't fire on view creation).
  */
-function updateStatus(view: EditorView): void {
+// §status-split — the status bar updates in two paths:
+//  - `updateCursorStatus` (O(1)): line/col/length/selection + read-only +
+//    dirty + undo/redo availability. Runs on every cursor move and edit.
+//  - `updateWordCount` (O(n)): words + reading time. Runs debounced
+//    (`scheduleWordCount`) only on edits — never on a bare cursor move.
+//    Previously a single `updateStatus` ran the full `getStatusInfo`
+//    (incl. `doc.toString()` + word count) on every selectionSet, which
+//    made large docs jank on arrow keys.
+function updateCursorStatus(view: EditorView): void {
+  const doc = view.state.doc;
+  const sel = view.state.selection.main;
+  const lineObj = doc.lineAt(sel.from);
+  statusLnEl.textContent = String(lineObj.number);
+  statusColEl.textContent = String(sel.from - lineObj.from + 1);
+  statusLengthEl.textContent = String(doc.length);
+  statusSelEl.textContent = String(sel.to - sel.from);
+  statusReadonlyEl.hidden = !view.state.readOnly;
+  statusDirtyEl.hidden = !isDirty;
+  // §18.3.5 — undo/redo availability from the `history()` field.
+  // CodeMirror 6's HistoryState exposes `done` / `undone` arrays (NOT
+  // v5's `undoStack` / `redoStack`). `field(name, false)` returns
+  // undefined if the extension isn't loaded (it is).
+  const hist = view.state.field(historyField, false);
+  const canUndo = !!hist && (hist as { done: unknown[] }).done.length > 0;
+  const canRedo = !!hist && (hist as { undone: unknown[] }).undone.length > 0;
+  statusUndoEl.hidden = !canUndo;
+  statusRedoEl.hidden = !canRedo;
+}
+
+function updateWordCount(view: EditorView): void {
   const info = getStatusInfo(view.state);
-  statusLnEl.textContent = String(info.line);
-  statusColEl.textContent = String(info.col);
-  statusLengthEl.textContent = String(info.length);
-  statusSelEl.textContent = String(info.selection);
   statusWordsEl.textContent = String(info.words);
   // §18.3.6 — reading time, only shown when meaningful (≥ 1 min).
   if (info.readingMinutes > 0) {
     statusWordsEl.title = `${info.readingMinutes} min read`;
   }
-  statusReadonlyEl.hidden = !view.state.readOnly;
-  // §18.3.5 — modified indicator is independent of the doc/selection
-  // state, so we update it here too (cheap; the listener fires only
-  // when state actually changes, not on every paint).
-  statusDirtyEl.hidden = !isDirty;
-  // §18.3.5 — undo/redo availability. Read the `history()` extension's
-  // stack state. The field returns `undefined` if the extension isn't
-  // loaded (it IS — it's in our keymap chain via `history()` + the
-  // default keymap's Cmd-Z/Cmd-Shift-Z bindings), but the `?.` keeps
-  // us safe against any future code path that doesn't include it.
-  const hist = view.state.field(historyField, false);
-  // canUndo/canRedo are inferred from stack length — `history()`'s
-  // default config has `minDepth: 100`, so a real edit pushes one
-  // entry. A redo of all changes clears both stacks.
-  //
-  // CodeMirror 6's `HistoryState` (from `@codemirror/commands`)
-  // exposes its branches as `done` and `undone`, NOT `undoStack` /
-  // `redoStack` (the latter was the v5 shape). The
-  // `field(name, false)` second arg is the `default`-when-missing
-  // flag — when false, the return is the field's value OR
-  // `undefined`. The `!!hist &&` guard short-circuits when the
-  // `history()` extension isn't on the editor (it is, but `?.`
-  // would also work and is more permissive).
-  const canUndo = !!hist && (hist as { done: unknown[] }).done.length > 0;
-  const canRedo = !!hist && (hist as { undone: unknown[] }).undone.length > 0;
-  statusUndoEl.hidden = !canUndo;
-  statusRedoEl.hidden = !canRedo;
+}
+
+/** Full status refresh (cursor + word count). Used for the initial seed
+ *  after `createEditor` / `setContent`, where we want everything painted
+ *  at once. The per-keystroke path uses the split functions directly. */
+function updateStatus(view: EditorView): void {
+  updateCursorStatus(view);
+  updateWordCount(view);
+}
+
+let wordCountTimer: ReturnType<typeof setTimeout> | null = null;
+/** Debounced word-count refresh — only edits change it, so a bare cursor
+ *  move never pays the O(n) `getStatusInfo` cost. 300ms matches the preview
+ *  scheduler. Cancelled on file switch (`setContent`). */
+function scheduleWordCount(view: EditorView): void {
+  if (wordCountTimer !== null) clearTimeout(wordCountTimer);
+  wordCountTimer = setTimeout(() => {
+    wordCountTimer = null;
+    if (view) updateWordCount(view);
+  }, 300);
 }
 
 // §18.3.5 — brief flash of the undo/redo indicator on the matching
@@ -377,6 +552,37 @@ setupLinkDelegation(previewPane, (href) => {
   window.whaleExt.postMessage({ type: 'openLinkExternally', url: href });
 });
 
+// §paste-image — paste a clipboard image: encode → ask host to save it into
+// the .md's directory → host replies `imageSaved` (handled in handleMessage)
+// where we insert ![](./filename) at the cursor. Text paste is left alone.
+let imageRequestId = 0;
+editorPane.addEventListener('paste', (e: ClipboardEvent) => {
+  if (!currentDir || !view) return;
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  for (const item of Array.from(items)) {
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      const file = item.getAsFile();
+      if (!file) continue;
+      e.preventDefault();
+      const ext = (item.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataURL = reader.result as string;
+        window.whaleExt.postMessage({
+          type: 'requestSaveImage',
+          requestId: `img-${++imageRequestId}`,
+          dataURL,
+          ext,
+          dirPath: currentDir,
+        });
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+  }
+});
+
 /**
  * Mirror the editor's scroll position onto the preview pane using
  * `data-source-line` markers (see §18.1.3). The preview is `overflow: hidden`
@@ -397,6 +603,24 @@ setupLinkDelegation(previewPane, (href) => {
  * shorter than the editor, fall back to the legacy ratio mapping so the
  * user still gets smooth follow-along scroll.
  */
+// §scroll-perf — cache of source-line → preview block element, rebuilt at
+// the end of each renderPreview so syncPreviewScroll can O(1) lookup
+// instead of querySelector on every scroll frame.
+let previewLineMap = new Map<number, HTMLElement>();
+
+// §scroll-perf — coalesce scroll-driven syncPreviewScroll calls to one per
+// animation frame. Scroll (and the preview-wheel forwarder) fire at high
+// frequency; syncPreviewScroll does lineBlockAtHeight + layout reads, so
+// batching per rAF keeps scrolling smooth.
+let scrollSyncRaf = 0;
+function scheduleSyncPreviewScroll(): void {
+  if (scrollSyncRaf) return;
+  scrollSyncRaf = requestAnimationFrame(() => {
+    scrollSyncRaf = 0;
+    syncPreviewScroll();
+  });
+}
+
 function syncPreviewScroll(): void {
   const scroller = view?.scrollDOM;
   if (!scroller || !view) return;
@@ -404,6 +628,23 @@ function syncPreviewScroll(): void {
   const scrollTop = scroller.scrollTop;
   const editorMax = scroller.scrollHeight - scroller.clientHeight;
   if (editorMax <= 0) {
+    previewPane.scrollTop = 0;
+    return;
+  }
+
+  // §scroll-bottom — when the editor is near its bottom, pin the preview to
+  // its bottom too. Without this, the source-line alignment below puts the
+  // last block's TOP at the viewport top, leaving its body (footnotes, etc.)
+  // cut off below the viewport — so you couldn't wheel to the preview's end.
+  const previewMaxBottom = previewPane.scrollHeight - previewPane.clientHeight;
+  if (previewMaxBottom > 0 && scrollTop >= editorMax - 60) {
+    previewPane.scrollTop = previewMaxBottom;
+    return;
+  }
+  // §scroll-top — symmetric: editor near its top → preview pinned to top.
+  // Without this the first block's padding offset can leave the preview
+  // scrolled a touch down when the editor is already at the very top.
+  if (scrollTop <= 60) {
     previewPane.scrollTop = 0;
     return;
   }
@@ -420,9 +661,14 @@ function syncPreviewScroll(): void {
   }
 
   if (lineNo !== null) {
-    const target = previewPane.querySelector(
-      `[data-source-line="${lineNo}"]`
-    ) as HTMLElement | null;
+    // §scroll-perf — O(1) map lookup (rebuilt in renderPreview) with a
+    // querySelector fallback for the brief window before the first render
+    // finishes building it.
+    const target =
+      previewLineMap.get(lineNo) ??
+      (previewPane.querySelector(
+        `[data-source-line="${lineNo}"]`
+      ) as HTMLElement | null);
     if (target) {
       const previewRect = previewPane.getBoundingClientRect();
       const targetRect = target.getBoundingClientRect();
@@ -461,6 +707,60 @@ function syncPreviewScroll(): void {
 }
 
 /**
+ * §fold-sync — mirror the editor's folded sections onto the preview pane. Each
+ * folded range in the CodeMirror `foldState` spans a heading section; the
+ * preview's top-level blocks carry `data-source-line` (set by parseMarkdown),
+ * so we hide any block whose source line falls strictly INSIDE a folded range.
+ * The heading block itself (at the range's first line) stays visible so the
+ * user sees the folded section's title.
+ *
+ * Called from the updateListener on foldState change, and from renderPreview
+ * so freshly-rendered content picks up the current fold state.
+ */
+function applyFoldToPreview(): void {
+  if (!view) return;
+  const folds = view.state.field(foldState, false);
+  const ranges: Array<{ fromLine: number; toLine: number }> = [];
+  if (folds) {
+    folds.between(0, view.state.doc.length, (from, to) => {
+      ranges.push({
+        fromLine: view!.state.doc.lineAt(from).number,
+        toLine: view!.state.doc.lineAt(to).number,
+      });
+    });
+  }
+  const blocks = previewPane.querySelectorAll('[data-source-line]');
+  blocks.forEach((el) => {
+    const lineAttr = el.getAttribute('data-source-line');
+    if (lineAttr === null) return;
+    const line = Number(lineAttr);
+    // Distinguish the two fold kinds:
+    //  - code-block fold (opening ``` fence at fromLine): COLLAPSE the <pre>
+    //    into a one-line placeholder (fold-collapsed) — the block stays
+    //    visible, just its body hidden. This is "fold", not "vanish".
+    //  - heading fold: hide the section's content blocks entirely
+    //    (fold-hidden); the heading block at fromLine stays.
+    let collapsed = false;
+    let hidden = false;
+    for (const r of ranges) {
+      const fromLineText = view!.state.doc.line(r.fromLine).text;
+      const isCodeFence = /^\s*(`{3,}|~{3,})/.test(fromLineText);
+      if (isCodeFence) {
+        if (line >= r.fromLine && line <= r.toLine) {
+          collapsed = true;
+          break;
+        }
+      } else if (line > r.fromLine && line <= r.toLine) {
+        hidden = true;
+        break;
+      }
+    }
+    el.classList.toggle('fold-collapsed', collapsed);
+    el.classList.toggle('fold-hidden', hidden);
+  });
+}
+
+/**
  * Exhaustiveness guard. Used at the end of `applyTheme` to give a
  * runtime error if a future code path passes a value outside the
  * expected `'light' | 'dark' | 'system'` union. With strict TS
@@ -468,37 +768,180 @@ function syncPreviewScroll(): void {
  * `throw` is a defense-in-depth measure for code paths that
  * bypass the type system (e.g. `any` casts, JSON deserialization).
  */
-function assertNever(x: never): never {
-  throw new Error(`md-editor: unexpected theme value: ${String(x)}`);
-}
+/**
+ * §fold — fold a markdown ATX heading (`#`…`######`) up to the next heading of
+ * the same or higher level (or end of document). Registered as a language-data
+ * `foldService` so `foldGutter` shows a marker on every heading line and
+ * Ctrl-Shift-[ folds the whole section. lang-markdown doesn't ship a heading
+ * fold, so we provide one based on the doc text (cheap line scan; a heading's
+ * span is bounded by the next `#` of equal/lesser depth).
+ */
+const foldMarkdownHeading = (
+  state: EditorState,
+  lineStart: number,
+  lineEnd: number
+): { from: number; to: number } | null => {
+  if (lineStart !== lineEnd) return null;
+  const line = state.doc.line(lineStart);
+  const m = /^(#{1,6})\s+\S/.exec(line.text);
+  if (!m) return null;
+  const level = m[1].length;
+  let endLine = state.doc.lines;
+  for (let i = lineStart + 1; i <= state.doc.lines; i += 1) {
+    const mm = /^(#{1,6})\s+\S/.exec(state.doc.line(i).text);
+    if (mm && mm[1].length <= level) {
+      endLine = i - 1;
+      break;
+    }
+  }
+  if (endLine <= lineStart) return null;
+  return { from: line.to, to: state.doc.line(endLine).to };
+};
+
+/**
+ * §fold — fold a fenced code block (``` or ~~~) from its opening fence to the
+ * matching closing fence. lang-markdown doesn't ship a code-block fold, so we
+ * detect the fence pair by text. Unterminated fences (no closer) are left
+ * unfoldable. Registers alongside foldMarkdownHeading so BOTH headings and
+ * code blocks get gutter markers.
+ */
+const foldCodeBlock = (
+  state: EditorState,
+  lineStart: number,
+  lineEnd: number
+): { from: number; to: number } | null => {
+  if (lineStart !== lineEnd) return null;
+  const line = state.doc.line(lineStart);
+  const m = /^(\s*)(`{3,}|~{3,})/.exec(line.text);
+  if (!m) return null;
+  const fenceChar = m[2][0];
+  const closeRe = new RegExp(`^\\s*\\${fenceChar}{3,}`);
+  let endLine = -1;
+  for (let i = lineStart + 1; i <= state.doc.lines; i += 1) {
+    if (closeRe.test(state.doc.line(i).text)) {
+      endLine = i;
+      break;
+    }
+  }
+  if (endLine === -1) return null; // unterminated fence — not foldable
+  return { from: line.to, to: state.doc.line(endLine).to };
+};
+
+/** The foldService is published via the `languageData` facet so the fold
+ *  gutter / foldKeymap pick it up. Markdown is always foldable, so this needs
+ *  no per-file gating (unlike text-editor's supportsFolding). */
+const markdownFoldExtension: Extension = EditorState.languageData.of(() => [
+  { foldService: foldMarkdownHeading },
+  { foldService: foldCodeBlock },
+]);
 
 function themeExtension(theme: 'light' | 'dark'): Extension {
-  return theme === 'dark' ? oneDark : [];
+  // Structure only. Token colors come from the dynamic HighlightStyle built by
+  // `buildMdHighlightFromCss` (below), not from oneDark's bundled highlight —
+  // that way editor tokens follow the render theme. Structure colors (bg /
+  // gutters / selection / ...) are further overridden by editor.css
+  // `body[data-theme] .cm-*` rules, so oneDarkTheme here just supplies
+  // CM-internal defaults (cursor shape, panel layout) we don't otherwise set.
+  return theme === 'dark' ? oneDarkTheme : [];
+}
+
+const highlightCompartment = new Compartment();
+
+/**
+ * §editor-theme — build a markdown + code HighlightStyle by reading the ACTIVE
+ * render preset's `--md-*` variables off the live DOM via getComputedStyle.
+ * Because it reads computed values at call time, the same function serves every
+ * preset: call it AFTER `setAttribute('data-theme', …)` so the CSS variables
+ * already reflect the new preset, then apply via `highlightCompartment`.
+ *
+ * Token mapping reuses the hljs palette where semantics line up (code
+ * keyword/string/number/comment) and the base vars for prose: link→accent,
+ * quote/url→muted, heading→hljs-title (each preset's "type/function" hue),
+ * emphasis/strong→text (they carry styling via italic/bold, not color).
+ */
+function buildMdHighlightFromCss(): HighlightStyle {
+  const cs = getComputedStyle(document.body);
+  const v = (name: string): string => cs.getPropertyValue(name).trim();
+  return HighlightStyle.define([
+    { tag: tags.heading, color: v('--md-hljs-title') },
+    { tag: tags.link, color: v('--md-accent') },
+    { tag: tags.url, color: v('--md-muted') },
+    { tag: tags.emphasis, color: v('--md-text') },
+    { tag: tags.strong, color: v('--md-text') },
+    { tag: tags.quote, color: v('--md-muted') },
+    { tag: tags.monospace, color: v('--md-hljs-string') },
+    { tag: tags.keyword, color: v('--md-hljs-keyword') },
+    { tag: tags.atom, color: v('--md-hljs-keyword') },
+    { tag: tags.string, color: v('--md-hljs-string') },
+    { tag: tags.number, color: v('--md-hljs-number') },
+    { tag: tags.comment, color: v('--md-hljs-comment') },
+    { tag: tags.meta, color: v('--md-faint') },
+  ]);
 }
 
 /**
- * §18.4.4 — apply the host's theme to the editor + body attribute.
- * Accepts `'light' | 'dark' | 'system'`; `'system'` resolves to the
- * OS-level preference via `detectInitialTheme()`. Any unexpected value
- * is rejected by `assertNever` (defense against a future code path
- * that bypasses the type system).
+ * Resolve the preset that should be active right now: the user's pinned
+ * preset if they chose one from the toolbar, otherwise the github-light/
+ * github-dark preset matching the host's current light/dark mode.
+ */
+function resolvePreset(): MdRenderPreset {
+  return mdThemePref === 'auto' ? presetForMode(hostMode) : mdThemePref;
+}
+
+/**
+ * Apply a render-theme preset: set `body[data-theme]` (which swaps the CSS
+ * variable block in editor.css) and reconfigure CodeMirror's light/dark
+ * theme to match. Also mirrors the current preference into the toolbar
+ * <select> so it stays in sync after host-driven changes (the user's own
+ * <select> change has already set it before calling here).
+ */
+function applyPreset(preset: MdRenderPreset): void {
+  document.body.setAttribute('data-theme', preset);
+  if (view) {
+    view.dispatch({
+      effects: [
+        // data-theme was just set, so buildMdHighlightFromCss reads the new
+        // preset's --md-* values — editor tokens follow the render theme.
+        themeCompartment.reconfigure(themeExtension(presetMode(preset))),
+        highlightCompartment.reconfigure(syntaxHighlighting(buildMdHighlightFromCss())),
+      ],
+    });
+  }
+  // §settings-sync — theme preset is owned by Settings ▸ General now (the
+  // toolbar <select> was removed). The host pushes it via setMdRenderTheme.
+}
+
+/**
+ * §18.4.4 — apply the host's theme. Accepts `'light' | 'dark' | 'system'`
+ * (the host only ever sends light/dark; `'system'` is retained as a
+ * defensive fallback and resolves via `detectInitialTheme()`). Records the
+ * host mode, then activates the resolved preset — the user's pinned preset
+ * if they set one, or the github-light/github-dark preset for the host mode
+ * otherwise. Any unexpected value is rejected by `assertNever` (defense
+ * against a code path that bypasses the type system).
  */
 function applyTheme(theme: 'light' | 'dark' | 'system') {
-  const resolved: 'light' | 'dark' =
-    theme === 'system' ? detectInitialTheme() : theme;
-  switch (resolved) {
+  let mode: 'light' | 'dark';
+  switch (theme) {
     case 'light':
     case 'dark':
-      document.body.setAttribute('data-theme', resolved);
-      if (view) {
-        view.dispatch({
-          effects: themeCompartment.reconfigure(themeExtension(resolved)),
-        });
-      }
-      return;
+      mode = theme;
+      break;
+    case 'system':
+      mode = detectInitialTheme();
+      break;
     default:
-      assertNever(resolved);
+      // §robust — never throw on an unexpected theme value (a host bug or
+      // a future theme shouldn't make the editor unopenable). Fall back to
+      // the OS preference and warn. This drops the compile-time
+      // exhaustiveness check `assertNever` gave, deliberately — runtime
+      // resilience matters more than catching a new union member here.
+      // eslint-disable-next-line no-console
+      console.warn('[md-editor] unexpected theme, falling back to OS:', theme);
+      mode = detectInitialTheme();
   }
+  hostMode = mode;
+  applyPreset(resolvePreset());
 }
 
 function setReadOnly(readOnly: boolean) {
@@ -593,9 +1036,44 @@ function refreshToc(content: string): void {
  * path (sans extension) + `.html`. If no path is open, falls back to
  * `untitled.html`.
  */
+/**
+ * §export-theme — read the active render preset's `--md-*` variable values
+ * off the live DOM so the exported HTML document carries the same theme.
+ * `getComputedStyle(document.body)` resolves each variable to its currently
+ * effective value (the :root default OR the body[data-theme='<preset>']
+ * override), so this works for every preset without knowing which is active.
+ *
+ * The list mirrors the 35 names defined in editor.css — keep them in sync if
+ * a variable is added/removed.
+ */
+const MD_VAR_NAMES = [
+  '--md-bg', '--md-text', '--md-muted', '--md-faint', '--md-border',
+  '--md-accent', '--md-surface', '--md-warn', '--md-hover-bg', '--md-active-bg',
+  '--md-splitter-hover', '--md-inline-code-bg', '--md-mark-bg',
+  '--md-callout-blue-border', '--md-callout-blue-bg',
+  '--md-callout-green-border', '--md-callout-green-bg',
+  '--md-callout-orange-border', '--md-callout-orange-bg',
+  '--md-callout-red-border', '--md-callout-red-bg',
+  '--md-callout-purple-border', '--md-callout-purple-bg',
+  '--md-callout-gray-border', '--md-callout-gray-bg',
+  '--md-hljs-base', '--md-hljs-comment', '--md-hljs-keyword', '--md-hljs-string',
+  '--md-hljs-title', '--md-hljs-number', '--md-hljs-deletion-fg',
+  '--md-hljs-deletion-bg', '--md-hljs-addition-fg', '--md-hljs-addition-bg',
+] as const;
+
+function readMdThemeVars(): string {
+  const cs = getComputedStyle(document.body);
+  return MD_VAR_NAMES.map((n) => `${n}:${cs.getPropertyValue(n).trim()}`).join(';');
+}
+
 function exportPreviewAsHtml(): void {
+  const themeVars = readMdThemeVars();
   if (!currentPath) {
-    triggerDownload('untitled.html', wrapHtmlDocument('Untitled', previewPane.innerHTML), 'text/html');
+    triggerDownload(
+      'untitled.html',
+      wrapHtmlDocument('Untitled', previewPane.innerHTML, themeVars),
+      'text/html'
+    );
     return;
   }
   // Strip the .md / .markdown extension from the basename.
@@ -605,7 +1083,11 @@ function exportPreviewAsHtml(): void {
   const stem = dot > 0 ? fileName.slice(0, dot) : fileName;
   const outName = `${stem}.html`;
   const title = stem || 'Untitled';
-  triggerDownload(outName, wrapHtmlDocument(title, previewPane.innerHTML), 'text/html');
+  triggerDownload(
+    outName,
+    wrapHtmlDocument(title, previewPane.innerHTML, themeVars),
+    'text/html'
+  );
 }
 
 function renderPreview(content: string) {
@@ -631,6 +1113,17 @@ function renderPreview(content: string) {
   // neither step's DOM mutation interferes with the other.
   resolveLocalImages(previewPane, currentDir);
 
+  // §copy — hover "Copy" button on each code block (after hljs so the button
+  // sits over the highlighted <pre>). §lightbox — click <img> to zoom.
+  addLanguageLabels(previewPane);
+  addCodeLineNumbers(previewPane);
+  addCodeCopyButtons(previewPane);
+  attachImageLightbox(previewPane);
+  // §task — clickable checkboxes toggle the editor's matching task line.
+  addTaskInteractivity(previewPane, (idx) => {
+    if (view) toggleTaskInEditor(view, idx);
+  });
+
   // §18.3.3 — render Mermaid diagrams. Lazy-imports mermaid on first
   // call (~200KB gzipped); async, so we don't await it — the SVG
   // appears ~100-500ms after the preview paints. Errors fall back to
@@ -646,6 +1139,15 @@ function renderPreview(content: string) {
   // stays strict.
   void renderKatex(previewPane);
 
+  // §scroll-perf — rebuild the source-line → block map so syncPreviewScroll
+  // can O(1) lookup on each scroll frame. Done after all DOM mutations
+  // above so the map reflects the final structure.
+  previewLineMap = new Map();
+  previewPane.querySelectorAll('[data-source-line]').forEach((el) => {
+    const ln = Number((el as HTMLElement).dataset.sourceLine);
+    if (Number.isFinite(ln)) previewLineMap.set(ln, el as HTMLElement);
+  });
+
   // Preview DOM just changed — keep the preview scrollTop in sync with
   // the editor's current line so the user's reading position doesn't
   // jump when the rendered content reflows.
@@ -655,6 +1157,9 @@ function renderPreview(content: string) {
   // only runs after a real render (shouldSkipRender has already
   // short-circuited identical re-renders above).
   refreshToc(content);
+
+  // §fold-sync — apply current editor folds to the freshly-rendered preview.
+  applyFoldToPreview();
 
   lastRenderedContent = content;
 }
@@ -688,8 +1193,24 @@ function createEditor(container: HTMLElement) {
     // `view.state` is always current inside the listener. The bar reflects
     // the *primary* selection (matches text-editor's convention; multi-
     // selection via `state.selection.ranges` is ignored by the status).
-    if (update.docChanged || update.selectionSet) {
-      updateStatus(view!);
+    // §status-split — cursor moves only update the cheap line/col/sel/
+    // undo-redo indicators; the O(n) word count runs debounced on edits.
+    if (update.selectionSet) updateCursorStatus(view!);
+    if (update.docChanged) {
+      updateCursorStatus(view!);
+      scheduleWordCount(view!);
+    }
+    // §fold-sync — fold/unfold effects (gutter click or foldKeymap) re-mirror
+    // the editor's folds onto the preview pane. Listening on the effect (not a
+    // foldState field reference compare) is the reliable signal — foldGutter
+    // and foldCode both dispatch foldEffect / unfoldEffect.
+    for (const tr of update.transactions) {
+      for (const eff of tr.effects) {
+        if (eff.is(foldEffect) || eff.is(unfoldEffect)) {
+          applyFoldToPreview();
+          return;
+        }
+      }
     }
   });
 
@@ -763,6 +1284,15 @@ function createEditor(container: HTMLElement) {
     },
   ];
 
+  // §fmt — Markdown formatting shortcuts (VSCode / Typora / Obsidian parity).
+  // Mod-B → **bold**, Mod-I → *italic*, Mod-K → [text](url). `preventDefault`
+  // stops the browser's native Mod-B (bookmarks in some setups) / Mod-I.
+  const markdownFormattingKeymap: import('@codemirror/view').KeyBinding[] = [
+    { key: 'Mod-b', preventDefault: true, run: (v) => wrapSelection(v, '**', '**') },
+    { key: 'Mod-i', preventDefault: true, run: (v) => wrapSelection(v, '*', '*') },
+    { key: 'Mod-k', preventDefault: true, run: insertLink },
+  ];
+
   const state = EditorState.create({
     doc: '',
     extensions: [
@@ -813,10 +1343,21 @@ function createEditor(container: HTMLElement) {
       // Both must come AFTER `defaultKeymap` (above) so the user's Mod-f
       // is captured here, not by the default keymap.
       search(),
-      keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
+      keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, ...foldKeymap]),
       keymap.of(findKeymap),
       keymap.of(zoomKeymap),
+      keymap.of(markdownFormattingKeymap),
       markdown(),
+      // §fold — heading fold (custom foldService above) + gutter markers +
+      // Ctrl-Shift-[ / ] keymap. Markdown is always foldable.
+      markdownFoldExtension,
+      // §fold — codeFolding() provides the foldState field that foldGutter,
+      // foldKeymap, and applyFoldToPreview all read. Without it the field may
+      // be absent and fold-sync silently no-ops.
+      codeFolding(),
+      foldGutter(),
+      // §editor-theme — markdown/code token colors, rebuilt per preset.
+      highlightCompartment.of(syntaxHighlighting(buildMdHighlightFromCss())),
       themeCompartment.of(themeExtension('light')),
       readOnlyCompartment.of(EditorView.editable.of(true)),
       fontSizeCompartment.of(
@@ -889,7 +1430,30 @@ function createEditor(container: HTMLElement) {
   // Sync preview scroll on every editor scroll event. `view.scrollDOM` is the
   // `.cm-scroller` element. Using a `scroll` listener (rather than polling
   // `requestAnimationFrame`) keeps the work proportional to user input.
-  view.scrollDOM.addEventListener('scroll', syncPreviewScroll, { passive: true });
+  view.scrollDOM.addEventListener('scroll', scheduleSyncPreviewScroll, { passive: true });
+
+  // §preview-wheel — forward wheel events over the preview pane to the
+  // editor's scroller. The preview is `overflow: hidden` (single-view
+  // design: the editor is the sole scroll source, `syncPreviewScroll`
+  // mirrors its scrollTop onto the preview), so without this a wheel over
+  // the preview does nothing. Forwarding to the editor's scroller scrolls
+  // the editor, which fires its `scroll` event → syncPreviewScroll mirrors
+  // it back to the preview, keeping the two panes in lock-step.
+  previewPane.addEventListener(
+    'wheel',
+    (e: WheelEvent) => {
+      const scroller = view?.scrollDOM;
+      if (!scroller) return;
+      // Normalize deltaMode: 0 = px (Chrome/Windows/Mac default), 1 = lines,
+      // 2 = pages. Most mice/touchpads fire mode 0; the 1/2 branches cover
+      // the rare browsers/devices reporting in lines or pages.
+      let dy = e.deltaY;
+      if (e.deltaMode === 1) dy *= 24;
+      else if (e.deltaMode === 2) dy *= scroller.clientHeight;
+      scroller.scrollTop += dy;
+    },
+    { passive: true }
+  );
   // First paint after the editor mounts: prime the sync so the preview's
   // initial scrollTop matches the editor's (defaults to 0).
   syncPreviewScroll();
@@ -908,6 +1472,12 @@ function setContent(content: string) {
   // §18.2.4 — also cancel the inner rAF scheduler; a stale rAF callback
   // must not render against the just-swapped document.
   rafScheduler.cancel();
+  // §status-split — cancel any pending debounced word-count from the
+  // previous file; updateStatus below paints fresh values immediately.
+  if (wordCountTimer !== null) {
+    clearTimeout(wordCountTimer);
+    wordCountTimer = null;
+  }
   // §18.3.5 — a fresh file load is by definition clean (whatever is on
   // disk matches what we're showing). Clear the dirty flag.
   isDirty = false;
@@ -918,6 +1488,12 @@ function setContent(content: string) {
       to: view.state.doc.length,
       insert: content,
     },
+    // §undo-leak — a file load must NOT enter the undo history. Without
+    // this, switching A→B then pressing Ctrl+Z in B would rewind through
+    // the setContent replace back into file A's text (with currentPath
+    // still pointing at B). Marking the transaction out-of-history keeps
+    // each file's undo stack scoped to that file's own edits.
+    annotations: Transaction.addToHistory.of(false),
   });
   // setContent is the only synchronous render path. Bypass
   // `shouldSkipRender` and the rAF scheduler: a file load must always
@@ -948,6 +1524,24 @@ function handleMessage(msg: HostMessage) {
     case 'setTheme':
       applyTheme(msg.theme);
       break;
+    case 'setMdRenderTheme': {
+      // §settings-sync — host (Settings ▸ General) pushed the preset. Apply
+      // it like the toolbar <select> would, but DON'T postMessage back (the
+      // host already knows — it just told us). applyPreset sets select.value
+      // programmatically, which doesn't fire 'change', so no loop.
+      mdThemePref = msg.theme;
+      persistMdThemePref(mdThemePref);
+      applyPreset(resolvePreset());
+      break;
+    }
+    case 'setCustomCallouts': {
+      // §settings-sync — host pushed the custom callout list. Update
+      // md-render's index + re-render so visible `[!custom]` blocks pick up
+      // new icons/colors immediately.
+      setCustomCallouts(msg.callouts);
+      if (currentPath !== null) schedulePreview();
+      break;
+    }
     case 'setReadOnly':
       setReadOnly(msg.readOnly);
       break;
@@ -994,6 +1588,19 @@ function handleMessage(msg: HostMessage) {
         });
       }
       break;
+    case 'imageSaved': {
+      // §paste-image — host saved the pasted image; insert ![](./filename)
+      // at the cursor. savedPath is inside currentDir so the relative link is
+      // just the basename (resolveLocalImages rewrites it to whale-file://).
+      if (view && msg.path) {
+        const filename = msg.path.split(/[\\/]/).pop() || msg.path;
+        view.dispatch(view.state.replaceSelection(`![](./${filename})`));
+      } else if (msg.error) {
+        // eslint-disable-next-line no-console
+        console.warn('[md-editor] paste-image failed:', msg.error);
+      }
+      break;
+    }
     default:
       break;
   }

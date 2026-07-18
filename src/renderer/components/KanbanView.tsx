@@ -15,9 +15,9 @@ import NoteAddIcon from '@mui/icons-material/NoteAdd';
 import SettingsIcon from '@mui/icons-material/Settings';
 
 import type { DirEntry } from '../../shared/ipc-types';
-import type { WorkflowStage } from '../../shared/workflow';
-import { getTagColor } from '../../shared/tag-colors';
-import { bucketEntries, UNTAGGED_COLUMN } from '../../shared/kanban';
+import type { WorkflowStage } from '../domain/workflow';
+import { getTagColor } from '../domain/tag-colors';
+import { bucketEntries, UNTAGGED_COLUMN } from '../domain/kanban';
 import { DND_TYPE_FILE, type FileDragItem } from '-/services/dnd';
 import { tagDisplayLabel } from '-/services/tag-display';
 import type { FileCellData } from '-/components/file-cell';
@@ -52,7 +52,7 @@ interface KanbanViewProps {
  * Kanban perspective: the customizable workflow stages become columns (plus a
  * trailing "untagged" column). Each file lands in the column of the first stage
  * value it carries; dragging a card to another column re-tags it (mutually
- * exclusive among the workflow values). See `src/shared/kanban.ts` for the pure
+ * exclusive among the workflow values). See `src/renderer/domain/kanban.ts` for the pure
  * bucketing/move logic.
  *
  * H.25: card-level right-click uses `KanbanEntryMenu` (domain-aware: move

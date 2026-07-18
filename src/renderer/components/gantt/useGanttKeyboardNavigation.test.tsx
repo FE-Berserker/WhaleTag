@@ -27,7 +27,7 @@ import {
 } from 'react';
 
 import { useGanttKeyboardNavigation } from './useGanttKeyboardNavigation';
-import type { GanttPeriod } from '../../../shared/gantt';
+import type { GanttPeriod } from '../../domain/gantt';
 
 interface ProbeHandle {
   // Reads (live, via refs so post-render state is correct).

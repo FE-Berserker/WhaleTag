@@ -3,7 +3,7 @@ import {
   filledTagSx,
   tagShapeSx,
   type TagShape,
-} from '../../shared/tag-colors';
+} from '../domain/tag-colors';
 import {
   ratingOfTag,
   workflowFunctionalityOfTag,
@@ -13,8 +13,8 @@ import {
   isPeriodTag,
   type SmartFunctionality,
 } from '../../shared/smart-tags';
-import { isGeoTag } from '../../shared/geo-tag';
-import { dateTagRangeKey } from '../../shared/calendar';
+import { isGeoTag } from '../domain/geo-tag';
+import { dateTagRangeKey } from '../domain/calendar';
 
 /**
  * Shared tag-chip presentation used by both the list rows and the grid cells.

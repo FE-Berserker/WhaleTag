@@ -151,6 +151,19 @@ describe('decodeWhaleFileUrl', () => {
     assert.equal(result, '/home/foo/%ZZ.mp4');
   });
 
+  it('decodes a Chromium-normalized drive-letter URL (whale-file://c/...) back to C:/...', () => {
+    // Chromium normalizes `whale-file:///C:/path` (a standard scheme) to
+    // `whale-file://c/path` — it treats the Windows drive letter as the URL
+    // host (lowercased). The decoder MUST recognize a single-letter host as a
+    // drive (not an SMB server), or it rebuilds UNC `//c/...` → lstat `\\c\`
+    // → 403/404. This is the exact regression that broke md-editor pasted
+    // images (img src whale-file:///C:/... → request whale-file://c/...).
+    assert.equal(
+      decodeWhaleFileUrl('whale-file://c/WhaleTag/Test/image.png'),
+      'C:/WhaleTag/Test/image.png'
+    );
+  });
+
   it('decodes a UNC URL back to //server/share (recovers the host)', () => {
     // Chromium normalizes the host to lowercase. The decoder MUST read
     // `url.hostname` (not just `pathname`) or the server is lost — the exact

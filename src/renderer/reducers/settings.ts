@@ -1,12 +1,14 @@
 import type { AnyAction } from 'redux';
 import type { SupportedLanguage } from '-/i18n';
 import type { ViewMode } from '../../shared/whale-meta';
-import type { TagShape } from '../../shared/tag-colors';
+import type { TagShape } from '../domain/tag-colors';
+import type { CustomCallout } from '../../shared/callout-types';
+import type { MdRenderThemePref } from '../../shared/extension-types';
 import {
   DEFAULT_KEYBINDINGS,
   sanitizeKeybindings,
   type KeyAction,
-} from '../../shared/keybindings';
+} from '../domain/keybindings';
 
 /**
  * H.23 P1-3 row-density preset (3 stops). Stored verbatim — the reducer
@@ -169,7 +171,7 @@ export interface SettingsState {
   /**
    * Show Chinese-lunar day labels in the Calendar perspective (zh locale only).
    * Off by default — opt-in, since it's culturally specific and the labels add
-   * density to day cells. See `shared/lunar.ts`.
+   * density to day cells. See `renderer/domain/lunar.ts`.
    */
   showLunar: boolean;
   /**
@@ -243,8 +245,17 @@ export interface SettingsState {
    */
   viewDepth: number;
   /**
+   * Phase 6: when true, main process auto-checks GitHub Releases ~5s after
+   * `whenReady` for a newer version and pushes `app:update-available` to the
+   * renderer. The manual "Check for updates" button in Settings always works
+   * regardless of this flag (the user can opt out of the *background* check
+   * without losing the manual trigger). Default `true` — the standard
+   * desktop-app experience.
+   */
+  autoUpdateCheck: boolean;
+  /**
    * Customizable key→action bindings for the file list (Settings ▸ Keyboard).
-   * Keys are normalized `KeyboardEvent.key` tokens (see `shared/keybindings`);
+   * Keys are normalized `KeyboardEvent.key` tokens (see `renderer/domain/keybindings`);
    * values are `KeyAction`. A missing key (or one sanitized away) means "no
    * action" — the browser default for that key is preserved, which is what
    * lets Tab fall back to focus traversal when the user sets it to 'none'.
@@ -291,6 +302,13 @@ export interface SettingsState {
   aiHttpTools: boolean;
   /** User-configured shell commands (right-click → Commands). See `shared/shell-types`. */
   userCommands: import('../../shared/shell-types').UserCommand[];
+  /** md-editor render-theme preset ('auto' = follow host light/dark).
+   *  Pushed to the md-editor iframe via setMdRenderTheme; mirrored back from
+   *  the editor's toolbar <select> via mdRenderThemeChanged. */
+  mdEditorRenderTheme: MdRenderThemePref;
+  /** User-defined callout types for md-editor's `> [!TYPE]` syntax (extend
+   *  the 15 built-ins). Pushed to the iframe via setCustomCallouts. */
+  customCallouts: CustomCallout[];
 }
 
 export const initialState: SettingsState = {
@@ -326,6 +344,15 @@ export const initialState: SettingsState = {
   trayVisible: true,
   trayWidth: 300,
   viewDepth: DEFAULT_VIEW_DEPTH,
+  /**
+   * Phase 6: when true, main process auto-checks GitHub Releases ~5s after
+   * `whenReady` for a newer version and pushes `app:update-available` to the
+   * renderer. The manual "Check for updates" button in Settings always works
+   * regardless of this flag (the user can opt out of the *background* check
+   * without losing the manual trigger). Default `true` — the standard
+   * desktop-app experience.
+   */
+  autoUpdateCheck: true,
   // Fresh copy so accidental mutation of initialState never bleeds into the
   // shared DEFAULT_KEYBINDINGS reference (the reducer always treats state as
   // immutable, but defense-in-depth is cheap here).
@@ -349,6 +376,8 @@ export const initialState: SettingsState = {
   aiMcpServers: [],
   aiHttpTools: true,
   userCommands: [],
+  mdEditorRenderTheme: 'auto',
+  customCallouts: [],
 };
 
 export const SET_THEME_MODE = 'settings/SET_THEME_MODE';
@@ -388,6 +417,7 @@ export const SET_MAP_PROVIDER = 'settings/SET_MAP_PROVIDER';
 export const SET_TRAY_VISIBLE = 'settings/SET_TRAY_VISIBLE';
 export const SET_TRAY_WIDTH = 'settings/SET_TRAY_WIDTH';
 export const SET_VIEW_DEPTH = 'settings/SET_VIEW_DEPTH';
+export const SET_AUTO_UPDATE_CHECK = 'settings/SET_AUTO_UPDATE_CHECK';
 export const SET_KEYBINDING = 'settings/SET_KEYBINDING';
 export const RESET_KEYBINDINGS = 'settings/RESET_KEYBINDINGS';
 /**
@@ -568,9 +598,14 @@ export interface SetViewDepthAction extends AnyAction {
   /** Clamped to [MIN_VIEW_DEPTH, MAX_VIEW_DEPTH] by `clampViewDepth` in the creator. */
   payload: number;
 }
+export interface SetAutoUpdateCheckAction extends AnyAction {
+  type: typeof SET_AUTO_UPDATE_CHECK;
+  /** `true` enables the 5s-delayed startup check; the manual button is always available. */
+  payload: boolean;
+}
 export interface SetKeybindingAction extends AnyAction {
   type: typeof SET_KEYBINDING;
-  /** `token` = normalized key (see `shared/keybindings`); `action === 'none'`
+  /** `token` = normalized key (see `renderer/domain/keybindings`); `action === 'none'`
    *  removes the binding so the browser default for that key is restored
    *  (e.g. Tab → focus traversal). */
   payload: { token: string; action: KeyAction };
@@ -734,6 +769,11 @@ export function setViewDepth(depth: number): SetViewDepthAction {
   return { type: SET_VIEW_DEPTH, payload: clampViewDepth(depth) };
 }
 
+/** Phase 6: toggle the 5s-delayed startup GitHub Releases check. */
+export function setAutoUpdateCheck(enabled: boolean): SetAutoUpdateCheckAction {
+  return { type: SET_AUTO_UPDATE_CHECK, payload: enabled };
+}
+
 export function setKeybinding(
   token: string,
   action: KeyAction
@@ -751,10 +791,21 @@ export function setAiSettings(patch: Partial<AiSettingsPatch>): SetAiSettingsAct
 }
 
 export const SET_USER_COMMANDS = 'settings/SET_USER_COMMANDS';
+export const SET_MD_RENDER_THEME = 'settings/SET_MD_RENDER_THEME';
+export const SET_CUSTOM_CALLOUTS = 'settings/SET_CUSTOM_CALLOUTS';
 
 export interface SetUserCommandsAction extends AnyAction {
   type: typeof SET_USER_COMMANDS;
   payload: import('../../shared/shell-types').UserCommand[];
+}
+
+export interface SetMdRenderThemeAction extends AnyAction {
+  type: typeof SET_MD_RENDER_THEME;
+  payload: MdRenderThemePref;
+}
+export interface SetCustomCalloutsAction extends AnyAction {
+  type: typeof SET_CUSTOM_CALLOUTS;
+  payload: CustomCallout[];
 }
 
 /**
@@ -767,6 +818,21 @@ export function setUserCommands(
   commands: import('../../shared/shell-types').UserCommand[]
 ): SetUserCommandsAction {
   return { type: SET_USER_COMMANDS, payload: commands };
+}
+
+/** Set the md-editor render-theme preset (Settings ▸ General + toolbar sync). */
+export function setMdRenderTheme(
+  theme: MdRenderThemePref
+): SetMdRenderThemeAction {
+  return { type: SET_MD_RENDER_THEME, payload: theme };
+}
+
+/** Replace the whole custom-callout list (Settings ▸ Callouts). Same
+ *  whole-array-replace pattern as `setUserCommands`. */
+export function setCustomCallouts(
+  callouts: CustomCallout[]
+): SetCustomCalloutsAction {
+  return { type: SET_CUSTOM_CALLOUTS, payload: callouts };
 }
 
 export default function settingsReducer(
@@ -810,6 +876,8 @@ export default function settingsReducer(
     | ResetKeybindingsAction
     | SetAiSettingsAction
     | SetUserCommandsAction
+    | SetMdRenderThemeAction
+    | SetCustomCalloutsAction
     | AnyAction
 ): SettingsState {
   // Migrate persisted state from before tagColors/language/default/fulltext existed.
@@ -945,10 +1013,23 @@ export default function settingsReducer(
   if (base.aiMcpServers === undefined) base = { ...base, aiMcpServers: [] };
   if (base.aiHttpTools === undefined) base = { ...base, aiHttpTools: true };
   if (base.userCommands === undefined) base = { ...base, userCommands: [] };
+  if (base.mdEditorRenderTheme === undefined)
+    base = { ...base, mdEditorRenderTheme: 'auto' };
+  if (base.customCallouts === undefined) base = { ...base, customCallouts: [] };
 
   switch (action.type) {
     case SET_USER_COMMANDS:
       return { ...base, userCommands: (action as SetUserCommandsAction).payload };
+    case SET_MD_RENDER_THEME:
+      return {
+        ...base,
+        mdEditorRenderTheme: (action as SetMdRenderThemeAction).payload,
+      };
+    case SET_CUSTOM_CALLOUTS:
+      return {
+        ...base,
+        customCallouts: (action as SetCustomCalloutsAction).payload,
+      };
     case SET_THEME_MODE:
       return { ...base, themeMode: (action as SetThemeModeAction).payload };
     case SET_THEME_PRESET:
@@ -1124,6 +1205,11 @@ export default function settingsReducer(
       return {
         ...base,
         viewDepth: clampViewDepth((action as SetViewDepthAction).payload),
+      };
+    case SET_AUTO_UPDATE_CHECK:
+      return {
+        ...base,
+        autoUpdateCheck: (action as SetAutoUpdateCheckAction).payload,
       };
     case SET_KEYBINDING: {
       // Rename the payload's `action` field to avoid shadowing the reducer's

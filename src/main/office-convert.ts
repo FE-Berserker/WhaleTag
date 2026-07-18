@@ -2,7 +2,7 @@ import path from 'path';
 import os from 'os';
 import { existsSync, promises as fsp } from 'fs';
 import { execFile } from 'child_process';
-import { sofficeBinary, sofficeConvertArgs } from './thumbnail';
+import { sofficeBinary, sofficeConvertArgs } from './office-binary';
 import { sofficeSemaphore } from './concurrency';
 import * as officeWorkerHost from './office-worker/office-worker-host';
 
@@ -125,9 +125,4 @@ export async function convertOfficeToPdf(
       () => undefined
     );
   }
-}
-
-/** Returns true when a LibreOffice `soffice` binary can be located. */
-export async function isSofficeAvailable(): Promise<boolean> {
-  return (await sofficeBinary(null)) !== null;
 }

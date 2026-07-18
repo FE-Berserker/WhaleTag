@@ -30,6 +30,23 @@ export function createBase(opts: BaseOptions = {}) {
           configFile: path.resolve(ROOT_PATH, 'tsconfig.json'),
         }),
       ],
+      // Force every `import ... from 'echarts'` (no path) to resolve to the
+      // lean ESM `echarts/core` instead of the full UMD distribution. echarts
+      // marks its own `index.js` as side-effecting in its package.json
+      // (`sideEffects: ['index.js', ...]`), so without this alias webpack
+      // would refuse to tree-shake the giant bundle and we'd ship every
+      // chart + every component + every renderer + every theme regardless
+      // of what the call sites actually use.
+      //
+      // The `$` suffix is webpack's "exact match" — `import 'echarts/core'`
+      // and `import 'echarts/charts'` keep their original targets, only the
+      // bare `'echarts'` specifier is rewritten. This affects
+      // `echarts-for-react` and `echarts-wordcloud` (both do `import * as
+      // echarts from 'echarts'` as a defensive fallback) without disturbing
+      // our explicit on-demand imports in `services/echarts-setup.ts`.
+      alias: {
+        echarts$: 'echarts/core',
+      },
     },
     module: {
       rules: [

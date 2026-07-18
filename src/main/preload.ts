@@ -1,5 +1,19 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { WhaleApi } from '../shared/ipc-types';
+import type {
+  WhaleApi,
+  AppUpdateAvailablePayload,
+  AppUpdateProgressPayload,
+  AppUpdateInfoPayload,
+} from '../shared/ipc-types';
+
+/** Payloads the main process pushes per update channel — mirrors the
+ *  `onAppUpdateEvent` callback contract in `WhaleApi` so the preload bridge
+ *  stays in lockstep with the interface. */
+type AppUpdateEventPayload =
+  | AppUpdateAvailablePayload
+  | AppUpdateProgressPayload
+  | AppUpdateInfoPayload
+  | string;
 import type { SidecarMeta, FolderMeta } from '../shared/whale-meta';
 import type { SearchQuery } from '../shared/search-query';
 import type { ExtensionRegistry, RevisionInfo } from '../shared/extension-types';
@@ -184,6 +198,8 @@ const whaleApi: WhaleApi = {
     ipcRenderer.invoke('ext:deleteRevision', revisionPath),
   writeFileWithRevision: (filePath: string, content: string) =>
     ipcRenderer.invoke('ext:writeFile', filePath, content),
+  saveImageToFile: (dataURL: string, dirPath: string, ext: string) =>
+    ipcRenderer.invoke('ext:saveImageToFile', dataURL, dirPath, ext),
   listRevisions: (filePath: string) =>
     ipcRenderer.invoke('ext:listRevisions', filePath) as Promise<RevisionInfo[]>,
   restoreRevision: (filePath: string, revisionPath: string) =>
@@ -324,18 +340,30 @@ const whaleApi: WhaleApi = {
   flushComplete: () => ipcRenderer.send('app:flush-complete'),
   requestQuit: () => ipcRenderer.send('app:request-quit'),
 
-  // Redux-persist storage backed by synchronous main-process file IO.
+  // Redux-persist storage backed by main-process JSON file IO (async invoke).
   persistRead: (key: string) => ipcRenderer.invoke('persist:read', key),
   persistWrite: (key: string, value: string) =>
     ipcRenderer.invoke('persist:write', key, value),
   persistDelete: (key: string) =>
     ipcRenderer.invoke('persist:delete', key),
-  persistReadSync: (key: string) =>
-    ipcRenderer.sendSync('persist:readSync', key),
-  persistWriteSync: (key: string, value: string) =>
-    ipcRenderer.sendSync('persist:writeSync', key, value),
-  persistDeleteSync: (key: string) =>
-    ipcRenderer.sendSync('persist:deleteSync', key),
+
+  // Application auto-update (electron-updater + GitHub Releases). The
+  // main-side state machine lives in `auto-update.ts`; preload is a thin
+  // bridge to the IPC channels declared in the `WhaleApi` interface.
+  appGetVersion: () => ipcRenderer.invoke('app:getVersion'),
+  appCheckForUpdates: () => ipcRenderer.invoke('app:update-check'),
+  appDownloadUpdate: () => ipcRenderer.invoke('app:update-download'),
+  appQuitAndInstall: () => ipcRenderer.send('app:update-quit-and-install'),
+  onAppUpdateEvent: (
+    channel: 'available' | 'progress' | 'downloaded' | 'error',
+    callback: (data: AppUpdateEventPayload) => void
+  ) => {
+    const wireChannel = `app:update-${channel}`;
+    const listener = (_e: unknown, payload: unknown): void =>
+      callback(payload as AppUpdateEventPayload);
+    ipcRenderer.on(wireChannel, listener);
+    return () => ipcRenderer.off(wireChannel, listener);
+  },
 };
 
 contextBridge.exposeInMainWorld('whale', whaleApi);

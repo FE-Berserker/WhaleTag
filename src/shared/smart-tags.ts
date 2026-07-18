@@ -33,9 +33,9 @@
  * add a `SmartFunctionality` variant + a `resolveSmartTag` case when needed.
  */
 
-import { isPeriodTag } from './calendar';
+import { isPeriodTag } from '../renderer/domain/calendar';
 
-export { isPeriodTag } from './calendar';
+export { isPeriodTag } from '../renderer/domain/calendar';
 
 export type SmartFunctionality =
   | 'now'

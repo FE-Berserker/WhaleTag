@@ -31,6 +31,7 @@ import DOMPurify from 'dompurify';
 import hljs from 'highlight.js/lib/common';
 import { encodeWhaleFileUrl } from '../../shared/whale-file-url';
 import type { Token } from 'marked';
+import markedFootnote from 'marked-footnote';
 
 // --- Markdown parsing -----------------------------------------------------
 
@@ -42,6 +43,10 @@ import type { Token } from 'marked';
  */
 const md = new Marked();
 md.use({ gfm: true, breaks: false });
+// §footnote — [^id] refs + [^id]: def → <sup> ref + <section class="footnotes">
+// list with back-links. Output is later run through DOMPurify (sanitize keeps
+// sup/a/ol/li/section + id/href/class), then styled by editor.css .footnotes.
+md.use(markedFootnote());
 
 /**
  * §18.3.3 — math extension. Detects `$...$` (inline) and `$$...$$`
@@ -233,6 +238,40 @@ const CALLOUT_ICON: Record<string, string> = {
 };
 const DEFAULT_CALLOUT_ICON = '📝';
 
+// §custom-callouts — user-defined types (from settings.customCallouts,
+// pushed in via setCustomCallouts by index.ts onMessage 'setCustomCallouts').
+// `customCalloutMap` is rebuilt on each set: lowercased type → enabled entry,
+// for O(1) lookup in transformCallouts. A custom entry shadows a same-named
+// built-in's icon AND injects inline border/bg colors (built-ins keep using
+// the static `.callout-{type}` CSS).
+import type { CustomCallout } from '../../shared/callout-types';
+
+let customCalloutMap: Record<string, CustomCallout> = {};
+
+/** Replace the custom-callout set. Called from index.ts when the host pushes
+ *  `setCustomCallouts`. Rebuilds the type→entry index (enabled entries only). */
+export function setCustomCallouts(list: CustomCallout[]): void {
+  const next: Record<string, CustomCallout> = {};
+  for (const c of list) {
+    if (c.enabled) next[c.type.toLowerCase()] = c;
+  }
+  customCalloutMap = next;
+}
+
+/** Mix `hex` toward white at `ratio` (0 = full color, 1 = white). Returns a
+ *  light tint for a custom callout's background (built-in callouts use CSS;
+ *  custom ones inject this inline since their colors are user-defined). */
+function mixTowardWhite(hex: string, ratio: number): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return 'rgba(0,0,0,0.04)';
+  const n = parseInt(m[1], 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  const mix = (c: number): number => Math.round(c + (255 - c) * ratio);
+  return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`;
+}
+
 /**
  * Remove `prefix` from the start of `el`'s leading text node, if that node
  * is a text node beginning with exactly `prefix`. Used to strip the
@@ -270,14 +309,19 @@ function transformCallouts(root: Element): void {
     const firstP = bq.querySelector('p');
     if (!firstP) continue;
     const text = firstP.textContent || '';
-    // `[!TYPE]` then optional fold (+/-) then optional `: title` to end of line.
-    const m = /^\[!([\w-]+)\][ \t]*([+-]?)(?::[ \t]*([^\n]*))?(?:\r?\n|$)/.exec(
+    // `[!TYPE]` then an optional fold marker (+ / -, which must be flush
+    // against `]` so `[!t] -5` is a title, not a fold) then an optional title.
+    // The title accepts BOTH forms: Obsidian's space form (`[!t] Title` /
+    // `[!t]- Title`) and the colon form (`[!t]: Title` / `[!t]-: Title`). A
+    // bare `[!TYPE]` with no title falls back to the TYPE word (handled below).
+    const m = /^\[!([\w-]+)\]([+-]?)[ \t]*(?::[ \t]*)?([^\n]*)(?:\r?\n|$)/.exec(
       text
     );
     if (!m) continue;
     const [, typeRaw, fold, titleRaw] = m;
     const type = typeRaw.toLowerCase();
-    const icon = CALLOUT_ICON[type] ?? DEFAULT_CALLOUT_ICON;
+    const custom = customCalloutMap[type];
+    const icon = custom?.icon ?? CALLOUT_ICON[type] ?? DEFAULT_CALLOUT_ICON;
     const title = (titleRaw && titleRaw.trim()) || typeRaw.toUpperCase();
 
     // Strip the `[!TYPE]...` marker line off firstP so it isn't duplicated
@@ -288,6 +332,14 @@ function transformCallouts(root: Element): void {
     const isFold = fold === '-' || fold === '+';
     const container = document.createElement(isFold ? 'details' : 'div');
     container.className = `callout callout-${type}`;
+    if (custom) {
+      // Custom types get inline colors (built-ins use the static
+      // `.callout-{type}` CSS). border-left emphasizes the accent; bg is a
+      // light tint of the same hue.
+      container.style.borderColor = custom.color;
+      container.style.borderLeftColor = custom.color;
+      container.style.background = mixTowardWhite(custom.color, 0.85);
+    }
     if (fold === '+') container.setAttribute('open', '');
     const line = bq.getAttribute('data-source-line');
     if (line) container.setAttribute('data-source-line', line);
@@ -593,7 +645,22 @@ export function highlightCodeBlocks(container: HTMLElement): void {
   );
   if (blocks.length === 0) return;
   blocks.forEach((el) => {
-    hljs.highlightElement(el as HTMLElement);
+    const code = el as HTMLElement;
+    // §preview-cache — skip hljs when we've already highlighted this exact
+    // source+language. innerHTML swaps wipe hljs's `data-highlighted`
+    // marker, so without this every preview re-render re-highlights every
+    // code block. Key folds in the className so the same source under
+    // different ```lang fences doesn't collide. JSON.stringify avoids any
+    // separator-collision / NUL-byte pitfalls.
+    const source = code.textContent ?? '';
+    const key = JSON.stringify([code.className, source]);
+    const cached = HLJS_CACHE.get(key);
+    if (cached !== undefined) {
+      code.outerHTML = cached;
+    } else {
+      hljs.highlightElement(code);
+      putRenderCache(HLJS_CACHE, key, code.outerHTML);
+    }
   });
 }
 
@@ -724,16 +791,39 @@ export interface StatusInfo {
   readingMinutes: number;
 }
 
+// §18.3.6 — CJK word counting. Chinese/Japanese/Korean text has no
+// whitespace between words, so a whitespace splitter counts a whole
+// paragraph as 1 "word". For the status-bar indicator we count each CJK
+// character as one unit (the convention Chinese word processors use for
+// 字数) plus whitespace-separated Latin tokens.
+const CJK_CHAR = /[一-鿿㐀-䶿豈-﫿]/g;
+
+/** Split `text` into CJK character count + Latin (whitespace-bounded) word
+ *  count. Shared by `countWords` and `estimateReadingMinutes` so the CJK
+ *  regex + splitter live in one place. Pure. */
+function countCjkAndLatin(text: string): {
+  cjkChars: number;
+  latinWords: number;
+} {
+  const cjkChars = (text.match(CJK_CHAR) || []).length;
+  // Replace CJK chars with spaces so the Latin splitter doesn't glue a
+  // Latin word to adjacent CJK (e.g. "hello你好" → "hello " → 1 Latin word).
+  const latinWords = text
+    .replace(CJK_CHAR, ' ')
+    .split(/\s+/)
+    .filter(Boolean).length;
+  return { cjkChars, latinWords };
+}
+
 /**
- * Count whitespace-separated tokens. Empty input returns 0 (not 1, as
- * `"".split(/\s+/).filter(Boolean).length` would). For CJK text the
- * splitter sees no whitespace, so consecutive characters count as 1
- * word — close enough for the status-bar "Words" indicator; a more
- * accurate CJK word/character counter is a future §18.3.6 follow-up.
+ * Count words for the status-bar indicator. Each CJK character counts as
+ * one (matches Chinese word processors' 字数); Latin/whitespace text counts
+ * whitespace-bounded tokens. Empty input returns 0. Pure.
  */
 export function countWords(text: string): number {
   if (!text) return 0;
-  return text.split(/\s+/).filter(Boolean).length;
+  const { cjkChars, latinWords } = countCjkAndLatin(text);
+  return cjkChars + latinWords;
 }
 
 export function getStatusInfo(state: EditorState): StatusInfo {
@@ -752,45 +842,22 @@ export function getStatusInfo(state: EditorState): StatusInfo {
 }
 
 /**
- * Estimate reading time in whole minutes for `text`. Mixed-script
- * docs (English prose with embedded CJK) are handled by counting
- * CJK characters separately and applying a higher CPM (Chinese
- * reading is ~400 characters/minute vs ~200 wpm for English —
- * the latter is the long-cited average for prose).
+ * Estimate reading time in whole minutes for `text`. Mixed-script docs
+ * (English prose with embedded CJK) count CJK characters and Latin words
+ * separately with different rates (Chinese ~400 chars/min vs ~200 wpm
+ * for English prose).
  *
- * Algorithm:
- *   - `cjk = count of BMP CJK code points (一-鿿, 3400-4DBF, F900-FAFF)`
- *   - `words = countWords(text)` — already counts each CJK run as 1
- *     "word" because the splitter sees no whitespace, so we subtract
- *     `cjk` to get the English-only word count
- *   - minutes = (englishWords / 200) + (cjk / 400), rounded up
+ * Algorithm (shares `countCjkAndLatin` with `countWords`):
+ *   - `cjkChars` = BMP CJK code points
+ *   - `latinWords` = whitespace-bounded tokens after stripping CJK
+ *   - minutes = (latinWords / 200) + (cjkChars / 400), rounded, min 1
  *
- * Pure: no DOM access, no globals. Returns 0 for an empty string.
- * Always returns at least 1 once the doc is non-empty (so the status
- * bar shows "1 min" instead of "0 min" for short notes).
- *
- * Heuristic, not a measured read-time. Real reading speed varies by
- * reader + content; a future §18.3.6 follow-up could allow a
- * user-configurable WPM.
+ * Pure. Returns 0 for empty, otherwise at least 1. Heuristic, not measured.
  */
 export function estimateReadingMinutes(text: string): number {
   if (!text) return 0;
-  const cjkChars = (
-    text.match(/[一-鿿㐀-䶿豈-﫿]/g) || []
-  ).length;
-  const totalWords = countWords(text);
-  // Count CJK runs: whitespace-bounded tokens that are pure CJK.
-  // We subtract `cjkRuns` (not `cjkChars`) from `totalWords` because
-  // `countWords` collapses each CJK run into 1 token — e.g. 200 English
-  // words + 400 CJK chars in one run gives `totalWords = 201`,
-  // `cjkRuns = 1`, `englishWords = 200`. Subtracting `cjkChars` (400)
-  // would over-subtract.
-  const cjkRuns = text
-    .split(/\s+/)
-    .filter((t) => t.length > 0 && /^[一-鿿㐀-䶿豈-﫿]+$/.test(t))
-    .length;
-  const englishWords = Math.max(0, totalWords - cjkRuns);
-  const minutes = englishWords / 200 + cjkChars / 400;
+  const { cjkChars, latinWords } = countCjkAndLatin(text);
+  const minutes = latinWords / 200 + cjkChars / 400;
   return Math.max(1, Math.round(minutes));
 }
 
@@ -1106,52 +1173,73 @@ export function renderToc(
 // --- HTML export (§18.3.2) ------------------------------------------------
 
 /**
- * Build a minimal CSS string for the exported HTML document. A small
- * subset of the editor's live styles — enough to render headings,
- * paragraphs, lists, code blocks, blockquotes, and tables. Doesn't try
- * to mirror every editor.css rule (toolbar, status, splitter, hljs
- * classes) since the exported file is a *document*, not a UI.
+ * Build the CSS string for the exported HTML document. Every color reads from
+ * a `--md-*` variable with a github-light fallback, so when the caller passes
+ * a `themeRootVars` block (the active preset's computed variable values) the
+ * exported document matches the editor's current render theme; without it, the
+ * fallbacks render a plain github-light document (used by unit tests).
  *
- * Kept inline (no `<link rel="stylesheet">`) so the exported file is
- * self-contained — opens in any browser, no missing-asset 404s.
+ * Covers the document subset — headings, paragraphs, lists, code blocks,
+ * blockquotes, tables, callouts, and hljs token colors. Inline (no
+ * `<link rel="stylesheet">`) so the file is self-contained.
+ *
+ * Unlike the live editor, the export pins the theme (no `prefers-color-scheme`
+ * media query): the document carries whichever preset the user had selected.
  */
 const EXPORT_CSS = `
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
     Oxygen, Ubuntu, Cantarell, sans-serif; max-width: 800px; margin: 40px auto;
-    padding: 0 20px; line-height: 1.6; color: #1f2328; background: #fff; }
+    padding: 0 20px; line-height: 1.6; color: var(--md-text, #1f2328);
+    background: var(--md-bg, #ffffff); }
   h1, h2, h3, h4, h5, h6 { margin-top: 24px; margin-bottom: 12px; font-weight: 600;
     line-height: 1.25; }
-  h1 { font-size: 2em; border-bottom: 1px solid #d0d7de; padding-bottom: 8px; }
-  h2 { font-size: 1.5em; border-bottom: 1px solid #d0d7de; padding-bottom: 6px; }
+  h1 { font-size: 2em; border-bottom: 1px solid var(--md-border, #d0d7de); padding-bottom: 8px; }
+  h2 { font-size: 1.5em; border-bottom: 1px solid var(--md-border, #d0d7de); padding-bottom: 6px; }
   h3 { font-size: 1.25em; }
   p { margin: 0 0 12px; }
-  a { color: #0969da; text-decoration: none; }
+  a { color: var(--md-accent, #0969da); text-decoration: none; }
   a:hover { text-decoration: underline; }
   code { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Consolas, monospace;
-    font-size: 0.9em; background: rgba(175, 184, 193, 0.2); padding: 2px 4px;
-    border-radius: 3px; }
-  pre { background: #f6f8fa; border-radius: 6px; padding: 12px; overflow: auto; }
+    font-size: 0.9em; background: var(--md-inline-code-bg, rgba(175, 184, 193, 0.2));
+    padding: 2px 4px; border-radius: 3px; }
+  pre { background: var(--md-surface, #f6f8fa); border-radius: 6px; padding: 12px; overflow: auto; }
   pre code { background: transparent; padding: 0; }
-  blockquote { margin: 0 0 12px; padding: 4px 16px; color: #57606a;
-    border-left: 4px solid #d0d7de; }
+  blockquote { margin: 0 0 12px; padding: 4px 16px; color: var(--md-muted, #57606a);
+    border-left: 4px solid var(--md-border, #d0d7de); }
   table { border-collapse: collapse; width: 100%; margin-bottom: 12px; }
-  th, td { border: 1px solid #d0d7de; padding: 6px 12px; text-align: left; }
-  th { background: #f6f8fa; font-weight: 600; }
+  th, td { border: 1px solid var(--md-border, #d0d7de); padding: 6px 12px; text-align: left; }
+  th { background: var(--md-surface, #f6f8fa); font-weight: 600; }
   img { max-width: 100%; height: auto; }
   ul, ol { margin: 0 0 12px; padding-left: 24px; }
   li { margin-bottom: 4px; }
-  hr { border: none; border-top: 1px solid #d0d7de; margin: 24px 0; }
+  hr { border: none; border-top: 1px solid var(--md-border, #d0d7de); margin: 24px 0; }
   input[type="checkbox"] { margin-right: 6px; }
-  @media (prefers-color-scheme: dark) {
-    body { color: #c9d1d9; background: #0d1117; }
-    h1, h2 { border-bottom-color: #30363d; }
-    a { color: #58a6ff; }
-    pre, th { background: #161b22; }
-    code { background: rgba(110, 118, 129, 0.2); }
-    blockquote { color: #8b949e; border-left-color: #30363d; }
-    th, td { border-color: #30363d; }
-    hr { border-top-color: #30363d; }
-  }
+  mark { background: var(--md-mark-bg, #fff8c5); padding: 1px 2px; border-radius: 2px; }
+  .callout { margin: 0 0 12px; border: 1px solid var(--md-border, #d0d7de);
+    border-left: 4px solid var(--md-border, #d0d7de); border-radius: 6px;
+    background: var(--md-surface, #f6f8fa); overflow: hidden; }
+  .callout-title { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-weight: 600; }
+  .callout-content { padding: 4px 12px 12px; }
+  .callout-note, .callout-info, .callout-question, .callout-todo
+    { border-color: var(--md-callout-blue-border, #0969da); border-left-color: var(--md-callout-blue-border, #0969da); background: var(--md-callout-blue-bg, #ddf4ff); }
+  .callout-tip, .callout-success
+    { border-color: var(--md-callout-green-border, #1a7f37); border-left-color: var(--md-callout-green-border, #1a7f37); background: var(--md-callout-green-bg, #dafbe1); }
+  .callout-warning
+    { border-color: var(--md-callout-orange-border, #9a6700); border-left-color: var(--md-callout-orange-border, #9a6700); background: var(--md-callout-orange-bg, #fff8c5); }
+  .callout-caution, .callout-danger, .callout-failure, .callout-bug
+    { border-color: var(--md-callout-red-border, #cf222e); border-left-color: var(--md-callout-red-border, #cf222e); background: var(--md-callout-red-bg, #ffebe9); }
+  .callout-important, .callout-example, .callout-abstract
+    { border-color: var(--md-callout-purple-border, #8250df); border-left-color: var(--md-callout-purple-border, #8250df); background: var(--md-callout-purple-bg, #fbefff); }
+  .callout-quote
+    { border-color: var(--md-callout-gray-border, #57606a); border-left-color: var(--md-callout-gray-border, #57606a); background: var(--md-callout-gray-bg, #f6f8fa); }
+  .hljs { color: var(--md-hljs-base, #24292e); }
+  .hljs-comment, .hljs-quote { color: var(--md-hljs-comment, #6a737d); font-style: italic; }
+  .hljs-keyword, .hljs-selector-tag { color: var(--md-hljs-keyword, #d73a49); font-weight: bold; }
+  .hljs-string, .hljs-attr, .hljs-symbol { color: var(--md-hljs-string, #032f62); }
+  .hljs-title, .hljs-name, .hljs-type, .hljs-built_in { color: var(--md-hljs-title, #6f42c1); }
+  .hljs-number, .hljs-regexp { color: var(--md-hljs-number, #005cc5); }
+  .hljs-deletion { color: var(--md-hljs-deletion-fg, #b31d28); background: var(--md-hljs-deletion-bg, #ffeef0); }
+  .hljs-addition { color: var(--md-hljs-addition-fg, #22863a); background: var(--md-hljs-addition-bg, #f0fff4); }
 `.trim();
 
 /**
@@ -1160,21 +1248,31 @@ const EXPORT_CSS = `
  * transform — no DOM access. `title` is the document `<title>`; the
  * caller should pass the file's basename or a user-supplied title.
  *
+ * `themeRootVars` (optional) is a string of `--md-*: value;` declarations
+ * for the active render preset, emitted as a `:root{…}` block so the
+ * exported document picks up the user's current theme. When omitted, the
+ * CSS fallbacks (github-light) are used — this is the path unit tests take.
+ *
  * The `data-source-line` attributes from `parseMarkdown` are preserved
  * (in case the user wants to round-trip the document back into the
  * editor) but they have no visual effect in the browser.
  */
-export function wrapHtmlDocument(title: string, bodyHtml: string): string {
+export function wrapHtmlDocument(
+  title: string,
+  bodyHtml: string,
+  themeRootVars?: string
+): string {
   const safeTitle = title
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+  const rootBlock = themeRootVars ? `:root{${themeRootVars}}` : '';
   return (
     `<!DOCTYPE html>\n<html lang="en">\n<head>\n` +
     `<meta charset="UTF-8" />\n` +
     `<meta name="viewport" content="width=device-width, initial-scale=1.0" />\n` +
     `<title>${safeTitle}</title>\n` +
-    `<style>${EXPORT_CSS}</style>\n` +
+    `<style>${rootBlock}${EXPORT_CSS}</style>\n` +
     `</head>\n<body>\n` +
     `${bodyHtml}\n` +
     `</body>\n</html>\n`
@@ -1206,6 +1304,224 @@ export function triggerDownload(
   // Defer revoke so the browser has a chance to start the download.
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   return url;
+}
+
+/**
+ * Copy `text` to the clipboard. Prefers the async Clipboard API, but the
+ * whale-extension:// iframe is cross-origin to the renderer, so
+ * Permissions-Policy denies `clipboard-write` and `writeText()` rejects — we
+ * fall back to the legacy `execCommand('copy')` path (hidden <textarea> +
+ * select + copy), which is gated by focus/selection rather than
+ * Permissions-Policy and works inside the iframe. Resolves true on success.
+ */
+function copyToClipboard(text: string): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text).then(
+      () => true,
+      () => execCommandCopy(text)
+    );
+  }
+  return Promise.resolve(execCommandCopy(text));
+}
+
+function execCommandCopy(text: string): boolean {
+  if (typeof document === 'undefined' || typeof document.execCommand !== 'function') {
+    return false;
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.top = '0px';
+  ta.style.left = '0px';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    ok = false;
+  }
+  document.body.removeChild(ta);
+  return ok;
+}
+
+/**
+ * §copy — attach a "Copy" button to each `<pre>` code block. Click copies the
+ * code text via `copyToClipboard` (Clipboard API with execCommand fallback for
+ * the cross-origin iframe). The button is invisible until the block is hovered
+ * and shows "Copied!" for 1.5s on success.
+ *
+ * Idempotent: a `<pre>` that already has a direct `.code-copy-btn` child is
+ * skipped, so re-rendering the same container doesn't double-add.
+ */
+export function addCodeCopyButtons(container: HTMLElement): void {
+  container.querySelectorAll('pre').forEach((pre) => {
+    if (pre.querySelector(':scope > .code-copy-btn')) return;
+    const code = pre.querySelector('code');
+    if (!code) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'code-copy-btn';
+    btn.textContent = 'Copy';
+    btn.addEventListener('click', () => {
+      copyToClipboard(code.textContent ?? '').then((ok) => {
+        if (!ok) return; // both paths failed — leave button as Copy
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+        window.setTimeout(() => {
+          btn.textContent = 'Copy';
+          btn.classList.remove('copied');
+        }, 1500);
+      });
+    });
+    pre.appendChild(btn);
+  });
+}
+
+/**
+ * §lightbox — click an `<img>` in the preview to open it centered on a dark
+ * overlay. Inside the overlay: mouse wheel zooms, `R` rotates 90°, `Esc` or a
+ * click on the backdrop closes. The image's `cursor` becomes `zoom-in`.
+ *
+ * Idempotent via `data-lightbox="1"` on the image (a re-render mounts new
+ * <img> nodes, which correctly get the handler; an image that survived a
+ * partial DOM update is skipped).
+ */
+/**
+ * §lang-label — stamp a language badge (top-left `<span class="code-lang">`)
+ * on each fenced `<pre>` by reading the `language-X` class that marked / hljs
+ * puts on the inner `<code>`. Also sets `data-lang` on the `<pre>` so the
+ * fold-collapsed placeholder can render `▸ ts · 已折叠` via CSS attr(). No
+ * badge when the code block has no language. Idempotent.
+ */
+export function addLanguageLabels(container: HTMLElement): void {
+  container.querySelectorAll('pre').forEach((pre) => {
+    if (pre.querySelector(':scope > .code-lang')) return;
+    const code = pre.querySelector('code');
+    if (!code) return;
+    const langClass = Array.from(code.classList).find((c) =>
+      c.startsWith('language-')
+    );
+    const lang = langClass ? langClass.slice('language-'.length) : '';
+    if (!lang) return;
+    pre.setAttribute('data-lang', lang);
+    const label = document.createElement('span');
+    label.className = 'code-lang';
+    label.textContent = lang;
+    pre.appendChild(label);
+  });
+}
+
+/**
+ * §line-numbers — stamp a line-number gutter on the left of each multi-line
+ * fenced `<pre>`, by counting the inner `<code>`'s lines. The gutter is an
+ * absolute-positioned `<span>` (white-space: pre, line-height matching code)
+ * so the numbers align with each code line. Skipped for one-liners. Idempotent.
+ */
+export function addCodeLineNumbers(container: HTMLElement): void {
+  container.querySelectorAll('pre').forEach((pre) => {
+    if (pre.querySelector(':scope > .code-linenumbers')) return;
+    const code = pre.querySelector('code');
+    if (!code) return;
+    const text = (code.textContent ?? '').replace(/\n+$/, '');
+    const lineCount = text.split('\n').length;
+    if (lineCount <= 1) return; // one-liner — no gutter
+    const gutter = document.createElement('span');
+    gutter.className = 'code-linenumbers';
+    gutter.textContent = Array.from({ length: lineCount }, (_, i) => i + 1).join('\n');
+    pre.appendChild(gutter);
+  });
+}
+
+/**
+ * §task — make GFM task-list checkboxes interactive. marked renders them as
+ * `<input type="checkbox" disabled>`; we drop `disabled` so they're clickable,
+ * then call `onToggle(index)` on change. The index is the checkbox's position
+ * among all checkboxes in the container — it matches the editor's Nth
+ * task-list line, so the caller can toggle the matching `- [ ]`/`- [x]`.
+ * Idempotent via the data-task flag (re-render mounts new inputs).
+ */
+export function addTaskInteractivity(
+  container: HTMLElement,
+  onToggle: (index: number) => void
+): void {
+  const boxes = Array.from(
+    container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')
+  );
+  boxes.forEach((cb, idx) => {
+    if (cb.dataset.task === '1') return;
+    cb.dataset.task = '1';
+    cb.removeAttribute('disabled');
+    cb.style.cursor = 'pointer';
+    cb.addEventListener('change', () => onToggle(idx));
+  });
+}
+
+export function attachImageLightbox(container: HTMLElement): void {
+  container.querySelectorAll('img').forEach((img) => {
+    if (img.dataset.lightbox === '1') return;
+    img.dataset.lightbox = '1';
+    img.style.cursor = 'zoom-in';
+    img.addEventListener('click', (e) => {
+      e.preventDefault();
+      openImageLightbox(img.currentSrc || img.src);
+    });
+  });
+}
+
+/**
+ * Open `src` in a full-viewport overlay. Self-contained: builds its own DOM,
+ * owns its key/wheel/click listeners, and tears them down on close. Append to
+ * `document.body` so it sits above the preview pane regardless of scroll.
+ */
+function openImageLightbox(src: string): void {
+  const overlay = document.createElement('div');
+  overlay.className = 'lightbox-overlay';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+
+  const img = document.createElement('img');
+  img.src = src;
+  img.className = 'lightbox-img';
+  overlay.appendChild(img);
+
+  let scale = 1;
+  let rotation = 0;
+  const apply = () => {
+    img.style.transform = `rotate(${rotation}deg) scale(${scale})`;
+  };
+
+  overlay.addEventListener(
+    'wheel',
+    (e) => {
+      e.preventDefault();
+      scale = Math.max(0.2, Math.min(8, scale * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
+      apply();
+    },
+    { passive: false }
+  );
+
+  const close = () => {
+    overlay.remove();
+    document.removeEventListener('keydown', onKey);
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      close();
+    } else if (e.key === 'r' || e.key === 'R') {
+      rotation = (rotation + 90) % 360;
+      apply();
+    }
+  };
+  overlay.addEventListener('click', (e) => {
+    // Only a click on the backdrop (not the image) closes.
+    if (e.target === overlay) close();
+  });
+  document.addEventListener('keydown', onKey);
+
+  document.body.appendChild(overlay);
 }
 
 // --- Mermaid (§18.3.3) ----------------------------------------------------
@@ -1437,6 +1753,29 @@ async function getSandbox(): Promise<import('./md-sandbox').SandboxRenderer> {
  * paints. A pending placeholder shows the raw source text until
  * the SVG replaces it.
  */
+// §preview-cache — render-output cache for the sandbox-based renderers
+// (mermaid / katex). Each preview re-render does a full `innerHTML` swap,
+// which wipes the per-block "processed" markers — without this cache every
+// diagram/equation gets re-posted to the sandbox on every debounced
+// keystroke stop. Keyed by source (katex folds in displayMode via a NUL
+// separator), bounded by RENDER_CACHE_CAP (LRU-ish: drops the oldest entry).
+const MERMAID_CACHE = new Map<string, string>();
+const HLJS_CACHE = new Map<string, string>();
+const katexInlineCache = new Map<string, string>();
+const katexBlockCache = new Map<string, string>();
+const RENDER_CACHE_CAP = 200;
+function putRenderCache(
+  cache: Map<string, string>,
+  key: string,
+  value: string
+): void {
+  if (cache.size >= RENDER_CACHE_CAP) {
+    const first = cache.keys().next().value;
+    if (first !== undefined) cache.delete(first);
+  }
+  cache.set(key, value);
+}
+
 export async function renderMermaid(container: HTMLElement): Promise<void> {
   const blocks = extractMermaidBlocks(container).filter(
     (c) => !isMermaidProcessed(c)
@@ -1476,7 +1815,15 @@ export async function renderMermaid(container: HTMLElement): Promise<void> {
   await Promise.all(
     placeholders.map(async ({ code, div, id, source }) => {
       try {
-        const svg = await sb.render(id, source);
+        // §preview-cache — skip the sandbox RPC when we've already rendered
+        // this exact source; innerHTML swaps wipe the `data-mermaid`
+        // marker, so without this every preview re-render re-posts every
+        // diagram to the sandbox.
+        let svg = MERMAID_CACHE.get(source);
+        if (svg === undefined) {
+          svg = await sb.render(id, source);
+          putRenderCache(MERMAID_CACHE, source, svg);
+        }
         // Replace the placeholder's innerHTML with the SVG. We use
         // `innerHTML` (not DOMParser) because the sandbox already
         // produced a sanitized SVG string (mermaid's render output
@@ -1596,7 +1943,14 @@ export async function renderKatex(container: HTMLElement): Promise<void> {
     blocks.map(async ({ el, source, displayMode }) => {
       const id = newKatexId();
       try {
-        const html = await sb.render(id, source, displayMode);
+        // §preview-cache — skip the sandbox RPC when we've already rendered
+        // this source+displayMode (NUL can't appear in LaTeX source).
+        const katexCache = displayMode ? katexBlockCache : katexInlineCache;
+        let html = katexCache.get(source);
+        if (html === undefined) {
+          html = await sb.render(id, source, displayMode);
+          putRenderCache(katexCache, source, html);
+        }
         // Replace the placeholder's innerHTML with the rendered
         // output. KaTeX returns HTML with `class="katex"` already
         // attached, so the existing class selectors in editor.css

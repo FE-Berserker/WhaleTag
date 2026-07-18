@@ -4,7 +4,12 @@ import { promises as fsp } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 
-import { migrateSidecarTags, runMigration } from './migrate-date-tags';
+import {
+  migrateSidecarTags,
+  runMigration,
+  triggerStartupMigration,
+  resetStartupMigrationForTests,
+} from './migrate-date-tags';
 import { atomicWriteJson } from './atomic-write';
 import { META_DIR, FOLDER_SIDECAR_FILE, FOLDER_META_FILE } from '../shared/whale-meta';
 
@@ -124,15 +129,24 @@ describe('migrateSidecarTags — end-to-end over the existing fixture data', () 
     }
     const raw = await fsp.readFile(fixturePath, 'utf-8');
     const original = JSON.parse(raw);
-    // Read tags from any entry, then run pure function; verify output is
-    // either the original (no legacy prefix anywhere) or a stripped form.
-    const sampleTags: string[] = [];
-    for (const f of Object.values(original.files ?? {}) as Array<{
+    // Read tags per entry, then run the pure function per entry; verify
+    // output is either the original (no legacy prefix anywhere) or a
+    // stripped form. Per-entry (not flattened): the互斥 collapse is a
+    // per-file rule, so flattening every file's tags into one array would
+    // falsely collapse unrelated period/date tags across files.
+    const entries = Object.values(original.files ?? {}) as Array<{
       tags?: string[];
-    }>) {
-      if (Array.isArray(f?.tags)) sampleTags.push(...f.tags);
-    }
-    const r = migrateSidecarTags(sampleTags);
+    }>;
+    const perEntry = entries
+      .filter((f) => Array.isArray(f?.tags))
+      .map((f) => migrateSidecarTags(f.tags as string[]));
+    const sampleTags: string[] = entries.flatMap((f) =>
+      Array.isArray(f?.tags) ? (f.tags as string[]) : []
+    );
+    const r = {
+      changed: perEntry.some((x) => x.changed),
+      tags: perEntry.flatMap((x) => x.tags),
+    };
     if (sampleTags.length === 0) {
       assert.equal(r.changed, false);
       return;
@@ -255,5 +269,48 @@ describe('runMigration — integration over a tmp directory', () => {
     const r = await runMigration([]);
     assert.equal(r.totalScanned, 0);
     assert.equal(r.totalMigrated, 0);
+  });
+});
+
+describe('triggerStartupMigration — startup trigger once-guard', () => {
+  let root: string;
+  before(async () => {
+    root = await fsp.mkdtemp(path.join(tmpdir(), 'migrate-trigger-'));
+  });
+  after(async () => {
+    if (root) {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('returns null on empty roots without consuming the once-guard', async () => {
+    resetStartupMigrationForTests();
+    assert.equal(triggerStartupMigration([]), null);
+    // A later non-empty push must still run (the renderer can push [] before
+    // rehydration and the real locations right after).
+    const dir = path.join(root, 'late');
+    await fsp.mkdir(path.join(dir, META_DIR), { recursive: true });
+    const wsdPath = path.join(dir, META_DIR, FOLDER_SIDECAR_FILE);
+    await atomicWriteJson(wsdPath, {
+      version: 1,
+      files: { 'x.txt': { tags: ['today-20260704'] } },
+    });
+    const p = triggerStartupMigration([root]);
+    assert.ok(p, 'non-empty roots should start the migration');
+    await p;
+    const migrated = JSON.parse(await fsp.readFile(wsdPath, 'utf-8'));
+    assert.deepEqual(migrated.files['x.txt'].tags, ['20260704']);
+  });
+
+  it('runs at most once per process', async () => {
+    resetStartupMigrationForTests();
+    const first = triggerStartupMigration([root]);
+    assert.ok(first, 'first trigger starts the migration');
+    await first;
+    assert.equal(
+      triggerStartupMigration([root]),
+      null,
+      'second trigger is a no-op (once-guard)'
+    );
   });
 });

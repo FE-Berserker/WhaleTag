@@ -17,7 +17,7 @@ import settingsReducer, {
   MIN_VIEW_DEPTH,
 } from './settings';
 import type { SettingsState } from './settings';
-import { DEFAULT_KEYBINDINGS } from '../../shared/keybindings';
+import { DEFAULT_KEYBINDINGS } from '../domain/keybindings';
 
 describe('settings.viewDepth constants', () => {
   it('bounds are 1-5', () => {

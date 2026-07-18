@@ -300,6 +300,9 @@ export interface WhaleApi {
   backupRevision: (filePath: string) => Promise<void>;
   deleteRevision: (revisionPath: string) => Promise<void>;
   writeFileWithRevision: (filePath: string, content: string) => Promise<void>;
+  /** §paste-image — decode `dataURL`, save into `dirPath` as image-<ts>.<ext>,
+   *  return the absolute path. md-editor paste-image uses this. */
+  saveImageToFile: (dataURL: string, dirPath: string, ext: string) => Promise<string>;
   listRevisions: (filePath: string) => Promise<RevisionInfo[]>;
   restoreRevision: (
     filePath: string,
@@ -472,8 +475,79 @@ export interface WhaleApi {
   persistRead: (key: string) => Promise<string | null>;
   persistWrite: (key: string, value: string) => Promise<void>;
   persistDelete: (key: string) => Promise<void>;
-  /** Synchronous variants used by the redux-persist storage adapter. */
-  persistReadSync: (key: string) => string | null;
-  persistWriteSync: (key: string, value: string) => void;
-  persistDeleteSync: (key: string) => void;
+
+  /**
+   * The app version string from the packaged app's `package.json`
+   * (`app.getVersion()`). Used by the Settings → About section. Authoritative
+   * source lives in the main process so dev and packaged builds report their
+   * own version without the renderer needing to import package.json.
+   */
+  appGetVersion: () => Promise<string>;
+
+  // ---------------------------------------------------------------------
+  // Phase 6 — Application auto-update (electron-updater + GitHub Releases).
+  // Main calls `initAutoUpdater()` on `whenReady`; renderer drives check /
+  // download / install through these. The startup-delayed auto-check fires
+  // `update-available` automatically when a newer version is found.
+  // ---------------------------------------------------------------------
+  /**
+   * Resolve a remote update descriptor (newer | none | unsupported | error).
+   * `unsupported` in dev (`!app.isPackaged`) — there's no `app-update.yml`
+   * outside a packaged build, so the IPC handler short-circuits instead of
+   * touching the network.
+   */
+  appCheckForUpdates: () => Promise<AppUpdateCheckResult>;
+  /** Begin downloading the previously-detected update. Idempotent per session. */
+  appDownloadUpdate: () => Promise<AppUpdateDownloadResult>;
+  /**
+   * Quit the app now and run the update installer on exit. NSIS / macOS
+   * updater expects to terminate the running app to swap the bundle in,
+   * so the call is by design destructive — the renderer must gate it behind
+   * an explicit user confirmation ("Restart to install" button).
+   */
+  appQuitAndInstall: () => void;
+  /**
+   * Subscribe to update events. Returns an unsubscribe. Channels:
+   *   `available`  — newer version found, payload is `AppUpdateInfo`.
+   *   `progress`   — periodic during download (0..100).
+   *   `downloaded` — installer ready; renderer should swap the "Check"
+   *                  button for "Restart to install".
+   *   `error`     — string message; renderer surfaces a toast.
+   */
+  onAppUpdateEvent: (
+    channel: 'available' | 'progress' | 'downloaded' | 'error',
+    callback: (
+      data:
+        | AppUpdateAvailablePayload
+        | AppUpdateProgressPayload
+        | AppUpdateInfoPayload
+        | string
+    ) => void
+  ) => () => void;
 }
+
+/** Subset of `electron-updater.UpdateInfo` needed by the renderer. */
+export interface AppUpdateInfo {
+  version: string;
+  releaseDate?: string;
+  releaseNotes?: string;
+}
+
+export type AppUpdateCheckResult =
+  | { kind: 'update-available'; info: AppUpdateInfo }
+  | { kind: 'no-update'; current: string }
+  | { kind: 'unsupported' }
+  | { kind: 'error'; error: string };
+
+export type AppUpdateDownloadResult =
+  | { kind: 'downloading' }
+  | { kind: 'error'; error: string };
+
+export type AppUpdateAvailablePayload = AppUpdateInfo;
+export interface AppUpdateProgressPayload {
+  percent: number;
+  bytesPerSecond: number;
+  transferred: number;
+  total: number;
+}
+export type AppUpdateInfoPayload = AppUpdateInfo;

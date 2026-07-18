@@ -39,6 +39,7 @@ import { getCanvas, getChardet, getIconv } from './lazy-native';
 import type { SidecarMeta } from '../shared/whale-meta';
 import type { FolderMeta } from '../shared/whale-meta';
 import { assertWithinAllowedRoot, setAllowedRoots, getAllowedRoots } from './allowed-roots';
+import { triggerStartupMigration } from './migrate-date-tags';
 import {
   backupRevision,
   backupRevisionBinary,
@@ -55,7 +56,7 @@ import {
   moveOfficePdf,
   copyOfficePdf,
 } from './office-cache';
-import { isSofficeAvailable } from './office-convert';
+import { isSofficeAvailable } from './office-binary';
 import { loadRecursiveScan, invalidateRecursiveScan } from './recursive-cache';
 import { convertDwgToDxf, dwg2dxfBinary, odaConverterBinary } from './cad-convert';
 import { convertEbookToEpub, ebookConvertBinary } from './ebook-convert';
@@ -484,11 +485,17 @@ export function registerIpcHandlers(): void {
       loadRecursiveScan(dirPath, options?.maxDepth ?? 3, listDirectoryRecursive)
   );
 
-  ipcMain.handle('fs:readTextFile', (_event, filePath: string) =>
-    readTextFile(filePath)
-  );
+  ipcMain.handle('fs:readTextFile', (_event, filePath: string) => {
+    assertWithinAllowedRoot(filePath);
+    return readTextFile(filePath);
+  });
 
-  ipcMain.handle('fs:readFile', (_event, filePath: string) => fsp.readFile(filePath));
+  // Read-side confinement (docs/13 §13): reads, like writes, are confined to
+  // configured locations — an extension's `requestFileBytes` funnels here.
+  ipcMain.handle('fs:readFile', (_event, filePath: string) => {
+    assertWithinAllowedRoot(filePath);
+    return fsp.readFile(filePath);
+  });
 
   ipcMain.handle('fs:pathExists', (_event, targetPath: string) =>
     existsSync(targetPath)
@@ -498,6 +505,11 @@ export function registerIpcHandlers(): void {
   // confine mutations to those roots (see assertWithinAllowedRoot).
   ipcMain.handle('fs:setAllowedRoots', (_event, roots: string[]) => {
     setAllowedRoots(roots);
+    // The startup date-tag migration must wait for this push: at bootstrap
+    // the root set is always still empty (the renderer hasn't mounted yet),
+    // so running it there silently did nothing (docs/09 §26). The trigger's
+    // once-guard keeps later re-pushes (location add/remove) from re-running.
+    void triggerStartupMigration(getAllowedRoots());
   });
 
   ipcMain.handle('dialog:openDirectory', () => openDirectoryDialog());
@@ -671,9 +683,13 @@ export function registerIpcHandlers(): void {
       writeBinaryFile(filePath, base64)
   );
 
-  ipcMain.handle('fs:openNative', (_event, targetPath: string) =>
-    openNative(targetPath)
-  );
+  // Read/exec-side confinement (docs/13 §13): extensions' `openLinkExternally`
+  // (non-http) and `openNative` messages funnel here; the OS handler must not
+  // be launchable on paths outside configured locations.
+  ipcMain.handle('fs:openNative', (_event, targetPath: string) => {
+    assertWithinAllowedRoot(targetPath);
+    return openNative(targetPath);
+  });
 
   ipcMain.handle('fs:zipDirectory', (_event, dirPath: string) =>
     zipDirectory(dirPath)
@@ -1055,6 +1071,21 @@ export function registerIpcHandlers(): void {
       writeFileWithRevision(filePath, content)
   );
 
+  // §paste-image (md-editor): decode the data URL sent from the clipboard,
+  // write the raw bytes into the .md's directory as image-<timestamp>.<ext>,
+  // return the absolute path so the editor can insert ![](path).
+  ipcMain.handle(
+    'ext:saveImageToFile',
+    async (_event, dataURL: string, dirPath: string, ext: string) => {
+      const match = /^data:image\/[\w+.-]+;base64,(.+)$/.exec(dataURL);
+      if (!match) throw new Error('saveImageToFile: invalid image data URL');
+      const fullPath = path.join(dirPath, `image-${Date.now()}.${ext}`);
+      assertWithinAllowedRoot(fullPath);
+      await atomicWriteBytes(fullPath, Buffer.from(match[1], 'base64'));
+      return fullPath;
+    }
+  );
+
   ipcMain.handle('ext:listRevisions', (_event, filePath: string) =>
     listRevisions(filePath)
   );
@@ -1220,31 +1251,17 @@ export function registerIpcHandlers(): void {
 
   // ---- redux-persist storage backed by main-process JSON file ----
   // localStorage in Electron is asynchronously flushed by Chromium and can
-  // lose data on process exit. These handlers use synchronous file IO so the
-  // persisted state is on disk before the IPC call returns.
-  //
-  // We expose both async (handle) and sync (on/sendSync) variants because
-  // redux-persist v5's default storage interface is synchronous. The renderer
-  // adapter uses sendSync so rehydration blocks until the file is read.
+  // lose data on process exit. The handlers commit the blob via async fs
+  // (atomic tmp + rename) so state is on disk before the invoke resolves —
+  // same durability as the removed sendSync + sync-fs variant, but without
+  // blocking the renderer main thread or the main event loop (2026-07-18).
   ipcMain.handle('persist:read', (_event, key: string) => persistRead(key));
-  ipcMain.handle('persist:write', (_event, key: string, value: string) => {
-    persistWrite(key, value);
-  });
-  ipcMain.handle('persist:delete', (_event, key: string) => {
-    persistDelete(key);
-  });
-
-  ipcMain.on('persist:readSync', (event, key: string) => {
-    event.returnValue = persistRead(key);
-  });
-  ipcMain.on('persist:writeSync', (event, key: string, value: string) => {
-    persistWrite(key, value);
-    event.returnValue = undefined;
-  });
-  ipcMain.on('persist:deleteSync', (event, key: string) => {
-    persistDelete(key);
-    event.returnValue = undefined;
-  });
+  ipcMain.handle('persist:write', (_event, key: string, value: string) =>
+    persistWrite(key, value)
+  );
+  ipcMain.handle('persist:delete', (_event, key: string) =>
+    persistDelete(key)
+  );
 }
 
 /** Maps a pdfjs binary-asset kind to its subdirectory under pdfjs-dist. */

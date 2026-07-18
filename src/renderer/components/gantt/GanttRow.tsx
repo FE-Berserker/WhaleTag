@@ -26,11 +26,11 @@ import { Box, Tooltip, Typography } from '@mui/material';
 
 import type { TFunction } from 'i18next';
 import type { DirEntry } from '../../../shared/ipc-types';
-import type { TagGroup } from '../../../shared/tag-library';
-import type { GanttChartRow, GanttPeriod } from '../../../shared/gantt';
-import { MIN_BAR_WIDTH } from '../../../shared/gantt';
+import type { TagGroup } from '../../domain/tag-library';
+import type { GanttChartRow, GanttPeriod } from '../../domain/gantt';
+import { MIN_BAR_WIDTH } from '../../domain/gantt';
 import { tagDisplayLabel } from '-/services/tag-display';
-import { isPeriodTag } from '../../../shared/calendar';
+import { isPeriodTag } from '../../domain/calendar';
 
 import ThumbIcon from '../ThumbIcon';
 import EntryTagChips from '../EntryTagChips';

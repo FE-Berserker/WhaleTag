@@ -12,9 +12,9 @@ import { useSelector } from 'react-redux';
 import type { TFunction } from 'i18next';
 
 import type { DirEntry } from '../../shared/ipc-types';
-import type { TagGroup } from '../../shared/tag-library';
-import { getTagColor, GEO_TAG_COLOR } from '../../shared/tag-colors';
-import { isGeoTag, parseGeoTag } from '../../shared/geo-tag';
+import type { TagGroup } from '../domain/tag-library';
+import { getTagColor, GEO_TAG_COLOR } from '../domain/tag-colors';
+import { isGeoTag, parseGeoTag } from '../domain/geo-tag';
 import type { RootState } from '-/reducers';
 import { chipSx, tagDisplayLabel } from '-/services/tag-display';
 

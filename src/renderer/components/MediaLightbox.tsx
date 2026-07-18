@@ -18,7 +18,7 @@ import RestartAltIcon from '@mui/icons-material/RestartAlt';
 
 import type { DirEntry } from '../../shared/ipc-types';
 import { isImageFile, isVideoFile } from '../../shared/whale-meta';
-import { mediaPlaylist, wrapIndex } from '../../shared/gallery';
+import { mediaPlaylist, wrapIndex } from '../domain/gallery';
 import { encodeWhaleFileUrl } from '../../shared/whale-file-url';
 import { ipcApi } from '-/services/ipc-api';
 

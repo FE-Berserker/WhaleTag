@@ -21,8 +21,8 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 
-import { readPrefs, writePrefs } from '../../../shared/perspective-prefs';
-import { todayKey } from '../../../shared/gantt';
+import { readPrefs, writePrefs } from '../../domain/perspective-prefs';
+import { todayKey } from '../../domain/gantt';
 
 /** Curated quick-range presets. Each maps to a fixed day-span centered
  *  on today; the toolbar renders one ToggleButton per entry. Add new

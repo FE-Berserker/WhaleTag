@@ -38,7 +38,7 @@ import {
 } from 'react';
 
 import { useBarDrag, type DragKind } from './useBarDrag';
-import type { GanttPeriod } from '../../../shared/gantt';
+import type { GanttPeriod } from '../../domain/gantt';
 
 interface CommitRecord {
   path: string;
@@ -169,7 +169,7 @@ const SCALE_TOTAL_DAYS = 90;
 const PX_PER_DAY = 20;
 
 /** Minimum pointermove distance that triggers the pending→dragging
- *  transition. Mirrors `DRAG_PENDING_THRESHOLD_PX` in shared/gantt.ts
+ *  transition. Mirrors `DRAG_PENDING_THRESHOLD_PX` in renderer/domain/gantt.ts
  *  — keep this in sync if the threshold ever changes. */
 const THRESHOLD_PX = 4;
 

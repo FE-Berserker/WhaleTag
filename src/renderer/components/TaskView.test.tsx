@@ -39,7 +39,7 @@ import { DirectoryTreeRefreshContextProvider } from '../hooks/DirectoryTreeRefre
 import { IOActionsContextProvider } from '../hooks/IOActionsContextProvider';
 import { PeriodTagDialogProvider } from './PeriodTagDialog';
 import type { DirEntry } from '../../shared/ipc-types';
-import type { WorkflowStage } from '../../shared/workflow';
+import type { WorkflowStage } from '../domain/workflow';
 
 const PREFS_KEY = 'whale-task-subview';
 

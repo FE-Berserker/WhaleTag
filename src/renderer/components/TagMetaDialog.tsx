@@ -14,7 +14,7 @@ import {
 
 import { RootState } from '-/reducers';
 import { setTagColor } from '-/reducers/settings';
-import { TAG_PALETTE, readableTextOn } from '../../shared/tag-colors';
+import { TAG_PALETTE, readableTextOn } from '../domain/tag-colors';
 import { useLocationTagLibrary } from '-/hooks/LocationTagLibraryContextProvider';
 
 interface TagMetaDialogProps {

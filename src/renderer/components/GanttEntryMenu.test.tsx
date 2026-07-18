@@ -22,7 +22,7 @@ import GanttEntryMenu, {
 } from './GanttEntryMenu';
 import { PeriodTagDialogProvider } from './PeriodTagDialog';
 import type { DirEntry } from '../../shared/ipc-types';
-import type { TagGroup } from '../../shared/tag-library';
+import type { TagGroup } from '../domain/tag-library';
 import type { TFunction } from 'i18next';
 
 const STUB_T: TFunction = ((key: string) => key) as TFunction;

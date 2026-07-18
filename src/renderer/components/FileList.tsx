@@ -25,7 +25,7 @@ import type { DirEntry } from '../../shared/ipc-types';
 import type { ViewMode, SidecarMeta } from '../../shared/whale-meta';
 import { COMMAND_PATH_BLOCKED } from '../../shared/shell-types';
 import { RootState } from '-/reducers';
-import { todayKey, periodTagFromRange } from '../../shared/gantt';
+import { todayKey, periodTagFromRange } from '../domain/gantt';
 import {
   setTrayVisible,
   setTrayWidth,
@@ -85,11 +85,11 @@ import PropertiesTray from '-/components/PropertiesTray';
 import FileListHeader, { RowColumnLabels } from '-/components/FileListHeader';
 import EntryContextMenu, { TagChipContextMenu } from '-/components/EntryContextMenu';
 import { isImageFile } from '../../shared/whale-meta';
-import { isMediaEntry, mediaPlaylist } from '../../shared/gallery';
-import { tagsAfterMove } from '../../shared/kanban';
-import { formatGeoTag, withoutGeoTags, isGeoTag } from '../../shared/geo-tag';
-import { isDateTypedTag } from '../../shared/calendar';
-import { resolveAction, nextView, DEFAULT_KEYBINDINGS } from '../../shared/keybindings';
+import { isMediaEntry, mediaPlaylist } from '../domain/gallery';
+import { tagsAfterMove } from '../domain/kanban';
+import { formatGeoTag, withoutGeoTags, isGeoTag } from '../domain/geo-tag';
+import { isDateTypedTag } from '../domain/calendar';
+import { resolveAction, nextView, DEFAULT_KEYBINDINGS } from '../domain/keybindings';
 import type { FileCellData } from '-/components/file-cell';
 import { splitNameExt } from '-/services/tags';
 import { basename } from '-/services/path-util';
@@ -1104,7 +1104,7 @@ export default function FileList() {
   // also means Tab inside the rename TextField still moves focus normally.
   //
   // Keys resolve to actions via the user-configurable keybindings map
-  // (Settings ▸ Keyboard; defaults in `shared/keybindings`). `resolveAction`
+  // (Settings ▸ Keyboard; defaults in `renderer/domain/keybindings`). `resolveAction`
   // ignores modifiers on purpose — Shift-range-extend stays inside the
   // navigate cases. The bindings apply in list/grid; GalleryView etc. own
   // their own focused-container keydown.

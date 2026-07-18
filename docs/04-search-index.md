@@ -87,3 +87,9 @@ loadExifProcessed(rootPath)                 // 查询
 - 首次索引大目录(数 GB / 数十万文件)虽已分批 yield,但仍耗时 —— UI 用 loading + spinner 反馈
 - 索引丢失单事务原子性(可接受,缓存可重建)
 - 主进程 SQLite 阻塞**已解决**:索引 / 全文 / EXIF 管线迁入 `utilityProcess` 子进程(`serviceName: 'whale-index'`,入口 `src/main/index-worker.ts`,宿主 `index-worker-host.ts`)。better-sqlite3 的 `openDbs` 缓存现在 scoped 到该子进程,主进程事件循环不再被同步 DB 调用阻塞。批让步(`INGEST_BATCH=1000` / `setImmediate` / `mapWithConcurrency`)在子进程内沿用。设计 / 排坑见 [docs/15 P0-2](./15-perf-audit.md);`assertWithinAllowedRoot` 仍在主进程校验,不信任 renderer、不下游重复。
+
+## 10. 架构审阅遗留(2026-07-18)
+
+- **DB 连接生命周期**:`index-db.ts` `closeDb` / `closeAllDbs` 生产零调用(仅测试引用)—— 切换 / 移除 location 不关闭连接,句柄只增不减;退出 `killIndexWorker()` 直接 SIGKILL、无 WAL checkpoint(WAL 保数据不丢,但 `-wal` 残留)。
+- **无失效机制**:全库无 `fs.watch` / chokidar;sidecar 写不增量更新 SQLite,索引陈旧靠手动 rebuild / 启动全量重建;目录被外部修改后 UI 也不自动刷新。
+- **进度推送未接**:`index-worker-host.ts` 预留 `subscribe` 通道未接,长构建 UI 只有 spinner。

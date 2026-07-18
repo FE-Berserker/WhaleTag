@@ -34,8 +34,8 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-import { buildGraph, layoutGraph } from '../../shared/knowledge-graph';
-import { type TagCategory } from '../../shared/tagcloud';
+import { buildGraph, layoutGraph } from '../domain/knowledge-graph';
+import { type TagCategory } from '../domain/tagcloud';
 import {
   CATEGORY_LABEL_KEY,
   DEFAULT_SHOWN_CATEGORIES,
@@ -43,8 +43,8 @@ import {
   readPrefs,
   sanitizeShownCategories,
   writePrefs,
-} from '../../shared/perspective-prefs';
-import { getTagColor } from '../../shared/tag-colors';
+} from '../domain/perspective-prefs';
+import { getTagColor } from '../domain/tag-colors';
 import { tagDisplayLabel } from '-/services/tag-display';
 import { useDirectoryUI } from '-/hooks/DirectoryContentContextProvider';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';

@@ -10,23 +10,22 @@ import { useExtensionContext } from '-/hooks/ExtensionContextProvider';
 /**
  * Minimal valid empty Draw.io diagram, written when creating a new drawing.
  *
- * Format notes — there are TWO competing drawio contracts to satisfy at once:
- *  - drawio's `Editor.parseDiagramNode` (app.min.js) checks whether the
- *    `<diagram>` element has any non-whitespace text content. If it does, it
- *    calls `Graph.decompress` (i.e. `atob` + `pako.inflateRaw`) UNCONDITIONALLY
- *    on the text — even when the text is plain XML. The OLD placeholder was
- *    raw base64 without a `%` marker, which `atob` decoded fine but
- *    `pako.inflateRaw` couldn't decompress, raising "invalid bit length repeat".
- *    Whitespace between `<diagram>` and `<mxGraphModel>` makes the second branch
- *    win, but that branch picks the first child node — and if the first child
- *    is a text node (the whitespace), it imports it as the document root and
- *    ends up with no `documentElement`. So the only reliable form is:
- *    `<diagram>` immediately followed by `<mxGraphModel>` with NO whitespace
- *    between them. That's what we emit here, on a single line.
- *  - H.17 thumbnail pipeline (drawio-thumb.ts) reads the file as text and
- *    walks `<mxCell>` elements; both compressed (`%...`) and uncompressed
- *    (child-element) forms are handled. The uncompressed form is simpler and
- *    lets us avoid maintaining a `zlib` round-trip just for the empty file.
+ * Format notes — drawio's `Editor.parseDiagramNode` (app.min.js) checks
+ * whether the `<diagram>` element has any non-whitespace text content. If it
+ * does, it calls `Graph.decompress` (i.e. `atob` + `pako.inflateRaw`)
+ * UNCONDITIONALLY on the text — even when the text is plain XML. The OLD
+ * placeholder was raw base64 without a `%` marker, which `atob` decoded fine
+ * but `pako.inflateRaw` couldn't decompress, raising "invalid bit length
+ * repeat". Whitespace between `<diagram>` and `<mxGraphModel>` makes the
+ * second branch win, but that branch picks the first child node — and if the
+ * first child is a text node (the whitespace), it imports it as the document
+ * root and ends up with no `documentElement`. So the only reliable form is:
+ * `<diagram>` immediately followed by `<mxGraphModel>` with NO whitespace
+ * between them. That's what we emit here, on a single line.
+ *
+ * Thumbnail note: Whale renders `.drawio` / `.dio` files with the brand icon
+ * (`renderer/assets/drawio-icon.png`), not a scene render — see
+ * `docs/06-thumbnails.md` §3.
  */
 const EMPTY_DRAWIO =
   '<mxfile version="22.1.0" type="device">' +

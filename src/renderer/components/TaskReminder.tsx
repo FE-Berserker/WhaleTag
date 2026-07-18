@@ -20,14 +20,14 @@ import { ipcApi } from '-/services/ipc-api';
 import { waitForAllowedRoots } from '-/services/allowed-roots';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { joinPath } from '-/services/path-util';
-import { getTagColor } from '../../shared/tag-colors';
+import { getTagColor } from '../domain/tag-colors';
 import { tagDisplayLabel } from '-/services/tag-display';
 import {
   buildPendingQuery,
   getDefaultPendingStageIds,
   groupPending,
   type PendingGroup,
-} from '../../shared/task-reminder';
+} from '../domain/task-reminder';
 
 /** Parent directory (relative path uses '/'; returns '' for a root-level file). */
 function relParentDir(relPath: string): string {

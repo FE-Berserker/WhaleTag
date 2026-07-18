@@ -49,5 +49,13 @@
   "linux": {
     "target": ["AppImage"],
     "category": "Utility"
-  }
+  },
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "FE-Berserker",
+      "repo": "WhaleTag",
+      "releaseType": "release"
+    }
+  ]
 }

@@ -16,10 +16,10 @@ import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 import Tooltip from '@mui/material/Tooltip';
 
 import type { DirEntry } from '../../shared/ipc-types';
-import type { WorkflowStage } from '../../shared/workflow';
-import { getTagColor } from '../../shared/tag-colors';
+import type { WorkflowStage } from '../domain/workflow';
+import { getTagColor } from '../domain/tag-colors';
 import { QUADRANT_VALUES, quadrantFunctionalityOfTag, smartTagI18nKey } from '../../shared/smart-tags';
-import { bucketEntries, UNTAGGED_COLUMN } from '../../shared/kanban';
+import { bucketEntries, UNTAGGED_COLUMN } from '../domain/kanban';
 import { DND_TYPE_FILE, type FileDragItem } from '-/services/dnd';
 import type { FileCellData } from '-/components/file-cell';
 import EntryCard from '-/components/EntryCard';

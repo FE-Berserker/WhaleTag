@@ -50,6 +50,7 @@ body {
   height: 26px;
   min-width: 26px;
   padding: 0 6px;
+  white-space: nowrap;
   border: 1px solid rgba(255, 255, 255, 0.2);
   background-color: rgba(255, 255, 255, 0.08);
   color: inherit;
@@ -117,6 +118,51 @@ body {
   min-width: 48px;
   text-align: center;
   font-variant-numeric: tabular-nums;
+}
+
+/* #main wraps the outline sidebar + page area in a row flex, so the sidebar
+   sits to the left of the pages. body stays column (toolbar / main / status). */
+#main {
+  flex: 1 1 auto;
+  display: flex;
+  overflow: hidden;
+  min-height: 0;
+}
+
+#outline-sidebar {
+  flex: 0 0 240px;
+  overflow: auto;
+  padding: 8px 0;
+  background-color: rgba(0, 0, 0, 0.25);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 13px;
+  user-select: none;
+}
+#outline-sidebar[data-open='false'] {
+  display: none;
+}
+#outline-sidebar ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+#outline-sidebar li {
+  cursor: pointer;
+  padding: 4px 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#outline-sidebar li:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+/* Nested children indent under their parent item. */
+#outline-sidebar li ul {
+  padding-left: 16px;
+}
+/* External-link outline entries get a distinct color. */
+#outline-sidebar li.outline-link {
+  color: #8ab4f8;
 }
 
 #pages {

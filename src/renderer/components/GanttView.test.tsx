@@ -16,7 +16,7 @@
  * attributes, so we can assert against them directly. Pointer-drag
  * coverage is deliberately out of scope here (would require
  * `@testing-library/user-event`); see the unit tests in
- * `src/shared/gantt.test.ts` (`periodWithShift` /
+ * `src/renderer/domain/gantt.test.ts` (`periodWithShift` /
  * `periodWithResize`) for the drag-arithmetic coverage.
  *
  * Test infrastructure mirrors KanbanView.test.tsx (node:test +
@@ -43,7 +43,7 @@ import { DirectoryTreeRefreshContextProvider } from '../hooks/DirectoryTreeRefre
 import { IOActionsContextProvider } from '../hooks/IOActionsContextProvider';
 import { PeriodTagDialogProvider } from './PeriodTagDialog';
 import type { DirEntry } from '../../shared/ipc-types';
-import type { WorkflowStage } from '../../shared/workflow';
+import type { WorkflowStage } from '../domain/workflow';
 
 function makeT(): FileCellData['t'] {
   return ((key: string): string => key) as FileCellData['t'];
@@ -681,7 +681,7 @@ describe('GanttView #9.5: double-click row opens the file', () => {
 //      by rendering a synthetic FileCellData and asserting that
 //      `data.onSetEntryDateTag` is the exact sink the closure uses.
 import { dayKeyFromClientX } from './gantt/GanttTimeline';
-import { todayKey, type GanttScale } from '../../shared/gantt';
+import { todayKey, type GanttScale } from '../domain/gantt';
 
 describe('GanttView #14: drop-to-schedule day math (dayKeyFromClientX)', () => {
   // Stub HTMLElement that mimics the scroller's getBoundingClientRect +
@@ -929,10 +929,10 @@ describe('GanttView #17: integration — 1000+ rows do not all mount', () => {
   });
 });
 
-// Helper kept here (rather than a shared/gantt import) so the test
+// Helper kept here (rather than a renderer/domain/gantt import) so the test
 // mirrors the exact line in GanttView.tsx. If the view ever switches
 // to a multi-day default, this assertion will catch it.
-import { periodTagFromRange } from '../../shared/gantt';
+import { periodTagFromRange } from '../domain/gantt';
 
 // Virtualization math — see GanttTimeline's windowing helper. Unit
 // tested directly so the math is locked without standing up the full
@@ -1216,7 +1216,7 @@ describe('GanttView #12: left-click taskbar pops the period dialog', () => {
 // ─── P0 #1: Swim lanes ──────────────────────────────────────────────
 // Verifies the swim-lane grouping + divider + hidden-lane-placeholder
 // wiring. The pure grouping helper itself (`groupRowsByWorkflow`) is
-// tested exhaustively in [src/shared/gantt.test.ts]; here we cover
+// tested exhaustively in [src/renderer/domain/gantt.test.ts]; here we cover
 // the integration: stages passed in, lanes rendered in order, dividers
 // appear at lane boundaries, filtered-out lanes collapse to a single
 // placeholder row.

@@ -3,8 +3,6 @@ import os from 'os';
 import { existsSync, promises as fsp } from 'fs';
 import { execFile } from 'child_process';
 import ffmpegStatic from 'ffmpeg-static';
-import { pathToFileURL } from 'url';
-import { createRequire } from 'module';
 import {
   META_DIR,
   THUMBS_DIR,
@@ -16,67 +14,41 @@ import {
 import type { GenerateThumbnailOptions } from '../shared/ipc-types';
 import { atomicWriteBytes } from './atomic-write';
 import { thumbnailSemaphore } from './concurrency';
-import { extractEbookCover } from './ebook-cover';
-import { renderFontToPng } from './font-thumb';
 import { convertOfficeToPdfVia } from './office-convert';
-import { getSharp, getCanvas } from './lazy-native';
+import { getSharp } from './lazy-native';
+import { encodeImageThumb, THUMB_SIZE, THUMB_QUALITY } from './thumb-encode';
+import { thumbRequest } from './thumb-worker-host';
 
 /**
  * Per-file thumbnails, stored at `<dir>/.whale/thumbs/<basename>.jpg`.
  *
- * Generation runs in the Electron main process. By source kind (`thumbKindOf`):
- *  - **image** → sharp (N-API, no rebuild) resizes/encodes directly.
+ * Generation is split across processes by backend. By source kind
+ * (`thumbKindOf`):
+ *  - **image** → sharp (N-API, libuv thread pool) resizes/encodes directly.
  *  - **video** → ffmpeg-static extracts one frame to a PNG buffer, then sharp
  *    resizes/encodes it.
  *  - **pdf** → pdfjs-dist renders page 1 to a `@napi-rs/canvas`, then sharp
- *    resizes/encodes it.
+ *    resizes/encodes it — pure-JS CPU, so it runs in the `whale-thumb`
+ *    utilityProcess (`thumb-worker.ts`, see docs/06 §8).
  *  - **office** → LibreOffice (`soffice`) headless-converts the document to a
- *    temporary PDF, then reuses the pdf path above. LibreOffice is NOT bundled;
- *    if it is missing or conversion fails, generation aborts silently and the
- *    renderer falls back to a file-type icon.
+ *    temporary PDF (UNO worker in the main process), then the worker's pdf
+ *    path above renders it. LibreOffice is NOT bundled; if it is missing or
+ *    conversion fails, generation aborts silently and the renderer falls back
+ *    to a file-type icon.
  *  - **ebook** → `ebook-cover.ts` extracts the embedded cover image bytes
  *    (epub/cbz via fflate; fb2 via XML; mobi/azw3 via PalmDB+EXTH), then sharp
- *    resizes/encodes it. A book with no embedded cover aborts silently (icon).
+ *    resizes/encodes it — inside the utilityProcess (`unzipSync` is pure-JS
+ *    CPU). A book with no embedded cover aborts silently (icon).
  *  - **font** → `font-thumb.ts` registers the font with `@napi-rs/canvas`,
- *    draws a sample preview, and encodes it as PNG; sharp then produces the
- *    JPEG thumbnail. Corrupt/unsupported fonts abort silently (icon).
+ *    draws a sample preview, and encodes it as PNG — inside the
+ *    utilityProcess; sharp then produces the JPEG thumbnail there.
+ *    Corrupt/unsupported fonts abort silently (icon).
  *
  * Output is always JPEG, max 256px. Cache: a thumbnail is reused while the
  * source is unchanged (`thumb.mtime >= source.mtime`). Cleanup mirrors
  * `sidecar.ts` (remove/move/copy on the matching `.jpg`) — all path-based and
  * format-agnostic, so adding kinds needs no IPC changes.
  */
-
-/** Max thumbnail edge in px. `withoutEnlargement` keeps small sources small. */
-const THUMB_SIZE = 256;
-
-/** JPEG quality for the stored thumbnail. */
-const THUMB_QUALITY = 80;
-
-const nodeRequire = createRequire(__filename);
-const pdfWorkerPath = nodeRequire.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs');
-// pdfjs in the Electron main process loads cmap / font data via fs.readFile, so
-// these must be plain filesystem paths with a trailing "/" (forward slash; pdfjs
-// validates it and Windows fs accepts forward separators), NOT file:// URLs — a
-// file:// URL would ENOENT and silently blank standard fonts / CJK glyphs.
-const pdfRootDir = path.join(path.dirname(pdfWorkerPath), '..', '..');
-const pdfStandardFontDataUrl = path.join(pdfRootDir, 'standard_fonts') + '/';
-// Predefined CMaps for decoding non-embedded CID-keyed CJK fonts.
-const pdfCMapUrl = path.join(pdfRootDir, 'cmaps') + '/';
-
-type PdfjsLib = typeof import('pdfjs-dist/legacy/build/pdf.mjs');
-let _pdfjs: PdfjsLib | undefined;
-/** Lazy-load pdfjs on first PDF thumbnail (not at app startup). The pdfjs
- *  module (~1MB+) and worker setup are deferred via nodeRequire (createRequire),
- *  which webpack leaves as a runtime require — bundling the .mjs would
- *  hard-code its import.meta.url and crash the main process at load. */
-function getPdfjs(): PdfjsLib {
-  if (_pdfjs) return _pdfjs;
-  const lib = nodeRequire('pdfjs-dist/legacy/build/pdf.mjs') as PdfjsLib;
-  lib.GlobalWorkerOptions.workerSrc = pathToFileURL(pdfWorkerPath).href;
-  _pdfjs = lib;
-  return lib;
-}
 
 /** `<dir>/.whale/thumbs/<basename>.jpg` for a given source file. */
 export function thumbPathFor(filePath: string): string {
@@ -98,99 +70,10 @@ export function ffmpegPath(): string | null {
   return ffmpegStatic.replace('app.asar', 'app.asar.unpacked');
 }
 
-// Memoized PATH-probe result for the bare `soffice` command (spawns a child,
-// up to 3s — LibreOffice's bootstrap can be slow on a cold Windows install).
-// Cached so office thumbnails / PDF conversions don't re-probe on every call;
-// the candidate-path checks below stay per-call (cheap existsSync). The probe
-// itself runs via async `execFile` (P1-1 — execFileSync would block the main
-// process event loop on cold PATH lookup and freeze every window / IPC).
-// `_sofficeInflight` dedupes concurrent probes: the first caller kicks off the
-// spawn, subsequent callers await the same Promise.
-let _sofficeOnPath: boolean | undefined;
-let _sofficeInflight: Promise<boolean> | null = null;
-
 /**
- * Tries to locate the LibreOffice `soffice` binary. Honours an explicit
- * override, then common install locations, then PATH. Returns null when
- * LibreOffice cannot be found.
- */
-export async function sofficeBinary(
-  override: string | null | undefined
-): Promise<string | null> {
-  if (override) return override;
-
-  const candidates: string[] = [];
-  if (process.platform === 'win32') {
-    candidates.push(
-      'C:\\Program Files\\LibreOffice\\program\\soffice.exe',
-      'C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe'
-    );
-  } else if (process.platform === 'darwin') {
-    candidates.push('/Applications/LibreOffice.app/Contents/MacOS/soffice');
-  } else {
-    candidates.push(
-      '/usr/bin/soffice',
-      '/usr/lib/libreoffice/program/soffice'
-    );
-  }
-
-  for (const c of candidates) {
-    if (existsSync(c)) return c;
-  }
-
-  // Final fallback: let PATH resolve it. Memoized (see _sofficeOnPath).
-  if (_sofficeOnPath === undefined) {
-    if (!_sofficeInflight) {
-      _sofficeInflight = new Promise<boolean>((resolve) => {
-        execFile(
-          'soffice',
-          ['--version'],
-          { timeout: 3000 },
-          (err) => {
-            _sofficeOnPath = !err;
-            _sofficeInflight = null;
-            resolve(_sofficeOnPath);
-          }
-        );
-      });
-    }
-    await _sofficeInflight;
-  }
-  return _sofficeOnPath ? 'soffice' : null;
-}
-
-/** Returns true when a LibreOffice `soffice` binary can be located. */
-export async function isSofficeAvailable(): Promise<boolean> {
-  return (await sofficeBinary(null)) !== null;
-}
-
-/**
- * Standard CLI args for converting an Office document to PDF via `soffice`.
- * Single source of truth shared by `encodeOfficeThumb` (thumbnail.ts) and
- * `convertOfficeToPdf` (office-convert.ts).
- *
- * `--norestore --nologo --nofirststartwizard` suppress LibreOffice's profile
- * restore / splash / first-start wizard, cutting cold-start overhead 30–50%
- * (typical Windows cold start 2–5s). The flags are no-ops when the profile
- * is already in steady state, so they're always safe to include.
- */
-export function sofficeConvertArgs(tmpDir: string, srcPath: string): string[] {
-  return [
-    '--headless',
-    '--norestore',
-    '--nologo',
-    '--nofirststartwizard',
-    '--convert-to',
-    'pdf',
-    '--outdir',
-    tmpDir,
-    srcPath,
-  ];
-}
-
-/**
- * Converts an Office document to a temporary PDF, then reuses `encodePdfThumb`
- * on that PDF. Cleans up the temporary PDF and its directory afterwards.
+ * Converts an Office document to a temporary PDF, then renders that PDF via
+ * the thumb worker (`thumb:pdf`). Cleans up the temporary PDF and its
+ * directory afterwards.
  *
  * Delegates the doc→PDF step to `convertOfficeToPdfVia` (shared with
  * office-viewer's `convertOfficeToPdf`) — which tries the persistent UNO
@@ -208,34 +91,17 @@ async function encodeOfficeThumb(
   try {
     // The semaphore + worker-vs-fallback decision live inside
     // convertOfficeToPdfVia; the subsequent pdfjs/sharp render stays outside
-    // any permit (as before).
+    // any permit (as before) — and now off the main process entirely.
     await convertOfficeToPdfVia(srcPath, outPdfPath, { sofficePath });
     if (!existsSync(outPdfPath)) {
       throw new Error('LibreOffice did not produce a PDF');
     }
-    return await encodePdfThumb(outPdfPath);
+    return await thumbRequest('thumb:pdf', { srcPath: outPdfPath });
   } finally {
     await fsp.rm(tmpDir, { recursive: true, force: true }).catch(
       () => undefined
     );
   }
-}
-
-/**
- * Resizes/encodes an image (path or in-memory buffer) into a JPEG thumbnail
- * buffer. The single place that touches the image backend (sharp).
- */
-async function encodeImageThumb(input: string | Buffer): Promise<Buffer> {
-  return getSharp()(input)
-    .rotate() // honor EXIF orientation (no-op for buffers without EXIF)
-    .resize({
-      width: THUMB_SIZE,
-      height: THUMB_SIZE,
-      fit: 'inside',
-      withoutEnlargement: true,
-    })
-    .jpeg({ quality: THUMB_QUALITY, mozjpeg: true })
-    .toBuffer();
 }
 
 /**
@@ -325,67 +191,6 @@ async function encodeVideoThumb(srcPath: string): Promise<Buffer> {
 }
 
 /**
- * Renders page 1 of `srcPath` via pdfjs-dist into a `@napi-rs/canvas`, then
- * encodes it as a JPEG thumbnail. Throws when the PDF is missing, encrypted,
- * or cannot to render page 1 within the timeout.
- */
-async function encodePdfThumb(srcPath: string): Promise<Buffer> {
-  const data = new Uint8Array(await fsp.readFile(srcPath));
-
-  const loadingTask = getPdfjs().getDocument({
-    data,
-    useSystemFonts: true,
-    cMapUrl: pdfCMapUrl,
-    cMapPacked: true,
-    standardFontDataUrl: pdfStandardFontDataUrl,
-  });
-
-  let doc: Awaited<typeof loadingTask.promise> | null = null;
-  try {
-    doc = await loadingTask.promise;
-    const page = await doc.getPage(1);
-    try {
-      // Choose a viewport scale so the larger edge becomes a high-res source
-      // for downscaling (quality is better than rendering at thumb size).
-      const viewport = page.getViewport({ scale: 1 });
-      const scale = THUMB_SIZE / Math.max(viewport.width, viewport.height);
-      const scaled = page.getViewport({ scale: Math.max(scale, 1) });
-      const canvas = getCanvas().createCanvas(scaled.width, scaled.height);
-      const ctx = canvas.getContext('2d');
-      await page.render({
-        canvas: null,
-        canvasContext: ctx as unknown as CanvasRenderingContext2D,
-        viewport: scaled,
-      }).promise;
-      const pngBuf = await canvas.encode('png');
-      return encodeImageThumb(pngBuf);
-    } finally {
-      page.cleanup?.();
-    }
-  } finally {
-    loadingTask.destroy?.().catch(() => undefined);
-  }
-}
-
-/**
- * Extracts an ebook's embedded cover (see `ebook-cover.ts`) and hands the raw
- * image bytes to `encodeImageThumb` for uniform sizing/quality. Throws when the
- * book has no embedded cover or it can't be decoded.
- */
-async function encodeEbookThumb(srcPath: string): Promise<Buffer> {
-  return encodeImageThumb(await extractEbookCover(srcPath));
-}
-
-/**
- * Renders a font preview via `font-thumb.ts` to a PNG buffer, then resizes/
- * encodes it as a JPEG thumbnail. Throws when the font file cannot be
- * registered or rendered (corrupt/unsupported format).
- */
-async function encodeFontThumb(srcPath: string): Promise<Buffer> {
-  return encodeImageThumb(await renderFontToPng(srcPath));
-}
-
-/**
  * Generates (or refreshes) a file's thumbnail. Skips files Whale can't
  * thumbnail and reuses an existing thumbnail when the source hasn't changed
  * (mtime). Silently does nothing if the source is gone; throws on real
@@ -446,13 +251,13 @@ async function doGenerateThumbnail(
         kind === 'video'
           ? await encodeVideoThumb(filePath)
           : kind === 'pdf'
-            ? await encodePdfThumb(filePath)
+            ? await thumbRequest('thumb:pdf', { srcPath: filePath })
             : kind === 'office'
               ? await encodeOfficeThumb(filePath, options?.sofficePath)
               : kind === 'ebook'
-                ? await encodeEbookThumb(filePath)
+                ? await thumbRequest('thumb:ebook', { srcPath: filePath })
                 : kind === 'font'
-                  ? await encodeFontThumb(filePath)
+                  ? await thumbRequest('thumb:font', { srcPath: filePath })
                   : kind === 'svg'
                     ? await encodeSvgThumb(filePath)
                     : await encodeImageThumb(filePath);

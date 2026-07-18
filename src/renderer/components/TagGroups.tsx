@@ -36,7 +36,7 @@ import {
   pickTagColor,
   getTagColor,
   readableTextOn,
-} from '../../shared/tag-colors';
+} from '../domain/tag-colors';
 import {
   SMART_TAGS,
   RATING_TAGS,

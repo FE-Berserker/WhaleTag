@@ -36,7 +36,10 @@ import UnfoldMoreIcon from '@mui/icons-material/UnfoldMore';
 import UnfoldLessIcon from '@mui/icons-material/UnfoldLess';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import ReactECharts from 'echarts-for-react';
-import * as echarts from 'echarts';
+// On-demand echarts instance (Treemap + Sunburst + 5 components + Canvas +
+// SVG renderers). Replaces `import * as echarts from 'echarts'` which
+// pulled the full UMD distribution (~1 MB).
+import { echarts } from '../services/echarts-setup';
 
 import {
   buildTree,
@@ -47,7 +50,7 @@ import {
   type FilterMode,
   type FolderVizNode,
   type FolderVizType,
-} from '../../shared/folderviz';
+} from '../domain/folderviz';
 import type { DirEntry } from '../../shared/ipc-types';
 import type { FileCellData } from '-/components/file-cell';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';

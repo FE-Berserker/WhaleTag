@@ -37,11 +37,15 @@ import CloseIcon from '@mui/icons-material/Close';
 import FilterAltIcon from '@mui/icons-material/FilterAlt';
 import GridViewIcon from '@mui/icons-material/GridView';
 import ReactECharts from 'echarts-for-react';
-import * as echarts from 'echarts';
-import 'echarts-wordcloud';
+// `echarts` is the on-demand configured instance (BarChart + HeatmapChart
+// + TreemapChart + SunburstChart + 5 components + Canvas + SVG renderers,
+// plus the `echarts-wordcloud` layout side-effect imported from
+// `services/echarts-setup`). Replaces the previous `import * as echarts
+// from 'echarts'` which pulled the full UMD distribution (~1 MB).
+import { echarts } from '../services/echarts-setup';
 
-import { tagCloudData, tagCooccurrenceMatrix, type TagCategory } from '../../shared/tagcloud';
-import { getTagColor } from '../../shared/tag-colors';
+import { tagCloudData, tagCooccurrenceMatrix, type TagCategory } from '../domain/tagcloud';
+import { getTagColor } from '../domain/tag-colors';
 import {
   CATEGORY_LABEL_KEY,
   DEFAULT_SHOWN_CATEGORIES,
@@ -49,7 +53,7 @@ import {
   readPrefs,
   sanitizeShownCategories,
   writePrefs,
-} from '../../shared/perspective-prefs';
+} from '../domain/perspective-prefs';
 import { geoTagDisplayLabel, tagDisplayLabel } from '-/services/tag-display';
 import { useDirectoryUI } from '-/hooks/DirectoryContentContextProvider';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';

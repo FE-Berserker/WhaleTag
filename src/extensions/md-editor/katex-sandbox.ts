@@ -1,175 +1,57 @@
 /**
  * md-editor — sandboxed KaTeX iframe manager (§18.3.3).
  *
- * Architecture mirrors `md-sandbox.ts` exactly:
- *   - A dedicated `<iframe sandbox="allow-scripts">` (no
- *     `allow-same-origin`) loads `katex-sandbox.html`, which has
- *     its own CSP allowing `'unsafe-inline'` for style (KaTeX injects
- *     class-based CSS that the main iframe needs to style). KaTeX does
- *     NOT need `unsafe-eval` (it's pure JS, no code generation).
- *   - The parent sends `{type: 'render', id, source, displayMode}`
- *     via `postMessage`; the sandbox runs `katex.renderToString` and
- *     posts back `{type: 'rendered', id, html}` (or `{type: 'error', id, message}`).
- *   - The sandbox is lazy-created on the first `render()` call (singleton
- *     per md-editor iframe lifetime). Re-using the sandbox keeps KaTeX's
- *     `~270KB` script cost amortized across all math blocks in the doc.
+ * KaTeX runs in a dedicated `<iframe sandbox="allow-scripts">` (no
+ * allow-same-origin → opaque origin), parallel to mermaid's. Unlike mermaid,
+ * KaTeX is pure JS (no `unsafe-eval`), but it still gets its own iframe so
+ * its CSP (style policy) is isolated from the main editor.
  *
- * Why a separate sandbox file (and not extending `md-sandbox.ts`):
- *   - KaTeX's CSP requirements differ from mermaid's (no `unsafe-eval`,
- *     but different `style-src` policy).
- *   - Keeping the two sandbox files isolated means the mermaid fix
- *     history (race conditions, IIFE patches) doesn't need to be
- *     re-validated against the KaTeX code path every time.
- *   - The duplication is ~80 lines — small enough to maintain.
+ * The iframe / lifecycle / RPC plumbing lives in `md-sandbox-factory.ts`
+ * (`createPostMessageSandbox`); this file holds only the katex-specific
+ * bits — the `html` result key, the `displayMode` extra payload, and id
+ * minting.
  *
- * The communication protocol is identical to mermaid's:
- *   parent → sandbox: `{type: 'render', id, source, displayMode}`
- *   sandbox → parent: `{type: 'rendered', id, html}` | `{type: 'error', id, message}`
- *   sandbox → parent: `{type: 'ready'}` once after load
+ * Protocol:
+ *   parent  → sandbox: { type: 'render', id, source, displayMode }
+ *   sandbox → parent:  { type: 'ready' }
+ *                    |  { type: 'rendered', id, html }
+ *                    |  { type: 'error', id, message }
  */
+import { createPostMessageSandbox } from './md-sandbox-factory';
 
 export interface KatexSandboxRenderer {
-  /**
-   * Render a LaTeX source string to HTML via KaTeX. Returns the
-   * rendered HTML on success, or rejects with a parse error message.
-   *
-   * `displayMode: true` produces centered block math; `false` produces
-   * inline math (the two have different CSS / spacing rules in KaTeX).
-   */
+  /** Render LaTeX source → HTML. `displayMode: true` = block math. */
   render(id: string, source: string, displayMode: boolean): Promise<string>;
-  /** Tear down: remove iframe + unregister message listener. */
+  /** Remove iframe + listener; reject pending RPCs. */
   destroy(): void;
-  /** Test / debug hook: in-flight or resolved render promise. */
+  /** Resolves once the sandbox booted. Renders before that are queued. */
   ready: Promise<void>;
 }
 
 interface SandboxOptions {
-  /**
-   * `<iframe>` `src` URL — relative to the iframe's base URL
-   * (`whale-extension://md-editor/`). The katex-sandbox.html +
-   * katex.min.js pair are copied to dist by the build script.
-   */
+  /** `<iframe src>` — relative to the extension's dist folder. */
   src: string;
-  /**
-   * Parent element to mount the iframe into. Defaults to
-   * `document.body`. The iframe is `position: absolute` with
-   * `width: 0` + `height: 0` so it never affects layout.
-   */
+  /** Mount parent (defaults to document.body). Iframe is zero-sized. */
   mount?: HTMLElement;
 }
 
-const SANDBOX_IFRAME_STYLE =
-  'position:absolute;width:0;height:0;border:0;visibility:hidden;';
-
-interface PendingRpc {
-  resolve(html: string): void;
-  reject(err: Error): void;
-}
-
 export function createKatexSandbox(opts: SandboxOptions): KatexSandboxRenderer {
-  const mount = opts.mount ?? document.body;
-
-  const pending = new Map<string, PendingRpc>();
-  const idCounter = 0;
-  let readyResolve: () => void = () => undefined;
-  let readyReject: (err: Error) => void = () => undefined;
-  const ready = new Promise<void>((resolve, reject) => {
-    readyResolve = resolve;
-    readyReject = reject;
+  const sb = createPostMessageSandbox({
+    src: opts.src,
+    mount: opts.mount,
+    title: 'katex-sandbox',
+    resultKey: 'html',
+    label: 'katex',
   });
-
-  const iframe = document.createElement('iframe');
-  iframe.setAttribute('sandbox', 'allow-scripts');
-  iframe.setAttribute('title', 'katex-sandbox');
-  iframe.setAttribute('aria-hidden', 'true');
-  iframe.style.cssText = SANDBOX_IFRAME_STYLE;
-  iframe.src = opts.src;
-
-  const messageHandler = (e: MessageEvent): void => {
-    const data = (e.data ?? {}) as {
-      type?: string;
-      id?: string;
-      html?: string;
-      message?: string;
-    };
-    const isFromOurSandbox = e.source === iframe.contentWindow;
-    const isOursByShape =
-      data.type === 'ready' ||
-      (data.type === 'rendered' && typeof data.html === 'string') ||
-      (data.type === 'error' && typeof data.message === 'string');
-    if (!isFromOurSandbox && !isOursByShape) return;
-
-    if (data.type === 'ready') {
-      readyResolve();
-      return;
-    }
-    if (!data.id) return;
-    const rpc = pending.get(data.id);
-    if (!rpc) return;
-    pending.delete(data.id);
-    if (data.type === 'rendered' && typeof data.html === 'string') {
-      rpc.resolve(data.html);
-    } else if (data.type === 'error') {
-      rpc.reject(new Error(data.message || 'katex render failed'));
-    }
-  };
-  window.addEventListener('message', messageHandler);
-
-  const onLoad = (): void => {
-    if (iframe.contentWindow === null) {
-      readyReject(new Error('katex sandbox iframe failed to load'));
-    }
-  };
-  iframe.addEventListener('load', onLoad);
-  iframe.addEventListener('error', () => {
-    readyReject(new Error('katex sandbox iframe load error'));
-  });
-  mount.appendChild(iframe);
-
-  // 5s auto-timeout — same shape as the mermaid sandbox. Protects
-  // against katex.min.js 404, sandbox crash, or any other failure
-  // mode that doesn't fire `error`.
-  const readyTimeout = setTimeout(() => {
-    readyReject(new Error('katex sandbox ready timeout (5s)'));
-  }, 5000);
-
   return {
-    ready,
-    render(id, source, displayMode) {
-      clearTimeout(readyTimeout);
-      return new Promise<string>((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-        ready.then(
-          () => {
-            iframe.contentWindow?.postMessage(
-              { type: 'render', id, source, displayMode },
-              '*'
-            );
-          },
-          (err) => reject(err instanceof Error ? err : new Error(String(err)))
-        );
-      });
-    },
-    destroy() {
-      clearTimeout(readyTimeout);
-      window.removeEventListener('message', messageHandler);
-      iframe.removeEventListener('load', onLoad);
-      for (const rpc of pending.values()) {
-        rpc.reject(new Error('katex sandbox destroyed'));
-      }
-      pending.clear();
-      readyReject(new Error('katex sandbox destroyed'));
-      ready.catch(() => undefined);
-      iframe.remove();
-    },
+    ready: sb.ready,
+    // katex folds displayMode into the render payload via `extra`.
+    render: (id, source, displayMode) => sb.render(id, source, { displayMode }),
+    destroy: sb.destroy,
   };
 }
 
-/**
- * Convenience: mint a fresh, unique `id` for a new KaTeX block.
- * The id is opaque to the sandbox — used only to correlate
- * placeholder DOM nodes with their pending RPC.
- */
+/** Mint a fresh, unique `id` for a new katex block. See `newMermaidId`. */
 export function newKatexId(): string {
   return `k${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 }

@@ -6,12 +6,12 @@ import WindowIcon from '@mui/icons-material/Window';
 import TimelineIcon from '@mui/icons-material/Timeline';
 
 import type { DirEntry } from '../../shared/ipc-types';
-import type { WorkflowStage } from '../../shared/workflow';
+import type { WorkflowStage } from '../domain/workflow';
 import type { FileCellData } from '-/components/file-cell';
 import KanbanView from '-/components/KanbanView';
 import MatrixView from '-/components/MatrixView';
 import GanttView from '-/components/GanttView';
-import { readPrefs, writePrefs } from '../../shared/perspective-prefs';
+import { readPrefs, writePrefs } from '../domain/perspective-prefs';
 
 /**
  * H.29 + Tasks §3.3: The three inner layouts the Task perspective can show.

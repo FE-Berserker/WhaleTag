@@ -3,9 +3,9 @@ import { Chip, InputBase, Stack, Typography } from '@mui/material';
 import { useSelector } from 'react-redux';
 import type { TFunction } from 'i18next';
 
-import type { TagGroup } from '../../shared/tag-library';
-import { getTagColor } from '../../shared/tag-colors';
-import { withoutGeoTags } from '../../shared/geo-tag';
+import type { TagGroup } from '../domain/tag-library';
+import { getTagColor } from '../domain/tag-colors';
+import { withoutGeoTags } from '../domain/geo-tag';
 import type { RootState } from '-/reducers';
 import { chipSx, tagDisplayLabel } from '-/services/tag-display';
 

@@ -24,7 +24,7 @@ import type { RootState } from '-/reducers';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { useFileSelectionContext } from '-/hooks/FileSelectionContextProvider';
 import { useDirectoryUI } from '-/hooks/DirectoryContentContextProvider';
-import { readPrefs } from '../../../shared/perspective-prefs';
+import { readPrefs } from '../../domain/perspective-prefs';
 import { ipcApi } from '-/services/ipc-api';
 import { useAiStream } from './useAiStream';
 import MessageRenderer from './MessageRenderer';

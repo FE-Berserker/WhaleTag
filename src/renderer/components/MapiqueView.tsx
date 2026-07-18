@@ -54,16 +54,16 @@ import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 
 import type { TFunction } from 'i18next';
 import type { DirEntry, ExifProcessedRecord } from '../../shared/ipc-types';
-import type { TagGroup } from '../../shared/tag-library';
-import { getTagColor, getGeoColor } from '../../shared/tag-colors';
+import type { TagGroup } from '../domain/tag-library';
+import { getTagColor, getGeoColor } from '../domain/tag-colors';
 import {
   entriesNeedingExif,
   fitBounds,
   geoEntries,
   isGeoCandidate,
   type GeoEntry,
-} from '../../shared/mapique';
-import { wgs84ToGcj02, gcj02ToWgs84 } from '../../shared/gcj02';
+} from '../domain/mapique';
+import { wgs84ToGcj02, gcj02ToWgs84 } from '../domain/gcj02';
 import type { MapProvider } from '-/reducers/settings';
 import { useSelector } from 'react-redux';
 import { chipSx, tagDisplayLabel } from '-/services/tag-display';
@@ -73,7 +73,7 @@ import { parentDir } from '-/services/path-util';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { useImageExport, type ClipboardKind } from '-/hooks/useImageExport';
 import { useUndoStack } from '-/hooks/useUndoStack';
-import { readPrefs, writePrefs } from '../../shared/perspective-prefs';
+import { readPrefs, writePrefs } from '../domain/perspective-prefs';
 import LoadingOverlay from './perspective/LoadingOverlay';
 import EmptyHint from './perspective/EmptyHint';
 import ErrorBanner from './perspective/ErrorBanner';

@@ -272,19 +272,19 @@ CRC = ABCD1234
   });
 
   describe('sevenZipBinary detection', () => {
-    it('returns explicit override first', () => {
+    it('returns explicit override first', async () => {
       const override = path.join(tmpDir, 'my-7za');
       fs.writeFileSync(override, '#!/bin/sh\n');
-      assert.equal(sevenZipBinary(override), override);
+      assert.equal(await sevenZipBinary(override), override);
     });
 
-    it('returns WHALE_7ZA_PATH when file exists', () => {
+    it('returns WHALE_7ZA_PATH when file exists', async () => {
       const envPath = path.join(tmpDir, 'env-7za');
       fs.writeFileSync(envPath, '#!/bin/sh\n');
       const original = process.env.WHALE_7ZA_PATH;
       process.env.WHALE_7ZA_PATH = envPath;
       try {
-        assert.equal(sevenZipBinary(null), envPath);
+        assert.equal(await sevenZipBinary(null), envPath);
       } finally {
         if (original === undefined) delete process.env.WHALE_7ZA_PATH;
         else process.env.WHALE_7ZA_PATH = original;

@@ -33,7 +33,7 @@ import {
   GEO_TAG_COLOR,
   PERIOD_COLOR,
   STALE_DATE_FOLD_COLOR,
-} from '../../shared/tag-colors';
+} from '../domain/tag-colors';
 import {
   smartTagColor,
   smartTagGlyph,

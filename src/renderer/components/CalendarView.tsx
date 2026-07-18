@@ -32,7 +32,10 @@ import { useDrag, useDrop } from 'react-dnd';
 import { NativeTypes } from 'react-dnd-html5-backend';
 import { List as VirtualList, type RowComponentProps } from 'react-window';
 import ReactECharts from 'echarts-for-react';
-import * as echarts from 'echarts';
+// On-demand echarts instance (Bar + 5 components + Canvas + SVG renderers).
+// Replaces `import * as echarts from 'echarts'` which pulled the full UMD
+// distribution (~1 MB).
+import { echarts } from '../services/echarts-setup';
 
 import { DND_TYPE_FILE, type FileDragItem } from '-/services/dnd';
 import type { DirEntry } from '../../shared/ipc-types';
@@ -61,7 +64,7 @@ import {
   heatIntensity,
   yearMonths,
   ymd,
-} from '../../shared/calendar';
+} from '../domain/calendar';
 import { resolveSmartTag } from '../../shared/smart-tags';
 import type { FileCellData } from '-/components/file-cell';
 import { useIOActionsContext } from '-/hooks/IOActionsContextProvider';
@@ -70,10 +73,10 @@ import CalendarEntryMenu, {
   type CalendarEntryContext,
 } from '-/components/CalendarEntryMenu';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
-import { readPrefs, writePrefs } from '../../shared/perspective-prefs';
+import { readPrefs, writePrefs } from '../domain/perspective-prefs';
 import { useSelector } from 'react-redux';
 import { RootState } from '-/reducers';
-import { lunarDayLabel } from '../../shared/lunar';
+import { lunarDayLabel } from '../domain/lunar';
 import { useImageExport, base64FromDataUrl, type ClipboardKind } from '-/hooks/useImageExport';
 
 interface CalendarViewProps {

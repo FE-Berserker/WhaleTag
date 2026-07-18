@@ -12,7 +12,7 @@
  * backend doesn't fire real drag events in jsdom, and forcing it requires a
  * 100+ line harness. The drop *handler* logic (resolveEntry path, sources
  * resolution, onMoveToColumn payload) is already covered at the algorithm
- * level in `src/shared/kanban.test.ts`.
+ * level in `src/renderer/domain/kanban.test.ts`.
  */
 
 import globalJsdom from 'global-jsdom';
@@ -35,7 +35,7 @@ import { DirectoryTreeRefreshContextProvider } from '../hooks/DirectoryTreeRefre
 import { IOActionsContextProvider } from '../hooks/IOActionsContextProvider';
 import { PeriodTagDialogProvider } from './PeriodTagDialog';
 import { QUADRANT_VALUES } from '../../shared/smart-tags';
-import { UNTAGGED_COLUMN } from '../../shared/kanban';
+import { UNTAGGED_COLUMN } from '../domain/kanban';
 import type { DirEntry } from '../../shared/ipc-types';
 
 /** i18n stub: returns `key` (or `key|opts=…` when interpolation is present)

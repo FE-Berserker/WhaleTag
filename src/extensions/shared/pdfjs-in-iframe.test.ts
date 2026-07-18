@@ -108,6 +108,21 @@ class FakeDoc {
   async cleanup() {
     this.cleanupCalls += 1;
   }
+  // ── Outline stubs (for session.getOutline / resolveDest tests) ──
+  outline: any[] = [];
+  destinations: Record<string, any[]> = {};
+  refToIndex: Map<any, number> = new Map();
+  async getOutline() {
+    return this.outline;
+  }
+  async getDestination(id: string) {
+    return this.destinations[id] ?? null;
+  }
+  async getPageIndex(ref: any) {
+    const idx = this.refToIndex.get(ref);
+    if (idx === undefined) throw new Error('unknown ref');
+    return idx;
+  }
 }
 
 function makeMockPdfjs(doc: FakeDoc): PdfjsLike {
@@ -990,5 +1005,70 @@ describe('createPdfjsSession: worker mode', () => {
       undefined,
       'globalThis.pdfjsWorker should be pinned in fake-worker mode',
     );
+  });
+});
+
+// ── Outline (getOutline / resolveDest) ──────────────────────────────────
+//
+// pdf-viewer's sidebar calls session.getOutline() for the bookmark tree and
+// session.resolveDest(dest) to turn a node's dest into a 0-based page index.
+// These run AFTER renderPdfBytes (so currentDoc is set); the virtualized
+// render path keeps currentDoc alive (the non-virtualized `finally` clears
+// it), so the tests mirror pdf-viewer's virtualize:true config.
+
+describe('createPdfjsSession: outline', () => {
+  function makeOutlineSession(doc: FakeDoc) {
+    return createPdfjsSession({
+      pagesEl: new FakePagesEl() as any,
+      getToken: () => 0,
+      pdfjsLib: makeMockPdfjs(doc),
+      virtualize: true,
+    });
+  }
+
+  it('getOutline() returns the doc outline tree', async () => {
+    const doc = new FakeDoc(1);
+    doc.outline = [
+      { title: 'Chapter 1', dest: 'ch1', url: null, items: [] },
+      { title: 'External', dest: null, url: 'https://example.com', items: [] },
+    ];
+    const session = makeOutlineSession(doc);
+    await session.renderPdfBytes(new Uint8Array(10));
+    const outline = await session.getOutline();
+    assert.equal(outline.length, 2);
+    assert.equal(outline[0].title, 'Chapter 1');
+    assert.equal(outline[1].url, 'https://example.com');
+  });
+
+  it('getOutline() returns [] when the doc has no outline', async () => {
+    const session = makeOutlineSession(new FakeDoc(1));
+    await session.renderPdfBytes(new Uint8Array(10));
+    assert.deepEqual(await session.getOutline(), []);
+  });
+
+  it('resolveDest resolves a named (string) dest via getDestination', async () => {
+    const doc = new FakeDoc(5);
+    const ref = {};
+    doc.destinations = { ch1: [ref, { name: 'XYZ' }, 0, 0, 0] };
+    doc.refToIndex.set(ref, 3); // 0-based page 3
+    const session = makeOutlineSession(doc);
+    await session.renderPdfBytes(new Uint8Array(10));
+    assert.equal(await session.resolveDest('ch1'), 3);
+  });
+
+  it('resolveDest resolves an explicit (array) dest directly', async () => {
+    const doc = new FakeDoc(5);
+    const ref = {};
+    doc.refToIndex.set(ref, 2);
+    const session = makeOutlineSession(doc);
+    await session.renderPdfBytes(new Uint8Array(10));
+    assert.equal(await session.resolveDest([ref, { name: 'XYZ' }]), 2);
+  });
+
+  it('resolveDest returns null for null / unknown dest', async () => {
+    const session = makeOutlineSession(new FakeDoc(3));
+    await session.renderPdfBytes(new Uint8Array(10));
+    assert.equal(await session.resolveDest(null), null);
+    assert.equal(await session.resolveDest('never-heard-of'), null);
   });
 });

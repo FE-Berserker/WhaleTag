@@ -1,5 +1,4 @@
-import { applyMiddleware, compose, createStore } from 'redux';
-import thunk from 'redux-thunk';
+import { createStore } from 'redux';
 import { persistReducer, persistStore, createTransform } from 'redux-persist';
 
 import rootReducer, { RootState } from '-/reducers';
@@ -64,14 +63,16 @@ const persistConfig = {
 
 const persistedReducer = persistReducer(persistConfig, rootReducer);
 
-const enhancer = compose(applyMiddleware(thunk));
-
-export const store = createStore(persistedReducer, enhancer);
+// No middleware: redux-thunk was registered for years but the codebase never
+// had a single thunk action (async IPC lives in services / components), so
+// the middleware was dead weight on every dispatch.
+export const store = createStore(persistedReducer);
 export const persistor = persistStore(store);
 
 // Ensure pending redux-persist writes are flushed before the window unloads.
-// The main process intercepts the close event and asks the renderer to flush;
-// because the storage adapter writes synchronously on disk, this is reliable.
+// The main process intercepts the close event and asks the renderer to flush.
+// Load-bearing with the async (invoke) storage adapter: in-flight writes must
+// be drained here before main destroys the window (3s closeFallback aside).
 if (typeof window !== 'undefined' && window.whale?.onBeforeUnloadFlush) {
   window.whale.onBeforeUnloadFlush(async () => {
     await persistor.flush();

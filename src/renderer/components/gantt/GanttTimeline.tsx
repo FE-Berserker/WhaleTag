@@ -28,8 +28,8 @@ import { useDrop } from 'react-dnd';
 import { NativeTypes } from 'react-dnd-html5-backend';
 import { Box, Typography } from '@mui/material';
 
-import type { WorkflowStage } from '../../../shared/workflow';
-import { getTagColor } from '../../../shared/tag-colors';
+import type { WorkflowStage } from '../../domain/workflow';
+import { getTagColor } from '../../domain/tag-colors';
 import { tagDisplayLabel } from '-/services/tag-display';
 import {
   PX_PER_DAY,
@@ -41,9 +41,9 @@ import {
   type GanttPeriod,
   type GanttScale,
   type GanttZoom,
-} from '../../../shared/gantt';
+} from '../../domain/gantt';
 import type { DirEntry } from '../../../shared/ipc-types';
-import type { TagGroup } from '../../../shared/tag-library';
+import type { TagGroup } from '../../domain/tag-library';
 import { DND_TYPE_FILE, type FileDragItem } from '-/services/dnd';
 import { useIOActionsContext } from '-/hooks/IOActionsContextProvider';
 
@@ -914,7 +914,7 @@ function addDaysKeyPure(key: string, n: number): string {
  *   - `- THUMB_COL_WIDTH` → cursor X relative to chart's day 0
  *   - `/ pxPerDay` and `floor` → half-open day index (matches the
  *     same `Math.floor` / `[0, totalDays)` clamp
- *     `dayKeyAtClientX` uses in shared/gantt.ts)
+ *     `dayKeyAtClientX` uses in renderer/domain/gantt.ts)
  *   - clamped to `[0, scale.totalDays - 1]`
  *
  * Exported so unit tests can verify the math without standing up the

@@ -53,7 +53,7 @@
 
 ## 5. 颜色三级回退
 
-[src/shared/tag-colors.ts](../src/shared/tag-colors.ts) `getTagColor(tag, tagColors, groups)` 优先级:
+[src/renderer/domain/tag-colors.ts](../src/renderer/domain/tag-colors.ts) `getTagColor(tag, tagColors, groups)` 优先级:
 
 1. `isRatingTag(tag)` → `RATING_COLOR = '#ffcc24'`(永远统一金,**不允许覆盖**)
 2. `isPeriodTag(tag)` → `PERIOD_COLOR = '#8b5cf6'`(可被 per-tag / group 覆盖)
@@ -181,7 +181,7 @@ runMigration(allowedRoots): Promise<MigrationResult>
   // 二次运行幂等(只看 changed)
 ```
 
-主进程 `bootstrap` 阶段 `void runMigration(getAllowedRoots())` fire-and-forget。
+**触发时机(2026-07-18 修复)**:首次**非空** `fs:setAllowedRoots` 推送时触发 —— [ipc.ts](../src/main/ipc.ts) handler 里 `triggerStartupMigration(getAllowedRoots())`(once-guard 防 location 增删的重推送重跑;空推送不消耗 guard,渲染层 rehydration 前可能先推一次 `[]`)。原先在 `bootstrap()` 里跑时 roots 必为空(渲染层尚未挂载),迁移从未真正执行 —— 见 [docs/09 §26](./09-known-issues.md)。
 
 ## 12. 已知取舍
 
@@ -191,3 +191,4 @@ runMigration(allowedRoots): Promise<MigrationResult>
 - `InlineTagInput` 调用 `tagDisplayLabel(tag, t)` 不传 `useNow()` —— chip 不动态刷新鲜度,等待下次 render(整体优化未做)
 - `nextWeek` 在它指向的那个**周一**就会 stale(过了当日 0:00 立刻降级)
 - `now` smart tag 的 60 秒鲜度窗口写死在 `smart-tags.ts` 的内联比较,未抽出常量;后续若调阈值,需在测试同步
+- `TagLibrary.tsx` 标签列表未虚拟化(clusterTags / otherTags 直接 `.map` 全量渲染),大库几百上千标签时全量 DOM(2026-07-18 审阅;SearchBar 有 SQL `QUERY_LIMIT=50` 兜底故无需)

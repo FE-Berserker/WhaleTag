@@ -36,9 +36,9 @@ import {
   tagShapeSx,
   tagShapeBoxPadding,
   TAG_SHAPES,
-} from '../../shared/tag-colors';
+} from '../domain/tag-colors';
 import { tagDisplayLabel } from '-/services/tag-display';
-import type { WorkflowStage } from '../../shared/workflow';
+import type { WorkflowStage } from '../domain/workflow';
 
 interface WorkflowManagerDialogProps {
   open: boolean;

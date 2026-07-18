@@ -19,7 +19,13 @@
  */
 
 import { utilityProcess, UtilityProcess } from 'electron';
-import { randomUUID } from 'crypto';
+import {
+  newRequest,
+  completeRequest,
+  failRequest,
+  rejectAllPending,
+  type Pending,
+} from './worker-protocol';
 import { resolveIndexWorkerEntryPath } from './index-worker-spawn';
 import type {
   IndexWorkerOp,
@@ -28,11 +34,6 @@ import type {
   IndexWorkerMessage,
   IndexWorkerEvent,
 } from './index-protocol';
-
-interface Pending {
-  resolve: (v: unknown) => void;
-  reject: (e: Error) => void;
-}
 
 /** Window in which we wait for the worker's `ready` event after spawn. */
 const READY_TIMEOUT_MS = 10_000;
@@ -101,11 +102,8 @@ async function ensureSpawn(): Promise<void> {
       // — TypeScript can't infer the discrimination from a single boolean
       // alone on a 4-member union.
       if (!('ok' in msg)) return;
-      const p = pending.get(msg.reqId);
-      if (!p) return; // late reply after a crash → drop
-      pending.delete(msg.reqId);
       if (msg.ok) {
-        p.resolve(msg.result);
+        completeRequest(pending, msg.reqId, msg.result);
       } else {
         // Narrow `IndexWorkerOk | IndexWorkerErr` to `IndexWorkerErr` via
         // the literal type discriminator (`ok: true | false`). TS handles
@@ -116,14 +114,13 @@ async function ensureSpawn(): Promise<void> {
         const err = new Error(errMsg.error.message);
         err.name = errMsg.error.name;
         if (errMsg.error.stack) err.stack = errMsg.error.stack;
-        p.reject(err);
+        failRequest(pending, msg.reqId, err);
       }
     });
 
     c.on('exit', (code: number) => {
       const e = new Error(`index worker exited unexpectedly (code=${code})`);
-      for (const p of pending.values()) p.reject(e);
-      pending.clear();
+      rejectAllPending(pending, e);
       child = null;
       spawnPromise = null;
       // Don't auto-respawn — next request() will lazy-spawn fresh.
@@ -136,8 +133,7 @@ async function ensureSpawn(): Promise<void> {
     (c as unknown as NodeJS.EventEmitter).on('error', (err: Error) => {
       // The 'exit' event usually follows; reject all pending either way
       // so the renderer surfaces the error promptly.
-      for (const p of pending.values()) p.reject(err);
-      pending.clear();
+      rejectAllPending(pending, err);
     });
 
     // 'spawn' is a strong fallback — it fires once Node has started.
@@ -180,15 +176,12 @@ export async function request<O extends IndexWorkerOp>(
 ): Promise<ResultFor<O>> {
   await ensureSpawn();
   if (!child) throw new Error('index worker not running');
-  const reqId = randomUUID();
-  // The Promise's resolve is typed loosely as `unknown` so the per-op
-  // generic on `request<O>` can narrow the *return* type at the call
-  // site. The implementation just shuttles the worker's reply back; the
-  // precise shape is enforced by the `request<O>` signature above.
-  return new Promise<unknown>((resolve, reject) => {
-    pending.set(reqId, { resolve, reject });
-    child!.postMessage({ reqId, op, arg });
-  }) as Promise<ResultFor<O>>;
+  const { reqId, promise } = newRequest(pending);
+  child!.postMessage({ reqId, op, arg });
+  // `promise` is typed as `Promise<unknown>` so the per-op generic on
+  // `request<O>` can narrow the return type at the call site. The precise
+  // shape is enforced by the signature above.
+  return promise as Promise<ResultFor<O>>;
 }
 
 /**
@@ -212,9 +205,7 @@ export function subscribe(handler: (ev: IndexWorkerEvent) => void): () => void {
  */
 export function killIndexWorker(): void {
   if (pending.size > 0) {
-    const e = new Error('index worker killed at app shutdown');
-    for (const p of pending.values()) p.reject(e);
-    pending.clear();
+    rejectAllPending(pending, new Error('index worker killed at app shutdown'));
   }
   if (!child) return;
   try {

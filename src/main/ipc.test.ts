@@ -31,6 +31,10 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'events';
 import { createRequire } from 'module';
+import { promises as fsp } from 'fs';
+import os from 'os';
+import path from 'path';
+import { setAllowedRoots } from './allowed-roots';
 
 // tsconfig.json has `module: CommonJS`, so `import.meta.url` is not
 // available. `__filename` is the CommonJS equivalent — the test file
@@ -108,6 +112,9 @@ async function buildRig(): Promise<TestRig> {
       showItemInFolder: (...args: unknown[]) => {
         showItemInFolderCalls.push({ args });
       },
+      // `openNative` resolves '' on success (Electron returns an error string
+      // only on failure).
+      openPath: async () => '',
     },
     dialog: { showOpenDialog: () => undefined },
     clipboard: { writeText: () => undefined },
@@ -305,6 +312,83 @@ describe('shell:revealAndSelect handler', () => {
       },
       /spawn ENOENT/,
       'nautilus is the terminal step; its failure must reject'
+    );
+  });
+});
+
+/**
+ * Read-side confinement (docs/13 §13): `fs:readFile` / `fs:readTextFile` /
+ * `fs:openNative` must refuse paths outside the configured locations —
+ * previously they were bare `fsp.readFile` / `shell.openPath`, so an
+ * extension iframe (`requestFileBytes` / `openLinkExternally`) could read or
+ * OS-launch anything on disk. The guard is the same
+ * `assertWithinAllowedRoot` the write channels use, so it fails CLOSED when
+ * no roots are registered.
+ */
+describe('read-side allowedRoots guards', () => {
+  let rig: TestRig;
+  let root: string;
+
+  beforeEach(async () => {
+    clearInjectedMocks();
+    rig = await buildRig();
+    root = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-read-guard-'));
+    setAllowedRoots([root]);
+    rig.registerIpcHandlers();
+  });
+
+  afterEach(async () => {
+    setAllowedRoots([]);
+    clearInjectedMocks();
+    const ipcPath = require_.resolve('./ipc');
+    delete require_.cache[ipcPath];
+    await fsp.rm(root, { recursive: true, force: true });
+  });
+
+  it('fs:readFile reads a file inside an allowed root', async () => {
+    const inside = path.join(root, 'a.txt');
+    await fsp.writeFile(inside, 'hello');
+    const handler = rig.ipcHandlers.get('fs:readFile')!;
+    const buf = (await handler({}, inside)) as Buffer;
+    assert.equal(buf.toString('utf8'), 'hello');
+  });
+
+  it('fs:readFile refuses a path outside every allowed root', async () => {
+    const handler = rig.ipcHandlers.get('fs:readFile')!;
+    await assert.rejects(
+      async () => handler({}, path.join(os.tmpdir(), 'whale-outside.bin')),
+      /Refused/
+    );
+  });
+
+  it('fs:readTextFile reads inside, refuses outside', async () => {
+    const inside = path.join(root, 'note.txt');
+    await fsp.writeFile(inside, 'hello whale', 'utf8');
+    const handler = rig.ipcHandlers.get('fs:readTextFile')!;
+    assert.equal(await handler({}, inside), 'hello whale');
+    await assert.rejects(
+      async () => handler({}, path.join(os.tmpdir(), 'outside.txt')),
+      /Refused/
+    );
+  });
+
+  it('fs:openNative opens inside, refuses outside', async () => {
+    const inside = path.join(root, 'a.txt');
+    await fsp.writeFile(inside, 'x');
+    const handler = rig.ipcHandlers.get('fs:openNative')!;
+    await handler({}, inside); // resolves — stubbed shell.openPath returns ''
+    await assert.rejects(
+      async () => handler({}, 'C:\\Windows\\System32\\cmd.exe'),
+      /Refused/
+    );
+  });
+
+  it('read guards fail closed when no roots are registered', async () => {
+    setAllowedRoots([]);
+    const handler = rig.ipcHandlers.get('fs:readFile')!;
+    await assert.rejects(
+      async () => handler({}, path.join(root, 'a.txt')),
+      /Refused/
     );
   });
 });

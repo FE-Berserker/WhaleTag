@@ -17,6 +17,10 @@ export default merge(createBase(), {
     // Externalized (better-sqlite3 / pdfjs-dist / sharp) just like main.js
     // so the worker can load native bindings from asar-unpacked.
     'index-worker': path.resolve(SRC_PATH, 'main', 'index-worker.ts'),
+    // utilityProcess entry for the pure-JS CPU-heavy thumbnail renders
+    // (pdf / ebook / font), off the main event loop (docs/06 §8). pdfjs-dist
+    // / @napi-rs/canvas / sharp stay externalized just like index-worker.
+    'thumb-worker': path.resolve(SRC_PATH, 'main', 'thumb-worker.ts'),
   },
   output: {
     path: MAIN_DIST,

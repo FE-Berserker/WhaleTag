@@ -16,9 +16,12 @@
  *      gated by a flag in `.whale/_migration-state.json` so subsequent runs
  *      skip the backup and become pure idempotent rewrites.
  *
- * Trigger: app startup (`runMigration(allowedRoots)` in main.ts). Per-file
- * writes are wrapped in `withLock` + `atomicWriteJson`; one file's failure
- * does not abort the rest of the migration.
+ * Trigger: first non-empty `fs:setAllowedRoots` push (`triggerStartupMigration`
+ * below) — main-process bootstrap runs before the renderer mounts, so the
+ * root set is always still empty there (the original bootstrap-time call
+ * silently never ran; see docs/09-known-issues.md §26). Per-file writes are
+ * wrapped in `withLock` + `atomicWriteJson`; one file's failure does not
+ * abort the rest of the migration.
  *
  * Idempotency: a second pass over an already-migrated file finds nothing to
  * change — the prefix-strip regex doesn't match the bare form, the互斥
@@ -322,4 +325,44 @@ export async function runMigration(
     }
   }
   return result;
+}
+
+let startupMigration: Promise<void> | null = null;
+
+/**
+ * Startup trigger for the migration: at most one run per process, and only
+ * once `allowedRoots` is non-empty. Called from the `fs:setAllowedRoots` IPC
+ * handler — the renderer pushes its configured locations after mount, which
+ * is the earliest point the roots are populated (main-process bootstrap runs
+ * before the window exists, so the original bootstrap-time call always saw an
+ * empty root set and the migration silently never ran).
+ *
+ * Returns the in-flight promise so tests can await it; `null` when skipped —
+ * either already ran (location add/remove re-pushes must not re-run it), or
+ * no roots yet (an empty push must NOT consume the once-guard: the renderer
+ * may push `[]` before rehydration and the real list right after).
+ */
+export function triggerStartupMigration(
+  allowedRoots: string[]
+): Promise<void> | null {
+  if (startupMigration || allowedRoots.length === 0) return null;
+  startupMigration = runMigration(allowedRoots)
+    .then((res) => {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[migrate-date-tags] scanned=${res.totalScanned} ` +
+          `migrated=${res.totalMigrated} backups=${res.totalBackups} ` +
+          `errors=${res.totalErrors}`
+      );
+    })
+    .catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error('[migrate-date-tags] unexpected error', err);
+    });
+  return startupMigration;
+}
+
+/** Test-only hook: clear the once-guard so a fresh trigger can run. */
+export function resetStartupMigrationForTests(): void {
+  startupMigration = null;
 }

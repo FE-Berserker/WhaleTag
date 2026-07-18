@@ -27,8 +27,8 @@
  */
 import { useCallback, useMemo, useState } from 'react';
 
-import { periodWithShift } from '../../../shared/gantt';
-import type { GanttPeriod } from '../../../shared/gantt';
+import { periodWithShift } from '../../domain/gantt';
+import type { GanttPeriod } from '../../domain/gantt';
 
 /** Set of all entry paths in render order — drives ↑↓ wrap-around.
  *  The consumer (GanttTimeline) passes `displayRows.map(r => r.entry.path)`. */

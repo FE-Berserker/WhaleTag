@@ -10,9 +10,9 @@ import {
 import { useTranslation } from 'react-i18next';
 
 import type { DirEntry } from '../../shared/ipc-types';
-import type { TagGroup } from '../../shared/tag-library';
+import type { TagGroup } from '../domain/tag-library';
 import { ratingOfTag } from '../../shared/smart-tags';
-import { getTagColor } from '../../shared/tag-colors';
+import { getTagColor } from '../domain/tag-colors';
 import { DND_TYPE_TAG, type TagDragItem } from '../services/dnd';
 import { tagDisplayLabel } from '../services/tag-display';
 import { usePeriodTagDialog } from './PeriodTagDialog';

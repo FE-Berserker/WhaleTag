@@ -89,24 +89,26 @@ writeFileAtomic(path, write):
 - 写文件前先清理目标目录下 `<basename>.*.tmp` 残留(崩溃遗留)
 - 用于 sidecar、索引迁移标志、redux-persist 写盘
 
-## 8. redux-persist(主进程同步 IO)
+## 8. redux-persist(主进程 IO)
 
-**位置**:`%APPDATA%/WhaleTag/persist/whale-root.json`。redux-persist 的 root key = `whale-root`(在 `src/renderer/store/configureStore.ts:33`),文件名由 `persistDir() + sanitize(key) + '.json'` 拼出(`persist-storage.ts:47-52`),特殊字符替换为 `_`,本 key 无需替换。
+**位置**:`%APPDATA%/WhaleTag/persist/whale-root.json`。redux-persist 的 root key = `whale-root`(在 `src/renderer/store/configureStore.ts:33`),文件名由 `persistDir() + sanitize(key) + '.json'` 拼出(`persist-storage.ts`),特殊字符替换为 `_`,本 key 无需替换。
 
-**为什么不走 localStorage**:Chromium 异步 flush;OS 强杀 / 3s close-fallback 会丢最后几毫秒的写。主进程同步 IO(`writeFileSync(.tmp) + renameSync`)保证 `setItem` 返回时字节已落盘。
+**为什么不走 localStorage**:Chromium 异步 flush;OS 强杀 / 3s close-fallback 会丢最后几毫秒的写。主进程 IO(`fsp.writeFile(.tmp)` + `fsp.rename`)保证 `setItem` resolve 时字节已落盘。
+
+**不再用 sendSync(2026-07-18)**:旧链路 `sendSync` + 同步 fs 双向阻塞(渲染主线程 + 主进程事件循环,被缩略图等 CPU 任务放大)。现为 async `invoke` + async fs,durability 语义不变(invoke resolve 时已落盘),`persist:*Sync` 通道已删;rehydration 走 `PersistGate`(index.tsx),退出 flush 握手(`persistor.flush()` → `app:flush-complete`)升级为 load-bearing —— 关窗前必须排干在途写。
 
 **架构**:
 
 ```
 renderer
-  └─ storage.getItem/setItem (src/renderer/store/storage.ts)
-       └─ window.whale.persistReadSync / persistWriteSync
-            └─ ipcRenderer.sendSync('persist:readSync' / 'writeSync')
+  └─ storage.getItem/setItem (src/renderer/store/storage.ts,async)
+       └─ window.whale.persistRead / persistWrite
+            └─ ipcRenderer.invoke('persist:read' / 'write')
                  ↓
 main
-  └─ persistRead / persistWrite
+  └─ persistRead / persistWrite (async fs)
        ├─ persistDir() lazy   ← app.getPath('userData') 首次解析
-       ├─ readFileSync / writeFileSync(atomic .tmp + renameSync)
+       ├─ fsp.readFile / fsp.writeFile(.tmp) + fsp.rename(原子)
        └─ console.error on failure
 ```
 
@@ -127,3 +129,9 @@ main
 - `assertWithinAllowedRoot` symlink 逃逸 → 必须 `realpathSync` 解析
 - redux-persist settings slice 被 skip rehydration → 关闭重启回默认值 → 根因是 `sanitizeKeybindings` 这类总返回新对象,要看 `autoMergeLevel1` 行为
 - Windows `explorer /select,path` 用 `child_process.execFile` 加引号会被 comma 拆分 → 改 `shell.showItemInFolder`
+
+## 10. 架构审阅遗留(2026-07-18)
+
+- ~~persist 全链路同步阻塞~~ **已修(2026-07-18)**:适配器改 async `invoke`、主进程改 async fs(tmp + rename),durability 不变(invoke resolve 时已落盘),`persist:*Sync` 通道删除;退出 flush 握手保留并升级为 load-bearing。**未加 debounce/throttle**:写量与改前相同(每变更整包重写),只是不再阻塞双线程 —— "每写必落盘"优先于写放大优化。见 §8。
+- **`fs:readTextFile` 主线程解码**:整文件 jschardet + iconv + 两遍 U+FFFD 计数都在主事件循环,大 legacy 编码文件长占。
+- `dir-lock.ts` `chains` Map 只增不清,长会话按目录数无界增长(值为已解决 Promise,低危)。

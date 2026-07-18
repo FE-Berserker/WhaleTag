@@ -22,7 +22,7 @@ import type { DirEntry } from '../../shared/ipc-types';
 import type { SidecarMeta } from '../../shared/whale-meta';
 import { RootState } from '-/reducers';
 import { setTagColor } from '-/reducers/settings';
-import { pickTagColor } from '../../shared/tag-colors';
+import { pickTagColor } from '../domain/tag-colors';
 import { useTagMetaContext } from '-/hooks/TagMetaContextProvider';
 import { useIOActionsContext } from '-/hooks/IOActionsContextProvider';
 import ThumbIcon from '-/components/ThumbIcon';

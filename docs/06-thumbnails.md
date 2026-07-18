@@ -70,7 +70,7 @@ type ThumbKind = 'image' | 'svg' | 'video' | 'pdf' | 'office' | 'ebook' | 'font'
 
 ## 5. 按格式区分的回退图标
 
-[src/renderer/components/FileTypeIcon.tsx](../src/renderer/components/FileTypeIcon.tsx) + [src/shared/file-icon.ts](../src/shared/file-icon.ts):
+[src/renderer/components/FileTypeIcon.tsx](../src/renderer/components/FileTypeIcon.tsx) + [src/renderer/domain/file-icon.ts](../src/renderer/domain/file-icon.ts):
 
 - **39 类** `FileIconCategory`(完整列表,不是 19):`image` / `video` / `audio` / `pdf` / `word` / `excel` / `ppt` / `archive` / **`javascript`** / **`typescript`** / **`html`** / **`css`** / **`python`** / **`java`** / **`cpp`** / **`csharp`** / **`go`** / **`rust`** / **`shell`** / **`database`** / **`matlab`** / **`json`** / **`notebook`** / **`design`** / **`email`** / **`link`** / **`diskimage`** / `code` / `markdown` / `text` / `data` / `ebook` / `caj` / `drawio` / `excalidraw` / `font` / `model3d` / `executable` / `generic`
 - 大小写不敏感;多点名取最后一段(`archive.tar.gz` → archive、`app.min.js` → code);dotfile(`.gitignore`) / 无扩展名 → `generic`
@@ -127,3 +127,7 @@ type ThumbKind = 'image' | 'svg' | 'video' | 'pdf' | 'office' | 'ebook' | 'font'
 - dotfile(`.gitignore`)归 `generic`
 - 同类别内不同格式暂不细分(JS/Python/Go 都是青色 `Code`),如需字母角标则在 `FileTypeIcon.tsx` 叠加 `Typography`,不改 `file-icon.ts` 类别映射
 - 大文件保护不在缩略图管线(只有 video 首帧快)
+
+## 8. 架构审阅遗留(2026-07-18)
+
+- ✅ **纯 JS CPU 已下沉 utilityProcess**(2026-07-18 修):pdf / ebook / font 渲染(pdfjs `page.render`、`unzipSync` 封面提取、font canvas 光栅化)移入 `whale-thumb` utilityProcess(thumb-worker.ts,镜像 index-worker 三件套);image 走 sharp libuv 线程池、video / office 本来就是子进程,故留主进程;office 的 doc→PDF 仍走主进程 UNO worker,临时 PDF 再交 worker 渲染。测试环境(ELECTRON_RUN_AS_NODE,`utilityProcess.fork` 不可用)下 host 进程内回退,直调同一套 thumb-render 函数。

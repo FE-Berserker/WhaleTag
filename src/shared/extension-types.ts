@@ -285,6 +285,52 @@ export interface SofficeCheckResultMessage {
   available: boolean;
 }
 
+/** Host -> Extension: response to `requestSaveImage`. `path` is the saved
+ *  absolute path on success, null on failure (with `error`). */
+export interface ImageSavedMessage {
+  type: 'imageSaved';
+  requestId: string;
+  path: string | null;
+  error?: string;
+}
+
+// md-editor render-theme preset + custom callouts (host → ext). The host
+// pushes these redux settings into the md-editor iframe (separate origin) so
+// its preview renders with the user's chosen preset + custom callout types.
+// `MdRenderPreset` is defined here (shared) so settings.ts + md-editor both
+// import the same union.
+export type MdRenderPreset =
+  | 'github-light'
+  | 'github-dark'
+  | 'solarized-light'
+  | 'solarized-dark'
+  | 'dracula'
+  | 'nord'
+  | 'gruvbox'
+  | 'one-dark';
+export type MdRenderThemePref = 'auto' | MdRenderPreset;
+
+/** Host → Extension (md-editor): apply this render-theme preset ('auto' =
+ *  follow the host's light/dark). Replaces the iframe's localStorage-only
+ *  theme so the Settings panel is the source of truth. */
+export interface SetMdRenderThemeMessage {
+  type: 'setMdRenderTheme';
+  theme: MdRenderThemePref;
+}
+/** Host → Extension (md-editor): replace the custom callout list. md-editor's
+ *  `transformCallouts` merges these over the 15 built-ins. */
+export interface SetCustomCalloutsMessage {
+  type: 'setCustomCallouts';
+  callouts: import('./callout-types').CustomCallout[];
+}
+/** Extension → Host (md-editor): the user changed the preset from the
+ *  toolbar `<select>` inside the editor. Host dispatches it back into redux
+ *  so Settings stays in sync (bidirectional). */
+export interface MdRenderThemeChangedMessage {
+  type: 'mdRenderThemeChanged';
+  theme: MdRenderThemePref;
+}
+
 export type HostMessage =
   | FileContentMessage
   | SavingFileMessage
@@ -308,10 +354,13 @@ export type HostMessage =
   | FileEmbedMessage
   | SiblingsMessage
   | FileBytesMessage
+  | SetMdRenderThemeMessage
+  | SetCustomCalloutsMessage
   | EbookAnnotationsMessage
   | RequestSelectionMessage
   | ApplyReplacementMessage
-  | StreamingUrlMessage;
+  | StreamingUrlMessage
+  | ImageSavedMessage;
 
 // Extension -> Host messages
 
@@ -570,6 +619,20 @@ export interface RequestDirectoryDialogMessage {
   requestId: string;
 }
 
+/** Extension -> Host: paste an image from the clipboard. The host saves it to
+ *  `dirPath` (the .md's directory) as `image-<timestamp>.<ext>` and answers
+ *  with `imageSaved` carrying the saved path (or null + error). */
+export interface RequestSaveImageMessage {
+  type: 'requestSaveImage';
+  requestId: string;
+  /** `data:image/<ext>;base64,...` — the clipboard image, encoded client-side. */
+  dataURL: string;
+  /** File extension without dot, e.g. "png" / "jpeg" (derived from the MIME). */
+  ext: string;
+  /** Absolute directory to save into (the .md's directory). */
+  dirPath: string;
+}
+
 export type ExtensionMessage =
   | ReadyMessage
   | LoadDefaultTextContentMessage
@@ -591,6 +654,7 @@ export type ExtensionMessage =
   | RequestEbookConvertMessage
   | RequestStreamingUrlMessage
   | RequestFileBytesMessage
+  | MdRenderThemeChangedMessage
   | RequestArchiveListMessage
   | RequestArchiveEntryMessage
   | RequestArchiveExtractMessage
@@ -601,7 +665,8 @@ export type ExtensionMessage =
   | RequestWriteEbookAnnotationsMessage
   | EditorSelectionMessage
   | RequestOpenInViewMessage
-  | RequestHideMessage;
+  | RequestHideMessage
+  | RequestSaveImageMessage;
 
 /** Runtime API injected into each extension iframe as `window.whaleExt`. */
 export interface WhaleExtApi {

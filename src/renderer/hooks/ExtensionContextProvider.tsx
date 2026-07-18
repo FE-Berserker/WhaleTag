@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
   ReactNode,
 } from 'react';
@@ -245,18 +246,36 @@ export function ExtensionContextProvider({
     setActiveView({ ...activeView, fileContent: content, encoding, fileSize: size });
   }, [activeView, readFileContent]);
 
-  const value: ExtensionContextValue = {
-    registry,
-    userDefaults,
-    enabledOverrides,
-    activeView,
-    loading,
-    error,
-    openFile,
-    openWithExtension,
-    closeView,
-    reloadContent,
-  };
+  // Memoize the context value: every member is already a stable useSelector
+  // reference / useState value / useCallback, so without this wrapper ANY
+  // provider render (e.g. every loading toggle) would mint a new object and
+  // force all consumers (MainLayout → FileList et al.) to re-render.
+  const value: ExtensionContextValue = useMemo(
+    () => ({
+      registry,
+      userDefaults,
+      enabledOverrides,
+      activeView,
+      loading,
+      error,
+      openFile,
+      openWithExtension,
+      closeView,
+      reloadContent,
+    }),
+    [
+      registry,
+      userDefaults,
+      enabledOverrides,
+      activeView,
+      loading,
+      error,
+      openFile,
+      openWithExtension,
+      closeView,
+      reloadContent,
+    ]
+  );
 
   return (
     <ExtensionContext.Provider value={value}>{children}</ExtensionContext.Provider>

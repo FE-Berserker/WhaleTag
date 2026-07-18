@@ -25,7 +25,7 @@
  *   - localStorage key: `whale-task-gantt-filter`
  *   - shape: `{ workflow: string[]; quadrant: string[] }`
  *   - reads/writes go through the shared `readPrefs` / `writePrefs`
- *     helpers from [src/shared/perspective-prefs.ts](../shared/perspective-prefs.ts)
+ *     helpers from [src/renderer/domain/perspective-prefs.ts](../renderer/domain/perspective-prefs.ts)
  *     so a tampered / quota-blocked storage can never crash the view
  *     (mirrors `useGanttZoom`'s pattern).
  *
@@ -39,7 +39,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { readPrefs, writePrefs } from '../../../shared/perspective-prefs';
+import { readPrefs, writePrefs } from '../../domain/perspective-prefs';
 
 /** Which filter dimension we're managing. */
 export type GanttFilterKey = 'workflow' | 'quadrant';
