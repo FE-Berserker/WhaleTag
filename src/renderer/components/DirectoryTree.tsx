@@ -48,7 +48,8 @@ import { useBackgroundPlayer } from '-/hooks/BackgroundPlayerContextProvider';
 import { useDirectoryTreeRefresh } from '-/hooks/DirectoryTreeRefreshContextProvider';
 import { ipcApi } from '-/services/ipc-api';
 import { COLUMN_HEADER_HEIGHT } from '-/theme';
-import { basename, joinPath } from '-/services/path-util';
+import { basename, joinPath, isSameOrDescendant } from '-/services/path-util';
+import { changedParentsToReload } from './directory-tree-refresh';
 import PromptDialog from '-/components/PromptDialog';
 
 /** Normalizes separators + trailing slash so two spellings of a path compare equal. */
@@ -280,6 +281,46 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
     registerRefreshTree((dirPath) => reloadChildren(dirPath));
     return () => unregisterRefreshTree();
   }, [registerRefreshTree, unregisterRefreshTree, reloadChildren]);
+
+  // docs/04 §10: external changes (fs.watch) — reload the affected PARENTS
+  // of currently-loaded folders so the sidebar tree stays in sync when
+  // another process creates / deletes / renames entries. Trailing 300ms
+  // debounce, paths coalesced into one set; unloaded folders are skipped
+  // (they load lazily on expand). childrenByPath is mirrored into a ref so
+  // the subscription doesn't re-register on every children load.
+  const childrenByPathRef = useRef(childrenByPath);
+  useEffect(() => {
+    childrenByPathRef.current = childrenByPath;
+  }, [childrenByPath]);
+  const externalTreeTimer = useRef<number | null>(null);
+  useEffect(() => {
+    if (!currentLocation) return undefined;
+    const changed = new Set<string>();
+    let overflow = false;
+    const flush = () => {
+      externalTreeTimer.current = null;
+      const loaded = new Set(childrenByPathRef.current.keys());
+      const parents = changedParentsToReload([...changed], loaded, overflow);
+      changed.clear();
+      overflow = false;
+      for (const p of parents) reloadChildren(p);
+    };
+    const off = ipcApi.onDirChanged((ev) => {
+      if (!isSameOrDescendant(ev.rootPath, currentLocation.path)) return;
+      if (ev.paths.length === 0) overflow = true; // watch buffer overflow
+      for (const rel of ev.paths) changed.add(`${ev.rootPath}/${rel}`);
+      if (externalTreeTimer.current !== null) {
+        window.clearTimeout(externalTreeTimer.current);
+      }
+      externalTreeTimer.current = window.setTimeout(flush, 300);
+    });
+    return () => {
+      off();
+      if (externalTreeTimer.current !== null) {
+        window.clearTimeout(externalTreeTimer.current);
+      }
+    };
+  }, [currentLocation, reloadChildren]);
 
   // Local transient notice for the copy-path action — DirectoryTree previously
   // had no notice surface (see the create-failure comment in handleCreate), so

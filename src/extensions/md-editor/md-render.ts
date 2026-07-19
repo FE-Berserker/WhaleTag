@@ -32,6 +32,7 @@ import hljs from 'highlight.js/lib/common';
 import { encodeWhaleFileUrl } from '../../shared/whale-file-url';
 import type { Token } from 'marked';
 import markedFootnote from 'marked-footnote';
+import { ctx } from './md-context';
 
 // --- Markdown parsing -----------------------------------------------------
 
@@ -400,9 +401,39 @@ export function parseMarkdown(content: string): string {
       const text = (blocks[i].textContent || '').trim();
       blocks[i].setAttribute('id', `md-h-${lineForId}-${text.length}`);
     }
+    // §table-edit — stamp each <tr> with the source line of its row so
+    // addTableInteractivity can dispatch cell edits back to the editor.
+    if (blocks[i].tagName === 'TABLE') {
+      const rows = Array.from(blocks[i].querySelectorAll('tr'));
+      rows.forEach((row) => {
+        const rowLine = computeTableRowLine(row, line);
+        if (rowLine) row.setAttribute('data-source-line', String(rowLine));
+      });
+    }
   }
   transformCallouts(root);
   return root.innerHTML;
+}
+
+/**
+ * Estimate the source line of a table row. Tables are emitted as a single
+ * top-level token, so the table block's `data-source-line` is the row of the
+ * first `<tr>`. Subsequent rows follow on subsequent lines (a separator line
+ * occupies a row but no `<tr>` is emitted for it; the next `<tr>` after the
+ * separator is its line + 2). The exact mapping is a best-effort estimation
+ * — when the cell text doesn't match the source, the editor's `replaceMarkdownTableCellText`
+ * still works because the cell-column index is well-defined per row.
+ */
+function computeTableRowLine(row: Element, tableLine: number | undefined): number | null {
+  if (tableLine === undefined) return null;
+  const table = row.closest('table');
+  if (!table) return null;
+  const rows = Array.from(table.querySelectorAll('tr'));
+  const index = rows.indexOf(row as HTMLTableRowElement);
+  if (index < 0) return null;
+  // First <tr> shares the table's source line; each subsequent <tr> is one
+  // source line further (the separator sits between data rows).
+  return tableLine + index;
 }
 
 // --- DOMPurify allow-list -------------------------------------------------
@@ -640,8 +671,10 @@ export function highlightCodeBlocks(container: HTMLElement): void {
   // post-render. We still filter the query here to suppress the
   // warnings during the brief window where both code paths see the
   // same DOM.
+  // `language-html` is skipped for the same reason: renderHtmlBlocks
+  // replaces those blocks with a live sandboxed preview iframe.
   const blocks = container.querySelectorAll(
-    'pre code:not(.language-mermaid):not(.mermaid)'
+    'pre code:not(.language-mermaid):not(.mermaid):not(.language-html)'
   );
   if (blocks.length === 0) return;
   blocks.forEach((el) => {
@@ -661,6 +694,79 @@ export function highlightCodeBlocks(container: HTMLElement): void {
       hljs.highlightElement(code);
       putRenderCache(HLJS_CACHE, key, code.outerHTML);
     }
+  });
+}
+
+// --- HTML code blocks → static preview (§html-block) --------------------------
+
+/**
+ * Replace ```` ```html ```` code blocks with a STATIC rendered preview: the
+ * source becomes the srcdoc of an `<iframe sandbox="">`. The EMPTY sandbox
+ * token list means maximum restriction — **no JavaScript at all** (this is
+ * the product decision: render-only, no JS execution). That also retires
+ * the two earlier approaches and their failure modes:
+ *  - `sandbox="allow-scripts"` + srcdoc: about:srcdoc inherits the
+ *    embedder's CSP (`script-src 'self'`), so inline JS was dead anyway;
+ *  - `./html-sandbox.html` + document.write: JS ran, but the height-report
+ *    ResizeObserver loop made the frame stretch endlessly.
+ * With no scripts permitted, neither matters — content renders statically
+ * (inline styles, layout, images all work; forms/links are inert).
+ *
+ * Frame height is a fixed 240px (see editor.css `.html-block-frame`) with
+ * `resize: vertical` so the user can drag it taller — no measuring script,
+ * no feedback loop.
+ *
+ * Idempotency: none needed — each preview re-render wipes `innerHTML`, so
+ * this runs fresh against brand-new DOM every time.
+ */
+/**
+ * Remove anything that would attempt script execution inside the sandboxed
+ * preview iframe: `<script>` elements, `on*` event-handler attributes and
+ * `javascript:` URLs. The empty-sandbox frame blocks all of these anyway —
+ * stripping them first keeps Chromium from logging a "Blocked script
+ * execution" console error per attempt (the rendered result is identical,
+ * since none of it could ever run). DOMParser-based, not regex, so odd
+ * casing and nested markup parse correctly.
+ */
+export function stripActiveContent(source: string): string {
+  const doc = new DOMParser().parseFromString(source, 'text/html');
+  doc.querySelectorAll('script').forEach((s) => s.remove());
+  doc.querySelectorAll('*').forEach((el) => {
+    for (const attr of Array.from(el.attributes)) {
+      if (/^on/i.test(attr.name)) {
+        el.removeAttribute(attr.name);
+      } else if (
+        (attr.name === 'href' ||
+          attr.name === 'src' ||
+          attr.name === 'xlink:href') &&
+        /^\s*javascript:/i.test(attr.value)
+      ) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  });
+  return doc.documentElement.outerHTML;
+}
+
+export function renderHtmlBlocks(container: HTMLElement): void {
+  const blocks = container.querySelectorAll('pre:has(> code.language-html)');
+  if (blocks.length === 0) return;
+  blocks.forEach((pre) => {
+    const code = pre.querySelector('code.language-html');
+    const source = code?.textContent ?? '';
+    const wrap = document.createElement('div');
+    wrap.className = 'html-block';
+    const frame = document.createElement('iframe');
+    frame.className = 'html-block-frame';
+    // Empty sandbox = the strongest lockdown: no scripts, no forms, no
+    // popups, opaque origin. Exactly the render-only behavior we want.
+    frame.setAttribute('sandbox', '');
+    frame.setAttribute('title', 'HTML preview');
+    // stripActiveContent: scripts are dead under the empty sandbox anyway —
+    // remove them so Chromium doesn't spam "Blocked script execution".
+    frame.srcdoc = stripActiveContent(source);
+    wrap.appendChild(frame);
+    (pre as HTMLElement).replaceWith(wrap);
   });
 }
 
@@ -1314,7 +1420,7 @@ export function triggerDownload(
  * select + copy), which is gated by focus/selection rather than
  * Permissions-Policy and works inside the iframe. Resolves true on success.
  */
-function copyToClipboard(text: string): Promise<boolean> {
+export function copyToClipboard(text: string): Promise<boolean> {
   if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
     return navigator.clipboard.writeText(text).then(
       () => true,
@@ -1393,7 +1499,7 @@ export function addCodeCopyButtons(container: HTMLElement): void {
  * §lang-label — stamp a language badge (top-left `<span class="code-lang">`)
  * on each fenced `<pre>` by reading the `language-X` class that marked / hljs
  * puts on the inner `<code>`. Also sets `data-lang` on the `<pre>` so the
- * fold-collapsed placeholder can render `▸ ts · 已折叠` via CSS attr(). No
+ * fold-collapsed placeholder can render `▸ ts · collapsed` via CSS attr(). No
  * badge when the code block has no language. Idempotent.
  */
 export function addLanguageLabels(container: HTMLElement): void {
@@ -1457,6 +1563,142 @@ export function addTaskInteractivity(
     cb.style.cursor = 'pointer';
     cb.addEventListener('change', () => onToggle(idx));
   });
+}
+
+/**
+ * §table-edit — make each GFM table cell in the preview pane editable. The
+ * editor pane (CodeMirror) is still the source of truth, but typing in a
+ * preview cell should immediately update the source so the user gets the
+ * Typora-like "edit anywhere" experience. On every cell change we call
+ * `onCellChange(sourceLine, column, value)` (provided by `index.ts`), which
+ * looks up the matching editor line and dispatches a `replaceMarkdownTableCellText`
+ * edit through CodeMirror. The next preview render re-mounts the table
+ * (idempotent guard below) and re-arms the listeners.
+ *
+ * Keyboard navigation mirrors the spreadsheet feel: Tab / Shift+Tab moves
+ * focus between cells (wrapping across rows), Enter commits and moves to the
+ * next row, Escape blurs the active cell. Up/Down arrow keys move vertically
+ * within the same column. Markdown-specific characters (`|`, `\n`) are
+ * stripped to a single space at commit time, so the table stays valid.
+ */
+export function addTableInteractivity(
+  container: HTMLElement,
+  onCellChange: (
+    sourceLine: number,
+    column: number,
+    value: string
+  ) => void,
+  onCellBlur?: () => void
+): void {
+  const tables = Array.from(container.querySelectorAll('table'));
+  tables.forEach((table) => {
+    if (table.dataset.interactive === '1') return;
+    table.dataset.interactive = '1';
+    const rows = Array.from(table.querySelectorAll('tr'));
+    rows.forEach((row) => {
+      const cells = Array.from(row.querySelectorAll('th, td'));
+      cells.forEach((cell, column) => {
+        if (!(cell instanceof HTMLElement)) return;
+        if (cell.dataset.editable === '1') return;
+        cell.dataset.editable = '1';
+        cell.setAttribute('contenteditable', 'true');
+        cell.setAttribute('spellcheck', 'false');
+        cell.setAttribute('tabindex', '-1');
+        const sourceLine = Number(cell.closest('tr')?.dataset.sourceLine);
+        if (!Number.isFinite(sourceLine) || sourceLine < 1) return;
+        const columnIndex = column;
+        cell.addEventListener('focus', () => {
+          ctx.previewCellEditing = true;
+          selectCellContents(cell);
+        });
+        cell.addEventListener('blur', () => {
+          ctx.previewCellEditing = false;
+          onCellBlur?.();
+        });
+        cell.addEventListener('input', () => {
+          if (!isTableElement(cell)) return;
+          onCellChange(sourceLine, columnIndex, cell.innerText);
+        });
+        cell.addEventListener('keydown', (event) => {
+          if (!isTableElement(cell)) return;
+          const nav = navigateTableCell(event, cell, rows);
+          if (nav) event.preventDefault();
+        });
+      });
+    });
+  });
+}
+
+function isTableElement(el: EventTarget | null): el is HTMLElement {
+  return el instanceof HTMLElement;
+}
+
+function selectCellContents(cell: HTMLElement): void {
+  // Place the caret at the end so the user can keep typing without losing
+  // the existing cell text. selectionStart/End are 0 inside an empty cell,
+  // so we just collapse to a single offset.
+  const selection = window.getSelection();
+  if (!selection) return;
+  const range = document.createRange();
+  range.selectNodeContents(cell);
+  range.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function navigateTableCell(
+  event: KeyboardEvent,
+  cell: HTMLElement,
+  rows: HTMLElement[]
+): boolean {
+  const allCells = rows
+    .map((row) => Array.from(row.querySelectorAll<HTMLElement>('th, td')))
+    .filter((row) => row.length > 0);
+  const currentRow = allCells.findIndex((row) => row.includes(cell));
+  if (currentRow < 0) return false;
+  const currentCol = allCells[currentRow].indexOf(cell);
+  if (currentCol < 0) return false;
+  const targetCell = (row: number, col: number): HTMLElement | null => {
+    if (row < 0 || row >= allCells.length) return null;
+    const safeCol = Math.min(col, allCells[row].length - 1);
+    if (safeCol < 0) return null;
+    return allCells[row][safeCol];
+  };
+  if (event.key === 'Tab') {
+    const nextCol = event.shiftKey ? currentCol - 1 : currentCol + 1;
+    if (nextCol >= allCells[currentRow].length) {
+      const next = targetCell(currentRow + 1, 0);
+      if (next) {
+        next.focus();
+        return true;
+      }
+    } else if (nextCol >= 0) {
+      allCells[currentRow][nextCol].focus();
+      return true;
+    }
+  } else if (event.key === 'Enter') {
+    const next = targetCell(currentRow + 1, currentCol);
+    if (next) {
+      next.focus();
+      return true;
+    }
+  } else if (event.key === 'ArrowUp') {
+    const next = targetCell(currentRow - 1, currentCol);
+    if (next) {
+      next.focus();
+      return true;
+    }
+  } else if (event.key === 'ArrowDown') {
+    const next = targetCell(currentRow + 1, currentCol);
+    if (next) {
+      next.focus();
+      return true;
+    }
+  } else if (event.key === 'Escape') {
+    cell.blur();
+    return true;
+  }
+  return false;
 }
 
 export function attachImageLightbox(container: HTMLElement): void {

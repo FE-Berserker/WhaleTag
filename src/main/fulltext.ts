@@ -205,7 +205,8 @@ async function extractText(
  * left untouched). Returns how many files are indexed.
  */
 export async function buildFulltextIndex(
-  rootPath: string
+  rootPath: string,
+  onProgress?: (processed: number) => void
 ): Promise<{ count: number }> {
   await fsp.mkdir(path.join(rootPath, META_DIR), { recursive: true });
   // prior is path → mtime ONLY (no content). Unchanged files' content stays in
@@ -254,6 +255,8 @@ export async function buildFulltextIndex(
         if (prevMtime !== undefined && prevMtime === stat.mtimeMs) {
           seen.add(rel);
           count += 1;
+          // docs/04 §10 progress (extract phase); worker throttles the events.
+          onProgress?.(count);
           return;
         }
 
@@ -263,6 +266,7 @@ export async function buildFulltextIndex(
         upserts.push({ path: rel, name, mtime: stat.mtimeMs, content: text });
         seen.add(rel);
         count += 1;
+        onProgress?.(count);
       }
     });
   }

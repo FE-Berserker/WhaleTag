@@ -7,6 +7,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),并遵循[语义化版本](https://semver.org/spec/v2.0.0.html)。
 
+## [0.4.0] - 2026-07-19
+
+### Added
+
+- **md-editor callout 提示框**:Obsidian/GitHub Alerts 语法 `> [!NOTE/WARNING/TIP/...]`,15 内置类型 + Settings 自定义类型(图标/颜色)。
+  **md-editor callout**:Obsidian/GitHub Alerts syntax `> [!NOTE/WARNING/TIP/...]`, 15 built-in types + custom types (icon/color) in Settings.
+- **md-editor 右键上下文菜单**:自定义 in-iframe 菜单(撤销/剪贴板/格式/标题/插入/导航/视图/导出),编辑区 + 预览区两套。
+  **md-editor right-click context menu**: custom in-iframe menu (undo/clipboard/format/heading/insert/navigate/view/export), separate for editor + preview.
+- **md-editor chrome 全量多语言**:工具栏/状态栏/TOC/右键菜单/对话框全部接入 i18n(en/zh/zh-TW/ja/ko)。
+  **md-editor chrome fully localized**: toolbar/status bar/TOC/context menu/dialogs wired to i18n (en/zh/zh-TW/ja/ko).
+- **md-editor 图片粘贴位置设置**(参考 Typora):当前目录 / 子文件夹模式,子文件夹名支持 `${filename}` 变量(按 md 文件名分目录)。
+  **md-editor pasted-image location setting** (Typora-style): current-folder / subfolder mode; subfolder name supports `${filename}` (per-md directory).
+- **md-editor 快捷键自定义**:Settings ▸ md-editor 快捷键,CodeMirror combo 重绑,live 生效。
+  **md-editor keybinding customization**: Settings ▸ md-editor, CodeMirror combo rebind, live.
+- **md-editor 代码折叠 / TOC 大纲侧栏 / 渲染主题预设**(github/solarized/dracula/nord/gruvbox/one-dark/latex,独立于全局主题)。
+  **md-editor code folding / TOC outline / render-theme presets** (independent of the global theme).
+- **office-viewer 数学公式渲染**、**主进程目录监视(dir-watcher)**、**whale-audio 协议**、KeyCaptureInput、tag-library-pack、callout-types。
+  **office-viewer math rendering**, **main-process dir-watcher**, **whale-audio protocol**, KeyCaptureInput, tag-library-pack, callout-types.
+
+### Changed
+
+- md-editor 架构拆分:从单一 `index.ts` 拆为 md-toolbar/md-keymaps/md-i18n/md-fold/md-toc/md-scroll/md-statusbar/md-theme/md-contextmenu/md-render。
+  md-editor split from a single `index.ts` into md-toolbar/md-keymaps/md-i18n/md-fold/md-toc/md-scroll/md-statusbar/md-theme/md-contextmenu/md-render.
+- IPC:`ipc.ts` → `ipc/` 目录(按域拆分);settings slice → `reducers/settings/`;extension-host → `extension-host/`。
+  IPC: `ipc.ts` → `ipc/` dir (per-domain); settings slice → `reducers/settings/`; extension-host → `extension-host/`.
+
+### Performance
+
+- md-editor:图片懒加载、移除 katex 死代码、`content-visibility`、日志精简。
+  md-editor: lazy images, dropped katex dead code, `content-visibility`, trimmed logs.
+- 移除 md-editor PDF 导出( drop pdf-lib,**-270KB gz**)。
+  Removed md-editor PDF export (dropped pdf-lib, **-270KB gz**).
+
+### Fixed
+
+- 网络共享删除失败时提供永久删除选项。
+  Offer permanent delete when trash fails on network shares.
+- md-editor Ctrl+T 表格对话框失效:`<dialog>`/showModal → div overlay;根因是过时 `src/*.js` 因 webpack `.js` 优先于 `.ts` 而污染 bundle。
+  md-editor Ctrl+T table dialog broken: `<dialog>`/showModal → div overlay; root cause was stale `src/*.js` shadowing `.ts` in the bundle (webpack resolves `.js` before `.ts`).
+
 ## [0.3.1] - 2026-07-18
 
 ### Added

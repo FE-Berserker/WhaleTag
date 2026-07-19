@@ -128,6 +128,11 @@ export interface PdfjsSessionOptions {
     baseVp: { width: number; height: number },
     doc: pdfjsLibDefault.PDFDocumentProxy,
   ) => void;
+  /** Optional formatter for each page canvas's `aria-label` (§16.18). Every
+   *  rendered canvas is stamped `role="img"` + this label so screen readers
+   *  announce "Page N of M" instead of a bare graphic. Default: English
+   *  `Page ${pageNum} of ${pageCount}`. */
+  pageAriaLabel?: (pageNum: number, pageCount: number) => string;
   /** Optional hook fired once after `getDocument.promise` resolves, with
    *  the total page count and a slim metadata summary. Lets consumers
    *  (pdf-viewer) update their "X of N" / page-input-max UI *before* the
@@ -262,7 +267,7 @@ export function applyTheme(theme: 'light' | 'dark') {
 }
 
 /**
- * i18n subset shared by both pdf-viewer and office-viewer. Six keys, two
+ * i18n subset shared by both pdf-viewer and office-viewer. Seven keys, two
  * locales. EN `failedRender` is the pdf-viewer wording (`PDF render failed: {msg}`)
  * — clearer subject-first phrasing; office-viewer's old `Failed to render PDF: {msg}`
  * is unified to this on refactor.
@@ -274,6 +279,7 @@ export interface PdfjsLocaleSubset {
   failedRender: string; // {msg}
   zoomIn: string;
   zoomOut: string;
+  pageLabel: string; // {n}/{total} — §16.18 canvas aria-label
 }
 
 export const PDFJS_I18N: Record<'en' | 'zh', PdfjsLocaleSubset> = {
@@ -284,6 +290,7 @@ export const PDFJS_I18N: Record<'en' | 'zh', PdfjsLocaleSubset> = {
     failedRender: 'PDF render failed: {msg}',
     zoomIn: 'Zoom in',
     zoomOut: 'Zoom out',
+    pageLabel: 'Page {n} of {total}',
   },
   zh: {
     loading: '加载中…',
@@ -292,6 +299,7 @@ export const PDFJS_I18N: Record<'en' | 'zh', PdfjsLocaleSubset> = {
     failedRender: 'PDF 渲染失败:{msg}',
     zoomIn: '放大',
     zoomOut: '缩小',
+    pageLabel: '第 {n} 页,共 {total} 页',
   },
 };
 
@@ -300,6 +308,11 @@ export const PDFJS_I18N: Record<'en' | 'zh', PdfjsLocaleSubset> = {
 /**
  * Default output scale: min(devicePixelRatio, 2) * 1.5. Matches the previous
  * hard-coded formula in both pdf-viewer and office-viewer.
+ *
+ * Why 1.5: the canvas backing store is rendered at 1.5× the CSS pixel size
+ * (times dpr) — a fixed supersample that keeps small PDF text crisp without a
+ * zoom-dependent re-raster. The dpr cap of 2 bounds canvas memory (width² ×
+ * height² × 4 B) on ≥3x displays, where the extra pixels are imperceptible.
  *
  * Exported (Phase 1 §A1) so pdf-viewer can `import { defaultOutputScale as outputScale }`
  * instead of declaring its own copy — a previous version did the latter, which
@@ -393,6 +406,7 @@ export function createPdfjsSession(opts: PdfjsSessionOptions): PdfjsSession {
     getDocumentExtras,
     onStatus,
     onAfterPageRender,
+    pageAriaLabel,
     onDocumentLoaded,
     outputScale = defaultOutputScale,
     computeDisplayScale,
@@ -508,6 +522,13 @@ export function createPdfjsSession(opts: PdfjsSessionOptions): PdfjsSession {
       const canvas = document.createElement('canvas');
       canvas.width = Math.floor(viewport.width);
       canvas.height = Math.floor(viewport.height);
+      // §16.18: expose each page canvas as an image to screen readers
+      // (canvas content is otherwise invisible to assistive tech).
+      canvas.setAttribute('role', 'img');
+      canvas.setAttribute(
+        'aria-label',
+        (pageAriaLabel ?? ((n, t) => `Page ${n} of ${t}`))(pageNum, doc.numPages),
+      );
       // Set BOTH CSS `width` AND `height` explicitly to `baseVp` (the
       // page's native dimensions, NOT the `outputScale`-scaled internal
       // bitmap size — the bitmap is the internal resolution set by

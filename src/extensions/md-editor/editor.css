@@ -368,6 +368,123 @@ body[data-theme='one-dark'] {
   --md-hljs-addition-bg: rgba(152, 195, 121, 0.15);
 }
 
+/* latex preset (2026-07-18): academic-paper look for writing 论文. Two
+ * parts: a light variable block (paper white / ink black / academic blue),
+ * then TYPOGRAPHY overrides (the only preset with per-selector rules — a
+ * paper is a layout, not just a palette). Conventions (researched 2026-07):
+ *   - LaTeX article class: body + headings share ONE serif family, headings
+ *     just bold (NOT sans); text justified; first-line indent ~1.5em
+ *   - Chinese thesis/journal: 1级标题 黑体四号居中;2/3 级标题 宋体加粗左对齐;
+ *     正文 宋体、首行缩进 2 字符;行距 ~1.5 倍,排版紧凑
+ * So: CJK-first serif body (Times-last — Times-first made CJK fallback
+ * obvious and ugly), 1.5 line height, h1 黑体居中, h2+ 宋体加粗左对齐,
+ * 2em indent (exempt: lists / quotes / callouts / tables / footnotes). */
+body[data-theme='latex'] {
+  --md-bg: #ffffff;
+  --md-text: #1a1a1a;
+  --md-muted: #555555;
+  --md-faint: #777777;
+  --md-border: #cccccc;
+  --md-accent: #003569;
+  --md-surface: #fafafa;
+  --md-warn: #9a6700;
+  --md-inline-code-bg: rgba(0, 0, 0, 0.05);
+}
+
+body[data-theme='latex'] #preview-pane {
+  font-family:
+    'Noto Serif CJK SC', 'Source Han Serif SC', 'Songti SC', 'SimSun',
+    'STSong', 'Times New Roman', serif;
+  font-size: 15px;
+  line-height: 1.5;
+  max-width: 760px;
+  margin: 0 auto;
+  text-align: justify;
+  hyphens: auto;
+}
+
+/* h1 = 一级标题:黑体、四号、居中(the only sans heading in the Chinese
+ * thesis convention; LaTeX's centered \title is the same idea). */
+body[data-theme='latex'] #preview-pane h1 {
+  font-family:
+    'SimHei', 'Heiti SC', 'PingFang SC', 'Microsoft YaHei',
+    'Noto Sans CJK SC', sans-serif;
+  font-size: 1.25em;
+  font-weight: 700;
+  text-align: center;
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+/* h2+ = 二/三级标题:宋体加粗、左对齐、无下框线(same serif as body —
+ * LaTeX sections are bold roman, NOT sans). */
+body[data-theme='latex'] #preview-pane h2,
+body[data-theme='latex'] #preview-pane h3,
+body[data-theme='latex'] #preview-pane h4,
+body[data-theme='latex'] #preview-pane h5,
+body[data-theme='latex'] #preview-pane h6 {
+  font-family: inherit;
+  font-weight: 700;
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+body[data-theme='latex'] #preview-pane h2 {
+  font-size: 1.25em;
+}
+
+body[data-theme='latex'] #preview-pane h3 {
+  font-size: 1.1em;
+}
+
+/* Chinese-thesis first-line indent; paragraphs carry the vertical rhythm via
+ * line-height instead of a bottom margin (紧凑, no large gaps). */
+body[data-theme='latex'] #preview-pane p {
+  text-indent: 2em;
+  margin-bottom: 0;
+}
+
+body[data-theme='latex'] #preview-pane li > p,
+body[data-theme='latex'] #preview-pane blockquote p,
+body[data-theme='latex'] #preview-pane .callout p,
+body[data-theme='latex'] #preview-pane table p,
+body[data-theme='latex'] #preview-pane .footnotes p {
+  text-indent: 0;
+}
+
+body[data-theme='latex'] #preview-pane a {
+  color: var(--md-accent);
+  text-decoration: underline;
+}
+
+body[data-theme='latex'] #preview-pane code {
+  font-family: 'Courier New', Consolas, monospace;
+}
+
+/* 三线表 (three-line table) — the standard table form in Chinese academic
+ * papers: thick top + bottom rules (1.5px), a thin rule under the header
+ * row (0.75px), NO vertical lines, NO body-row rules, no header shading.
+ * Content-width and centered like a float; cells inherit the body serif. */
+body[data-theme='latex'] #preview-pane table {
+  width: auto;
+  margin: 12px auto;
+  border-top: 1.5px solid var(--md-text);
+  border-bottom: 1.5px solid var(--md-text);
+}
+
+body[data-theme='latex'] #preview-pane th,
+body[data-theme='latex'] #preview-pane td {
+  border: none;
+  padding: 4px 14px;
+}
+
+body[data-theme='latex'] #preview-pane thead th {
+  background: transparent;
+  font-weight: 700;
+  border-bottom: 0.75px solid var(--md-text);
+}
+
+
 body {
   background-color: var(--md-bg);
   color: var(--md-text);
@@ -641,6 +758,117 @@ body {
 #preview-pane img {
   max-width: 100%;
   height: auto;
+}
+
+/* §html-block — live preview of ```` ```html ```` code blocks (renderHtmlBlocks
+ * replaces the <pre> with this wrapper). The "HTML" caption chip mirrors the
+ * `.code-lang` badge so blocks still read as code-sourced content. */
+#preview-pane .html-block {
+  position: relative;
+  margin-bottom: 12px;
+}
+
+#preview-pane .html-block::before {
+  content: 'HTML';
+  position: absolute;
+  top: -9px;
+  left: 8px;
+  z-index: 1;
+  padding: 0 6px;
+  font-size: 10px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--md-muted);
+  background: var(--md-bg);
+  border: 1px solid var(--md-border);
+  border-radius: 3px;
+}
+
+#preview-pane .html-block-frame {
+  display: block;
+  width: 100%;
+  height: 240px;
+  border: 1px solid var(--md-border);
+  border-radius: 4px;
+  background: #fff; /* paper for arbitrary block content, regardless of preset */
+  /* User-draggable taller (no measuring script — the frame is static by
+     design; taller content scrolls inside the frame). */
+  resize: vertical;
+  overflow: auto;
+}
+
+/* §context-menu — right-click menu (md-contextmenu.ts). Same `--md-*`
+ * variable family as the rest of the chrome so it follows every preset. */
+.cm-context-menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 190px;
+  padding: 4px;
+  background: var(--md-bg);
+  border: 1px solid var(--md-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  font-size: 13px;
+  user-select: none;
+}
+
+.cm-context-menu.submenu {
+  z-index: 10000;
+}
+
+.cm-context-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--md-text);
+  font: inherit;
+  text-align: left;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.cm-context-item:hover:not(.disabled),
+.cm-context-item:focus-visible:not(.disabled) {
+  background: var(--md-hover-bg);
+  outline: none;
+}
+
+.cm-context-item.disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.cm-context-item .check {
+  width: 14px;
+  flex: 0 0 14px;
+  text-align: center;
+}
+
+.cm-context-item .label {
+  flex: 1;
+  white-space: nowrap;
+}
+
+.cm-context-item .shortcut {
+  color: var(--md-muted);
+  font-size: 11px;
+  margin-left: 14px;
+}
+
+.cm-context-item .arrow {
+  color: var(--md-muted);
+  margin-left: 8px;
+}
+
+.cm-context-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--md-border);
 }
 
 /* CodeMirror overrides to fill the pane. */
@@ -1264,6 +1492,36 @@ a.toc-h6 {
   border-color: var(--md-hljs-addition-fg);
 }
 
+/* §table-edit — preview table cells are contenteditable. Highlight the active
+ * cell so the user can see which cell they're typing in, and add a subtle
+ * focus ring on Tab navigation (the default browser outline is suppressed
+ * because it sits outside the rounded cell border). */
+#preview-pane th,
+#preview-pane td {
+  position: relative;
+  vertical-align: top;
+}
+
+#preview-pane th[contenteditable='true'],
+#preview-pane td[contenteditable='true'] {
+  outline: none;
+  min-width: 4ch;
+  cursor: text;
+}
+
+#preview-pane th[contenteditable='true']:focus,
+#preview-pane td[contenteditable='true']:focus {
+  background: color-mix(in srgb, var(--md-accent) 12%, transparent);
+  box-shadow: inset 0 0 0 2px var(--md-accent);
+}
+
+#preview-pane th[contenteditable='true']:empty::before,
+#preview-pane td[contenteditable='true']:empty::before {
+  content: attr(data-placeholder);
+  color: var(--md-faint);
+  pointer-events: none;
+}
+
 /* Image lightbox overlay (§lightbox). Fixed full-viewport, above everything.
  * Backdrop click / Esc closes; wheel zooms; R rotates (JS in md-render.ts). */
 .lightbox-overlay {
@@ -1330,3 +1588,109 @@ a.toc-h6 {
   font-style: italic;
   font-size: 0.9em;
 }
+
+/* §table-dialog — fixed full-viewport overlay replaces `<dialog>`/showModal
+ *   (showModal's top-layer rendering is unreliable in the nested extension
+ *   iframe). The overlay is the backdrop + flex centerer; `.md-table-dialog-
+ *   panel` is the visible card. */
+.md-table-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.md-table-overlay[hidden] {
+  display: none;
+}
+
+.md-table-dialog-panel {
+  width: min(360px, calc(100vw - 32px));
+  padding: 20px;
+  color: var(--md-text);
+  background: var(--md-bg);
+  border: 1px solid var(--md-border);
+  border-radius: 8px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.md-table-dialog-title {
+  margin: 0;
+  color: var(--md-text);
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.md-table-dialog-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.md-table-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: var(--md-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.md-table-dialog-field input {
+  width: 100%;
+  height: 34px;
+  padding: 6px 9px;
+  color: var(--md-text);
+  background: var(--md-surface);
+  border: 1px solid var(--md-border);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.md-table-dialog-field input:focus {
+  border-color: var(--md-accent);
+  outline: 2px solid color-mix(in srgb, var(--md-accent) 25%, transparent);
+  outline-offset: 0;
+}
+
+.md-table-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.md-table-dialog-actions button {
+  min-width: 72px;
+  padding: 7px 14px;
+  color: var(--md-text);
+  background: transparent;
+  border: 1px solid var(--md-border);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.md-table-dialog-actions button:hover {
+  background: var(--md-hover-bg);
+}
+
+.md-table-dialog-actions button:focus-visible {
+  outline: 2px solid var(--md-accent);
+  outline-offset: 1px;
+}
+
+.md-table-dialog-actions button.primary {
+  color: #ffffff;
+  background: var(--md-accent);
+  border-color: var(--md-accent);
+}
+

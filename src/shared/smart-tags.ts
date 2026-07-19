@@ -1,7 +1,8 @@
 /**
  * Smart tags: tag *templates* that resolve to a concrete value at apply time.
  *
- *   "now"     ->  "20260704T1430"   (active within 5 min; else stale → null)
+ *   "now"     ->  "20260704T1430"   (fresh 60s — minute-truncated, see
+ *                                      NOW_TAG_FRESH_WINDOW_MS; else stale → null)
  *   "today"   ->  "20260704"
  *   "month"   ->  "202607"
  *   "★★★"    ->  "3star"
@@ -33,9 +34,63 @@
  * add a `SmartFunctionality` variant + a `resolveSmartTag` case when needed.
  */
 
-import { isPeriodTag } from '../renderer/domain/calendar';
+/**
+ * Period tags (`YYYYMMDD-YYYYMMDD`) — parsing lives HERE (shared), not in
+ * `renderer/domain/calendar`: main-process consumers (the HTTP provider's
+ * `apply_tag` tool, the Phase-4 date migration) need `isPeriodTag` too, and
+ * shared must never import from renderer (docs/01 §12). `renderer/domain/
+ * calendar` re-exports these for its view-layer callers.
+ */
 
-export { isPeriodTag } from '../renderer/domain/calendar';
+/** Number of days in a 1-based month. */
+function daysInMonth(year: number, month: number): number {
+  return new Date(year, month, 0).getDate();
+}
+
+/** Validates an 8-digit YYYYMMDD string and returns `YYYY-MM-DD`, or null. */
+export function parseYyyymmdd(value: string): string | null {
+  if (!/^\d{8}$/.test(value)) return null;
+  const year = parseInt(value.slice(0, 4), 10);
+  const month = parseInt(value.slice(4, 6), 10);
+  const day = parseInt(value.slice(6, 8), 10);
+  if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) {
+    return null;
+  }
+  return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`;
+}
+
+/** A parsed `YYYYMMDD-YYYYMMDD` period tag, as inclusive local YYYY-MM-DD bounds. */
+export interface DateTagRange {
+  startKey: string;
+  endKey: string;
+}
+
+/**
+ * Parse a period date tag (`YYYYMMDD-YYYYMMDD`) into inclusive local day bounds,
+ * or null if `tag` isn't a valid period. Only the bare period form is a range;
+ * smart / day / datetime tags resolve to a single day.
+ *
+ * `start`/`end` are normalized so `start <= end` regardless of tag order.
+ */
+export function dateTagRangeKey(tag: string): DateTagRange | null {
+  const m = /^(\d{8})-(\d{8})$/.exec(tag);
+  if (!m) return null;
+  const a = parseYyyymmdd(m[1]);
+  const b = parseYyyymmdd(m[2]);
+  if (!a || !b) return null;
+  return a <= b ? { startKey: a, endKey: b } : { startKey: b, endKey: a };
+}
+
+/**
+ * True when `tag` is a period tag (`YYYYMMDD-YYYYMMDD`).
+ *
+ * Period tags are an independent exclusive family (see docs/03-tagging.md §5):
+ * a file can hold at most one, and they are NOT part of the smart-date family
+ * even though they share the day parser for the start day.
+ */
+export function isPeriodTag(tag: string): boolean {
+  return dateTagRangeKey(tag) !== null;
+}
 
 export type SmartFunctionality =
   | 'now'
@@ -485,6 +540,36 @@ export function mondayOfWeek(d: Date): Date {
 }
 
 /**
+ * Freshness window of the `now` smart tag (docs/03 §12): 60s. The stored
+ * `YYYYMMDDTHHMM` value is minute-truncated, so `now - tagMinute < 60s` is
+ * EXACTLY equivalent to "same calendar minute" — the tag stays active for
+ * the remainder of the minute it was written in (0–60s depending on where
+ * in the minute the write landed). Named so the window is one visible
+ * constant instead of an emergent property of the string compare; change it
+ * only together with the tests in smart-tags.test.ts.
+ */
+export const NOW_TAG_FRESH_WINDOW_MS = 60_000;
+
+/**
+ * True when a canonical `YYYYMMDDTHHMM` tag is within
+ * {@link NOW_TAG_FRESH_WINDOW_MS} of `now` (see the constant for the exact
+ * same-minute equivalence). Bare day forms (no `T`) are never `now`-fresh.
+ */
+export function isNowTagFresh(canonical: string, now: Date): boolean {
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})$/.exec(canonical);
+  if (!m) return false;
+  const tagMs = new Date(
+    Number(m[1]),
+    Number(m[2]) - 1,
+    Number(m[3]),
+    Number(m[4]),
+    Number(m[5])
+  ).getTime();
+  const diff = now.getTime() - tagMs;
+  return diff >= 0 && diff < NOW_TAG_FRESH_WINDOW_MS;
+}
+
+/**
  * Resolves a smart tag to its concrete string value at the given moment.
  *
  * `now` is passed in (not read via `new Date()` internally) so the function
@@ -685,6 +770,12 @@ export function smartFunctionalityOfTag(
     'currentMonth',
     'currentYear',
   ] as const) {
+    // `now` uses the explicit 60s window (minute-truncated timestamp —
+    // equivalent to same-minute, see NOW_TAG_FRESH_WINDOW_MS).
+    if (fn === 'now') {
+      if (isNowTagFresh(canonical, now)) return fn;
+      continue;
+    }
     if (resolveSmartTag(fn, now) === canonical) return fn;
   }
   return null;

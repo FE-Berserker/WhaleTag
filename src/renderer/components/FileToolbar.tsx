@@ -32,7 +32,7 @@ import { COLUMN_HEADER_HEIGHT } from '-/theme';
 import { clearRecent } from '-/reducers/recent';
 import { setViewDepth, MAX_VIEW_DEPTH, MIN_VIEW_DEPTH } from '-/reducers/settings';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
-import { useDirectoryContentContext } from '-/hooks/DirectoryContentContextProvider';
+import { useDirectoryUI } from '-/hooks/DirectoryContentContextProvider';
 import { useIOActionsContext } from '-/hooks/IOActionsContextProvider';
 import { basename } from '-/services/path-util';
 import PromptDialog from '-/components/PromptDialog';
@@ -100,7 +100,10 @@ export default function FileToolbar() {
     canGoBack,
     canGoForward,
   } = useCurrentLocationContext();
-  const { refresh, loading } = useDirectoryContentContext();
+  // UI slice only (`refresh` / `loading`) — the combined hook would also
+  // subscribe to the data slice and re-render the toolbar on every rescan
+  // (docs/01 §12).
+  const { refresh, loading } = useDirectoryUI();
   const { createFolder, createFile } = useIOActionsContext();
   const recentItems = useSelector(
     (s: RootState) => s.recent?.items ?? EMPTY_ARR

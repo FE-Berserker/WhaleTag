@@ -23,6 +23,7 @@ import { geoPointFromTags } from '../domain/geo-tag';
 import { MAX_RECURSIVE_ENTRIES } from '../domain/recursive-entries';
 import type { RootState } from '-/reducers';
 import { ipcApi } from '-/services/ipc-api';
+import { isSameOrDescendant } from '-/services/path-util';
 import { useCurrentLocationContext } from './CurrentLocationContextProvider';
 
 export type SortKey = 'name' | 'size' | 'modified' | 'extension';
@@ -363,6 +364,37 @@ export function DirectoryContentContextProvider({
     () => load(currentDirectoryPath),
     [currentDirectoryPath, load]
   );
+
+  // docs/04 §10: external changes under the current location (fs.watch) —
+  // refresh the file area when a watcher flush touches the open directory.
+  // Trailing 300ms debounce: a burst (git checkout, unzip, big copy) reloads
+  // once, not per event.
+  const externalRefreshTimer = useRef<number | null>(null);
+  useEffect(() => {
+    if (!currentDirectoryPath) return undefined;
+    const off = ipcApi.onDirChanged((ev) => {
+      if (!isSameOrDescendant(ev.rootPath, currentDirectoryPath)) return;
+      const touches =
+        ev.paths.length === 0 || // watch buffer overflow — blanket refresh
+        ev.paths.some((rel) =>
+          isSameOrDescendant(currentDirectoryPath, `${ev.rootPath}/${rel}`)
+        );
+      if (!touches) return;
+      if (externalRefreshTimer.current !== null) {
+        window.clearTimeout(externalRefreshTimer.current);
+      }
+      externalRefreshTimer.current = window.setTimeout(() => {
+        externalRefreshTimer.current = null;
+        void load(currentDirectoryPath);
+      }, 300);
+    });
+    return () => {
+      off();
+      if (externalRefreshTimer.current !== null) {
+        window.clearTimeout(externalRefreshTimer.current);
+      }
+    };
+  }, [currentDirectoryPath, load]);
 
   // H.24 R3: the list shows BOTH files and directories at any depth. `dirs`
   // is also exposed separately so FolderViz can rebuild its tree from the

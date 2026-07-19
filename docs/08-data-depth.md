@@ -64,7 +64,7 @@ type DirectoryContentContextValue = DirectoryContentMetaValue & DirectoryUIValue
 
 ## 3. 批量 sidecar 读取 IPC
 
-[src/main/ipc.ts](../src/main/ipc.ts) 注册 `sidecar:readForPaths` handler;主进程侧 [src/main/sidecar.ts](../src/main/sidecar.ts) 的 `readSidecardsForPaths(paths)` 并行执行两遍:
+[src/main/ipc/meta.ts](../src/main/ipc/meta.ts) 注册 `sidecar:readForPaths` handler;主进程侧 [src/main/sidecar.ts](../src/main/sidecar.ts) 的 `readSidecardsForPaths(paths)` 并行执行两遍:
 
 - **Pass 1**(并行 `Promise.all`):按父目录分组,每个目录 bulk 读 `wsd.json`
 - **Pass 2**(并行 `Promise.all`,仅当 Pass 1 后仍有 `missing` 时):凡 wsd.json 没命中的 path,逐个调 `readSidecar(filePath)`(内部已经实现"先试 wsd.json → 失败就 withLock(loadFilesOrMigrate) 读 legacy per-file")

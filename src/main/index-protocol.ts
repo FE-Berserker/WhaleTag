@@ -26,6 +26,8 @@ export type IndexWorkerOp =
   | 'index:advanced'
   | 'index:tags'
   | 'index:status'
+  | 'index:close'
+  | 'index:shutdown'
   // fulltext
   | 'fulltext:build'
   | 'fulltext:search'
@@ -46,6 +48,8 @@ export type IndexWorkerArg =
   | { op: 'index:advanced'; arg: { rootPath: string; q: SearchQuery } }
   | { op: 'index:tags'; arg: { rootPath: string } }
   | { op: 'index:status'; arg: { rootPath: string } }
+  | { op: 'index:close'; arg: { rootPath: string } }
+  | { op: 'index:shutdown'; arg: Record<string, never> }
   | { op: 'fulltext:build'; arg: { rootPath: string } }
   | { op: 'fulltext:search'; arg: { rootPath: string; q: string } }
   | { op: 'fulltext:has'; arg: { rootPath: string } }
@@ -67,6 +71,8 @@ export type IndexWorkerResult =
   | { op: 'index:advanced'; result: IndexEntry[] }
   | { op: 'index:tags'; result: string[] }
   | { op: 'index:status'; result: { count: number; ready: boolean } }
+  | { op: 'index:close'; result: void }
+  | { op: 'index:shutdown'; result: void }
   | { op: 'fulltext:build'; result: { count: number } }
   | { op: 'fulltext:search'; result: FulltextHit[] }
   | { op: 'fulltext:has'; result: boolean }
@@ -104,9 +110,10 @@ export interface IndexWorkerErr {
 }
 
 /**
- * Server-pushed events (no reqId). Currently only `ready` — progress
- * events arrive in a follow-up PR (mirror the `ai:chunk` pattern at
- * `src/main/ai/ipc-ai-runtime.ts:57-63`).
+ * Server-pushed events (no reqId): `ready` on boot, `progress` during
+ * `index:build` / `fulltext:build` (docs/04 §10 — the host fans these out
+ * via `subscribe()`, `main.ts` forwards them to windows as
+ * `index:progress`).
  */
 export type IndexWorkerEvent =
   | { kind: 'ready' }
@@ -117,6 +124,9 @@ export type IndexWorkerEvent =
       phase: 'scan' | 'ingest' | 'extract' | 'delete';
       processed: number;
       total: number | null;
+      /** Terminal event for the build (emitted once, before the response) —
+       *  passive observers clear their progress UI on this. */
+      done?: boolean;
     };
 
 /** Discriminated union of every message that flows on the worker port. */

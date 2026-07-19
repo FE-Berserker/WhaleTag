@@ -8,7 +8,7 @@
 
 - **本地文件夹位置**(本地路径,CRUD:`createLocation` / `updateLocation` / `deleteLocation`)
 - **切换最近**:LRU(`reducers/recent.ts`),前进 / 后退栈
-- **只读位置**:`isReadOnly: true` 时**写路径根本不在 `allowedRoots` 里**(`assertWithinAllowedRoot` 早 throw)+ UI 写按钮 disabled + 提示
+- **只读位置**:写拦截在 **renderer 层**(`IOActionsContextProvider.runAndRefresh` 早 throw + FileList/useListCommands 守卫 + 写按钮 disabled);AI 侧另有 `readOnlyGuard`。**注意**:`setAllowedRoots` 收到的 roots **包含**只读位置(Root.tsx 全量推送)——allowedRoots 只表达"配置的 location",主进程写 IPC 对只读位置**不会**早 throw(与早期文档表述不同,以代码为准;Whale 自身元数据如 `.whale/index.db` 仍会写入只读位置)。
 
 云存储(S3 / WebDAV)、导入导出、`.ts → .whale` 迁移工具均**不在范围**。详见 [docs/09-known-issues.md](./09-known-issues.md)。
 
@@ -60,7 +60,7 @@
 - `assertWithinAllowedRoot(filePath)` 校验给定路径在某个 root 下;**空集合 = 拒绝所有写**(fail-closed,`allowed-roots.ts:47-49` 抛 "Refused: no configured locations")
 - 对称路径用 `fs.realpathSync` 解析目标(不存在则递归解析存在的父目录再拼尾部,`allowed-roots.ts:27-39` `resolveGuardPath`),防止 symlink 逃逸;`setAllowedRoots` 也对 root 做 `realpathSync`(不可达 fallback 到 `path.resolve`)
 - Windows 大小写归一(`isSameOrDescendant` 调用前 `toLowerCase()`)
-- **只读位置**(`isReadOnly=true`)在 setAllowedRoots 时不传入此 root → 对应写 IPC 早 throw → UI 写按钮自然 disabled
+- **只读位置**(`isReadOnly=true`)的写拦截在 renderer 层(IOActions / FileList / useListCommands 守卫)+ AI `readOnlyGuard`;allowedRoots **包含**只读位置(见 §1 上方条目),主进程写 IPC 不对其早 throw
 
 **renderer 侧 await helper**(`src/renderer/services/allowed-roots.ts`):
 

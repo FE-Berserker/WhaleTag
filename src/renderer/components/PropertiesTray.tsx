@@ -34,6 +34,7 @@ import { formatSize, formatDate } from '-/services/format';
 import { useDirectoryContent } from '-/hooks/DirectoryContentContextProvider';
 import { stripTagsFromName } from '-/services/tags';
 import { outlinedTagChipSx, tagDisplayLabel } from '-/services/tag-display';
+import { useTagDisplayLabels } from '-/hooks/useTagDisplayLabels';
 import {
   SMART_TAGS,
   RATING_TAGS,
@@ -265,6 +266,10 @@ export default function PropertiesTray({
   const visibleTags = single
     ? tagsByName.get(single.path) ?? []
     : commonTags;
+
+  // docs/03: freshness-aware chip labels (date-family tags flip on the
+  // per-minute tick; subscribed only when a date-shaped tag is present).
+  const visibleTagLabels = useTagDisplayLabels(visibleTags);
 
   const tagActions = useTagActions({
     entries,
@@ -600,12 +605,12 @@ export default function PropertiesTray({
                   </Typography>
                 </Stack>
                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
-                  {visibleTags.map((tag) => {
+                  {visibleTags.map((tag, i) => {
                     const c = tagColors[tag];
                     return (
                       <Chip
                         key={tag}
-                        label={tagDisplayLabel(tag, t)}
+                        label={visibleTagLabels[i]}
                         size="small"
                         variant="outlined"
                         sx={outlinedTagChipSx(c, tagShape)}

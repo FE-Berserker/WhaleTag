@@ -294,6 +294,15 @@ export interface ImageSavedMessage {
   error?: string;
 }
 
+/** Host -> Extension: response to `requestClipboardText` (md-editor context
+ *  menu Paste). `text` is the clipboard's current text ('' when empty or
+ *  non-text). */
+export interface ClipboardTextMessage {
+  type: 'clipboardText';
+  requestId: string;
+  text: string;
+}
+
 // md-editor render-theme preset + custom callouts (host → ext). The host
 // pushes these redux settings into the md-editor iframe (separate origin) so
 // its preview renders with the user's chosen preset + custom callout types.
@@ -307,8 +316,15 @@ export type MdRenderPreset =
   | 'dracula'
   | 'nord'
   | 'gruvbox'
-  | 'one-dark';
+  | 'one-dark'
+  | 'latex';
 export type MdRenderThemePref = 'auto' | MdRenderPreset;
+
+/** md-editor pasted-image save location: alongside the .md, or inside a
+ *  subfolder of it (Typora-style). The subfolder name (see
+ *  SetImageSaveConfigMessage) may contain a `${filename}` placeholder that
+ *  expands to the .md's basename without extension (notes.md → notes). */
+export type MdImageSaveMode = 'current' | 'subfolder';
 
 /** Host → Extension (md-editor): apply this render-theme preset ('auto' =
  *  follow the host's light/dark). Replaces the iframe's localStorage-only
@@ -322,6 +338,25 @@ export interface SetMdRenderThemeMessage {
 export interface SetCustomCalloutsMessage {
   type: 'setCustomCallouts';
   callouts: import('./callout-types').CustomCallout[];
+}
+/** Host → Extension (md-editor): replace the keymap bindings. Payload is an
+ *  action→CodeMirror-combo map (e.g. `{ save: 'Mod-s', bold: 'Mod-b' }`). The
+ *  editor reconfigures its keymapCompartment so the change applies live to an
+ *  already-open editor. `''` = no binding for that action. Typed loosely here
+ *  (Record<string,string>) so shared/ doesn't import renderer domain. */
+export interface SetKeybindingsMessage {
+  type: 'setKeybindings';
+  keybindings: Record<string, string>;
+}
+/** Host → Extension (md-editor): configure where pasted/dropped images are
+ *  saved. `mode='current'` → the .md's own directory; `mode='subfolder'` → a
+ *  subfolder of it, whose name may contain `${filename}` (= the .md basename
+ *  without extension). The main process mkdir's the subfolder (recursive) on
+ *  save, and the editor inserts a `![](./<subfolder>/file)` link accordingly. */
+export interface SetImageSaveConfigMessage {
+  type: 'setImageSaveConfig';
+  mode: MdImageSaveMode;
+  subfolder: string;
 }
 /** Extension → Host (md-editor): the user changed the preset from the
  *  toolbar `<select>` inside the editor. Host dispatches it back into redux
@@ -356,11 +391,14 @@ export type HostMessage =
   | FileBytesMessage
   | SetMdRenderThemeMessage
   | SetCustomCalloutsMessage
+  | SetKeybindingsMessage
+  | SetImageSaveConfigMessage
   | EbookAnnotationsMessage
   | RequestSelectionMessage
   | ApplyReplacementMessage
   | StreamingUrlMessage
-  | ImageSavedMessage;
+  | ImageSavedMessage
+  | ClipboardTextMessage;
 
 // Extension -> Host messages
 
@@ -633,6 +671,14 @@ export interface RequestSaveImageMessage {
   dirPath: string;
 }
 
+/** Extension -> Host: read the clipboard's text (md-editor context menu
+ *  Paste). Routed through the host because an iframe's Clipboard API is
+ *  Permissions-Policy-gated; the host's main process reads it directly. */
+export interface RequestClipboardTextMessage {
+  type: 'requestClipboardText';
+  requestId: string;
+}
+
 export type ExtensionMessage =
   | ReadyMessage
   | LoadDefaultTextContentMessage
@@ -666,7 +712,8 @@ export type ExtensionMessage =
   | EditorSelectionMessage
   | RequestOpenInViewMessage
   | RequestHideMessage
-  | RequestSaveImageMessage;
+  | RequestSaveImageMessage
+  | RequestClipboardTextMessage;
 
 /** Runtime API injected into each extension iframe as `window.whaleExt`. */
 export interface WhaleExtApi {

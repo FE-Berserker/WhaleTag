@@ -82,7 +82,9 @@
 
 **鲜度谓词**内联在 `smartFunctionalityOfTag` 内(`smart-tags.ts:688` 用 `resolveSmartTag(fn, now)` 直接比较),过期的 `now` 视角返回 null。
 
-`useNow()` hook([src/renderer/hooks/useNow.ts](../src/renderer/hooks/useNow.ts))每分钟 tick 提供 `now`。**当前仅 3 个调用点**(`FileList.tsx` ×1,`PropertiesTray.tsx` ×2,`TagMetaContextProvider.tsx` ×1)。其他 `tagDisplayLabel(tag, t)` 调用走默认 `now = new Date()` —— 在用户长时间停留时,**当日的 chip 在跨日后不会自动重渲染**(直到下次显式 tick)。后续优化:统一在 hook 内驱动,或向上下文注入。
+`useNow()` hook([src/renderer/hooks/useNow.ts](../src/renderer/hooks/useNow.ts))每分钟 tick 提供 `now`(共享单定时器 + `useSyncExternalStore`;`subscribeNow` / `getNowSnapshot` 导出给条件订阅者)。直挂 `useNow()` 的调用点:`FileList.tsx` ×1(且经 `FROZEN_NOW` 门控,仅 `date:`/`smart:*` 过滤才消费 tick)、`PropertiesTray.tsx` ×2、`TagMetaContextProvider.tsx` ×1。
+
+**chip 标签鲜度已统一(2026-07-18)**:[useTagDisplayLabels](../src/renderer/hooks/useTagDisplayLabels.ts) 批量包 `tagDisplayLabel` —— **仅当所展示标签含日期形 tag(`isAnyDateShapeTag`)才订阅**每分钟 tick,无日期 tag 的 chip 组件零订阅零重渲;label 数组按 index 对齐。已接入:InlineTagInput、EntryTagChips(含 overflow popover)、PropertiesTray 标签 chip、GanttRow 悬浮 tooltip、GalleryCell 角标 + tooltip。TaskReminder 未接(其分组 tag 是 workflow 家族,label 与 `now` 无关);菜单/对话框类(EntryMenu 系列、TagGroups、Settings 等)开启时即最新,不接。
 
 **降级展示**:过期日期不再显示具体值,统一折叠进 **`日期` chip`,显示文本 "日期 (n)"(en/zh 同),`STALE_DATE_FOLD_COLOR = '#9e9e9e'` 中性灰,`HistoryIcon` 图标。在 `TagLibrary` 渲染时位于标签库"日期组"簇内最后一项。
 
@@ -181,14 +183,14 @@ runMigration(allowedRoots): Promise<MigrationResult>
   // 二次运行幂等(只看 changed)
 ```
 
-**触发时机(2026-07-18 修复)**:首次**非空** `fs:setAllowedRoots` 推送时触发 —— [ipc.ts](../src/main/ipc.ts) handler 里 `triggerStartupMigration(getAllowedRoots())`(once-guard 防 location 增删的重推送重跑;空推送不消耗 guard,渲染层 rehydration 前可能先推一次 `[]`)。原先在 `bootstrap()` 里跑时 roots 必为空(渲染层尚未挂载),迁移从未真正执行 —— 见 [docs/09 §26](./09-known-issues.md)。
+**触发时机(2026-07-18 修复)**:首次**非空** `fs:setAllowedRoots` 推送时触发 —— [fs-roots.ts](../src/main/ipc/fs-roots.ts) handler 里 `triggerStartupMigration(getAllowedRoots())`(once-guard 防 location 增删的重推送重跑;空推送不消耗 guard,渲染层 rehydration 前可能先推一次 `[]`)。原先在 `bootstrap()` 里跑时 roots 必为空(渲染层尚未挂载),迁移从未真正执行 —— 见 [docs/09 §26](./09-known-issues.md)。
 
 ## 12. 已知取舍
 
 - `tagDisplayLabel` 不在 `now` 状态下显示 i18n 模板名(因为精度到分钟,显示原 `2026-07-04 14:30` 比"此刻"更有信息量)
 - 期间家族"过期"无专门折叠(与 `date:` 共用 `isDateLikeShape` 边界,但通过 `isPeriodTag` 排除)
 - 文件夹元数据(`.whale/wsm.json` 的 `tags`)也对日期家族做互斥收敛,批量子目录打标时每个子目录各自互斥
-- `InlineTagInput` 调用 `tagDisplayLabel(tag, t)` 不传 `useNow()` —— chip 不动态刷新鲜度,等待下次 render(整体优化未做)
+- ~~`InlineTagInput` 调用 `tagDisplayLabel(tag, t)` 不传 `useNow()`~~ ✅ 已统一(2026-07-18,`useTagDisplayLabels`,见 §3 上文的鲜度段)
 - `nextWeek` 在它指向的那个**周一**就会 stale(过了当日 0:00 立刻降级)
-- `now` smart tag 的 60 秒鲜度窗口写死在 `smart-tags.ts` 的内联比较,未抽出常量;后续若调阈值,需在测试同步
-- `TagLibrary.tsx` 标签列表未虚拟化(clusterTags / otherTags 直接 `.map` 全量渲染),大库几百上千标签时全量 DOM(2026-07-18 审阅;SearchBar 有 SQL `QUERY_LIMIT=50` 兜底故无需)
+- ~~`now` smart tag 的 60 秒鲜度窗口写死在 `smart-tags.ts` 的内联比较~~ ✅ 已抽常量(2026-07-18):`NOW_TAG_FRESH_WINDOW_MS` + `isNowTagFresh()` —— 与分钟截断比较**严格等价**(零行为漂移,82 测试不改全过);顺带修正头注「5 min」的失实表述
+- ~~`TagLibrary.tsx` 标签列表未虚拟化~~ ✅ 已虚拟化(2026-07-18):cluster(`smart:`/`period:`/`date:` 日期簇)作为 react-window `List` 的第 0 行,普通标签经 [tag-library-pack.ts](../src/renderer/components/tag-library-pack.ts) 按容器宽度贪心打包成行(变宽 chip 无法固定每行个数;宽度模型 latin 6.4px/CJK×2 + 数字 + 34px 基值,宁偏宽不偏移),行级 `useDynamicRowHeight` 实测高;大库只挂载可视窗 + overscan。`geo:` 留在普通标签流(独立坐标家族)。DnD 不受影响(仅可见行内的 chip 挂载拖拽)。测试:[tag-library-pack.test.ts](../src/renderer/components/tag-library-pack.test.ts) 8 例(宽度模型/贪心打包/超宽独行/极窄防死循环/高度估算)

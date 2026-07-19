@@ -114,6 +114,16 @@ import { useNow } from '-/hooks/useNow';
 
 const SORT_KEYS: SortKey[] = ['name', 'size', 'modified', 'extension'];
 
+/**
+ * Sentinel for the `visible` memo's `now` dependency: filters that never
+ * classify tag freshness (plain tag / `geo:` / `period:`) use this frozen
+ * Date so the per-minute `useNow` tick neither recomputes the filter nor
+ * re-renders the visible rows (docs/01 §12). Only the `date:` / `smart:*`
+ * fold filters see the live tick — their freshness classification genuinely
+ * depends on wall-clock boundaries.
+ */
+const FROZEN_NOW = new Date(0);
+
 function copyDefaultName(name: string): string {
   const { base, ext } = splitNameExt(name);
   return `${base} - copy${ext || ''}`;
@@ -193,9 +203,9 @@ export default function FileList() {
   // (path-keyed, single source of truth). TagMetaContext now only owns
   // activeTag / setActiveTag / save / saveMany / allTags.
   const { activeTag, setActiveTag, save, saveMany } = useTagMetaContext();
-  // Phase 3 / §3: needed by the `date:` fold filter so it can classify
-  // tags as fresh / stale at filter time. Refreshes once a minute via the
-  // shared useNow hook — same source the tag library uses.
+  // Phase 3 / §3: freshness classification for the `date:` / `smart:*` fold
+  // filters. Refreshes once a minute via the shared useNow hook — but only
+  // reaches the `visible` memo when such a filter is active (see `nowTick`).
   const now = useNow();
   const tagColors = useShallowEqualSelector(
     (s: RootState) => s.settings?.tagColors ?? {}
@@ -459,6 +469,13 @@ export default function FileList() {
   // Full-screen media lightbox state.
   const [lightboxEntry, setLightboxEntry] = useState<DirEntry | null>(null);
 
+  // Only the `date:` / `smart:*` fold filters classify tag freshness against
+  // wall-clock — gate the memo's `now` dependency on them so the per-minute
+  // `useNow` tick doesn't recompute (and re-render all visible rows) for
+  // plain tag / `geo:` / `period:` filters (docs/01 §12).
+  const freshnessFilter = activeTag === 'date:' || (activeTag?.startsWith('smart:') ?? false);
+  const nowTick = freshnessFilter ? now : FROZEN_NOW;
+
   const visible = useMemo(() => {
     if (!activeTag) return entries;
     // Folded geo filter ("geo:") matches every file carrying a coordinate tag.
@@ -481,7 +498,7 @@ export default function FileList() {
     // boundaries correctly re-classify at click time.
     if (activeTag === 'date:') {
       return entries.filter((e) =>
-        (tagsByName.get(e.path) ?? []).some((tg) => isStaleDateTag(tg, now))
+        (tagsByName.get(e.path) ?? []).some((tg) => isStaleDateTag(tg, nowTick))
       );
     }
     // Folded smart-tag filter ("smart:today") matches every variant of that fn.
@@ -489,14 +506,14 @@ export default function FileList() {
       const fn = activeTag.slice(6) as SmartFunctionality;
       return entries.filter((e) =>
         (tagsByName.get(e.path) ?? []).some(
-          (tg) => smartFunctionalityOfTag(tg) === fn
+          (tg) => smartFunctionalityOfTag(tg, nowTick) === fn
         )
       );
     }
     return entries.filter((e) =>
       (tagsByName.get(e.path) ?? []).includes(activeTag)
     );
-  }, [entries, activeTag, tagsByName, now]);
+  }, [entries, activeTag, tagsByName, nowTick]);
 
   const selectedEntries = useMemo(
     () => visible.filter((e) => selectedPathsRef.current.has(e.path)),

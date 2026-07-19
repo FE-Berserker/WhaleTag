@@ -34,9 +34,18 @@ body[data-theme='dark'] {
   user-select: none;
 }
 
+#toolbar .separator {
+  width: 1px;
+  height: 18px;
+  background-color: rgba(255, 255, 255, 0.15);
+  margin: 0 2px;
+}
+
 #toolbar button {
-  width: 26px;
   height: 26px;
+  min-width: 26px;
+  padding: 0 6px;
+  white-space: nowrap;
   border: 1px solid rgba(255, 255, 255, 0.2);
   background-color: rgba(255, 255, 255, 0.08);
   color: inherit;
@@ -50,14 +59,59 @@ body[data-theme='dark'] {
   background-color: rgba(255, 255, 255, 0.18);
 }
 
+#toolbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+#toolbar button:disabled:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+#toolbar button.active {
+  background-color: rgba(76, 175, 80, 0.4);
+  border-color: rgba(76, 175, 80, 0.7);
+}
+
+.page-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+#page-input {
+  width: 44px;
+  height: 24px;
+  text-align: center;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background-color: rgba(0, 0, 0, 0.25);
+  color: inherit;
+  border-radius: 3px;
+  font: inherit;
+  padding: 0 4px;
+  -moz-appearance: textfield;
+}
+
+#page-input::-webkit-outer-spin-button,
+#page-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+#page-input:focus {
+  outline: none;
+  border-color: rgba(76, 175, 80, 0.7);
+}
+
+.page-sep {
+  opacity: 0.6;
+  margin: 0 2px;
+}
+
 #zoom-level {
   min-width: 44px;
   text-align: center;
-}
-
-#page-info {
-  margin-left: auto;
-  opacity: 0.8;
 }
 
 #pages {
@@ -136,12 +190,53 @@ body[data-theme='dark'] {
 
 #status {
   flex: 0 0 auto;
-  padding: 6px 12px;
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 12px;
   font-size: 12px;
-  opacity: 0.7;
-  text-align: center;
+  opacity: 0.85;
+  background-color: rgba(0, 0, 0, 0.35);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  user-select: none;
 }
 
-#status:empty {
+#status .status-left,
+#status .status-right {
+  display: inline-flex;
+  gap: 14px;
+}
+
+#status .status-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+#status .status-label {
+  opacity: 0.65;
+  margin-right: 2px;
+}
+
+/* Loading bar — transient progress / error line just above the status bar.
+   Empty by default (`:empty` hides it); the TS layer shows "Converting…" /
+   "Rendering N / M…" / error text here during heavy work (§16.8). */
+#loading-bar {
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  font-size: 12px;
+  text-align: center;
+  background-color: rgba(0, 0, 0, 0.25);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  color: inherit;
+  opacity: 0.9;
+  user-select: none;
+}
+
+#loading-bar:empty {
   display: none;
+}
+
+#loading-bar[data-state='error'] {
+  background-color: rgba(244, 67, 54, 0.25);
+  color: #ffcdd2;
 }

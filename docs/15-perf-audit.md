@@ -37,7 +37,7 @@
 [recursive-cache.ts](../src/main/recursive-cache.ts)(镜像 office-cache):缓存 `<dir>/.whale/index-recursive/d<depth>.json` 的 scan(`DirEntry[]`);**双守卫失效**(`dirPath` 挡文件夹移动 + `folderMtime` 挡子项增删);`invalidateRecursiveScan` 清祖先 ≤5 层,挂 6 个 fs-op 钩(含原先无钩的 mkdir)。sidecar 读更便宜且耦合 `wsd.json`,留后续。
 
 ### P1-4. office→PDF bytes IPC 双拷贝 ✅
-端到端改 `Uint8Array`:[ipc.ts](../src/main/ipc.ts) `ext:convertOfficeToPdf` 直返 Buffer 删拷贝;types + viewer 直传。净省 1 次 memcpy/文档。**同类已照改(2026-07-18)**:`convertDwgToDxf` / `convertEbookToEpub` 两 handler 同形改完(handler 直返 Buffer;ipc-types / extension-types / ipc-api 链 `ArrayBuffer`→`Uint8Array`;cad-viewer 去 `new Uint8Array` 包裹、ebook-viewer `loadEpub(data)` 直传)。**`convertAudio` 不适用**:走 `whale-audio://` 协议流式(无 IPC bytes 往返),其 stdout chunk 的 `ArrayBuffer.slice` 是 load-bearing(Node 池化 buffer 防 `'data'` 覆盖),不能删。
+端到端改 `Uint8Array`:[extensions.ts](../src/main/ipc/extensions.ts) `ext:convertOfficeToPdf` 直返 Buffer 删拷贝;types + viewer 直传。净省 1 次 memcpy/文档。**同类已照改(2026-07-18)**:`convertDwgToDxf` / `convertEbookToEpub` 两 handler 同形改完(handler 直返 Buffer;ipc-types / extension-types / ipc-api 链 `ArrayBuffer`→`Uint8Array`;cad-viewer 去 `new Uint8Array` 包裹、ebook-viewer `loadEpub(data)` 直传)。**`convertAudio` 不适用**:走 `whale-audio://` 协议流式(无 IPC bytes 往返),其 stdout chunk 的 `ArrayBuffer.slice` 是 load-bearing(Node 池化 buffer 防 `'data'` 覆盖),不能删。
 
 ### P1-5. GanttRow memo 解锁 ✅
 GanttView→GanttTimeline 6 个内联闭包稳定(纯转发直传 `data.*`,其余 `useCallback`);**真正 spoiler**:GanttTimeline per-row `onCommit` adapter 每行新函数——把 entry-binding 下沉到 GanttRow 内部(同 `onClick` 模式),GanttTimeline 直传。
@@ -88,8 +88,8 @@ office-viewer `openOfficeFile` 并行 fire `requestThumbnail` + `requestOfficeCo
 ### P3-3. UNO/soffice 常驻后台进程 ✅
 保活一个 LibreOffice UNO listener,后续 office→PDF 转换复用已初始化进程(~200–500ms),冷启动只一次。Node 无原生 UNO 客户端,故 bundle 一个 Python worker(借用 LO 自带 `python`+`pythonuno`)做桥接,worker 起不来时带 cooldown 自动回退现有 `execFile`(**零 regression**)。详见 [docs/17](./17-office-worker.md)。顺带把 `convertOfficeToPdf` 与 `encodeOfficeThumb` 两处重复的 spawn body 合并成共享 `convertOfficeToPdfVia`(worker 优先 + execFile 兜底,`sofficeSemaphore` 包两路)。
 
-### P3-4. AI 流式 boolean 兜底 ⬜ 需诊断
-per-uuid `streamedMsgs` 去重疑似 partial/complete uuid 不匹配,现用 per-turn boolean 兜底(能用,每轮多一次渲染)。删 boolean 需先记 uuid 流向日志确诊。见 [docs/09 §23](./09-known-issues.md)。
+### P3-4. AI 流式 boolean 兜底 ✅
+实跑 CLI 抓 stream-json 确诊(2026-07-18):**uuid 每行随机**(partial 之间也互不相同),不止 partial/complete 不匹配;且 complete 在**块 delta 流完即发(早于 `content_block_stop`)**、一条 API 消息可拆多个非累积 complete。[transformSdkMessage.ts](../src/main/ai/providers/claude/stream/transformSdkMessage.ts) 重写:per-scope(`parent_tool_use_id`)flow 状态机;text/thinking 按**内容精确匹配**去重(delta 拼接与 complete 逐字节相等,已实证);tool_use 按稳定块 id 双向去重(complete 先到则杀 pending,stop 先到则查 `emittedToolIds`);删 `startedMsgs`/`streamedMsgs`/boolean 兜底。附带修好:complete 误开第二**空气泡**、subagent 文本重复(原兜底未覆盖)。6 个真实 wire-shape 回归测试 + 两份真实抓包回放校验。详见 [docs/09 §23](./09-known-issues.md)。
 
 ### P3-5. 零碎项
 - ~~`firstThumbnailableFile`~~ — **评估不做**:find-first + 早返回,首候选即中(1 stat),并发反而过度取数。
@@ -131,4 +131,4 @@ per-uuid `streamedMsgs` 去重疑似 partial/complete uuid 不匹配,现用 per-
 
 ## 剩余
 
-仅 **P3-4**(AI 流式,需运行时诊断)未做。Tier 0–2 + P3-1/2/3/5 已全部完成(2026-07-12 ~ 07-18)。
+无。Tier 0–3 全部完成(2026-07-12 ~ 07-18);最后的 P3-4 于 2026-07-18 实跑 CLI 抓包确诊并修复(见 [docs/09 §23](./09-known-issues.md))。

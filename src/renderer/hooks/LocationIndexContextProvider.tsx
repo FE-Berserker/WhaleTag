@@ -8,16 +8,25 @@ import {
   type ReactNode,
 } from 'react';
 
-import type { IndexEntry } from '../../shared/ipc-types';
+import type { IndexEntry, IndexProgressEvent } from '../../shared/ipc-types';
 import { ipcApi } from '-/services/ipc-api';
 import { useCurrentLocationContext } from './CurrentLocationContextProvider';
 
 export type IndexStatus = 'idle' | 'loading' | 'building' | 'ready' | 'error';
 
+/** Live build progress for the active location (null when no build is
+ *  flowing events — docs/04 §10). */
+export type IndexProgress = Pick<
+  IndexProgressEvent,
+  'phase' | 'processed' | 'total'
+>;
+
 interface LocationIndexContextValue {
   status: IndexStatus;
   error: string | null;
   count: number;
+  /** Scan/ingest progress of the running build, if any. */
+  progress: IndexProgress | null;
   /** Builds (walks + ingests) the index for the current location. */
   build: () => Promise<void>;
   /** Filename/path/tags fuzzy search (FTS5) — async, runs in main. */
@@ -59,6 +68,30 @@ export function LocationIndexContextProvider({
   const [status, setStatus] = useState<IndexStatus>('idle');
   const [error, setError] = useState<string | null>(null);
   const [count, setCount] = useState(0);
+  const [progress, setProgress] = useState<IndexProgress | null>(null);
+
+  // docs/04 §10: live build progress for the active location. Events for
+  // other roots (fulltext builds from Settings, another location's build)
+  // are ignored; the terminal `done` event clears the indicator.
+  useEffect(() => {
+    const rootPath = currentLocation?.path;
+    if (!rootPath) {
+      setProgress(null);
+      return undefined;
+    }
+    const off = ipcApi.onIndexProgress((ev) => {
+      if (ev.rootPath !== rootPath) return;
+      if (ev.done) {
+        setProgress(null);
+      } else {
+        setProgress({ phase: ev.phase, processed: ev.processed, total: ev.total });
+      }
+    });
+    return () => {
+      off();
+      setProgress(null);
+    };
+  }, [currentLocation?.path]);
 
   // Probe the index status when the active location changes.
   useEffect(() => {
@@ -114,8 +147,8 @@ export function LocationIndexContextProvider({
   );
 
   const value = useMemo(
-    () => ({ status, error, count, build, search }),
-    [status, error, count, build, search]
+    () => ({ status, error, count, progress, build, search }),
+    [status, error, count, progress, build, search]
   );
 
   return (

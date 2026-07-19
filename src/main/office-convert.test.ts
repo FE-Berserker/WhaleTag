@@ -2,9 +2,10 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import path from 'path';
 import os from 'os';
-import { promises as fsp } from 'fs';
+import { existsSync, promises as fsp } from 'fs';
 import {
   convertOfficeToPdf,
+  _resetStaleTmpSweepForTest,
 } from './office-convert';
 import {
   isSofficeAvailable,
@@ -227,6 +228,46 @@ describe('office-convert (with fake soffice)', () => {
       }
     } finally {
       await fsp.rm(tmp, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('sweeps stale whale-office-* tmpdirs once per process (§16.6)', async () => {
+    const tmp = os.tmpdir();
+    const stamp = Date.now();
+    const stale = path.join(tmp, `whale-office-stale-${stamp}`);
+    const fresh = path.join(tmp, `whale-office-fresh-${stamp}`);
+    await fsp.mkdir(stale, { recursive: true });
+    await fsp.mkdir(fresh, { recursive: true });
+    // Backdate the stale dir well before this process booted; `fresh` keeps
+    // its current mtime (newer than boot — mimics a live second instance).
+    const old = new Date(Date.now() - 2 * 3_600_000);
+    await fsp.utimes(stale, old, old);
+    const work = await fsp.mkdtemp(path.join(tmp, 'whale-office-test-'));
+    try {
+      const fakeBin = await makeFakeSoffice(work);
+      const input = path.join(work, 'sweep.docx');
+      await fsp.writeFile(input, 'x');
+
+      _resetStaleTmpSweepForTest();
+      await convertOfficeToPdf(input, { sofficePath: fakeBin });
+
+      assert.ok(!existsSync(stale), 'stale dir swept on first conversion');
+      assert.ok(existsSync(fresh), 'fresh dir kept (mtime newer than boot)');
+
+      // Once-guard: without a reset, a newly-leaked dir is NOT swept again.
+      const stale2 = `${stale}-2`;
+      await fsp.mkdir(stale2, { recursive: true });
+      await fsp.utimes(stale2, old, old);
+      try {
+        await convertOfficeToPdf(input, { sofficePath: fakeBin });
+        assert.ok(existsSync(stale2), 'once-guard: no second sweep per process');
+      } finally {
+        await fsp.rm(stale2, { recursive: true, force: true }).catch(() => undefined);
+      }
+    } finally {
+      await fsp.rm(stale, { recursive: true, force: true }).catch(() => undefined);
+      await fsp.rm(fresh, { recursive: true, force: true }).catch(() => undefined);
+      await fsp.rm(work, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 });

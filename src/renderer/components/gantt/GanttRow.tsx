@@ -29,7 +29,7 @@ import type { DirEntry } from '../../../shared/ipc-types';
 import type { TagGroup } from '../../domain/tag-library';
 import type { GanttChartRow, GanttPeriod } from '../../domain/gantt';
 import { MIN_BAR_WIDTH } from '../../domain/gantt';
-import { tagDisplayLabel } from '-/services/tag-display';
+import { useTagDisplayLabels } from '-/hooks/useTagDisplayLabels';
 import { isPeriodTag } from '../../domain/calendar';
 
 import ThumbIcon from '../ThumbIcon';
@@ -150,6 +150,10 @@ function GanttRowImpl({
   onBarFocus,
 }: GanttRowProps) {
   const { entry, period, tags } = row;
+
+  // docs/03: freshness-aware tooltip labels (date-family tags flip on the
+  // per-minute tick; subscribed only when a date-shaped tag is present).
+  const tagLabels = useTagDisplayLabels(tags);
 
   // Bar geometry within the chart area (NOT including the thumb column).
   // The row's `display: flex` puts the thumb column at the left and the
@@ -300,7 +304,7 @@ function GanttRowImpl({
                       py: 0.25,
                     }}
                   >
-                    {tags.map((tag) => {
+                    {tags.map((tag, i) => {
                       const isPeriod = isPeriodTag(tag);
                       return (
                         <Typography
@@ -314,7 +318,7 @@ function GanttRowImpl({
                               : 'inherit',
                           }}
                         >
-                          {tagDisplayLabel(tag, t)}
+                          {tagLabels[i]}
                           {isPeriod ? (
                             <Typography
                               component="span"

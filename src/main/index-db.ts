@@ -276,7 +276,8 @@ export function filesPrior(rootPath: string): Map<string, string> {
  */
 export async function ingestFiles(
   rootPath: string,
-  entries: IndexEntry[]
+  entries: IndexEntry[],
+  onProgress?: (done: number, total: number) => void
 ): Promise<void> {
   const db = getDb(rootPath);
   const upsert = db.prepare(`
@@ -301,12 +302,19 @@ export async function ingestFiles(
   const removed: string[] = [];
   for (const p of prior.keys()) if (!seen.has(p)) removed.push(p);
 
+  // docs/04 §10 progress: one counter across the delete + upsert loops; the
+  // worker throttles the events, so reporting every batch is fine.
+  const total = removed.length + changed.length;
+  let done = 0;
+
   const delStmt = db.prepare('DELETE FROM files WHERE path = ?');
   const delBatch = db.transaction((paths: string[]) => {
     for (const p of paths) delStmt.run(p);
   });
   for (let i = 0; i < removed.length; i += INGEST_BATCH) {
     delBatch(removed.slice(i, i + INGEST_BATCH));
+    done += Math.min(INGEST_BATCH, removed.length - i);
+    onProgress?.(done, total);
     await yieldToEventLoop();
   }
 
@@ -325,6 +333,8 @@ export async function ingestFiles(
   });
   for (let i = 0; i < changed.length; i += INGEST_BATCH) {
     upsertBatch(changed.slice(i, i + INGEST_BATCH));
+    done += Math.min(INGEST_BATCH, changed.length - i);
+    onProgress?.(done, total);
     await yieldToEventLoop();
   }
 

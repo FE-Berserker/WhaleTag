@@ -13,9 +13,9 @@
  *    follow-up).
  *
  * The renderer-facing IPC layer (`src/main/ipc.ts`) calls `request()`
- * directly. `subscribe()` is reserved for the future progress push
- * channels (mirror the `ai:chunk` pattern at
- * `src/main/ai/ipc-ai-runtime.ts:57-63`).
+ * directly. `subscribe()` fans out worker events (`ready` + build
+ * `progress`) — `main.ts` forwards progress to windows as `index:progress`
+ * (docs/04 §10).
  */
 
 import { utilityProcess, UtilityProcess } from 'electron';
@@ -185,10 +185,9 @@ export async function request<O extends IndexWorkerOp>(
 }
 
 /**
- * Subscribe to server-pushed events. Currently the only event is `ready`;
- * progress events (`index:build` / `fulltext:build` updates) will arrive
- * in a follow-up PR. Returns an unsubscribe function — mirror the
- * `onAiChunk` shape at `src/main/preload.ts:291-316`.
+ * Subscribe to server-pushed events (`ready` on boot; `progress` during
+ * `index:build` / `fulltext:build`). Returns an unsubscribe function —
+ * mirror the `onAiChunk` shape at `src/main/preload.ts:291-316`.
  */
 export function subscribe(handler: (ev: IndexWorkerEvent) => void): () => void {
   subscribers.add(handler);
@@ -198,10 +197,43 @@ export function subscribe(handler: (ev: IndexWorkerEvent) => void): () => void {
 }
 
 /**
- * Best-effort kill for app shutdown. Does NOT flush — graceful shutdown
- * with a `shutdown` op + WAL checkpoint is a follow-up. Pending requests
- * are rejected via the `'exit'` handler (and cleared defensively here in
- * case `kill()` is synchronous on Windows).
+ * Ask the worker to close the index.db connection for `rootPath` (docs/04
+ * §10 — its location was removed from settings). No-op when the worker
+ * isn't running: a never-spawned worker holds no handles, and respawning
+ * just to close would be pure waste. Fire-and-forget at the call site.
+ */
+export async function closeIndexDb(rootPath: string): Promise<void> {
+  if (!child) return;
+  await request('index:close', { rootPath });
+}
+
+/**
+ * Graceful shutdown for app quit (docs/04 §10): ask the worker to
+ * `closeAllDbs()` so SQLite WAL checkpoints into the main db file (no `-wal`
+ * residue), bounded by a timeout — quitting must never hang on a stuck
+ * worker. No-op when the worker was never spawned. The caller is expected
+ * to `killIndexWorker()` right after (the process is killed either way;
+ * this only decides whether the WAL is flushed first).
+ */
+export async function shutdownIndexWorker(timeoutMs = 1000): Promise<void> {
+  if (!child) return;
+  try {
+    await Promise.race([
+      request('index:shutdown', {}),
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, timeoutMs).unref?.();
+      }),
+    ]);
+  } catch {
+    // Best effort — the kill that follows still ends the process.
+  }
+}
+
+/**
+ * Best-effort kill for app shutdown. Pending requests are rejected via the
+ * `'exit'` handler (and cleared defensively here in case `kill()` is
+ * synchronous on Windows). Pair with {@link shutdownIndexWorker} for a WAL
+ * checkpoint before the kill.
  */
 export function killIndexWorker(): void {
   if (pending.size > 0) {

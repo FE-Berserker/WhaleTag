@@ -46,6 +46,33 @@ function post(message: unknown): void {
   parentPort!.postMessage(message);
 }
 
+/**
+ * docs/04 §10: per-request progress poster, time-throttled so a 100k-file
+ * build doesn't flood the worker port with one message per file. The final
+ * state is implicit — the request's own response resolves the awaiter, and
+ * `done: true` is emitted once at completion for passive observers.
+ */
+function makeProgressPoster(
+  op: 'index:build' | 'fulltext:build',
+  rootPath: string
+): (phase: 'scan' | 'ingest' | 'extract' | 'delete', processed: number, total: number | null) => void {
+  let lastAt = 0;
+  return (phase, processed, total) => {
+    const now = Date.now();
+    if (now - lastAt < 100) return;
+    lastAt = now;
+    const ev: IndexWorkerEvent = {
+      kind: 'progress',
+      op,
+      rootPath,
+      phase,
+      processed,
+      total,
+    };
+    post(ev);
+  };
+}
+
 function fail(reqId: string, err: unknown): void {
   const name = err instanceof Error ? err.name : 'Error';
   const message = err instanceof Error ? err.message : String(err);
@@ -74,15 +101,41 @@ async function dispatch(req: IndexWorkerRequest): Promise<void> {
     // -------- writes / builds --------
     case 'index:build': {
       const { rootPath } = req.arg as { rootPath: string };
-      const entries = await indexer.buildIndex(rootPath);
-      await db.ingestFiles(rootPath, entries);
+      const progress = makeProgressPoster('index:build', rootPath);
+      const entries = await indexer.buildIndex(rootPath, (n) =>
+        progress('scan', n, null)
+      );
+      await db.ingestFiles(rootPath, entries, (d, t) =>
+        progress('ingest', d, t)
+      );
       db.removeLegacyWsi(rootPath);
+      post({
+        kind: 'progress',
+        op: 'index:build',
+        rootPath,
+        phase: 'ingest',
+        processed: entries.length,
+        total: entries.length,
+        done: true,
+      });
       post({ reqId: req.reqId, ok: true, result: { count: entries.length } });
       return;
     }
     case 'fulltext:build': {
       const { rootPath } = req.arg as { rootPath: string };
-      const count = await fulltext.buildFulltextIndex(rootPath);
+      const progress = makeProgressPoster('fulltext:build', rootPath);
+      const { count } = await fulltext.buildFulltextIndex(rootPath, (n) =>
+        progress('extract', n, null)
+      );
+      post({
+        kind: 'progress',
+        op: 'fulltext:build',
+        rootPath,
+        phase: 'extract',
+        processed: count,
+        total: count,
+        done: true,
+      });
       post({ reqId: req.reqId, ok: true, result: { count } });
       return;
     }
@@ -152,6 +205,23 @@ async function dispatch(req: IndexWorkerRequest): Promise<void> {
         ok: true,
         result: db.indexStatus(rootPath),
       });
+      return;
+    }
+    case 'index:close': {
+      // Location removed from settings — drop its cached db handle so
+      // per-location connections don't accumulate (docs/04 §10). No-op
+      // when the db was never opened.
+      const { rootPath } = req.arg as { rootPath: string };
+      db.closeDb(rootPath);
+      post({ reqId: req.reqId, ok: true, result: undefined });
+      return;
+    }
+    case 'index:shutdown': {
+      // App quitting: close every db so SQLite WAL checkpoints into the main
+      // file on clean close (no `-wal` residue). The host kills the process
+      // right after this reply — anything heavier belongs in the host.
+      db.closeAllDbs();
+      post({ reqId: req.reqId, ok: true, result: undefined });
       return;
     }
     case 'fulltext:search': {

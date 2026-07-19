@@ -96,6 +96,48 @@ describe('index-db (SQLite + FTS5 trigram)', () => {
     }
   });
 
+  it('closeDb drops the cached handle; double-close is a no-op and the next query reopens (docs/04 §10)', async () => {
+    const root = await tmpRoot();
+    try {
+      await setup(root);
+      await ingestFiles(root, [entry({ path: 'x.txt', name: 'x.txt' })]);
+      assert.equal(queryFiles(root, 'x.txt').length, 1);
+      closeDb(root);
+      closeDb(root); // already closed — no-op, must not throw
+      // The handle cache is cold again, but the on-disk db persists: the
+      // next query lazily reopens and still sees the ingested rows.
+      assert.equal(queryFiles(root, 'x.txt').length, 1);
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('ingestFiles reports monotonic progress across delete + upsert batches (docs/04 §10)', async () => {
+    const root = await tmpRoot();
+    try {
+      await setup(root);
+      // Seed a row that the second run deletes (not walked anymore).
+      await ingestFiles(root, [entry({ path: 'gone.txt', name: 'gone.txt' })]);
+      const calls: Array<[number, number]> = [];
+      await ingestFiles(
+        root,
+        [entry({ path: 'keep.txt', name: 'keep.txt' })],
+        (done, total) => calls.push([done, total])
+      );
+      // total = removed(1: gone.txt) + changed(1: keep.txt) = 2.
+      assert.ok(calls.length >= 1);
+      assert.deepEqual(calls[calls.length - 1], [2, 2]);
+      for (const [, total] of calls) assert.equal(total, 2);
+      for (let i = 1; i < calls.length; i++) {
+        assert.ok(calls[i][0] >= calls[i - 1][0], 'monotonic');
+      }
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('ingestFiles is incremental: unchanged rows skipped, tag-only changes re-indexed (P0-1)', async () => {
     const root = await tmpRoot();
     try {

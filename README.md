@@ -99,7 +99,7 @@ WhaleTag/
 └── src/
     ├── shared/                # pure logic shared across main ↔ renderer (types + pure fns)
     ├── main/                  # MAIN process — all FS IO, thumbnails, index, extensions, AI CLI
-    │   ├── main.ts / preload.ts / ipc.ts / menu.ts
+    │   ├── main.ts / preload.ts / ipc/ (domain handlers) / menu.ts
     └── renderer/              # RENDERER process (React UI, web target)
 ```
 

@@ -81,6 +81,7 @@ export const MD_PRESETS = [
   'nord',
   'gruvbox',
   'one-dark',
+  'latex',
 ] as const;
 export type MdRenderPreset = (typeof MD_PRESETS)[number];
 export type MdThemePref = 'auto' | MdRenderPreset;
@@ -126,6 +127,15 @@ export const ctx = {
   fontSizeCompartment: new Compartment(),
   wrapCompartment: new Compartment(),
   highlightCompartment: new Compartment(),
+  keymapCompartment: new Compartment(),
+  // §md-keybindings — host-pushed action→combo overrides; buildEditorKeymaps
+  //  reads these. Empty = use built-in defaults until the host pushes.
+  mdKeybindings: {} as Record<string, string>,
+  // §paste-image — host-pushed pasted-image save config (mode + subfolder
+  //  name with optional `${filename}` placeholder). Defaults apply until the
+  //  host pushes setImageSaveConfig.
+  mdImageSaveMode: 'subfolder' as 'current' | 'subfolder',
+  mdImageSubfolder: '${filename}.assets',
   previewLineMap: new Map<number, HTMLElement>(),
   scrollSyncRaf: 0,
   wordCountTimer: null as ReturnType<typeof setTimeout> | null,
@@ -136,33 +146,109 @@ export const ctx = {
   mdWrapMode: loadMdWrapMode() as 'wrap' | 'nowrap',
   mdThemePref: loadMdThemePref(),
   hostMode: detectInitialTheme() as 'light' | 'dark',
+  // §table-edit — set while a preview table cell has focus so the editor's
+  // docChanged listener can skip scheduling a preview re-render. Otherwise
+  // each typed character would recreate the cell, blowing away the caret.
+  previewCellEditing: false,
 };
 
 // --- Cached DOM element refs (one getElementById each, at module load) ---
-export const dom = {
-  editorPane: document.getElementById('editor-pane') as HTMLDivElement,
-  previewPane: document.getElementById('preview-pane') as HTMLDivElement,
-  splitterEl: document.getElementById('splitter') as HTMLDivElement,
-  mainRowEl: document.getElementById('main-row') as HTMLDivElement,
-  statusLnEl: document.getElementById('status-ln') as HTMLSpanElement,
-  statusColEl: document.getElementById('status-col') as HTMLSpanElement,
-  statusLengthEl: document.getElementById('status-length') as HTMLSpanElement,
-  statusSelEl: document.getElementById('status-sel') as HTMLSpanElement,
-  statusWordsEl: document.getElementById('status-words') as HTMLSpanElement,
-  statusReadonlyEl: document.getElementById('status-readonly') as HTMLSpanElement,
-  statusDirtyEl: document.getElementById('status-dirty') as HTMLSpanElement,
-  statusUndoEl: document.getElementById('status-undo') as HTMLSpanElement,
-  statusRedoEl: document.getElementById('status-redo') as HTMLSpanElement,
-  findBtn: document.getElementById('btn-find') as HTMLButtonElement,
-  toggleWrapBtn: document.getElementById('btn-toggle-wrap') as HTMLButtonElement,
-  zoomOutBtn: document.getElementById('btn-zoom-out') as HTMLButtonElement,
-  zoomResetBtn: document.getElementById('btn-zoom-reset') as HTMLButtonElement,
-  zoomInBtn: document.getElementById('btn-zoom-in') as HTMLButtonElement,
-  wrapStateEl: document.getElementById('wrap-state') as HTMLSpanElement,
-  toggleTocBtn: document.getElementById('btn-toggle-toc') as HTMLButtonElement,
-  gotoLineBtn: document.getElementById('btn-goto-line') as HTMLButtonElement,
-  exportHtmlBtn: document.getElementById('btn-export-html') as HTMLButtonElement,
-  themeSelectEl: document.getElementById('select-theme') as HTMLSelectElement,
-  tocSidebarEl: document.getElementById('toc-sidebar') as HTMLElement,
-  tocListEl: document.getElementById('toc-list') as HTMLElement,
-};
+// Guarded with `typeof document` so test files that only need `ctx` (e.g.
+// `md-toolbar`'s pure markdown helpers) don't crash on a Node import. The
+// real `dom` is built when the extension boots inside the iframe.
+export const dom = typeof document === 'undefined'
+  ? ({
+      editorPane: null,
+      previewPane: null,
+      splitterEl: null,
+      mainRowEl: null,
+      statusLnEl: null,
+      statusColEl: null,
+      statusLengthEl: null,
+      statusSelEl: null,
+      statusWordsEl: null,
+      statusLabelLnEl: null,
+      statusLabelColEl: null,
+      statusLabelLengthEl: null,
+      statusLabelSelEl: null,
+      statusLabelWordsEl: null,
+      statusReadonlyEl: null,
+      statusDirtyEl: null,
+      statusUndoEl: null,
+      statusRedoEl: null,
+      findBtn: null,
+      toggleWrapBtn: null,
+      zoomOutBtn: null,
+      zoomResetBtn: null,
+      zoomInBtn: null,
+      wrapStateEl: null,
+      toggleTocBtn: null,
+      gotoLineBtn: null,
+      exportHtmlBtn: null,
+      themeSelectEl: null,
+      tocSidebarEl: null,
+      tocListEl: null,
+    } as unknown as {
+      editorPane: HTMLDivElement;
+      previewPane: HTMLDivElement;
+      splitterEl: HTMLDivElement;
+      mainRowEl: HTMLDivElement;
+      statusLnEl: HTMLSpanElement;
+      statusColEl: HTMLSpanElement;
+      statusLengthEl: HTMLSpanElement;
+      statusSelEl: HTMLSpanElement;
+      statusWordsEl: HTMLSpanElement;
+      statusLabelLnEl: HTMLSpanElement;
+      statusLabelColEl: HTMLSpanElement;
+      statusLabelLengthEl: HTMLSpanElement;
+      statusLabelSelEl: HTMLSpanElement;
+      statusLabelWordsEl: HTMLSpanElement;
+      statusReadonlyEl: HTMLSpanElement;
+      statusDirtyEl: HTMLSpanElement;
+      statusUndoEl: HTMLSpanElement;
+      statusRedoEl: HTMLSpanElement;
+      findBtn: HTMLButtonElement;
+      toggleWrapBtn: HTMLButtonElement;
+      zoomOutBtn: HTMLButtonElement;
+      zoomResetBtn: HTMLButtonElement;
+      zoomInBtn: HTMLButtonElement;
+      wrapStateEl: HTMLSpanElement;
+      toggleTocBtn: HTMLButtonElement;
+      gotoLineBtn: HTMLButtonElement;
+      exportHtmlBtn: HTMLButtonElement;
+      themeSelectEl: HTMLSelectElement;
+      tocSidebarEl: HTMLElement;
+      tocListEl: HTMLElement;
+    })
+  : {
+      editorPane: document.getElementById('editor-pane') as HTMLDivElement,
+      previewPane: document.getElementById('preview-pane') as HTMLDivElement,
+      splitterEl: document.getElementById('splitter') as HTMLDivElement,
+      mainRowEl: document.getElementById('main-row') as HTMLDivElement,
+      statusLnEl: document.getElementById('status-ln') as HTMLSpanElement,
+      statusColEl: document.getElementById('status-col') as HTMLSpanElement,
+      statusLengthEl: document.getElementById('status-length') as HTMLSpanElement,
+      statusSelEl: document.getElementById('status-sel') as HTMLSpanElement,
+      statusWordsEl: document.getElementById('status-words') as HTMLSpanElement,
+      statusLabelLnEl: document.getElementById('status-label-ln') as HTMLSpanElement,
+      statusLabelColEl: document.getElementById('status-label-col') as HTMLSpanElement,
+      statusLabelLengthEl: document.getElementById('status-label-length') as HTMLSpanElement,
+      statusLabelSelEl: document.getElementById('status-label-sel') as HTMLSpanElement,
+      statusLabelWordsEl: document.getElementById('status-label-words') as HTMLSpanElement,
+      statusReadonlyEl: document.getElementById('status-readonly') as HTMLSpanElement,
+      statusDirtyEl: document.getElementById('status-dirty') as HTMLSpanElement,
+      statusUndoEl: document.getElementById('status-undo') as HTMLSpanElement,
+      statusRedoEl: document.getElementById('status-redo') as HTMLSpanElement,
+      findBtn: document.getElementById('btn-find') as HTMLButtonElement,
+      toggleWrapBtn: document.getElementById('btn-toggle-wrap') as HTMLButtonElement,
+      zoomOutBtn: document.getElementById('btn-zoom-out') as HTMLButtonElement,
+      zoomResetBtn: document.getElementById('btn-zoom-reset') as HTMLButtonElement,
+      zoomInBtn: document.getElementById('btn-zoom-in') as HTMLButtonElement,
+      wrapStateEl: document.getElementById('wrap-state') as HTMLSpanElement,
+      toggleTocBtn: document.getElementById('btn-toggle-toc') as HTMLButtonElement,
+      gotoLineBtn: document.getElementById('btn-goto-line') as HTMLButtonElement,
+      exportHtmlBtn: document.getElementById('btn-export-html') as HTMLButtonElement,
+      themeSelectEl: document.getElementById('select-theme') as HTMLSelectElement,
+      tocSidebarEl: document.getElementById('toc-sidebar') as HTMLElement,
+      tocListEl: document.getElementById('toc-list') as HTMLElement,
+    };

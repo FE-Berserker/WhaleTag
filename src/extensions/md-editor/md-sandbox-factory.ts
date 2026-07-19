@@ -19,11 +19,11 @@
  * Security: the iframe is `sandbox="allow-scripts"` (no allow-same-origin),
  * so it has an opaque origin — it can run code (mermaid needs `unsafe-eval`
  * for `new Function`) but CANNOT read the parent's DOM, cookies, or
- * storage. Communication is postMessage only. The messageHandler accepts
- * only messages from our iframe (`e.source === contentWindow`), with a
- * shape-match fallback for Chromium versions where that strict-equality is
- * unreliable; each `rendered`/`error` must also correlate to a pending
- * `id` (random, unpredictable).
+ * storage. Communication is postMessage only. The messageHandler requires
+ * BOTH a source match (`e.source === contentWindow`) AND a shape match
+ * (known type + well-typed payload) — defense in depth, since modern
+ * Chromium's `e.source` strict-equality is reliable; each `rendered`/`error`
+ * must also correlate to a pending `id` (random, unpredictable).
  */
 
 export interface PostMessageSandboxOptions {
@@ -95,7 +95,10 @@ export function createPostMessageSandbox(
       data.type === 'ready' ||
       (data.type === 'rendered' && typeof data[resultKey] === 'string') ||
       (data.type === 'error' && typeof data.message === 'string');
-    if (!isFromOurSandbox && !isOursByShape) return;
+    // §18.4-harden — require BOTH source match AND shape match (AND, not OR).
+    // Modern Chromium's `e.source === contentWindow` is reliable, so shape is
+    // a second gate (defense in depth), not a fallback for an unreliable one.
+    if (!isFromOurSandbox || !isOursByShape) return;
 
     if (data.type === 'ready') {
       readyResolve();

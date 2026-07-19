@@ -60,8 +60,115 @@ interface SidebarProps {
   onAddLocation: () => void;
   /** Embedded (narrow-window tab mode): drop the title / add-button header
    *  and fill the parent panel (width 100%, no right border) — MainLayout's
-   *  tab bar replaces this component's own header. */
+   *  tab bar replaces this component's own header. The actions bar is also
+   *  skipped: MainLayout renders it once below the tab content so it stays
+   *  visible (and uncovered) no matter which tab is active. */
   embedded?: boolean;
+}
+
+/**
+ * Bottom actions row (trash / AI panel / new excalidraw / new drawio /
+ * settings). Lives at the bottom of the Sidebar in wide mode; in narrow
+ * (tabbed) mode MainLayout renders it below the tab content instead, so the
+ * DirectoryTree tab can't push it off-screen or cover it — that was the
+ * "tree occludes the buttons" regression. Exported for MainLayout.
+ */
+export function SidebarActionsBar() {
+  const { t } = useTranslation();
+  const dispatch = useDispatch();
+  const aiEnabled = useSelector((s: RootState) => s.settings.aiEnabled);
+  const aiPanelOpen = useSelector((s: RootState) => s.settings.aiPanelOpen);
+  const newExcalidraw = useNewExcalidraw();
+  const newDrawio = useNewDrawio();
+  const aiComponent = useAiComponent();
+  // Settings dialog is owned one level up by SettingsDialogProvider so other
+  // surfaces (file row right-click, kanban card right-click, …) can deep-link
+  // to a particular section via `useSettingsDialog().openDialog({ section })`.
+  const { openDialog: openSettings } = useSettingsDialog();
+  return (
+    <Box
+      sx={{
+        p: 1,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 0.5,
+        flexShrink: 0,
+      }}
+    >
+      <Tooltip title={t('openTrash')}>
+        <IconButton size="small" onClick={() => void ipcApi.openTrash()}>
+          <RestoreFromTrashIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+      {aiEnabled ? (
+        aiComponent.state.installed ? (
+          <Tooltip title={t('aiToggle')}>
+            <IconButton
+              size="small"
+              data-testid="ai-toggle-button"
+              color={aiPanelOpen ? 'primary' : 'default'}
+              onClick={() =>
+                dispatch(setAiSettings({ aiPanelOpen: !aiPanelOpen }))
+              }
+            >
+              <SmartToyIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        ) : (
+          <Tooltip title={t('aiComponentNotInstalled')}>
+            <span>
+              <IconButton size="small" disabled>
+                <SmartToyIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+        )
+      ) : null}
+      {newExcalidraw.available && (
+        <Tooltip title={t('newExcalidraw')}>
+          <span>
+            <IconButton
+              size="small"
+              data-testid="new-excalidraw-button"
+              disabled={!newExcalidraw.canCreate}
+              onClick={() => {
+                newExcalidraw.create().catch(() => undefined);
+              }}
+            >
+              <GestureIcon fontSize="small" />
+            </IconButton>
+          </span>
+        </Tooltip>
+      )}
+      {newDrawio.available && (
+        <Tooltip title={t('newDrawio')}>
+          <span>
+            <IconButton
+              size="small"
+              data-testid="new-drawio-button"
+              disabled={!newDrawio.canCreate}
+              onClick={() => {
+                newDrawio.create().catch(() => undefined);
+              }}
+            >
+              <AccountTreeIcon fontSize="small" />
+            </IconButton>
+          </span>
+        </Tooltip>
+      )}
+      <Tooltip title={t('settings')}>
+        <IconButton
+          size="small"
+          data-testid="settings-button"
+          onClick={() => {
+            openSettings();
+          }}
+        >
+          <SettingsIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+    </Box>
+  );
 }
 
 /**
@@ -214,19 +321,10 @@ export default function Sidebar({ onAddLocation, embedded = false }: SidebarProp
   const defaultLocationId = useSelector(
     (s: RootState) => s.settings.defaultLocationId
   );
-  const aiEnabled = useSelector((s: RootState) => s.settings.aiEnabled);
-  const aiPanelOpen = useSelector((s: RootState) => s.settings.aiPanelOpen);
   const taskReminderLocationId = useSelector(
     (s: RootState) => s.settings?.taskReminderLocationId ?? null
   );
   const { currentLocation, openLocation } = useCurrentLocationContext();
-  const newExcalidraw = useNewExcalidraw();
-  const newDrawio = useNewDrawio();
-  const aiComponent = useAiComponent();
-  // Settings dialog is owned one level up by SettingsDialogProvider so other
-  // surfaces (file row right-click, kanban card right-click, …) can deep-link
-  // to a particular section via `useSettingsDialog().openDialog({ section })`.
-  const { openDialog: openSettings } = useSettingsDialog();
   const [ctxMenu, setCtxMenu] = useState<{
     x: number;
     y: number;
@@ -367,81 +465,12 @@ export default function Sidebar({ onAddLocation, embedded = false }: SidebarProp
       </Box>
       <TagGroups />
       <TagLibrary />
-      <Divider />
-      <Box sx={{ p: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
-        <Tooltip title={t('openTrash')}>
-          <IconButton size="small" onClick={() => void ipcApi.openTrash()}>
-            <RestoreFromTrashIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-        {aiEnabled ? (
-          aiComponent.state.installed ? (
-            <Tooltip title={t('aiToggle')}>
-              <IconButton
-                size="small"
-                data-testid="ai-toggle-button"
-                color={aiPanelOpen ? 'primary' : 'default'}
-                onClick={() =>
-                  dispatch(setAiSettings({ aiPanelOpen: !aiPanelOpen }))
-                }
-              >
-                <SmartToyIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-          ) : (
-            <Tooltip title={t('aiComponentNotInstalled')}>
-              <span>
-                <IconButton size="small" disabled>
-                  <SmartToyIcon fontSize="small" />
-                </IconButton>
-              </span>
-            </Tooltip>
-          )
-        ) : null}
-        {newExcalidraw.available && (
-          <Tooltip title={t('newExcalidraw')}>
-            <span>
-              <IconButton
-                size="small"
-                data-testid="new-excalidraw-button"
-                disabled={!newExcalidraw.canCreate}
-                onClick={() => {
-                  newExcalidraw.create().catch(() => undefined);
-                }}
-              >
-                <GestureIcon fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
-        )}
-        {newDrawio.available && (
-          <Tooltip title={t('newDrawio')}>
-            <span>
-              <IconButton
-                size="small"
-                data-testid="new-drawio-button"
-                disabled={!newDrawio.canCreate}
-                onClick={() => {
-                  newDrawio.create().catch(() => undefined);
-                }}
-              >
-                <AccountTreeIcon fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
-        )}
-        <Tooltip title={t('settings')}>
-          <IconButton
-            size="small"
-            data-testid="settings-button"
-            onClick={() => {
-              openSettings();
-            }}
-          >
-            <SettingsIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-      </Box>
+      {embedded ? null : (
+        <>
+          <Divider />
+          <SidebarActionsBar />
+        </>
+      )}
 
       <Menu
         open={ctxMenu !== null}

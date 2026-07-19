@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Chip, InputBase, Stack, Typography } from '@mui/material';
 import { useSelector } from 'react-redux';
 import type { TFunction } from 'i18next';
@@ -7,7 +7,8 @@ import type { TagGroup } from '../domain/tag-library';
 import { getTagColor } from '../domain/tag-colors';
 import { withoutGeoTags } from '../domain/geo-tag';
 import type { RootState } from '-/reducers';
-import { chipSx, tagDisplayLabel } from '-/services/tag-display';
+import { chipSx } from '-/services/tag-display';
+import { useTagDisplayLabels } from '-/hooks/useTagDisplayLabels';
 
 /**
  * Inline chip-style tag editor used by the Mapique detail panel and the
@@ -46,7 +47,11 @@ export default function InlineTagInput({
     (s: RootState) => s.settings?.tagShape ?? 'rounded'
   );
   const [input, setInput] = useState('');
-  const visibleTags = withoutGeoTags(tags);
+  // Memoized so `useTagDisplayLabels`' internal memos hold across renders.
+  const visibleTags = useMemo(() => withoutGeoTags(tags), [tags]);
+  // docs/03: freshness-aware labels — a date-family chip flips its label on
+  // the per-minute tick (subscribed only when a date-shaped tag is shown).
+  const labels = useTagDisplayLabels(visibleTags);
 
   const commit = () => {
     const tag = input.trim();
@@ -103,10 +108,10 @@ export default function InlineTagInput({
         },
       }}
     >
-      {visibleTags.map((tag) => (
+      {visibleTags.map((tag, i) => (
         <Chip
           key={tag}
-          label={tagDisplayLabel(tag, t)}
+          label={labels[i]}
           size="small"
           onDelete={readOnly ? undefined : () => onRemove(tag)}
           sx={chipSx(getTagColor(tag, tagColors, groups), false, tagShape)}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import {
   Box,
@@ -33,6 +33,7 @@ import {
 import { useExtensionContext } from '-/hooks/ExtensionContextProvider';
 import { useDirectoryUI } from '-/hooks/DirectoryContentContextProvider';
 import { useDirectoryTreeRefresh } from '-/hooks/DirectoryTreeRefreshContextProvider';
+import { createRpcHandler } from './extension-host/rpc-cases';
 import PromptDialog from '-/components/PromptDialog';
 import InlineEditModal from '-/components/ai/InlineEditModal';
 import { RootState } from '-/reducers';
@@ -167,11 +168,25 @@ export default function ExtensionHost({
   const calibrePath = useSelector(
     (s: RootState) => s.settings?.calibrePath ?? null
   );
+  // docs/09 §16.14: the user's explicit LibreOffice override from settings —
+  // forwarded to office-PDF conversion and the availability probe below.
+  const sofficePath = useSelector(
+    (s: RootState) => s.settings?.sofficePath ?? null
+  );
   const mdRenderTheme = useSelector(
     (s: RootState) => s.settings?.mdEditorRenderTheme ?? 'auto'
   );
   const customCallouts = useSelector(
     (s: RootState) => s.settings?.customCallouts ?? []
+  );
+  const mdKeybindings = useSelector(
+    (s: RootState) => s.settings?.mdKeybindings
+  );
+  const mdImageSaveMode = useSelector(
+    (s: RootState) => s.settings?.mdImageSaveMode ?? 'subfolder'
+  );
+  const mdImageSubfolder = useSelector(
+    (s: RootState) => s.settings?.mdImageSubfolder ?? '${filename}.assets'
   );
   const dirty = editState?.dirty ?? false;
 
@@ -189,6 +204,20 @@ export default function ExtensionHost({
       );
     },
     []
+  );
+
+  // docs/07 §10: the 16 `request* → reply` RPC cases live in
+  // `extension-host/rpc-cases.ts` (one forwardRpc helper + reply
+  // constructors); the switch below keeps only the component-state cases.
+  const handleRpc = useMemo(
+    () =>
+      createRpcHandler(postToExtension, {
+        dwg2dxfPath,
+        odaPath,
+        calibrePath,
+        sofficePath,
+      }),
+    [postToExtension, dwg2dxfPath, odaPath, calibrePath, sofficePath]
   );
 
   /** Inline-edit: ask the editor for its current selection (3s timeout). */
@@ -272,6 +301,27 @@ export default function ExtensionHost({
       postToExtension({ type: 'setCustomCallouts', callouts: customCallouts });
     }
   }, [customCallouts, ready, postToExtension]);
+
+  // md-editor keymap overrides (action → CodeMirror combo). The editor
+  // reconfigures its keymapCompartment on receipt, so rebinding applies live.
+  useEffect(() => {
+    if (ready && mdKeybindings) {
+      postToExtension({ type: 'setKeybindings', keybindings: mdKeybindings });
+    }
+  }, [mdKeybindings, ready, postToExtension]);
+
+  // md-editor pasted-image save location (host → ext). The editor computes the
+  // save dir + insert link from these on every paste; `subfolder` may contain
+  // `${filename}`. Defaults are guarded so the first push (pre-migrate) is sane.
+  useEffect(() => {
+    if (ready) {
+      postToExtension({
+        type: 'setImageSaveConfig',
+        mode: mdImageSaveMode,
+        subfolder: mdImageSubfolder,
+      });
+    }
+  }, [mdImageSaveMode, mdImageSubfolder, ready, postToExtension]);
 
   useEffect(() => {
     if (ready) {
@@ -459,6 +509,10 @@ export default function ExtensionHost({
       if (!isValidEnvelope<ExtensionMessage>(event.data, 'extension')) return;
 
       const msg = event.data.message;
+      // docs/07 §10: the 16 `request*` RPC cases are delegated to
+      // `handleRpc` (extension-host/rpc-cases.ts); only component-state
+      // cases stay in this switch.
+      if (handleRpc(msg)) return;
       switch (msg.type) {
         case 'ready':
           setReady(true);
@@ -506,155 +560,10 @@ export default function ExtensionHost({
             ipcApi.openNative(msg.url).catch(() => undefined);
           }
           break;
-        case 'requestPdfAsset': {
-          const { requestId, kind, filename } = msg;
-          ipcApi
-            .getPdfAsset(kind, filename)
-            .then((data) => {
-              postToExtension({ type: 'pdfAsset', requestId, data });
-            })
-            .catch((e) => {
-              postToExtension({
-                type: 'pdfAsset',
-                requestId,
-                data: null,
-                error: e instanceof Error ? e.message : String(e),
-              });
-            });
-          break;
-        }
-        case 'requestCadWasm': {
-          const { requestId } = msg;
-          ipcApi
-            .getCadWasm()
-            .then((data) => {
-              postToExtension({ type: 'cadWasm', requestId, data });
-            })
-            .catch((e) => {
-              postToExtension({
-                type: 'cadWasm',
-                requestId,
-                data: null,
-                error: e instanceof Error ? e.message : String(e),
-              });
-            });
-          break;
-        }
-        case 'requestHeicWasm': {
-          const { requestId } = msg;
-          ipcApi
-            .getHeicWasm()
-            .then((data) => {
-              postToExtension({ type: 'heicWasm', requestId, data });
-            })
-            .catch((e) => {
-              postToExtension({
-                type: 'heicWasm',
-                requestId,
-                data: null,
-                error: e instanceof Error ? e.message : String(e),
-              });
-            });
-          break;
-        }
-        case 'requestOfficeConvert': {
-          const { requestId, path: officePath } = msg;
-          ipcApi
-            .convertOfficeToPdf(officePath)
-            .then((data) => {
-              postToExtension({ type: 'officePdfContent', requestId, data });
-            })
-            .catch((e) => {
-              postToExtension({
-                type: 'officePdfContent',
-                requestId,
-                data: null,
-                error: e instanceof Error ? e.message : String(e),
-              });
-            });
-          break;
-        }
-        case 'requestSofficeCheck': {
-          // docs/09 §16.16: office-viewer probes LibreOffice availability so it
-          // can show install guidance instead of a bare "not found" dead-end.
-          const { requestId } = msg;
-          ipcApi
-            .isSofficeAvailable()
-            .then((available) =>
-              postToExtension({ type: 'sofficeCheckResult', requestId, available })
-            )
-            .catch(() =>
-              postToExtension({ type: 'sofficeCheckResult', requestId, available: false })
-            );
-          break;
-        }
         case 'openWithSystem': {
           // docs/09 §16.21: fallback — open the file with the OS default app
           // when LibreOffice is missing or conversion fails. Fire-and-forget.
           ipcApi.openNative(msg.path).catch(() => undefined);
-          break;
-        }
-        case 'requestThumbnail': {
-          // P3-1: office-viewer asks for the cached thumbnail (data URL) to
-          // show as an instant first-page placeholder while LibreOffice
-          // cold-converts to PDF. `loadThumbnail` returns null when no
-          // thumbnail has been generated yet — the viewer then just keeps
-          // its "Converting…" status.
-          const { requestId, path: thumbPath } = msg;
-          ipcApi
-            .loadThumbnail(thumbPath)
-            .then((dataUrl) => {
-              postToExtension({
-                type: 'thumbnailContent',
-                requestId,
-                dataUrl: dataUrl ?? null,
-              });
-            })
-            .catch(() => {
-              postToExtension({
-                type: 'thumbnailContent',
-                requestId,
-                dataUrl: null,
-              });
-            });
-          break;
-        }
-        case 'requestDwgConvert': {
-          const { requestId, path: dwgPath } = msg;
-          ipcApi
-            .convertDwgToDxf(dwgPath, { dwg2dxfPath, odaPath })
-            .then((data) => {
-              postToExtension({ type: 'dwgConvertedContent', requestId, data });
-            })
-            .catch((e) => {
-              postToExtension({
-                type: 'dwgConvertedContent',
-                requestId,
-                data: null,
-                error: e instanceof Error ? e.message : String(e),
-              });
-            });
-          break;
-        }
-        case 'requestEbookConvert': {
-          const { requestId, path: ebookPath } = msg;
-          ipcApi
-            .convertEbookToEpub(ebookPath, { calibrePath })
-            .then((data) => {
-              postToExtension({
-                type: 'ebookConvertedContent',
-                requestId,
-                data,
-              });
-            })
-            .catch((e) => {
-              postToExtension({
-                type: 'ebookConvertedContent',
-                requestId,
-                data: null,
-                error: e instanceof Error ? e.message : String(e),
-              });
-            });
           break;
         }
         case 'requestStreamingUrl': {
@@ -674,33 +583,6 @@ export default function ExtensionHost({
           });
           break;
         }
-        case 'requestFileBytes': {
-          // pdf-viewer can't `fetch(whale-file://)` — Chromium CORS blocks
-          // cross-origin fetch to custom schemes (only http/https/data/chrome
-          // are allowed) — so it asks the host to read the file and ship the
-          // raw bytes back. Electron structured-clones the Uint8Array through
-          // postMessage (one memcpy, no base64, no O(n²) decode). Mirrors
-          // office-viewer's officePdfContent path.
-          const { requestId, path: bytesPath } = msg;
-          ipcApi
-            .readFile(bytesPath)
-            .then((buf: ArrayBuffer) => {
-              postToExtension({
-                type: 'fileBytes',
-                requestId,
-                data: new Uint8Array(buf),
-              });
-            })
-            .catch((e: unknown) => {
-              postToExtension({
-                type: 'fileBytes',
-                requestId,
-                data: null,
-                error: e instanceof Error ? e.message : String(e),
-              });
-            });
-          break;
-        }
         case 'mdRenderThemeChanged': {
           // md-editor toolbar <select> changed the preset → sync back into
           // redux so Settings stays in sync (bidirectional). This dispatch
@@ -709,165 +591,6 @@ export default function ExtensionHost({
           // onMessage for setMdRenderTheme is a no-op when the value matches
           // its current mdThemePref).
           dispatch(setMdRenderTheme(msg.theme));
-          break;
-        }
-        case 'requestSaveImage': {
-          // §paste-image (md-editor): save the pasted clipboard image into the
-          // .md's directory, return the absolute path so the editor can link it.
-          const { requestId, dataURL, ext, dirPath } = msg;
-          ipcApi
-            .saveImageToFile(dataURL, dirPath, ext)
-            .then((savedPath: string) => {
-              postToExtension({ type: 'imageSaved', requestId, path: savedPath });
-            })
-            .catch((e: unknown) => {
-              postToExtension({
-                type: 'imageSaved',
-                requestId,
-                path: null,
-                error: e instanceof Error ? e.message : String(e),
-              });
-            });
-          break;
-        }
-        case 'requestReadEbookAnnotations': {
-          const { requestId, path: annoPath } = msg;
-          ipcApi
-            .readEbookAnnotations(annoPath)
-            .then((payload) => {
-              postToExtension({
-                type: 'ebookAnnotations',
-                requestId,
-                ok: true,
-                payload: payload ?? null,
-              });
-            })
-            .catch((e) => {
-              postToExtension({
-                type: 'ebookAnnotations',
-                requestId,
-                ok: false,
-                payload: null,
-                error: e instanceof Error ? e.message : String(e),
-              });
-            });
-          break;
-        }
-        case 'requestWriteEbookAnnotations': {
-          const { requestId, path: annoPath, payload } = msg;
-          ipcApi
-            .writeEbookAnnotations(
-              annoPath,
-              payload as Parameters<typeof ipcApi.writeEbookAnnotations>[1]
-            )
-            .then(() => {
-              postToExtension({
-                type: 'ebookAnnotations',
-                requestId,
-                ok: true,
-                payload: null,
-              });
-            })
-            .catch((e) => {
-              postToExtension({
-                type: 'ebookAnnotations',
-                requestId,
-                ok: false,
-                payload: null,
-                error: e instanceof Error ? e.message : String(e),
-              });
-            });
-          break;
-        }
-        case 'requestArchiveList': {
-          const { requestId, path: archivePath, maxEntries, password } = msg;
-          ipcApi
-            .listArchive(archivePath, { maxEntries, password })
-            .then(({ entries, truncated }) => {
-              postToExtension({
-                type: 'archiveList',
-                requestId,
-                entries,
-                truncated,
-              });
-            })
-            .catch((e) => {
-              postToExtension({
-                type: 'archiveList',
-                requestId,
-                entries: [],
-                truncated: false,
-                error: e instanceof Error ? e.message : String(e),
-              });
-            });
-          break;
-        }
-        case 'requestArchiveEntry': {
-          const { requestId, path: archivePath, entryPath, password, force } = msg;
-          ipcApi
-            .readArchiveEntry(archivePath, entryPath, { password, force })
-            .then((result) => {
-              postToExtension({
-                type: 'archiveEntryContent',
-                requestId,
-                base64: result?.base64 ?? '',
-                size: result?.size ?? 0,
-              });
-            })
-            .catch((e) => {
-              postToExtension({
-                type: 'archiveEntryContent',
-                requestId,
-                base64: '',
-                size: 0,
-                error: e instanceof Error ? e.message : String(e),
-              });
-            });
-          break;
-        }
-        case 'requestArchiveExtract': {
-          const { requestId, path: archivePath, destDir, password, flatten } = msg;
-          ipcApi
-            .extractArchive(archivePath, destDir, { password, flatten })
-            .then(({ written, skipped, errors }) => {
-              postToExtension({
-                type: 'archiveExtracted',
-                requestId,
-                written,
-                skipped,
-                errors,
-              });
-            })
-            .catch((e) => {
-              postToExtension({
-                type: 'archiveExtracted',
-                requestId,
-                written: 0,
-                skipped: [],
-                errors: [],
-                error: e instanceof Error ? e.message : String(e),
-              });
-            });
-          break;
-        }
-        case 'requestDirectoryDialog': {
-          const { requestId } = msg;
-          ipcApi
-            .openDirectoryDialog()
-            .then((selected) => {
-              postToExtension({
-                type: 'directoryDialogResult',
-                requestId,
-                path: selected,
-              });
-            })
-            .catch(() => {
-              postToExtension({
-                type: 'directoryDialogResult',
-                requestId,
-                path: null,
-              });
-            });
           break;
         }
         case 'error':
@@ -886,9 +609,7 @@ export default function ExtensionHost({
     handleSave,
     handleRequestFileEmbed,
     postToExtension,
-    dwg2dxfPath,
-    odaPath,
-    calibrePath,
+    handleRpc,
   ]);
 
   const title = manifest.name;

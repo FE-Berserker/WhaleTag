@@ -10,6 +10,11 @@ import {
   nextView,
   sanitizeKeybindings,
 } from './keybindings';
+import {
+  DEFAULT_MD_KEYBINDINGS,
+  MD_KEY_ACTIONS,
+  sanitizeMdKeybindings,
+} from './md-keybindings';
 
 describe('keybindings.normalizeKey', () => {
   it("canonicalizes ' ' (space) to 'Space'", () => {
@@ -165,5 +170,27 @@ describe('keybindings.MAPPABLE_KEYS / DEFAULT_KEYBINDINGS consistency', () => {
         `mappable key ${token} has no default action`
       );
     }
+  });
+});
+
+describe('md-keybindings insertion shortcuts', () => {
+  it('uses Mod-Q for callouts and Mod-T for tables', () => {
+    assert.equal(DEFAULT_MD_KEYBINDINGS.callout, 'Mod-q');
+    assert.equal(DEFAULT_MD_KEYBINDINGS.table, 'Mod-t');
+  });
+
+  it('exposes both insertion actions in Settings', () => {
+    const actions = new Set(MD_KEY_ACTIONS.map(({ action }) => action));
+    assert.ok(actions.has('callout'));
+    assert.ok(actions.has('table'));
+  });
+
+  it('backfills both shortcuts for persisted legacy maps', () => {
+    const legacy = { ...DEFAULT_MD_KEYBINDINGS } as Record<string, string>;
+    delete legacy.callout;
+    delete legacy.table;
+    const sanitized = sanitizeMdKeybindings(legacy);
+    assert.equal(sanitized.callout, 'Mod-q');
+    assert.equal(sanitized.table, 'Mod-t');
   });
 });

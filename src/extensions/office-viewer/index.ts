@@ -6,14 +6,34 @@ import {
   PDFJS_I18N,
   type PdfjsSession,
 } from '../shared/pdfjs-in-iframe';
+import {
+  clampZoom,
+  clampPage,
+  computeDisplayScale,
+  nextRotation,
+  formatBytes,
+  ZOOM_STEP,
+  type ZoomMode,
+} from './view-math';
 
 // --- DOM refs -------------------------------------------------------------
 const pagesEl = document.getElementById('pages') as HTMLDivElement;
-const statusEl = document.getElementById('status') as HTMLDivElement;
-const pageInfoEl = document.getElementById('page-info') as HTMLSpanElement;
+const loadingBarEl = document.getElementById('loading-bar') as HTMLDivElement;
+const statusSizeEl = document.getElementById('status-size') as HTMLSpanElement;
+const statusPagesEl = document.getElementById('status-pages') as HTMLSpanElement;
+const sizeLblEl = document.getElementById('size-lbl') as HTMLSpanElement;
+const pagesLblEl = document.getElementById('pages-lbl') as HTMLSpanElement;
+const pageInput = document.getElementById('page-input') as HTMLInputElement;
+const pageCountEl = document.getElementById('page-count') as HTMLSpanElement;
 const zoomLevelEl = document.getElementById('zoom-level') as HTMLSpanElement;
+const prevBtn = document.getElementById('prev-page') as HTMLButtonElement;
+const nextBtn = document.getElementById('next-page') as HTMLButtonElement;
+const fitWidthBtn = document.getElementById('fit-width') as HTMLButtonElement;
+const fitPageBtn = document.getElementById('fit-page') as HTMLButtonElement;
 const zoomInEl = document.getElementById('zoom-in') as HTMLButtonElement;
 const zoomOutEl = document.getElementById('zoom-out') as HTMLButtonElement;
+const rotateLeftBtn = document.getElementById('rotate-left') as HTMLButtonElement;
+const rotateRightBtn = document.getElementById('rotate-right') as HTMLButtonElement;
 
 // --- Conversion bridge: still office-specific (soffice → PDF), not shared.
 type PendingResolver = {
@@ -23,14 +43,15 @@ type PendingResolver = {
 const pendingConversions = new Map<string, PendingResolver>();
 let convertReqId = 0;
 let renderToken = 0;
-let zoom = 1;
-const ZOOM_STEP = 0.25;
-const ZOOM_MIN = 0.5; // office-viewer's choice — narrower than pdf-viewer's 0.25
-const ZOOM_MAX = 4;
-// P3-2: scroll-synced current page for the "cur / total" indicator (was a
-// static "N / N").
+
+// §16.8 view state (mirrors pdf-viewer): manual zoom or a fit mode; per-page
+// user rotation; scroll-synced current page; file size for the status bar.
+let zoomMode: ZoomMode = 'manual';
+let manualZoom = 1;
+const pageRotations = new Map<number, number>();
 let currentPage = 0;
-let totalPages = 0;
+let pageCount = 0;
+let fileSizeBytes: number | null = null;
 
 function requestOfficeConvert(path: string): Promise<Uint8Array> {
   const requestId = `o${(convertReqId += 1)}`;
@@ -79,37 +100,77 @@ const BTN_STYLE =
   'background:transparent;cursor:pointer;font:inherit;';
 
 // --- Shared pdfjs session -------------------------------------------------
-// Office-viewer's render loop has no per-page rotation / fit-mode, so it
-// uses the full `session.renderPdfBytes` flow.
+// §16.8: the session now gets the same hooks pdf-viewer has — per-canvas
+// data-* stamping + CSS display scale (fit-width / fit-page / manual zoom)
+// and a shared display-scale for the TextLayer so text selection aligns at
+// any zoom (previously the TextLayer always laid out at scale 1, so selection
+// drifted as soon as the user zoomed — a latent bug the fit modes forced us
+// to fix properly).
 const session: PdfjsSession = createPdfjsSession({
   pagesEl,
   getToken: () => renderToken,
-  // P3-2: stamp the page number on each canvas so the rAF scroll handler can
-  // resolve the current page (office-viewer otherwise has no per-page marker).
-  onAfterPageRender: (pageNum, canvas) => {
+  onAfterPageRender: (pageNum, canvas, baseVp) => {
     canvas.setAttribute('data-page-num', String(pageNum));
+    canvas.setAttribute('data-base-w', String(baseVp.width));
+    canvas.setAttribute('data-base-h', String(baseVp.height));
+    // Apply the CURRENT display scale immediately (same Chromium-canvas-
+    // intrinsic-size reason as pdf-viewer: set BOTH width and height —
+    // `aspect-ratio` is resolved after the intrinsic bitmap size and is
+    // effectively ignored for <canvas>).
+    const ds = computeDisplayScale(
+      zoomMode,
+      manualZoom,
+      pagesEl.clientWidth,
+      pagesEl.clientHeight,
+      baseVp.width,
+      baseVp.height
+    );
+    canvas.style.width = `${baseVp.width * ds}px`;
+    canvas.style.height = `${baseVp.height * ds}px`;
+  },
+  // §16.18: localized per-page aria-label for the shared render loop's
+  // role="img" canvas stamping.
+  pageAriaLabel: (pageNum, total) =>
+    T.pageLabel.replace('{n}', String(pageNum)).replace('{total}', String(total)),
+  computeDisplayScale: (baseVp) =>
+    computeDisplayScale(
+      zoomMode,
+      manualZoom,
+      pagesEl.clientWidth,
+      pagesEl.clientHeight,
+      baseVp.width,
+      baseVp.height
+    ),
+  onDocumentLoaded: (count) => {
+    pageCount = count;
+    updatePageUi();
+    updateStatusBar();
   },
   onStatus: ({ kind, text }) => {
     if (kind === 'error') {
-      statusEl.textContent = text;
-    } else if (kind === 'progress') {
-      // The session's "rendering N/total" status uses a "{n}/{total}"
-      // shorthand, but office-viewer's local i18n expects the rendering
-      // template with placeholders. Map the bare progress number into the
-      // template; clear text = idle (no message).
-      if (!text) {
-        statusEl.textContent = '';
-      } else {
-        statusEl.textContent = T.rendering
-          .replace('{cur}', text)
-          .replace('{total}', String(pageInfoEl.textContent.split('/').pop()?.trim() ?? '?'));
-      }
+      setLoadingBar(T.failedRender.replace('{msg}', text), 'error');
+      return;
+    }
+    // progress: the session drives its own per-page text ('2 / 10'); surface
+    // it through the localised "Rendering N / M…" template (mirrors pdf-viewer).
+    if (!text) {
+      setLoadingBar('', 'progress');
+      return;
+    }
+    const m = text.match(/^(\d+) \/ (\d+)$/);
+    if (m) {
+      setLoadingBar(
+        T.rendering.replace('{cur}', m[1]).replace('{total}', m[2]),
+        'progress'
+      );
+    } else {
+      setLoadingBar(text, 'progress');
     }
   },
 });
 
 // --- i18n ----------------------------------------------------------------
-// 6 shared keys come from PDFJS_I18N; 2 are office-specific.
+// 7 shared keys come from PDFJS_I18N; the rest are office-specific.
 interface Strings {
   loading: string;
   failedDecode: string;
@@ -117,6 +178,19 @@ interface Strings {
   failedRender: string;
   zoomIn: string;
   zoomOut: string;
+  /** §16.18: per-page canvas aria-label (`{n}` / `{total}` placeholders). */
+  pageLabel: string;
+  prevPage: string;
+  nextPage: string;
+  /** page-input title / aria-label. */
+  pageNumber: string;
+  fitWidth: string;
+  fitPage: string;
+  rotateLeft: string;
+  rotateRight: string;
+  /** status-bar labels (§16.8). */
+  sizeLabel: string;
+  pagesLabel: string;
   converting: string;
   failedConvert: string;
   /** docs/09 §16.16: shown when LibreOffice is not installed. */
@@ -129,6 +203,15 @@ interface Strings {
 const I18N: Record<string, Strings> = {
   en: {
     ...PDFJS_I18N.en,
+    prevPage: 'Previous page',
+    nextPage: 'Next page',
+    pageNumber: 'Page number',
+    fitWidth: 'Fit width',
+    fitPage: 'Fit page',
+    rotateLeft: 'Rotate left',
+    rotateRight: 'Rotate right',
+    sizeLabel: 'Size',
+    pagesLabel: 'Pages',
     converting: 'Converting to PDF…',
     failedConvert: 'Office document conversion failed: {msg}',
     sofficeMissing:
@@ -138,6 +221,15 @@ const I18N: Record<string, Strings> = {
   },
   zh: {
     ...PDFJS_I18N.zh,
+    prevPage: '上一页',
+    nextPage: '下一页',
+    pageNumber: '页码',
+    fitWidth: '适合宽度',
+    fitPage: '适合页面',
+    rotateLeft: '向左旋转',
+    rotateRight: '向右旋转',
+    sizeLabel: '大小',
+    pagesLabel: '页数',
     converting: '正在转换为 PDF…',
     failedConvert: 'Office 文档转换失败:{msg}',
     sofficeMissing: '未安装 LibreOffice。WhaleTag 需要它来渲染 Office 文档。',
@@ -151,88 +243,206 @@ let T: Strings = I18N.en;
 function applyLocale() {
   T = window.whaleExt.t(I18N);
   document.documentElement.lang = window.whaleExt.locale;
-  zoomInEl.title = T.zoomIn;
-  zoomOutEl.title = T.zoomOut;
+  const labelled: Array<[HTMLButtonElement, string]> = [
+    [prevBtn, T.prevPage],
+    [nextBtn, T.nextPage],
+    [fitWidthBtn, T.fitWidth],
+    [fitPageBtn, T.fitPage],
+    [zoomOutEl, T.zoomOut],
+    [zoomInEl, T.zoomIn],
+    [rotateLeftBtn, T.rotateLeft],
+    [rotateRightBtn, T.rotateRight],
+  ];
+  for (const [btn, label] of labelled) {
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
+  }
+  pageInput.title = T.pageNumber;
+  pageInput.setAttribute('aria-label', T.pageNumber);
+  sizeLblEl.textContent = T.sizeLabel;
+  pagesLblEl.textContent = T.pagesLabel;
+}
+
+// --- Loading bar (§16.8: transient progress / error line) ------------------
+function setLoadingBar(text: string, state: 'progress' | 'error') {
+  loadingBarEl.textContent = text;
+  if (text === '') {
+    loadingBarEl.removeAttribute('data-state');
+  } else {
+    loadingBarEl.setAttribute('data-state', state);
+  }
+}
+
+// --- Status bar (§16.8: file size + page count) ----------------------------
+function updateStatusBar() {
+  statusSizeEl.textContent = formatBytes(fileSizeBytes);
+  statusPagesEl.textContent = pageCount > 0 ? String(pageCount) : '—';
+}
+
+// --- Zoom / fit (§16.8, mirrors pdf-viewer) --------------------------------
+/**
+ * Re-lay out already-rendered canvases without re-rendering pixels. Used for
+ * zoom / fit-mode / rotation changes where the existing bitmap is still good.
+ * BOTH width and height are set explicitly — see the session hook comment.
+ */
+function relayoutPages() {
+  const canvases = pagesEl.querySelectorAll<HTMLCanvasElement>(
+    'canvas[data-page-num]'
+  );
+  canvases.forEach((canvas) => {
+    const baseW = Number(canvas.getAttribute('data-base-w'));
+    const baseH = Number(canvas.getAttribute('data-base-h'));
+    if (!Number.isFinite(baseW) || !Number.isFinite(baseH) || baseW <= 0 || baseH <= 0) {
+      return;
+    }
+    const ds = computeDisplayScale(
+      zoomMode,
+      manualZoom,
+      pagesEl.clientWidth,
+      pagesEl.clientHeight,
+      baseW,
+      baseH
+    );
+    canvas.style.width = `${baseW * ds}px`;
+    canvas.style.height = `${baseH * ds}px`;
+    canvas.style.maxWidth = '100%';
+  });
 }
 
 function applyZoom() {
-  zoomLevelEl.textContent = `${Math.round(zoom * 100)}%`;
-  pagesEl.querySelectorAll('canvas').forEach((c) => {
-    const el = c as HTMLCanvasElement;
-    if (zoom === 1) {
-      el.style.width = '';
-      el.style.maxWidth = '100%';
-    } else {
-      el.style.maxWidth = 'none';
-      el.style.width = `${zoom * 100}%`;
-    }
-  });
+  zoomLevelEl.textContent = `${Math.round(manualZoom * 100)}%`;
+  relayoutPages();
 }
 
-function setZoom(next: number) {
-  zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, next));
+function setZoomMode(mode: ZoomMode) {
+  zoomMode = mode;
+  fitWidthBtn.classList.toggle('active', mode === 'fit-width');
+  fitPageBtn.classList.toggle('active', mode === 'fit-page');
   applyZoom();
 }
 
-zoomInEl.addEventListener('click', () => setZoom(zoom + ZOOM_STEP));
-zoomOutEl.addEventListener('click', () => setZoom(zoom - ZOOM_STEP));
+function setManualZoom(next: number) {
+  zoomMode = 'manual';
+  fitWidthBtn.classList.remove('active');
+  fitPageBtn.classList.remove('active');
+  manualZoom = clampZoom(next);
+  applyZoom();
+}
 
-// P3-2: track the current page from scroll position (rAF-throttled), mirroring
-// pdf-viewer. Finds the page whose top is closest to (but not past) 25% down
-// the viewport and updates the "cur / total" indicator. The ResizeObserver +
-// relayout half of P3-2 is N/A here: office canvases render at a fixed px width
-// (no fit-mode), so a container resize neither re-rasterizes nor needs a
-// CSS relayout — there's nothing to throttle.
-let scrollRaf = 0;
-pagesEl.addEventListener('scroll', () => {
-  if (scrollRaf) return;
-  scrollRaf = requestAnimationFrame(() => {
-    scrollRaf = 0;
-    if (totalPages === 0) return;
-    const rect = pagesEl.getBoundingClientRect();
-    const targetY = rect.top + rect.height * 0.25;
-    const canvases = pagesEl.querySelectorAll<HTMLCanvasElement>(
-      'canvas[data-page-num]'
-    );
-    let best: { num: number; top: number } | null = null;
-    canvases.forEach((c) => {
-      const top = c.getBoundingClientRect().top;
-      const num = Number(c.getAttribute('data-page-num'));
-      if (top <= targetY && (!best || top > best.top)) best = { num, top };
-    });
-    const next = best?.num ?? 1;
-    if (next !== currentPage) {
-      currentPage = next;
-      pageInfoEl.textContent = `${currentPage} / ${totalPages}`;
-    }
-  });
-});
+function zoomIn() {
+  setManualZoom(manualZoom + ZOOM_STEP);
+}
+
+function zoomOut() {
+  setManualZoom(manualZoom - ZOOM_STEP);
+}
+
+// --- Page navigation (§16.8) -----------------------------------------------
+function setCurrentPage(pageNum: number) {
+  currentPage = clampPage(pageNum, pageCount);
+  // Don't clobber the input while the user is typing in it.
+  if (document.activeElement !== pageInput) {
+    pageInput.value = String(currentPage);
+  }
+  updatePageUi();
+}
+
+function updatePageUi() {
+  if (pageCount > 0) {
+    pageCountEl.textContent = String(pageCount);
+    pageInput.max = String(pageCount);
+  } else {
+    pageCountEl.textContent = '—';
+    pageInput.removeAttribute('max');
+  }
+  const hasDoc = pageCount > 0;
+  prevBtn.disabled = !hasDoc || currentPage <= 1;
+  nextBtn.disabled = !hasDoc || currentPage >= pageCount;
+}
+
+function gotoPage(pageNum: number) {
+  if (!pageCount) return;
+  setCurrentPage(pageNum);
+  const container = pagesEl.querySelector<HTMLElement>(
+    `div[data-page-container="${currentPage}"]`
+  );
+  if (container) {
+    container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
+function gotoPrev() {
+  if (currentPage > 1) gotoPage(currentPage - 1);
+}
+
+function gotoNext() {
+  if (currentPage < pageCount) gotoPage(currentPage + 1);
+}
+
+function gotoFirst() {
+  if (pageCount) gotoPage(1);
+}
+
+function gotoLast() {
+  if (pageCount) gotoPage(pageCount);
+}
+
+// --- Rotation (§16.8: per-page ±90°) ----------------------------------------
+async function rerenderPage(pageNum: number): Promise<void> {
+  const rotation = pageRotations.get(pageNum) ?? 0;
+  await session.rerenderPage(pageNum, rotation);
+  relayoutPages();
+}
+
+function setPageRotation(pageNum: number, delta: 90 | -90) {
+  const next = nextRotation(pageRotations.get(pageNum) ?? 0, delta);
+  pageRotations.set(pageNum, next);
+  void rerenderPage(pageNum);
+}
+
+function rotateCurrentPage(direction: 1 | -1) {
+  if (!pageCount) return;
+  setPageRotation(currentPage, (direction * 90) as 90 | -90);
+}
+
+// --- Render pipeline ---------------------------------------------------------
+/** Reset all per-file view state before a new document renders. */
+function resetViewState() {
+  pageRotations.clear();
+  pageCount = 0;
+  currentPage = 1;
+  manualZoom = 1;
+  zoomMode = 'manual';
+  pageInput.value = '1';
+  zoomLevelEl.textContent = '100%';
+  fitWidthBtn.classList.remove('active');
+  fitPageBtn.classList.remove('active');
+  updatePageUi();
+  updateStatusBar();
+}
 
 async function renderPdf(bytes: Uint8Array) {
   const token = (renderToken += 1);
   pagesEl.innerHTML = '';
-  pageInfoEl.textContent = '';
-  zoom = 1;
-  zoomLevelEl.textContent = '100%';
-  statusEl.textContent = T.loading;
-  pageInfoEl.textContent = '?';
+  resetViewState();
+  setLoadingBar(T.loading, 'progress');
 
   try {
     await session.renderPdfBytes(bytes);
     if (token !== renderToken) return;
-    // session may have been cancelled mid-render — bail without overwriting status.
-    const pages = pagesEl.querySelectorAll('canvas[data-page-num]');
-    if (pages.length > 0) {
-      totalPages = pages.length;
+    setLoadingBar('', 'progress');
+    if (pageCount > 0) {
       currentPage = 1;
-      pageInfoEl.textContent = `${currentPage} / ${totalPages}`;
-      statusEl.textContent = '';
+      updatePageUi();
     }
   } catch (e) {
     if (token === renderToken) {
-      statusEl.textContent = T.failedRender.replace(
-        '{msg}',
-        e instanceof Error ? e.message : String(e)
+      setLoadingBar(
+        T.failedRender.replace(
+          '{msg}',
+          e instanceof Error ? e.message : String(e)
+        ),
+        'error'
       );
     }
   }
@@ -241,12 +451,8 @@ async function renderPdf(bytes: Uint8Array) {
 async function openOfficeFile(path: string) {
   const token = (renderToken += 1);
   pagesEl.innerHTML = '';
-  pageInfoEl.textContent = '';
-  totalPages = 0;
-  currentPage = 0;
-  zoom = 1;
-  zoomLevelEl.textContent = '100%';
-  statusEl.textContent = T.converting;
+  resetViewState();
+  setLoadingBar(T.converting, 'progress');
 
   // docs/09 §16.16: probe LibreOffice up front. If it's missing, show install
   // guidance + an "open with system default" fallback instead of attempting a
@@ -344,14 +550,155 @@ function showOfficeMessage(opts: {
   );
   wrap.appendChild(open);
   pagesEl.appendChild(wrap);
-  statusEl.textContent = '';
+  setLoadingBar('', 'progress');
 }
+
+// --- Resize → refit (§16.8: CSS-only relayout, never re-rasterizes) ---------
+let resizeRaf = 0;
+function scheduleRefit() {
+  if (resizeRaf) cancelAnimationFrame(resizeRaf);
+  resizeRaf = requestAnimationFrame(() => {
+    resizeRaf = 0;
+    if (zoomMode === 'fit-width' || zoomMode === 'fit-page') {
+      relayoutPages();
+    }
+  });
+}
+
+const resizeObserver =
+  typeof ResizeObserver === 'function'
+    ? new ResizeObserver(() => scheduleRefit())
+    : null;
+if (resizeObserver) resizeObserver.observe(pagesEl);
+window.addEventListener('resize', scheduleRefit);
+
+// --- Toolbar / keyboard wiring (§16.8) --------------------------------------
+prevBtn.addEventListener('click', gotoPrev);
+nextBtn.addEventListener('click', gotoNext);
+zoomInEl.addEventListener('click', zoomIn);
+zoomOutEl.addEventListener('click', zoomOut);
+fitWidthBtn.addEventListener('click', () => setZoomMode('fit-width'));
+fitPageBtn.addEventListener('click', () => setZoomMode('fit-page'));
+rotateLeftBtn.addEventListener('click', () => rotateCurrentPage(-1));
+rotateRightBtn.addEventListener('click', () => rotateCurrentPage(1));
+
+pageInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const n = parseInt(pageInput.value, 10);
+    if (Number.isFinite(n) && n >= 1 && n <= pageCount) {
+      gotoPage(n);
+      pageInput.blur();
+    } else {
+      pageInput.value = String(currentPage);
+    }
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    pageInput.value = String(currentPage);
+    pageInput.blur();
+  }
+});
+pageInput.addEventListener('focus', () => {
+  pageInput.select();
+});
+pageInput.addEventListener('blur', () => {
+  if (parseInt(pageInput.value, 10) !== currentPage && pageCount > 0) {
+    pageInput.value = String(currentPage);
+  }
+});
+
+window.addEventListener('keydown', (e) => {
+  // Ignore when the user is typing in the page input.
+  if (document.activeElement === pageInput) return;
+  // Don't hijack browser/OS shortcuts with extra modifiers.
+  if (e.altKey || e.metaKey || e.shiftKey) return;
+
+  if (e.ctrlKey || e.metaKey) {
+    if (e.key === '0') {
+      e.preventDefault();
+      setZoomMode('fit-width');
+      return;
+    }
+    if (e.key === '9') {
+      e.preventDefault();
+      setZoomMode('fit-page');
+      return;
+    }
+    if (e.key === '+' || e.key === '=') {
+      e.preventDefault();
+      zoomIn();
+      return;
+    }
+    if (e.key === '-' || e.key === '_') {
+      e.preventDefault();
+      zoomOut();
+      return;
+    }
+  }
+
+  switch (e.key) {
+    case 'PageDown':
+      e.preventDefault();
+      gotoNext();
+      return;
+    case 'PageUp':
+      e.preventDefault();
+      gotoPrev();
+      return;
+    case 'Home':
+      e.preventDefault();
+      gotoFirst();
+      return;
+    case 'End':
+      e.preventDefault();
+      gotoLast();
+      return;
+    case 'ArrowRight':
+      e.preventDefault();
+      gotoNext();
+      return;
+    case 'ArrowLeft':
+      e.preventDefault();
+      gotoPrev();
+      return;
+    default:
+      return;
+  }
+});
+
+// P3-2: track the current page from scroll position (rAF-throttled), mirroring
+// pdf-viewer. Finds the page whose top is closest to (but not past) 25% down
+// the viewport.
+let scrollRaf = 0;
+pagesEl.addEventListener('scroll', () => {
+  if (scrollRaf) return;
+  scrollRaf = requestAnimationFrame(() => {
+    scrollRaf = 0;
+    if (pageCount === 0) return;
+    const rect = pagesEl.getBoundingClientRect();
+    const targetY = rect.top + rect.height * 0.25;
+    const canvases = pagesEl.querySelectorAll<HTMLCanvasElement>(
+      'canvas[data-page-num]'
+    );
+    let best: { num: number; top: number } | null = null;
+    canvases.forEach((c) => {
+      const top = c.getBoundingClientRect().top;
+      const num = Number(c.getAttribute('data-page-num'));
+      if (top <= targetY && (!best || top > best.top)) best = { num, top };
+    });
+    if (best && best.num !== currentPage) {
+      setCurrentPage(best.num);
+    }
+  });
+});
 
 window.whaleExt.onMessage((msg) => {
   switch (msg.type) {
     case 'fileContent':
       // The Office bytes are sent as base64, but conversion happens in the main
-      // process which reads the file directly. We only need the path here.
+      // process which reads the file directly. We only need the path here (and
+      // the size, when the host supplies it, for the status bar — §16.8).
+      fileSizeBytes = typeof msg.size === 'number' ? msg.size : null;
       openOfficeFile(msg.path).catch(() => undefined);
       break;
     case 'officePdfContent': {
@@ -401,4 +748,6 @@ window.whaleExt.onLocale(() => applyLocale());
 // docs/09 §16.9). Host's `setTheme` then overwrites within milliseconds.
 applyTheme(detectInitialTheme());
 applyLocale();
+updatePageUi();
+updateStatusBar();
 window.whaleExt.postMessage({ type: 'ready' });

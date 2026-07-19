@@ -6,11 +6,32 @@
  * yields `stream_event` (SDKPartialAssistantMessage) messages carrying the
  * raw Anthropic streaming events. We translate those into `text`/`thinking`/
  * `tool_use` chunks as they arrive so the UI types token-by-token. The SDK
- * THEN yields the complete `assistant` message — we dedup against what the
+ * THEN yields complete `assistant` message(s) — we dedup against what the
  * deltas already emitted so nothing is shown twice.
  *
+ * Wire facts confirmed by capturing the CLI's stream-json output (2026-07-18,
+ * claude-code 2.1.198 — see docs/09 §23):
+ *
+ * - **`message.uuid` is a fresh random value per emitted LINE** — it does NOT
+ *   correlate a `stream_event` with its complete `assistant` message, nor two
+ *   `stream_event`s with each other. Never use it as a dedup key. (Older
+ *   builds shared the uuid between `message_start` and the complete message
+ *   but not the deltas, which is why per-uuid dedup half-worked historically.)
+ * - A complete `assistant` message is yielded **as soon as one content block's
+ *   deltas finish — BEFORE that block's `content_block_stop`** — and one API
+ *   message can arrive as SEVERAL non-cumulative completes (e.g. `[thinking]`
+ *   then `[tool_use]`).
+ * - A content block's complete text equals the concatenation of its deltas
+ *   **byte-for-byte**; a tool_use block's `id` is stable across stream and
+ *   complete. These — not uuids — are the reliable dedup keys.
+ *
+ * Correlation therefore runs on a per-scope flow keyed by `parent_tool_use_id`
+ * (subagent streams interleave with the top level): `message_start` opens a
+ * new flow, deltas accumulate per content-block index, and completes exact-
+ * match their blocks against what was streamed.
+ *
  * The {@link TransformState} is created fresh per turn by the runtime (turns
- * are serial), which keeps the per-index/per-uuid bookkeeping local.
+ * are serial), which keeps the per-scope bookkeeping local.
  */
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
@@ -54,38 +75,82 @@ interface PendingToolBlock {
   json: string;
 }
 
+/** A text/thinking block already shown to the user (exact-content dedup). */
+interface ShownBlock {
+  type: 'text' | 'thinking';
+  text: string;
+}
+
+/**
+ * Flow state for ONE in-flight API message within one scope. Created/reset by
+ * `message_start`. The complete `assistant` message(s) for the API message
+ * arrive while the flow is live and dedup against it.
+ */
+interface MsgFlow {
+  /** True once `assistant_message_start` was emitted for this API message
+   *  (top-level scope only) — the complete message must not open a 2nd bubble. */
+  bubbleOpen: boolean;
+  /** In-flight text/thinking accumulators, keyed by content-block index.
+   *  A block's deltas are all in by the time its complete arrives (the
+   *  complete is yielded before `content_block_stop`), so at complete time
+   *  the accumulator holds the block's full text. */
+  acc: Map<number, ShownBlock>;
+  /** Blocks already shown this API message — finalized streamed blocks plus
+   *  blocks emitted from a complete (so a cumulative repeat complete skips
+   *  them). Exact full-string match: a complete block's text equals the
+   *  concatenation of its deltas, so there is no substring ambiguity. */
+  shown: ShownBlock[];
+}
+
+/** Scope key for the top-level stream (a real `parent_tool_use_id` never ''). */
+const TOP_SCOPE = '';
+
 /**
  * Per-turn transform state. Holds the bookkeeping needed to stream deltas and
- * then dedup the final complete assistant message.
+ * then dedup the final complete assistant message(s).
  */
 export interface TransformState {
-  /** Assistant message uuids whose `assistant_message_start` was emitted. */
-  startedMsgs: Set<string>;
-  /** Assistant message uuids that received any streamed text/thinking. */
-  streamedMsgs: Set<string>;
-  /** Tool-use ids already emitted via content_block_stop (to skip in complete). */
+  /** In-flight API-message flows, keyed by scope (`parent_tool_use_id`, or
+   *  {@link TOP_SCOPE} for the top level). Subagent streams interleave with
+   *  the top level, so each gets its own flow. */
+  flows: Map<string, MsgFlow>;
+  /** Tool-use ids already emitted — by `content_block_stop` OR by a complete
+   *  message, whichever arrives first (completes usually win: they precede
+   *  the stop on the wire). */
   emittedToolIds: Set<string>;
-  /** Tool-use blocks mid-stream, keyed by content-block index. */
-  toolBlocks: Map<number, PendingToolBlock>;
-  /** True once any thinking delta streamed this turn — a dedup backstop for the
-   *  complete assistant message's thinking block, in case the SDK pairs a
-   *  partial stream_event with the complete message under different uuids (which
-   *  would leave the per-uuid `streamed` check false). Per content-type so a
-   *  streamed thinking block doesn't suppress a complete-only text block. */
-  thinkingStreamed: boolean;
-  /** Same backstop, for text. */
-  textStreamed: boolean;
+  /** Tool-use blocks mid-stream, keyed by `${scope}:${content-block index}`. */
+  toolBlocks: Map<string, PendingToolBlock>;
 }
 
 export function createTransformState(): TransformState {
   return {
-    startedMsgs: new Set(),
-    streamedMsgs: new Set(),
+    flows: new Map(),
     emittedToolIds: new Set(),
     toolBlocks: new Map(),
-    thinkingStreamed: false,
-    textStreamed: false,
   };
+}
+
+function freshFlow(): MsgFlow {
+  return { bubbleOpen: false, acc: new Map(), shown: [] };
+}
+
+/** Get the scope's live flow, creating one if the stream opened mid-message. */
+function getFlow(state: TransformState, scope: string): MsgFlow {
+  let flow = state.flows.get(scope);
+  if (!flow) {
+    flow = freshFlow();
+    state.flows.set(scope, flow);
+  }
+  return flow;
+}
+
+/** True if `block` (from a complete message) was already shown — either still
+ *  accumulating from deltas or finalized/emitted earlier. */
+function alreadyShown(flow: MsgFlow, block: ShownBlock): boolean {
+  for (const b of flow.acc.values()) {
+    if (b.type === block.type && b.text === block.text) return true;
+  }
+  return flow.shown.some((b) => b.type === block.type && b.text === block.text);
 }
 
 /**
@@ -130,24 +195,26 @@ function* transformStreamEvent(
 ): Generator<StreamChunk> {
   const event = message.event as { type?: string };
   if (!event || typeof event.type !== 'string') return;
-  const uuid = message.uuid;
+  const scope = parent ?? TOP_SCOPE;
 
   if (event.type === 'message_start') {
-    // Subagent turns aren't top-level messages — don't open a new bubble.
+    // A new API message in this scope: reset the flow so its blocks dedup
+    // against their own deltas only. Subagent turns aren't top-level
+    // messages — don't open a new bubble for them.
+    const flow = freshFlow();
+    state.flows.set(scope, flow);
     if (parent) return;
-    if (!state.startedMsgs.has(uuid)) {
-      state.startedMsgs.add(uuid);
-      yield { type: 'assistant_message_start', itemId: uuid };
-    }
+    flow.bubbleOpen = true;
+    yield { type: 'assistant_message_start', itemId: message.uuid };
     return;
   }
 
   if (event.type === 'content_block_start') {
     const block = (event as { content_block?: { type?: string; id?: string; name?: string } })
       .content_block;
+    const index = (event as { index?: number }).index ?? 0;
     if (block?.type === 'tool_use' && typeof block.id === 'string') {
-      const index = (event as { index?: number }).index ?? 0;
-      state.toolBlocks.set(index, {
+      state.toolBlocks.set(`${scope}:${index}`, {
         id: block.id,
         name: typeof block.name === 'string' ? block.name : '',
         json: '',
@@ -160,17 +227,23 @@ function* transformStreamEvent(
     const delta = (event as { delta?: { type?: string; text?: string; thinking?: string; partial_json?: string } }).delta;
     if (!delta) return;
     if (delta.type === 'text_delta' && typeof delta.text === 'string') {
-      state.streamedMsgs.add(uuid);
+      const flow = getFlow(state, scope);
+      const index = (event as { index?: number }).index ?? 0;
+      const slot = flow.acc.get(index) ?? { type: 'text' as const, text: '' };
+      slot.text += delta.text;
+      flow.acc.set(index, slot);
       if (parent) {
         yield { type: 'subagent_text', subagentId: parent, content: delta.text };
       } else {
-        state.textStreamed = true;
         yield { type: 'text', content: delta.text };
       }
     } else if (delta.type === 'thinking_delta' && typeof delta.thinking === 'string') {
-      state.streamedMsgs.add(uuid);
+      const flow = getFlow(state, scope);
+      const index = (event as { index?: number }).index ?? 0;
+      const slot = flow.acc.get(index) ?? { type: 'thinking' as const, text: '' };
+      slot.text += delta.thinking;
+      flow.acc.set(index, slot);
       if (!parent) {
-        state.thinkingStreamed = true;
         yield { type: 'thinking', content: delta.thinking };
       }
     } else if (
@@ -178,7 +251,7 @@ function* transformStreamEvent(
       typeof delta.partial_json === 'string'
     ) {
       const index = (event as { index?: number }).index ?? 0;
-      const pending = state.toolBlocks.get(index);
+      const pending = state.toolBlocks.get(`${scope}:${index}`);
       if (pending) pending.json += delta.partial_json;
     }
     return;
@@ -186,9 +259,20 @@ function* transformStreamEvent(
 
   if (event.type === 'content_block_stop') {
     const index = (event as { index?: number }).index ?? 0;
-    const pending = state.toolBlocks.get(index);
+    // Finalize a streamed text/thinking block into the dedup pool.
+    const flow = state.flows.get(scope);
+    const slot = flow?.acc.get(index);
+    if (flow && slot) {
+      flow.acc.delete(index);
+      flow.shown.push(slot);
+    }
+    const key = `${scope}:${index}`;
+    const pending = state.toolBlocks.get(key);
     if (pending) {
-      state.toolBlocks.delete(index);
+      state.toolBlocks.delete(key);
+      // The complete message usually beats the stop to the wire and emits the
+      // tool_use first — then this stop must not re-emit it.
+      if (state.emittedToolIds.has(pending.id)) return;
       state.emittedToolIds.add(pending.id);
       const input = parseToolInput(pending.json);
       if (parent) {
@@ -213,33 +297,43 @@ function* transformAssistant(
   state: TransformState,
   parent: string | null
 ): Generator<StreamChunk> {
-  const uuid = message.uuid;
-  if (!parent && !state.startedMsgs.has(uuid)) {
-    state.startedMsgs.add(uuid);
-    yield { type: 'assistant_message_start', itemId: uuid };
+  const scope = parent ?? TOP_SCOPE;
+  const flow = getFlow(state, scope);
+  if (!parent && !flow.bubbleOpen) {
+    // No `message_start` seen for this API message (partial events lost or
+    // disabled) — open the bubble now.
+    flow.bubbleOpen = true;
+    yield { type: 'assistant_message_start', itemId: message.uuid };
   }
   const content = message.message?.content;
   if (!Array.isArray(content)) return;
-  const streamed = state.streamedMsgs.has(uuid);
   for (const block of content) {
     if (block.type === 'text') {
-      // Skip if streamed token-by-token. `textStreamed` is a per-turn backstop
-      // for partial/complete uuid mismatch (see TransformState).
-      if (streamed || state.textStreamed) continue;
+      // Skip if streamed token-by-token (exact full-text match — a complete
+      // block's text is the concatenation of its deltas).
+      const shown: ShownBlock = { type: 'text', text: block.text };
+      if (alreadyShown(flow, shown)) continue;
+      flow.shown.push(shown);
       if (parent) {
         yield { type: 'subagent_text', subagentId: parent, content: block.text };
       } else {
         yield { type: 'text', content: block.text };
       }
     } else if (block.type === 'thinking') {
-      // Skip if streamed token-by-token. `thinkingStreamed` is a per-turn
-      // backstop for partial/complete uuid mismatch.
-      if (streamed || state.thinkingStreamed) continue;
+      const shown: ShownBlock = { type: 'thinking', text: block.thinking };
+      if (alreadyShown(flow, shown)) continue;
+      flow.shown.push(shown);
       if (!parent) {
         yield { type: 'thinking', content: block.thinking };
       }
     } else if (block.type === 'tool_use') {
       if (state.emittedToolIds.has(block.id)) continue;
+      state.emittedToolIds.add(block.id);
+      // The complete usually arrives BEFORE this block's content_block_stop —
+      // drop the pending assembly so the stop doesn't re-emit the same call.
+      for (const [key, pending] of state.toolBlocks) {
+        if (pending.id === block.id) state.toolBlocks.delete(key);
+      }
       if (parent) {
         yield {
           type: 'subagent_tool_use',

@@ -49,7 +49,7 @@ import UpdateSection from './UpdateSection';
 import UserCommandsSection from './UserCommandsSection';
 import CustomCalloutsSection from './CustomCalloutsSection';
 import VisibilityIcon from '@mui/icons-material/Visibility';
-import StickyNote2Icon from '@mui/icons-material/StickyNote2';
+import ExtensionIcon from '@mui/icons-material/Extension';
 import MapIcon from '@mui/icons-material/Map';
 import StyleIcon from '@mui/icons-material/Style';
 import NotificationsIcon from '@mui/icons-material/Notifications';
@@ -96,15 +96,19 @@ import {
   setDefaultEntrySize,
   setKeybinding,
   resetKeybindings,
+  setMdKeybinding,
+  resetMdKeybindings,
   setAiSettings,
   setMdRenderTheme,
+  setMdImageSaveMode,
+  setMdImageSubfolder,
   DEFAULT_ENTRY_SIZE,
   normalizeFsPath,
   type ThemeMode,
   type MapProvider,
 } from '-/reducers/settings';
 import { setExtensionEnabled, setDefaultExtension } from '-/reducers/extensions';
-import type { MdRenderThemePref } from '../../shared/extension-types';
+import type { MdRenderThemePref, MdImageSaveMode } from '../../shared/extension-types';
 import type { ViewMode } from '../../shared/whale-meta';
 import {
   type TagShape,
@@ -117,6 +121,8 @@ import {
   KEYBOARD_ACTIONS,
   type KeyAction,
 } from '../domain/keybindings';
+import { MD_KEY_ACTIONS } from '../domain/md-keybindings';
+import { KeyCaptureInput } from '-/components/KeyCaptureInput';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { ipcApi } from '-/services/ipc-api';
 import AiMcpSection from '-/components/ai/AiMcpSection';
@@ -147,7 +153,7 @@ export type SettingsSectionId =
   | 'notifications'
   | 'ai'
   | 'commands'
-  | 'callouts'
+  | 'extensions'
   | 'about'
   | 'advanced';
 
@@ -195,6 +201,8 @@ type BuildState = 'unbuilt' | 'building' | 'ready' | 'error';
 interface FtStatus {
   state: BuildState;
   count?: number;
+  /** Live extraction progress during 'building' (docs/04 §10). */
+  processed?: number;
   error?: string;
 }
 
@@ -408,6 +416,20 @@ function FulltextSection() {
     setStatus({});
   }, [paths]);
 
+  // docs/04 §10: live extraction progress for in-flight fulltext builds.
+  useEffect(() => {
+    return ipcApi.onIndexProgress((ev) => {
+      if (ev.op !== 'fulltext:build') return;
+      const key = normalizeFsPath(ev.rootPath);
+      setStatus((prev) => {
+        const cur = prev[key];
+        if (!cur || cur.state !== 'building') return prev;
+        if (ev.done) return { ...prev, [key]: { ...cur, processed: undefined } };
+        return { ...prev, [key]: { ...cur, processed: ev.processed } };
+      });
+    });
+  }, []);
+
   // Probe existing indexes for paths we don't yet have a status for.
   useEffect(() => {
     for (const p of paths) {
@@ -433,7 +455,10 @@ function FulltextSection() {
 
   const statusLabel = (st: FtStatus | undefined): string => {
     if (!st) return '';
-    if (st.state === 'building') return t('fulltextBuilding');
+    if (st.state === 'building')
+      return st.processed !== undefined
+        ? `${t('fulltextBuilding')} ${st.processed}`
+        : t('fulltextBuilding');
     if (st.state === 'error') return `${t('errorOccurred')}${st.error ? `: ${st.error}` : ''}`;
     if (st.state === 'ready')
       return st.count !== undefined
@@ -564,9 +589,6 @@ function GeneralSection() {
   const { t } = useTranslation();
   const dispatch = useDispatch();
   const themeMode = useSelector((s: RootState) => s.settings.themeMode);
-  const mdRenderTheme = useSelector(
-    (s: RootState) => s.settings.mdEditorRenderTheme ?? 'auto'
-  );
   const language = useSelector((s: RootState) => s.settings?.language ?? 'en');
   const fontSize = useSelector((s: RootState) => s.settings?.fontSize ?? 13);
   const defaultLocationId = useSelector(
@@ -630,27 +652,6 @@ function GeneralSection() {
                 </Stack>
               </MenuItem>
             ))}
-          </Select>
-        </FormControl>
-      </Field>
-
-      <Field label={t('mdRenderTheme')}>
-        <FormControl size="small" sx={{ minWidth: 180 }}>
-          <Select
-            value={mdRenderTheme}
-            onChange={(e) =>
-              dispatch(setMdRenderTheme(e.target.value as MdRenderThemePref))
-            }
-          >
-            <MenuItem value="auto">{t('mdRenderThemeAuto')}</MenuItem>
-            <MenuItem value="github-light">GitHub Light</MenuItem>
-            <MenuItem value="github-dark">GitHub Dark</MenuItem>
-            <MenuItem value="solarized-light">Solarized Light</MenuItem>
-            <MenuItem value="solarized-dark">Solarized Dark</MenuItem>
-            <MenuItem value="dracula">Dracula</MenuItem>
-            <MenuItem value="nord">Nord</MenuItem>
-            <MenuItem value="gruvbox">Gruvbox</MenuItem>
-            <MenuItem value="one-dark">One Dark</MenuItem>
           </Select>
         </FormControl>
       </Field>
@@ -909,19 +910,20 @@ function ViewSection() {
           label={t('enabled')}
         />
       </Field>
-      {officeThumbnailEnabled ? (
-        <Field label={t('sofficePath')} hint={t('sofficePathHint')}>
-          <TextField
-            size="small"
-            fullWidth
-            placeholder={t('sofficePathPlaceholder')}
-            value={sofficePath ?? ''}
-            onChange={(e) =>
-              dispatch(setSofficePath(e.target.value.trim() || null))
-            }
-          />
-        </Field>
-      ) : null}
+      {/* docs/09 §16.14: not gated behind `officeThumbnailEnabled` — the
+          override also drives office-viewer rendering / availability probes,
+          which work regardless of the thumbnail toggle. */}
+      <Field label={t('sofficePath')} hint={t('sofficePathHint')}>
+        <TextField
+          size="small"
+          fullWidth
+          placeholder={t('sofficePathPlaceholder')}
+          value={sofficePath ?? ''}
+          onChange={(e) =>
+            dispatch(setSofficePath(e.target.value.trim() || null))
+          }
+        />
+      </Field>
     </Stack>
   );
 }
@@ -1446,6 +1448,78 @@ function AdvancedSection() {
 }
 
 /**
+ * Per-extension settings (docs/07 extension system). Starts with md-editor:
+ * the render-theme select (moved from General) and the callout manager
+ * (moved from the standalone 提示框 section, now a subsection here). Future
+ * extension-specific options get their own subsections in this pane.
+ */
+function PerExtensionSettingsSection() {
+  const { t } = useTranslation();
+  const dispatch = useDispatch();
+  const mdRenderTheme = useSelector(
+    (s: RootState) => s.settings.mdEditorRenderTheme ?? 'auto'
+  );
+  const mdImageSaveMode = useSelector(
+    (s: RootState) => s.settings.mdImageSaveMode ?? 'subfolder'
+  );
+  const mdImageSubfolder = useSelector(
+    (s: RootState) => s.settings.mdImageSubfolder ?? '${filename}.assets'
+  );
+  return (
+    <Stack sx={{ gap: 2 }}>
+      <Typography variant="subtitle2">{t('extMdEditorTitle')}</Typography>
+      <Field label={t('mdRenderTheme')}>
+        <FormControl size="small" sx={{ minWidth: 180 }}>
+          <Select
+            value={mdRenderTheme}
+            onChange={(e) =>
+              dispatch(setMdRenderTheme(e.target.value as MdRenderThemePref))
+            }
+          >
+            <MenuItem value="auto">{t('mdRenderThemeAuto')}</MenuItem>
+            <MenuItem value="github-light">GitHub Light</MenuItem>
+            <MenuItem value="github-dark">GitHub Dark</MenuItem>
+            <MenuItem value="solarized-light">Solarized Light</MenuItem>
+            <MenuItem value="solarized-dark">Solarized Dark</MenuItem>
+            <MenuItem value="dracula">Dracula</MenuItem>
+            <MenuItem value="nord">Nord</MenuItem>
+            <MenuItem value="gruvbox">Gruvbox</MenuItem>
+            <MenuItem value="one-dark">One Dark</MenuItem>
+            <MenuItem value="latex">Latex</MenuItem>
+          </Select>
+        </FormControl>
+      </Field>
+      <Field label={t('mdImageSaveMode')}>
+        <FormControl size="small" sx={{ minWidth: 180 }}>
+          <Select
+            value={mdImageSaveMode}
+            onChange={(e) =>
+              dispatch(setMdImageSaveMode(e.target.value as MdImageSaveMode))
+            }
+          >
+            <MenuItem value="current">{t('mdImageSaveModeCurrent')}</MenuItem>
+            <MenuItem value="subfolder">{t('mdImageSaveModeSubfolder')}</MenuItem>
+          </Select>
+        </FormControl>
+      </Field>
+      {mdImageSaveMode === 'subfolder' && (
+        <Field label={t('mdImageSubfolder')}>
+          <TextField
+            size="small"
+            value={mdImageSubfolder}
+            onChange={(e) => dispatch(setMdImageSubfolder(e.target.value))}
+            helperText={t('mdImageSubfolderHint')}
+            sx={{ minWidth: 260 }}
+          />
+        </Field>
+      )}
+      <Divider />
+      <CustomCalloutsSection />
+    </Stack>
+  );
+}
+
+/**
  * Keyboard shortcut bindings (key → action). Each mappable key gets a row with
  * a dropdown of every available action (plus "None", which clears the binding
  * and restores that key's browser default — notably Tab focus traversal). The
@@ -1457,13 +1531,36 @@ function KeyboardSection() {
   const keybindings = useSelector(
     (s: RootState) => s.settings?.keybindings
   );
+  const [query, setQuery] = useState('');
+  const q = query.trim().toLowerCase();
 
   return (
     <Stack sx={{ gap: 2 }}>
       <Typography variant="body2" color="text.secondary">
         {t('keybindingsHint')}
       </Typography>
-      {MAPPABLE_KEYS.map(({ token, labelKey }) => (
+      <input
+        type="text"
+        placeholder={t('keybindingsSearch')}
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        style={{
+          width: '100%',
+          height: 40,
+          boxSizing: 'border-box',
+          padding: '0 10px',
+          fontSize: 14,
+          fontFamily: 'inherit',
+          border: '1px solid rgba(127,127,127,0.4)',
+          borderRadius: 4,
+          background: 'transparent',
+          color: 'inherit',
+          outline: 'none',
+        }}
+      />
+      {MAPPABLE_KEYS.filter(({ labelKey }) =>
+        !q || t(labelKey).toLowerCase().includes(q)
+      ).map(({ token, labelKey }) => (
         <Field key={token} label={t(labelKey)}>
           <Select<KeyAction>
             value={keybindings?.[token] ?? 'none'}
@@ -1488,6 +1585,73 @@ function KeyboardSection() {
           onClick={() => dispatch(resetKeybindings())}
         >
           {t('resetKeybindings')}
+        </Button>
+      </Box>
+      <MdKeyboardSection query={query} />
+    </Stack>
+  );
+}
+
+/** md-editor keymap panel: each action's combo is editable via KeyCaptureInput.
+ *  Conflict detection flags two actions sharing a combo. Changes dispatch
+ *  setMdKeybinding → ExtensionHost pushes setKeybindings → editor reconfigures
+ *  its keymapCompartment live (see md-keymaps.ts / domain/md-keybindings.ts). */
+function MdKeyboardSection({ query = '' }: { query?: string }) {
+  const { t } = useTranslation();
+  const dispatch = useDispatch();
+  const bindings = useSelector((s: RootState) => s.settings?.mdKeybindings);
+  const q = query.trim().toLowerCase();
+  // combo → how many actions claim it (for conflict highlighting).
+  const counts: Record<string, number> = {};
+  if (bindings) {
+    for (const combo of Object.values(bindings)) {
+      if (combo) counts[combo] = (counts[combo] ?? 0) + 1;
+    }
+  }
+  return (
+    <Stack sx={{ gap: 2, mt: 3 }}>
+      <Typography variant="subtitle2">
+        {t('settingsSectionMdKeyboard')}
+      </Typography>
+      <Typography variant="body2" color="text.secondary">
+        {t('mdKeyboardHint')}
+      </Typography>
+      <Stack sx={{ gap: 1 }}>
+        {MD_KEY_ACTIONS.filter(({ labelKey }) =>
+          !q || t(labelKey).toLowerCase().includes(q)
+        ).map(({ action, labelKey }) => {
+          const value = bindings?.[action] ?? '';
+          const conflict = !!value && (counts[value] ?? 0) > 1;
+          return (
+            <Stack
+              key={action}
+              direction="row"
+              spacing={1.5}
+              sx={{ alignItems: 'center', minHeight: 40 }}
+            >
+              <Typography
+                variant="body2"
+                noWrap
+                sx={{ flex: 1, minWidth: 0 }}
+              >
+                {t(labelKey)}
+              </Typography>
+              <KeyCaptureInput
+                value={value}
+                onChange={(combo) => dispatch(setMdKeybinding(action, combo))}
+                conflict={conflict}
+              />
+            </Stack>
+          );
+        })}
+      </Stack>
+      <Box sx={{ mt: 1 }}>
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() => dispatch(resetMdKeybindings())}
+        >
+          {t('resetMdKeybindings')}
         </Button>
       </Box>
     </Stack>
@@ -1849,7 +2013,7 @@ const SECTIONS: {
   },
   { id: 'ai', labelKey: 'settingsSectionAi', Icon: SmartToyIcon },
   { id: 'commands', labelKey: 'settingsSectionCommands', Icon: TerminalIcon },
-  { id: 'callouts', labelKey: 'settingsSectionCallouts', Icon: StickyNote2Icon },
+  { id: 'extensions', labelKey: 'settingsSectionExtensions', Icon: ExtensionIcon },
   { id: 'about', labelKey: 'settingsSectionAbout', Icon: InfoOutlinedIcon },
   { id: 'advanced', labelKey: 'settingsSectionAdvanced', Icon: SettingsIcon },
 ];
@@ -1897,8 +2061,8 @@ export default function SettingsDialog({
         return <AiSection />;
       case 'commands':
         return <UserCommandsSection />;
-      case 'callouts':
-        return <CustomCalloutsSection />;
+      case 'extensions':
+        return <PerExtensionSettingsSection />;
       case 'about':
         return <UpdateSection />;
       case 'advanced':

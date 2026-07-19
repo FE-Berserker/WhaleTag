@@ -4,6 +4,8 @@ import type {
   AppUpdateAvailablePayload,
   AppUpdateProgressPayload,
   AppUpdateInfoPayload,
+  IndexProgressEvent,
+  DirChangedEvent,
 } from '../shared/ipc-types';
 
 /** Payloads the main process pushes per update channel — mirrors the
@@ -131,6 +133,8 @@ const whaleApi: WhaleApi = {
     ipcRenderer.invoke('fulltext:search', rootPath, query),
   hasFulltextIndex: (rootPath: string) =>
     ipcRenderer.invoke('fulltext:has', rootPath),
+  syncFulltextPaths: (paths: string[]) =>
+    ipcRenderer.invoke('fulltext:syncPaths', paths),
 
   // Sidecar metadata
   readSidecars: (dirPath: string, names: string[]) =>
@@ -231,8 +235,10 @@ const whaleApi: WhaleApi = {
     ipcRenderer.invoke('ext:detectEbookConverter') as Promise<{
       calibre: string | null;
     }>,
-  isSofficeAvailable: () =>
-    ipcRenderer.invoke('ext:isSofficeAvailable') as Promise<boolean>,
+  isSofficeAvailable: (options?: { sofficePath?: string | null }) =>
+    ipcRenderer.invoke('ext:isSofficeAvailable', options) as Promise<boolean>,
+  readClipboardText: () =>
+    ipcRenderer.invoke('ext:readClipboardText') as Promise<string>,
 
   // Phase 4b — Archive viewer main-process decoder
   listArchive: (filePath: string, options?) =>
@@ -304,6 +310,18 @@ const whaleApi: WhaleApi = {
   aiInstallComponent: (filePath: string) =>
     ipcRenderer.invoke('ai:installComponent', filePath),
   aiUninstallComponent: () => ipcRenderer.invoke('ai:uninstallComponent'),
+  onIndexProgress: (cb: (ev: IndexProgressEvent) => void) => {
+    const listener = (_e: unknown, payload: IndexProgressEvent): void =>
+      cb(payload);
+    ipcRenderer.on('index:progress', listener);
+    return () => ipcRenderer.off('index:progress', listener);
+  },
+  onDirChanged: (cb: (ev: DirChangedEvent) => void) => {
+    const listener = (_e: unknown, payload: DirChangedEvent): void =>
+      cb(payload);
+    ipcRenderer.on('fs:dirChanged', listener);
+    return () => ipcRenderer.off('fs:dirChanged', listener);
+  },
   onAiChunk: (
     cb: (e: { conversationId: string; chunk: StreamChunk }) => void
   ) => {

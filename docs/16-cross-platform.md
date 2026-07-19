@@ -31,7 +31,7 @@
 | claude CLI | [findClaudeCliPath.ts](../src/main/ai/providers/claude/cli/findClaudeCliPath.ts) | 范本级跨平台:Win 查 AppData / Program Files,非 Win 查 `/usr/local/bin`、`/opt/homebrew/bin`、`~/.volta`、`~/.asdf`、`~/.npm-global`、`~/.local/bin` |
 | spawn / shell-quote | [customSpawn.ts](../src/main/ai/providers/claude/customSpawn.ts) / [shell-quote.ts](../src/main/shell-quote.ts) | `.cmd/.bat/.ps1` 仅 win32 走 `shell:true`;POSIX 单引号转义正确 |
 | env / path 工具 | [ai/utils/env.ts](../src/main/ai/utils/env.ts) / [ai/utils/path.ts](../src/main/ai/utils/path.ts) | PATH 分隔符、大小写归一、`node` vs `node.exe` 全按平台分 |
-| userData / 菜单 / 回收站 / reveal | [main.ts](../src/main/main.ts) ~L349-369 / [menu.ts](../src/main/menu.ts) / [ipc.ts](../src/main/ipc.ts) ~L685-800 | 三分支齐全;mac「关窗不退出」行为正确 |
+| userData / 菜单 / 回收站 / reveal | [main.ts](../src/main/main.ts) ~L349-369 / [menu.ts](../src/main/menu.ts) / [shell.ts](../src/main/ipc/shell.ts) | 三分支齐全;mac「关窗不退出」行为正确 |
 | webpack externals | [.erb/configs/](../.erb/configs/) | [docs/14 坑4](./14-packaging.md) 的 pdfjs 子路径修是 OS 无关正则,无 `file:///C:/` 泄漏 |
 | AI 组件 `.whaleai` | [build-ai-component.js](../scripts/build-ai-component.js) | 按设计每平台各跑一次,读当前平台 optionalDeps |
 | asarUnpack globs | [builder.json](../resources/builder.json) ~L16-25 | `@img/**` / `@napi-rs/**` 正确覆盖 mac/linux prebuild 路径 |
@@ -61,8 +61,8 @@
 ### C-2. Linux 桌面环境 fallback 链缺失(易用性)
 - **现状**:
   - [shell-command.ts](../src/main/shell-command.ts) ~L113-117:「用户命令」开终端只 `xterm -e bash -c`。GNOME / KDE / Cinnamon 默认不带 xterm;spawn 失败被吞(L119-123,文档记为「已知限制」)。
-  - [ipc.ts](../src/main/ipc.ts) ~L784-800:「在文件夹中显示」linux 只 fallback 到 `nautilus --select`(GNONE 专);KDE 是 `dolphin --select`、XFCE 是 `thunar`。`xdg-open` 已覆盖主场景,这是锦上添花。
-  - [ipc.ts](../src/main/ipc.ts) ~L373-407 `runOsZip`:linux 走外部 `zip -r` 命令,最小化 linux 镜像 / 容器未必装;失败是干净报错,不崩。
+  - [shell.ts](../src/main/ipc/shell.ts) `revealAndSelect`:linux 只 fallback 到 `nautilus --select`(GNONE 专);KDE 是 `dolphin --select`、XFCE 是 `thunar`。`xdg-open` 已覆盖主场景,这是锦上添花。
+  - [fs-write.ts](../src/main/ipc/fs-write.ts) `runOsZip`:linux 走外部 `zip -r` 命令,最小化 linux 镜像 / 容器未必装;失败是干净报错,不崩。
 - **修法**:① 终端 DE 感知 fallback(`gnome-terminal` / `konsole` / `xfce4-terminal` / `xterm` 兜底,**moderate**);② reveal fallback 扩展 `dolphin --select`(**trivial**);③ `zip` 可 fallback 到已依赖的 7zip,或记为运行时前置(**moderate**)。
 
 - [ ] 终端 DE fallback
@@ -80,6 +80,12 @@
 - **修法**:要 universal dmg 需 `mac.target: [{ target: "dmg", arch: ["x64", "arm64"] }]`,或 CI 分别出 arm64 / x64 两个 dmg。
 
 - [ ] 按分发策略定 arch
+
+### C-5. Linux 无递归目录监听(功能性,2026-07-18 引入)
+- **现状**:[dir-watcher.ts](../src/main/dir-watcher.ts)(docs/04 §10 fs.watch 失效机制)用 `fs.watch {recursive:true}` —— Windows/macOS 正常,**Linux 抛 `ERR_FEATURE_UNAVAILABLE_ON_PLATFORM`,该 root 回落到手动刷新 / 手动重建**(行为与引入前一致,不是回归,但 Linux 上没有自动刷新)。
+- **修法**:Linux 走 per-dir 递归监听(自建目录树快照 + 逐目录 fs.watch,新目录出现时补挂),或引入 chokidar(跨平台但多一个原生无关的大依赖)。~半天-1天。
+
+- [ ] Linux per-dir 递归监听 / chokidar 评估
 
 ---
 

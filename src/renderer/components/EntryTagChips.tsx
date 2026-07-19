@@ -16,7 +16,8 @@ import type { TagGroup } from '../domain/tag-library';
 import { getTagColor, GEO_TAG_COLOR } from '../domain/tag-colors';
 import { isGeoTag, parseGeoTag } from '../domain/geo-tag';
 import type { RootState } from '-/reducers';
-import { chipSx, tagDisplayLabel } from '-/services/tag-display';
+import { chipSx } from '-/services/tag-display';
+import { useTagDisplayLabels } from '-/hooks/useTagDisplayLabels';
 
 /**
  * Renders an entry's applied tags as compact chips, capped at `max` with a
@@ -60,6 +61,11 @@ function EntryTagChipsBase({
   const shownTags = tags.slice(0, shownCount);
   const overflowTags = tags.slice(shownCount);
 
+  // docs/03: freshness-aware labels, index-aligned with `tags` (shownTags
+  // are [0..shownCount), overflowTags the rest). Subscribes to the per-minute
+  // tick only when a date-shaped tag is present.
+  const labels = useTagDisplayLabels(tags);
+
   return (
     <Box
       sx={{
@@ -70,7 +76,7 @@ function EntryTagChipsBase({
         ...containerSx,
       }}
     >
-      {shownTags.map((tag) => {
+      {shownTags.map((tag, i) => {
         const active = activeTag === tag;
         // Geo coordinate tags render as a frameless location pin (no chip
         // border/background) — the full lat/lng is noisy and the outline looks
@@ -102,7 +108,7 @@ function EntryTagChipsBase({
         }
         // Ratings/workflow get a localized label; the stored value + accent
         // color are unchanged. Right-click a chip to remove the tag.
-        const label = tagDisplayLabel(tag, t);
+        const label = labels[i];
         return (
           <Chip
             key={tag}
@@ -155,9 +161,9 @@ function EntryTagChipsBase({
               onClick={(e) => e.stopPropagation()}
               onContextMenu={(e) => e.stopPropagation()}
             >
-              {overflowTags.map((tag) => {
+              {overflowTags.map((tag, j) => {
                 const active = activeTag === tag;
-                const label = tagDisplayLabel(tag, t);
+                const label = labels[shownCount + j];
                 if (isGeoTag(tag)) {
                   const pt = parseGeoTag(tag);
                   return (

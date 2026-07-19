@@ -8,6 +8,12 @@
  */
 
 import type { DirEntry } from '../../shared/ipc-types';
+import { dateTagRangeKey, parseYyyymmdd, type DateTagRange } from '../../shared/smart-tags';
+
+// Period-tag parsing (`isPeriodTag` / `dateTagRangeKey` / `DateTagRange`) lives
+// in shared/smart-tags (main-process tag code uses it too) — re-exported here
+// so existing view-layer imports from this module keep working.
+export { isPeriodTag, dateTagRangeKey, type DateTagRange } from '../../shared/smart-tags';
 
 export interface CalendarDay {
   /** Midnight-local Date for this grid cell. */
@@ -161,23 +167,6 @@ export function modifiedDateKey(entry: DirEntry): string | null {
   return ymd(d);
 }
 
-/** Number of days in a 1-based month. */
-function daysInMonth(year: number, month: number): number {
-  return new Date(year, month, 0).getDate();
-}
-
-/** Validates an 8-digit YYYYMMDD string and returns `YYYY-MM-DD`, or null. */
-function parseYyyymmdd(value: string): string | null {
-  if (!/^\d{8}$/.test(value)) return null;
-  const year = parseInt(value.slice(0, 4), 10);
-  const month = parseInt(value.slice(4, 6), 10);
-  const day = parseInt(value.slice(6, 8), 10);
-  if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) {
-    return null;
-  }
-  return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`;
-}
-
 /**
  * Extract a specific day key (`YYYY-MM-DD`) from a date-oriented tag.
  *
@@ -223,17 +212,6 @@ export function isDateTypedTag(tag: string): boolean {
 }
 
 /**
- * True when `tag` is a period tag (`YYYYMMDD-YYYYMMDD`).
- *
- * Period tags are an independent exclusive family (see docs/03-tagging.md §5):
- * a file can hold at most one, and they are NOT part of the smart-date family
- * even though they share the `dateTagDayKey` parser for the start day.
- */
-export function isPeriodTag(tag: string): boolean {
-  return dateTagRangeKey(tag) !== null;
-}
-
-/**
  * Date extractor that uses the first date-specific tag on a file.
  * Falls back to `null` if the file carries no date tag, so the caller can
  * decide whether to hide it or fall back to modified date.
@@ -248,28 +226,6 @@ export function dateTagDateKey(
     if (key) return key;
   }
   return null;
-}
-
-/** A parsed `YYYYMMDD-YYYYMMDD` period tag, as inclusive local YYYY-MM-DD bounds. */
-export interface DateTagRange {
-  startKey: string;
-  endKey: string;
-}
-
-/**
- * Parse a period date tag (`YYYYMMDD-YYYYMMDD`) into inclusive local day bounds,
- * or null if `tag` isn't a valid period. Only the bare period form is a range;
- * smart / day / datetime tags resolve to a single day (use {@link dateTagDayKey}).
- *
- * `start`/`end` are normalized so `start <= end` regardless of tag order.
- */
-export function dateTagRangeKey(tag: string): DateTagRange | null {
-  const m = /^(\d{8})-(\d{8})$/.exec(tag);
-  if (!m) return null;
-  const a = parseYyyymmdd(m[1]);
-  const b = parseYyyymmdd(m[2]);
-  if (!a || !b) return null;
-  return a <= b ? { startKey: a, endKey: b } : { startKey: b, endKey: a };
 }
 
 /**

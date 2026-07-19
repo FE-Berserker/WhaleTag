@@ -1,14 +1,14 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { useDispatch } from 'react-redux';
 import { useTranslation } from 'react-i18next';
-import { Box, IconButton, Tab, Tabs, Tooltip, useMediaQuery } from '@mui/material';
+import { Box, Divider, IconButton, Tab, Tabs, Tooltip, useMediaQuery } from '@mui/material';
 import CreateNewFolderIcon from '@mui/icons-material/CreateNewFolder';
 
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { FileSelectionProvider } from '-/hooks/FileSelectionContextProvider';
 import { addLocation } from '-/reducers/locations';
 import { setTrayVisible } from '-/reducers/settings';
-import Sidebar from '-/components/Sidebar';
+import Sidebar, { SidebarActionsBar } from '-/components/Sidebar';
 import DirectoryTree from '-/components/DirectoryTree';
 import FileToolbar from '-/components/FileToolbar';
 import TitleBar from '-/components/TitleBar';
@@ -184,6 +184,12 @@ export default function MainLayout() {
                       {currentLocation ? <DirectoryTree embedded /> : null}
                     </Box>
                   </Box>
+                  {/* Actions bar pinned to the panel bottom, OUTSIDE the tab
+                      content — otherwise the tree tab's absolute-fill content
+                      covers it (the "tree occludes the buttons" regression).
+                      The embedded Sidebar skips its own copy. */}
+                  <Divider />
+                  <SidebarActionsBar />
                 </Box>
               ) : (
                 <>

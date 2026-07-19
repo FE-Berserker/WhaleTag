@@ -48,7 +48,10 @@ function makeEntry(
 }
 
 /** Recursively walks `rootPath`, returning a flat list of IndexEntry. */
-export async function buildIndex(rootPath: string): Promise<IndexEntry[]> {
+export async function buildIndex(
+  rootPath: string,
+  onProgress?: (scanned: number) => void
+): Promise<IndexEntry[]> {
   const entries: IndexEntry[] = [];
 
   async function walk(dir: string): Promise<void> {
@@ -110,6 +113,10 @@ export async function buildIndex(rootPath: string): Promise<IndexEntry[]> {
     // boundaries, never mid-statement. Insertion order becomes non-deterministic,
     // which is fine: the SQLite index is order-independent and queries re-sort.
     await mapWithConcurrency(dirs, 8, ({ full }) => walk(full));
+
+    // docs/04 §10 progress (scan phase): report after each directory; the
+    // worker throttles the actual events.
+    onProgress?.(entries.length);
   }
 
   await walk(rootPath);

@@ -1,5 +1,5 @@
 import type { CellComponentProps } from 'react-window';
-import { useRef } from 'react';
+import { useMemo, useRef } from 'react';
 import { useDrop } from 'react-dnd';
 import {
   Box,
@@ -7,14 +7,13 @@ import {
   ImageListItemBar,
   Tooltip,
 } from '@mui/material';
-import { useTranslation } from 'react-i18next';
 
 import type { DirEntry } from '../../shared/ipc-types';
 import type { TagGroup } from '../domain/tag-library';
 import { ratingOfTag } from '../../shared/smart-tags';
 import { getTagColor } from '../domain/tag-colors';
 import { DND_TYPE_TAG, type TagDragItem } from '../services/dnd';
-import { tagDisplayLabel } from '../services/tag-display';
+import { useTagDisplayLabels } from '../hooks/useTagDisplayLabels';
 import { usePeriodTagDialog } from './PeriodTagDialog';
 import ThumbIcon from './ThumbIcon';
 
@@ -280,7 +279,13 @@ function TileTagOverlay({
   tagColors: Record<string, string>;
   groups: TagGroup[];
 }) {
-  const { t } = useTranslation();
+  // docs/03: freshness-aware labels (date-family tags flip on the per-minute
+  // tick; subscribed only when a date-shaped tag is present).
+  const labels = useTagDisplayLabels(tags);
+  const labelByTag = useMemo(
+    () => new Map(tags.map((tag, i) => [tag, labels[i]])),
+    [tags, labels]
+  );
 
   const rating = tags.reduce<number | null>(
     (acc, tag) => acc ?? ratingOfTag(tag),
@@ -292,7 +297,7 @@ function TileTagOverlay({
   const hasContent = rating !== null || shown.length > 0 || overflow > 0;
   if (!hasContent) return null;
 
-  const tooltipText = tags.map((tag) => tagDisplayLabel(tag, t)).join(' · ');
+  const tooltipText = labels.join(' · ');
 
   return (
     <Tooltip title={tooltipText} placement="top" arrow enterDelay={300}>
@@ -344,7 +349,7 @@ function TileTagOverlay({
                   textShadow: '0 0 2px rgba(0,0,0,0.6)',
                 }}
               >
-                {tagDisplayLabel(tag, t)}
+                {labelByTag.get(tag) ?? tag}
               </Box>
             );
           })}

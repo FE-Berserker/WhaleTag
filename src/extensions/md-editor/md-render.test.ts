@@ -34,6 +34,7 @@ import {
   createPreviewScheduler,
   createRafScheduler,
   highlightCodeBlocks,
+  renderHtmlBlocks,
   getStatusInfo,
   countWords,
   estimateReadingMinutes,
@@ -590,6 +591,67 @@ describe('highlightCodeBlocks', () => {
     for (const c of Array.from(codes)) {
       assert.ok(/hljs/.test((c as HTMLElement).className));
     }
+  });
+});
+
+// --- renderHtmlBlocks (§html-block) ---------------------------------------
+
+describe('renderHtmlBlocks', () => {
+  it('is a no-op when no language-html blocks are present', () => {
+    const el = document.createElement('div');
+    el.innerHTML = '<pre><code class="language-js">const x = 1;</code></pre>';
+    renderHtmlBlocks(el);
+    assert.equal(el.querySelectorAll('iframe').length, 0);
+    assert.ok(el.querySelector('pre')); // untouched
+  });
+
+  it('replaces a language-html <pre> with a scriptless sandboxed iframe carrying the raw source', () => {
+    const el = document.createElement('div');
+    // marked escapes the fence content (&lt;h1&gt;), so textContent yields
+    // the literal html source — same shape as production.
+    el.innerHTML =
+      '<pre><code class="language-html">&lt;h1&gt;Hello&lt;/h1&gt;&lt;p&gt;paper&lt;/p&gt;</code></pre>';
+    renderHtmlBlocks(el);
+    assert.equal(el.querySelectorAll('pre').length, 0);
+    const wrap = el.querySelector('.html-block');
+    assert.ok(wrap, 'wrapper div expected');
+    const frame = wrap!.querySelector(
+      'iframe.html-block-frame'
+    ) as HTMLIFrameElement;
+    // Render-only by design: EMPTY sandbox (no allow-scripts — no JS may
+    // run) + the raw source as srcdoc, no report script injected.
+    assert.equal(frame.getAttribute('sandbox'), '');
+    assert.ok(!frame.getAttribute('sandbox')!.includes('allow-scripts'));
+    assert.ok(frame.srcdoc.includes('<h1>Hello</h1>'));
+    assert.ok(!frame.srcdoc.includes('mdHtmlBlockHeight'));
+  });
+
+  it('handles multiple html blocks independently', () => {
+    const el = document.createElement('div');
+    el.innerHTML = [
+      '<pre><code class="language-html">&lt;b&gt;one&lt;/b&gt;</code></pre>',
+      '<pre><code class="language-js">two</code></pre>',
+      '<pre><code class="language-html">&lt;i&gt;three&lt;/i&gt;</code></pre>',
+    ].join('');
+    renderHtmlBlocks(el);
+    assert.equal(el.querySelectorAll('iframe.html-block-frame').length, 2);
+    assert.equal(el.querySelectorAll('pre').length, 1); // the js block stays
+  });
+
+  it('strips <script>, on* handlers and javascript: URLs so the sandbox logs no blocked-script errors', () => {
+    const el = document.createElement('div');
+    // Same marked-escaped shape as production; covers a script element, an
+    // inline handler and a javascript: link plus content that must survive.
+    el.innerHTML =
+      '<pre><code class="language-html">&lt;div onclick=&quot;x()&quot;&gt;a&lt;/div&gt;&lt;script&gt;alert(1)&lt;/script&gt;&lt;a href=&quot;javascript:evil()&quot;&gt;l&lt;/a&gt;&lt;p&gt;keep&lt;/p&gt;</code></pre>';
+    renderHtmlBlocks(el);
+    const frame = el.querySelector(
+      'iframe.html-block-frame'
+    ) as HTMLIFrameElement;
+    assert.ok(!/<script/i.test(frame.srcdoc), 'script element stripped');
+    assert.ok(!/onclick/i.test(frame.srcdoc), 'inline handler stripped');
+    assert.ok(!/javascript:/i.test(frame.srcdoc), 'javascript: URL stripped');
+    assert.ok(frame.srcdoc.includes('<p>keep</p>'), 'inert content kept');
   });
 });
 
@@ -1406,5 +1468,122 @@ describe('_resetSandboxForTest — module-state reset hook', () => {
     // Re-reset to keep subsequent tests isolated.
     _resetSandboxForTest();
     await Promise.resolve();
+  });
+});
+
+describe('markdown insertion templates', () => {
+  it('registers the callout and table key commands', async () => {
+    const { buildEditorKeymaps } = await import('./md-keymaps');
+    const keymaps = buildEditorKeymaps();
+    assert.ok(keymaps.some(({ key }) => key === 'Mod-q'));
+    assert.ok(keymaps.some(({ key }) => key === 'Mod-t'));
+  });
+
+  it('handles table dialog buttons without sandboxed form submission', async () => {
+    const { createTableDialogElements } = await import('./md-toolbar');
+    const inserted: Array<[number, number]> = [];
+    let closed = 0;
+    const elements = createTableDialogElements(
+      (rows, columns) => inserted.push([rows, columns]),
+      () => {
+        closed += 1;
+      }
+    );
+    elements.columnsInput.value = '3';
+    elements.rowsInput.value = '4';
+    elements.overlay.hidden = false;
+    elements.insertButton.click();
+    assert.deepEqual(inserted, [[4, 3]]);
+    assert.equal(closed, 1);
+    assert.equal(elements.overlay.querySelector('form'), null);
+    elements.overlay.hidden = false;
+    elements.cancelButton.click();
+    assert.equal(closed, 2);
+    elements.overlay.remove();
+  });
+
+  it('creates an empty note callout with the cursor-ready body prefix', async () => {
+    const { createCalloutMarkdown } = await import('./md-toolbar');
+    assert.equal(createCalloutMarkdown(), '> [!NOTE]\n> ');
+  });
+
+  it('moves every selected line into the callout body', async () => {
+    const { createCalloutMarkdown } = await import('./md-toolbar');
+    assert.equal(
+      createCalloutMarkdown('first\n\nsecond'),
+      '> [!NOTE]\n> first\n>\n> second'
+    );
+  });
+
+  it('creates the requested total rows and columns', async () => {
+    const { createTableMarkdown } = await import('./md-toolbar');
+    const markdown = createTableMarkdown(3, 2);
+    assert.equal(
+      markdown,
+      '|  |  |\n| --- | --- |\n|  |  |\n|  |  |'
+    );
+    assert.match(parseMarkdown(markdown), /<table[^>]*>/);
+  });
+
+  it('clamps invalid table dimensions to safe defaults and limits', async () => {
+    const { createTableMarkdown } = await import('./md-toolbar');
+    assert.equal(createTableMarkdown(0, 0), '|  |\n| --- |');
+    const limited = createTableMarkdown(1000, 1000);
+    assert.equal(limited.split('\n').length, 101);
+    assert.equal(limited.split('\n', 1)[0].split('|').length - 2, 20);
+  });
+
+  it('replaces a single cell while preserving alignment spaces', async () => {
+    const { replaceMarkdownTableCellText } = await import('./md-toolbar');
+    const line = '| a |   b   | c |';
+    assert.equal(
+      replaceMarkdownTableCellText(line, 1, 'B'),
+      '| a | B | c |'
+    );
+    assert.equal(
+      replaceMarkdownTableCellText(line, 0, 'A1'),
+      '| A1 |   b   | c |'
+    );
+  });
+
+  it('escapes pipes and backslashes inside cell values', async () => {
+    const { replaceMarkdownTableCellText } = await import('./md-toolbar');
+    const line = '|  |';
+    assert.equal(
+      replaceMarkdownTableCellText(line, 0, 'a | b \\ c'),
+      '| a \\| b \\\\ c |'
+    );
+  });
+
+  it('returns null for columns out of range', async () => {
+    const { replaceMarkdownTableCellText } = await import('./md-toolbar');
+    assert.equal(replaceMarkdownTableCellText('|  |  |', 5, 'x'), null);
+  });
+
+  it('wires preview tables as editable with source-line markers', async () => {
+    const { addTableInteractivity, parseMarkdown, sanitizeMarkdownHtml } =
+      await import('./md-render');
+    const html = parseMarkdown('| h1 | h2 |\n| --- | --- |\n| a | b |');
+    const clean = sanitizeMarkdownHtml(html);
+    const host = document.createElement('div');
+    host.innerHTML = clean;
+    const changes: Array<[number, number, string]> = [];
+    addTableInteractivity(
+      host,
+      (line, column, value) => changes.push([line, column, value])
+    );
+    const cells = Array.from(host.querySelectorAll<HTMLElement>('th, td'));
+    // The separator `| --- | --- |` does not emit a <tr>; only the
+    // header and data rows produce one, so 2 rows × 2 columns = 4 cells.
+    assert.equal(cells.length, 4);
+    assert.equal(cells[0].getAttribute('contenteditable'), 'true');
+    const firstDataCell = cells[2];
+    firstDataCell.innerText = 'A2';
+    firstDataCell.dispatchEvent(new window.Event('input', { bubbles: true }));
+    // The table starts at source line 1; the header row is line 1, the
+    // data row is line 2 (the `| --- | --- |` separator doesn't emit a <tr>).
+    assert.deepEqual(changes, [[2, 0, 'A2']]);
+    const row = firstDataCell.closest('tr');
+    assert.equal(row?.getAttribute('data-source-line'), '2');
   });
 });

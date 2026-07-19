@@ -41,6 +41,37 @@ import { setAllowedRoots } from './allowed-roots';
 // runs through ts-node/register, which sets it.
 const require_ = createRequire(__filename);
 
+// The 2026-07-18 god-file split moved the handlers from `ipc.ts` into
+// `ipc/*.ts` domain modules (docs/01 §12). Every one of them must be dropped
+// from require.cache between tests so each rig re-evaluates them against
+// the freshly injected `electron` / `child_process` stubs — clearing only
+// `./ipc` (the registrar) would leave the domain modules pinned to a stale
+// stub from an earlier test.
+const IPC_MODULE_SPECS = [
+  './ipc',
+  './ipc/fs-read',
+  './ipc/fs-write',
+  './ipc/fs-roots',
+  './ipc/dialogs',
+  './ipc/shell',
+  './ipc/search-index',
+  './ipc/meta',
+  './ipc/thumbnails',
+  './ipc/extensions',
+  './ipc/window',
+  './ipc/persist',
+];
+
+function clearIpcModuleCache(): void {
+  for (const spec of IPC_MODULE_SPECS) {
+    try {
+      delete require_.cache[require_.resolve(spec)];
+    } catch {
+      // Module not resolvable yet (never required) — nothing to clear.
+    }
+  }
+}
+
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown> | unknown;
 
 /** Outcome for the next (or current call index) `execFile` invocation. */
@@ -159,13 +190,12 @@ async function buildRig(): Promise<TestRig> {
   // `createRequire(__filename)` so the resolution is relative to this
   // test file. `require.cache` is the mechanism that lets the stubs
   // above intercept `require('electron')` / `require('child_process')`
-  // from inside `ipc.ts`. (Await `import()` would try to resolve as
-  // ESM, which doesn't auto-resolve `.ts` under ts-node.)
-  // Drop any cached ipc.ts from a prior test in this run so the next
-  // `require_('./ipc')` re-evaluates the module against the freshly
-  // injected `electron` / `child_process` stubs.
-  const ipcPath = require_.resolve('./ipc');
-  delete require_.cache[ipcPath];
+  // from inside the `ipc/*` modules. (Await `import()` would try to
+  // resolve as ESM, which doesn't auto-resolve `.ts` under ts-node.)
+  // Drop any cached ipc modules from a prior test in this run so the next
+  // `require_('./ipc')` re-evaluates them against the freshly injected
+  // `electron` / `child_process` stubs.
+  clearIpcModuleCache();
   const mod = require_('./ipc');
   return {
     ipcHandlers,
@@ -190,10 +220,9 @@ describe('shell:revealAndSelect handler', () => {
   afterEach(() => {
     setPlatform(originalPlatform);
     clearInjectedMocks();
-    // Also wipe the ipc module itself from the cache so the next test
-    // re-runs its top-level imports against fresh stubs.
-    const ipcPath = require_.resolve('./ipc');
-    delete require_.cache[ipcPath];
+    // Also wipe the ipc modules themselves from the cache so the next test
+    // re-runs their top-level imports against fresh stubs.
+    clearIpcModuleCache();
   });
 
   it('Windows: routes through shell.showItemInFolder (no execFile)', async () => {
@@ -340,8 +369,7 @@ describe('read-side allowedRoots guards', () => {
   afterEach(async () => {
     setAllowedRoots([]);
     clearInjectedMocks();
-    const ipcPath = require_.resolve('./ipc');
-    delete require_.cache[ipcPath];
+    clearIpcModuleCache();
     await fsp.rm(root, { recursive: true, force: true });
   });
 

@@ -66,3 +66,12 @@ function getSnapshot(): Date {
 export function useNow(): Date {
   return useSyncExternalStore(subscribe, getSnapshot);
 }
+
+/**
+ * Raw store access for ADVANCED consumers that gate the subscription behind a
+ * condition (e.g. `useTagDisplayLabels` only subscribes when a shown tag is
+ * date-shaped — most components then pay zero per-minute re-renders).
+ * `useNow()` itself always subscribes; these let callers opt in dynamically.
+ */
+export const subscribeNow = subscribe;
+export const getNowSnapshot = getSnapshot;

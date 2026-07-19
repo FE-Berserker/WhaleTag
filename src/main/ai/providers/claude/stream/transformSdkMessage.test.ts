@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
-import { transformSdkMessage, createTransformState } from './transformSdkMessage';
+import { transformSdkMessage, createTransformState, type TransformState } from './transformSdkMessage';
 import type { StreamChunk } from '../../../../../shared/ai-types';
 
 /** Collect every chunk a message yields. */
@@ -347,6 +347,221 @@ describe('transformSdkMessage (subagents)', () => {
         content: 'body',
         isError: false,
       },
+    ]);
+  });
+});
+
+/**
+ * Wire-shape regressions from capturing the real CLI stream-json output
+ * (2026-07-18, claude-code 2.1.198 — see docs/09 §23):
+ * - every emitted line carries a FRESH random uuid (partial ≠ complete)
+ * - a complete `assistant` message arrives BEFORE its block's
+ *   `content_block_stop`, and one API message can split into several
+ *   non-cumulative completes (`[thinking]` then `[tool_use]`)
+ */
+describe('transformSdkMessage (real wire shapes)', () => {
+  /** Build a stream_event message with a unique uuid per line, like the CLI. */
+  let lineNo = 0;
+  function se(event: unknown, parent?: string): SDKMessage {
+    lineNo += 1;
+    return {
+      type: 'stream_event',
+      uuid: `line-${lineNo}`,
+      ...(parent ? { parent_tool_use_id: parent } : {}),
+      event,
+    } as unknown as SDKMessage;
+  }
+  function complete(content: unknown[], parent?: string): SDKMessage {
+    lineNo += 1;
+    return {
+      type: 'assistant',
+      uuid: `line-${lineNo}`,
+      ...(parent ? { parent_tool_use_id: parent } : {}),
+      message: { content },
+    } as unknown as SDKMessage;
+  }
+  /** Fresh per-test state so line numbers are deterministic within a test. */
+  function setup(): TransformState {
+    lineNo = 0;
+    return createTransformState();
+  }
+
+  it('pure-text turn: 1 bubble, text once, no echo from the complete', () => {
+    const state = setup();
+    const out = [
+      ...transformSdkMessage(se({ type: 'message_start' }), state),
+      ...transformSdkMessage(
+        se({ type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
+        state
+      ),
+      ...transformSdkMessage(
+        se({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'hi' } }),
+        state
+      ),
+      // complete arrives BEFORE content_block_stop (real wire order).
+      ...transformSdkMessage(complete([{ type: 'text', text: 'hi' }]), state),
+      ...transformSdkMessage(se({ type: 'content_block_stop', index: 0 }), state),
+      ...transformSdkMessage(se({ type: 'message_stop' }), state),
+    ];
+    assert.deepEqual(out, [
+      { type: 'assistant_message_start', itemId: 'line-1' },
+      { type: 'text', content: 'hi' },
+    ]);
+  });
+
+  it('thinking + tool_use turn: split completes emit each block exactly once', () => {
+    const state = setup();
+    const out = [
+      ...transformSdkMessage(se({ type: 'message_start' }), state),
+      ...transformSdkMessage(
+        se({ type: 'content_block_start', index: 0, content_block: { type: 'thinking' } }),
+        state
+      ),
+      ...transformSdkMessage(
+        se({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'thin' } }),
+        state
+      ),
+      ...transformSdkMessage(
+        se({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'king' } }),
+        state
+      ),
+      // complete #1 carries ONLY the thinking block (non-cumulative split).
+      ...transformSdkMessage(complete([{ type: 'thinking', thinking: 'thinking' }]), state),
+      ...transformSdkMessage(se({ type: 'content_block_stop', index: 0 }), state),
+      ...transformSdkMessage(
+        se({
+          type: 'content_block_start',
+          index: 1,
+          content_block: { type: 'tool_use', id: 't1', name: 'Read' },
+        }),
+        state
+      ),
+      ...transformSdkMessage(
+        se({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"file_path":"/a' } }),
+        state
+      ),
+      // complete #2 (tool_use) arrives BEFORE content_block_stop; its parsed
+      // input wins over the half-accumulated json.
+      ...transformSdkMessage(
+        complete([{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/a.txt' } }]),
+        state
+      ),
+      // the trailing stop must NOT re-emit the same tool call.
+      ...transformSdkMessage(se({ type: 'content_block_stop', index: 1 }), state),
+      ...transformSdkMessage(se({ type: 'message_stop' }), state),
+      // tool result, then a second API message with text.
+      ...transformSdkMessage(
+        {
+          type: 'user',
+          message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'body', is_error: false }] },
+        } as unknown as SDKMessage,
+        state
+      ),
+      ...transformSdkMessage(se({ type: 'message_start' }), state),
+      ...transformSdkMessage(
+        se({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'done' } }),
+        state
+      ),
+      ...transformSdkMessage(complete([{ type: 'text', text: 'done' }]), state),
+      ...transformSdkMessage(se({ type: 'content_block_stop', index: 0 }), state),
+    ];
+    assert.deepEqual(out, [
+      { type: 'assistant_message_start', itemId: 'line-1' },
+      { type: 'thinking', content: 'thin' },
+      { type: 'thinking', content: 'king' },
+      { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/a.txt' } },
+      { type: 'tool_result', id: 't1', content: 'body', isError: false },
+      { type: 'assistant_message_start', itemId: 'line-12' },
+      { type: 'text', content: 'done' },
+    ]);
+  });
+
+  it('complete with no prior stream events emits everything (recovery path)', () => {
+    const state = setup();
+    const out = transformSdkMessage(
+      complete([
+        { type: 'thinking', thinking: 'hm' },
+        { type: 'text', text: 'late full message' },
+      ]),
+      state
+    );
+    assert.deepEqual([...out], [
+      { type: 'assistant_message_start', itemId: 'line-1' },
+      { type: 'thinking', content: 'hm' },
+      { type: 'text', content: 'late full message' },
+    ]);
+  });
+
+  it('a cumulative repeat complete does not re-emit an already-shown block', () => {
+    const state = setup();
+    const out = [
+      ...transformSdkMessage(se({ type: 'message_start' }), state),
+      ...transformSdkMessage(
+        se({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'hi' } }),
+        state
+      ),
+      ...transformSdkMessage(complete([{ type: 'text', text: 'hi' }]), state),
+      // a second complete repeating the same block verbatim (cumulative style).
+      ...transformSdkMessage(
+        complete([
+          { type: 'text', text: 'hi' },
+          { type: 'text', text: 'hi' },
+        ]),
+        state
+      ),
+    ];
+    assert.deepEqual(out, [
+      { type: 'assistant_message_start', itemId: 'line-1' },
+      { type: 'text', content: 'hi' },
+    ]);
+  });
+
+  it('subagent: complete with a different uuid does not duplicate streamed text', () => {
+    const state = setup();
+    const out = [
+      ...transformSdkMessage(se({ type: 'message_start' }, 'taskT'), state),
+      ...transformSdkMessage(
+        se({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'working' } }, 'taskT'),
+        state
+      ),
+      ...transformSdkMessage(complete([{ type: 'text', text: 'working' }], 'taskT'), state),
+    ];
+    assert.deepEqual(out, [
+      { type: 'subagent_text', subagentId: 'taskT', content: 'working' },
+    ]);
+  });
+
+  it('two identical text blocks in one API message are both kept from the stream', () => {
+    // Identical text at different block indices: both deltas display; the
+    // completes collapse by design (showing "ok" a third/fourth time adds
+    // nothing — documented trade-off in docs/09 §23).
+    const state = setup();
+    const out = [
+      ...transformSdkMessage(se({ type: 'message_start' }), state),
+      ...transformSdkMessage(
+        se({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } }),
+        state
+      ),
+      ...transformSdkMessage(se({ type: 'content_block_stop', index: 0 }), state),
+      ...transformSdkMessage(
+        se({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'ok' } }),
+        state
+      ),
+      ...transformSdkMessage(se({ type: 'content_block_stop', index: 1 }), state),
+      // completes echo both identical blocks — both collapse (stream already
+      // showed the text twice; a 3rd/4th copy adds nothing).
+      ...transformSdkMessage(
+        complete([
+          { type: 'text', text: 'ok' },
+          { type: 'text', text: 'ok' },
+        ]),
+        state
+      ),
+    ];
+    assert.deepEqual(out, [
+      { type: 'assistant_message_start', itemId: 'line-1' },
+      { type: 'text', content: 'ok' },
+      { type: 'text', content: 'ok' },
     ]);
   });
 });

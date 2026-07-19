@@ -95,6 +95,15 @@ export default function Root() {
     void setAllowedRootsAndWait(locationItems.map((l) => l.path));
   }, [locationItems]);
 
+  // docs/04 §10: keep the dir-watcher's fulltext root set in sync so an
+  // external change inside a fulltext root schedules an incremental rebuild.
+  const fulltextPaths = useSelector(
+    (s: RootState) => s.settings?.fulltextPaths ?? []
+  );
+  useEffect(() => {
+    void ipcApi.syncFulltextPaths(fulltextPaths).catch(() => undefined);
+  }, [fulltextPaths]);
+
   // Clean up stale extension revisions once on startup.
   useEffect(() => {
     if (locationItems.length === 0) return;

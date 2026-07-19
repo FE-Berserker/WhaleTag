@@ -172,6 +172,10 @@
 
 CodeMirror 6,查找/替换、字体缩放、Wrap、代码折叠、状态栏、`requestSelection`/`applyReplacement` AI 编辑桥。
 
+- [ ] md-editor 编辑区右键:Undo/Cut/Copy/Paste/Select All、Bold/Italic/Link/Heading 子菜单、Insert Callout/Table、Find/Go to Line、Wrap/Zoom、Export as HTML 齐全且生效,动作后菜单关闭
+- [ ] md-editor 只读文件右键:编辑类项(Cut/Paste/Bold/Italic/Link/Heading/Insert)全禁用,Copy/Select All/Find/Export 可用;空选区时 Cut/Copy 禁用
+- [ ] md-editor 预览区右键:Copy 复制选中文本 + Export as HTML;Esc / 点击外侧关闭菜单
+
 ### image-viewer / heic-viewer
 
 image-viewer 11 种格式,jpg/jpeg/png/gif/webp/bmp/avif/tiff/tif/ico/svg;Lightbox + zoom/pan/rotate/flipH/flipV;`F` 全屏。heic-viewer libheif-js wasm 解码。

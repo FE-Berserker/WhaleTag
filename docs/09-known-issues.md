@@ -244,13 +244,13 @@ Task reminder check failed: Error: Error invoking remote method 'index:build':
 - audio-convert 转码走 `whale-audio://` 实时流式([src/main/main.ts](../src/main/main.ts) `registerWhaleAudioProtocol`):ffmpeg stdout 边转边推给 `<audio>`,同步 tee 写 `.whale/transcodes/<basename>.opus`(缓存命中走 Range/206);`isTranscodeCached` mtime 失效 + `removeTranscode` / `moveTranscode` / `copyTranscode` 全套钩子在 [src/main/transcode-cache.ts](../src/main/transcode-cache.ts),inflight dedup + 信号量在协议层
 - pdf-viewer 渲染层有 fit-width / fit-page / 旋转 / 跳页 input / 键盘导航 / ResizeObserver 重排 / 滚动同步 currentPage / status 栏 / 主题初始猜测去白闪
 
-**进度**(2026-07-06 改造;§16.16/§16.21 补于 2026-07-16):§16.1 / §16.2 / §16.3 / §16.5 / §16.7 / §16.9 / §16.11 / §16.13 / §16.15 / §16.16 / §16.21 已修。新增代码:[src/main/office-cache.ts](../src/main/office-cache.ts) / [src/main/office-cache.test.ts](../src/main/office-cache.ts) / [src/main/office-convert.test.ts](../src/main/office-convert.test.ts) / [src/extensions/shared/pdfjs-in-iframe.ts](../src/extensions/shared/pdfjs-in-iframe.ts)。**还剩** §16.4 / §16.6 / §16.8 / §16.10 / §16.14 / §16.17 / §16.18 / §16.19 / §16.20 9 项遗留,按 ROI 排在下方。
+**进度**(2026-07-06 改造;§16.16/§16.21 补于 2026-07-16;§16.4/§16.6/§16.8/§16.14/§16.18/§16.19/§16.20 补于 2026-07-18):**§16.1–§16.21 全部闭环** —— office-viewer 与 pdf-viewer 的 UX / 缓存 / 稳定性 / a11y 差距已清零。新增代码:[src/main/office-cache.ts](../src/main/office-cache.ts) / [src/main/office-convert.test.ts](../src/main/office-convert.test.ts) / [src/extensions/shared/pdfjs-in-iframe.ts](../src/extensions/shared/pdfjs-in-iframe.ts) / [src/extensions/office-viewer/view-math.ts](../src/extensions/office-viewer/view-math.ts)。§16.12 备注(office-viewer `pendingConversions` 未套 30s 超时 —— 大文件 PPTX 可能合法 60s+)维持原评估。
 
 ### 16.1 PDF 无缓存(头号优化) ✅ 已修(2026-07-06)
 
 `convertOfficeToPdf` 每次开档都冷启动 soffice。**同一 docx 重新打开耗时 5s 左右**,翻页不动也重转;audio 路径首次冷转 + 后续秒开,office 路径是"每次都冷转"。
 
-迁移路径 = 仿 [src/main/transcode-cache.ts](../src/main/transcode-cache.ts) 落 `.whale/transcodes/<basename>.pdf`(复用 `TRANSCODES_DIR`),mtime 失效 + 原子写 + inflight `Map<path, Promise<Buffer>>` 去重 + `removeOfficePdf` / `moveOfficePdf` / `copyOfficePdf` 钩子。**已落地于 [src/main/office-cache.ts](../src/main/office-cache.ts)**,并接入 [src/main/ipc.ts](../src/main/ipc.ts) 的 `cleanupMeta` / `fs:rename` / `fs:move` / `fs:copy` / `fs:importExternal` 五个钩子点。测试 11 个 case 全过([src/main/office-cache.test.ts](../src/main/office-cache.test.ts))。
+迁移路径 = 仿 [src/main/transcode-cache.ts](../src/main/transcode-cache.ts) 落 `.whale/transcodes/<basename>.pdf`(复用 `TRANSCODES_DIR`),mtime 失效 + 原子写 + inflight `Map<path, Promise<Buffer>>` 去重 + `removeOfficePdf` / `moveOfficePdf` / `copyOfficePdf` 钩子。**已落地于 [src/main/office-cache.ts](../src/main/office-cache.ts)**,并接入 [src/main/ipc/fs-write.ts](../src/main/ipc/fs-write.ts) 的 `cleanupMeta` / `fs:rename` / `fs:move` / `fs:copy` / `fs:importExternal` 五个钩子点。测试 11 个 case 全过([src/main/office-cache.test.ts](../src/main/office-cache.test.ts))。
 
 ### 16.2 soffice 冷启动开销 ✅ 已修(2026-07-06,短期部分)
 
@@ -263,36 +263,40 @@ Task reminder check failed: Error: Error invoking remote method 'index:build':
 
 `convertOfficeToPdf` 是裸函数,没 `inflight Map`。**已修**:`loadOfficePdf` 加了模块级 `inflight: Map<string, Promise<Buffer>>`(与 audio 转码的 `activeAudioTranscodes` 同模式 —— audio 转码现已改为 `whale-audio://` 实时流式,见 [src/main/main.ts](../src/main/main.ts) `registerWhaleAudioProtocol`,inflight dedup 在协议层)。8 并发 → 1 次 soffice 调用已验证。
 
-### 16.4 Buffer → ArrayBuffer 双重拷贝
+### 16.4 Buffer → ArrayBuffer 双重拷贝 ✅ 已修(2026-07-18,docs/15 P1-4)
 
-[src/main/ipc.ts:1015-1023](../src/main/ipc.ts) `convertOfficeToPdf` 返回 Buffer,IPC handler 拷成 ArrayBuffer 再传;renderer 又 `new Uint8Array(msg.data)` 一次。**典型 PDF 几 MB 到几十 MB,两次拷贝纯浪费**。Electron IPC 三者互通,直接传 Buffer / Uint8Array 即可。
+[src/main/ipc/extensions.ts](../src/main/ipc/extensions.ts) `convertOfficeToPdf` 返回 Buffer,IPC handler 拷成 ArrayBuffer 再传;renderer 又 `new Uint8Array(msg.data)` 一次。**典型 PDF 几 MB 到几十 MB,两次拷贝纯浪费**。Electron IPC 三者互通,直接传 Buffer / Uint8Array 即可。
+
+**已修**:端到端改 `Uint8Array` —— handler 直返 Buffer 删拷贝,ipc-types / extension-types / ipc-api 链 `ArrayBuffer`→`Uint8Array`,viewer 直传,净省 1 次 memcpy/文档;`convertDwgToDxf` / `convertEbookToEpub` 同形照改。详见 [docs/15 P1-4](./15-perf-audit.md)。
 
 ### 16.5 缺 move/copy/remove 钩子 ✅ 已修(2026-07-06,随 §16.1)
 
-audio-convert 三件齐全,office-convert 一件没接。**已修**:`office-cache.ts` 导出 `removeOfficePdf` / `moveOfficePdf`(含 EXDEV 回退)/ `copyOfficePdf`,均接入 [src/main/ipc.ts](../src/main/ipc.ts) 的 `cleanupMeta` / `fs:rename` / `fs:move` / `fs:copy` / `fs:importExternal` 五个钩子点。
+audio-convert 三件齐全,office-convert 一件没接。**已修**:`office-cache.ts` 导出 `removeOfficePdf` / `moveOfficePdf`(含 EXDEV 回退)/ `copyOfficePdf`,均接入 [src/main/ipc/fs-write.ts](../src/main/ipc/fs-write.ts) 的 `cleanupMeta` / `fs:rename` / `fs:move` / `fs:copy` / `fs:importExternal` 五个钩子点。
 
-### 16.6 临时目录无启动清理
+### 16.6 临时目录无启动清理 ✅ 已修(2026-07-18)
 
 `tmpDir = fsp.mkdtemp(os.tmpdir() + '/whale-office-')`,转换完 `fsp.rm(tmpDir, {recursive, force})`。**如果 Electron 主进程在 soffice 运行中崩溃**(断电 / kill -9),`whale-office-*` tmpDir 永久泄漏,无 cleanup-on-startup。
 
-修复:启动时 `await fsp.rm(join(tmpdir(), 'whale-office-*'), {recursive: true, force: true})`。
+**已修**:[office-convert.ts](../src/main/office-convert.ts) 加 per-process 一次性惰性清扫 —— 首次 `convertOfficeToPdf` 前扫 `os.tmpdir()` 删掉 `whale-office-*` 残留(比启动时扫省 boot 成本,残留只在再转换时才要紧)。**mtime 守卫**:只删比本进程启动更早的目录 —— 应用无单实例锁,并发第二个 Whale 实例的活转换 tmpdir 不会被误删。测试:[office-convert.test.ts](../src/main/office-convert.test.ts)「sweeps stale whale-office-\* tmpdirs once per process」。
 
 ### 16.7 iframe 与 pdf-viewer 字符级重复 ✅ 已修(2026-07-06)
 
 [src/extensions/office-viewer/index.ts](../src/extensions/office-viewer/index.ts) 的 `requestAsset` / `HostBinaryDataFactory` / `pendingAssets` / `renderPdf` 与 [src/extensions/pdf-viewer/index.ts](../src/extensions/pdf-viewer/index.ts) 几乎是字符级复制。**已修**:抽出 [src/extensions/shared/pdfjs-in-iframe.ts](../src/extensions/shared/pdfjs-in-iframe.ts),导出 `createPdfjsSession(opts)` 工厂 + `detectInitialTheme()` / `applyTheme()` / `PDFJS_I18N`。pdf-viewer 保留自己的 render loop(per-page rotation + fit-mode),通过 `session.binaryDataFactory` + `session.handleHostMessage` 复用资产桥;office-viewer 用完整的 `session.renderPdfBytes`。同步修了 §16.12(`requestAsset` 30s 超时,放进 session)。
 
-### 16.8 缺 pdf-viewer 同款 UX
+### 16.8 缺 pdf-viewer 同款 UX ✅ 已修(2026-07-18)
 
-office-viewer 当前只支持手动缩放(+/− 两按钮),**无**:
+office-viewer 当前只支持手动缩放(+/− 两按钮),**无** fit / 旋转 / 跳页 / 键盘导航 / ResizeObserver 重排 / status 栏。
 
-- fit-width / fit-page(参考 [pdf-viewer/index.ts:268-290](../src/extensions/pdf-viewer/index.ts))
-- 每页独立旋转(±90°)
-- 跳页 input(`<input type="number">`)
-- 键盘导航(`PageUp` / `PageDown` / `Home` / `End` / `←` / `→` / `Ctrl+0` fit-width / `Ctrl+9` fit-page / `Ctrl+`+`+`/`Ctrl+-` 缩放)
-- ResizeObserver + rAF 重排(窗口 resize 时不重新渲染像素,只重排 CSS)
-- 滚动同步 currentPage(scroll 事件 rAF 找出最接近视口顶 25% 的页)
-- 文件大小 + 页数 status 栏
-- 进度条 UI(`setLoadingBar(text, 'progress' | 'error')` + data-state + `:empty` CSS 隐藏)
+**已修**(全部镜像 pdf-viewer 的已实现模式):
+
+- **fit-width / fit-page / manual 三档显示模式**:`computeDisplayScale`(manual → `manualZoom`;fit-width → 容器内宽 / 页宽;fit-page → 宽高取小),fit 按钮带 active 态;缩放 / fit 切换只重排 CSS(`relayoutPages`,canvas 位图不重栅格化),`Ctrl+0` fit-width、`Ctrl+9` fit-page
+- **每页独立旋转 ±90°**:`pageRotations` Map + `session.rerenderPage(pageNum, rotation)`(单页重栅格化),`data-base-w/h` 随新 baseVp 更新后重排
+- **跳页 input + prev/next**:`#page-input`(Enter 跳页 / Esc 还原 / blur 回写 / focus 全选)+ `#page-count`;prev/next disabled 态随 currentPage
+- **键盘导航**:PageUp / PageDown / Home / End / ← / → / Ctrl(+Shift 不误劫)
+- **ResizeObserver + rAF 重排**:仅 fit 模式下容器尺寸变化触发 `relayoutPages`(CSS-only,不重栅格化)
+- **status 栏 + 进度条**:底部 `#status` 左文件大小(`fileContent.size`,`formatBytes`)右页数;`#loading-bar` 承载 Converting / Rendering N/M / 错误文本(`data-state` + `:empty` 隐藏,`role="status"` 保 §16.18 可宣告性)
+- **TextLayer 对齐修复(顺带)**:session 新增传入 `computeDisplayScale` —— 此前 TextLayer 永远按 scale 1 布局,一缩放选区就漂移(隐性 bug,fit 模式逼着转正)
+- 纯函数抽 [view-math.ts](../src/extensions/office-viewer/view-math.ts)(clampZoom / clampPage / computeDisplayScale / nextRotation / formatBytes),8 个测试用例:[view-math.test.ts](../src/extensions/office-viewer/view-math.test.ts)
 
 ### 16.9 主题初始猜测缺失 → 白闪 ✅ 已修(2026-07-06,随 §16.7)
 
@@ -318,9 +322,11 @@ office-viewer 当前只支持手动缩放(+/− 两按钮),**无**:
 
 `execFile` 不传 `stdio: 'pipe'`,**失败时 stderr 默认进 Electron 主进程 stdout,用户看不到诊断信息**。**已修**:[src/main/office-convert.ts](../src/main/office-convert.ts) + [src/main/thumbnail.ts](../src/main/thumbnail.ts) 的 `encodeOfficeThumb` 都改为 `stdio: ['ignore', 'pipe', 'pipe']` + 3 参 callback,失败时 `Error` message 包含 `stderr || stdout`。`[src/main/office-convert.test.ts](../src/main/office-convert.test.ts)` 的 "surfaces stderr in the error message" case 验证 fake exit 2 + stderr 文本能进 error message。
 
-### 16.14 缺 soffice 路径用户配置入口
+### 16.14 缺 soffice 路径用户配置入口 ✅ 已修(2026-07-18)
 
 `options.sofficePath` 接受 override,**但 UI 没暴露**。`Settings → Extensions` 可以加一个"Office 渲染器"输入框(参考 dwg2dxf / ODA File Converter 的设置 pattern),非标准安装位置即可用。
+
+**已修**:设置 UI 与 reducer 字段(`sofficePath` + `setSofficePath` + 5 语言 locale)此前已随缩略图链路落地([ThumbIcon](../src/renderer/components/ThumbIcon.tsx) 生成 office 缩略图时已透传),本次补齐 **viewer 链路**:[ExtensionHost](../src/renderer/components/ExtensionHost.tsx) 的 `requestOfficeConvert` → `convertOfficeToPdf(path, { sofficePath })`、`requestSofficeCheck` → `isSofficeAvailable({ sofficePath })`(ipc-types / preload / ipc handler 同步放开签名);`isSofficeAvailable(override)` 透传 override。设置里的路径输入框**不再被 `officeThumbnailEnabled` 门控** —— 不开缩略图的用户也用 viewer。注意:显式 override 会按既定语义**绕过常驻 UNO worker** 走一次性 execFile(见 [office-convert.ts](../src/main/office-convert.ts) `convertOfficeToPdfVia` 注释)。
 
 ### 16.15 缺 `office-convert.test.ts` ✅ 已修(2026-07-06)
 
@@ -336,19 +342,21 @@ office-viewer `openOfficeFile` 先 `requestSofficeCheck` → host `ext:isSoffice
 
 修复:抽 `src/extensions/shared/pdf-locale.ts`,两边复用。**已修(2026-07-06)**:6 个 key 抽到 [src/extensions/shared/pdfjs-in-iframe.ts](../src/extensions/shared/pdfjs-in-iframe.ts) 的 `PDFJS_I18N` 常量;pdf-viewer 与 office-viewer 都用 `...PDFJS_I18N[lang]` spread。**注意**:`failedRender` EN 字符串统一为 `PDF render failed: {msg}`(原 office-viewer 的 `Failed to render PDF: {msg}` 被替换),ZH 不变。
 
-### 16.18 缺 a11y
+### 16.18 缺 a11y ✅ 已修(2026-07-18)
 
-- `#zoom-in` / `#zoom-out` 按钮只有 `title`,**没 `aria-label`**(对照 pdf-viewer 两处都设)
-- `#status` 不是 `role="status"`,屏幕阅读器拿不到转换进度
-- `<canvas>` 无 alt(Office 文档页没自然 alt,但至少第一页可贴 `Page N of M`)
+- ~~`#zoom-in` / `#zoom-out` 按钮只有 `title`,**没 `aria-label`**~~ → 已补(静态 HTML 默认值 + `applyLocale` 随语言更新,对照 pdf-viewer 两处都设)
+- ~~`#status` 不是 `role="status"`,屏幕阅读器拿不到转换进度~~ → 已加 `role="status"`(隐含 aria-live=polite)
+- ~~`<canvas>` 无 alt~~ → 共享渲染循环([pdfjs-in-iframe.ts](../src/extensions/shared/pdfjs-in-iframe.ts) `renderPageContent`,两个 viewer 的所有页统一)给每页 canvas 打 `role="img"` + `aria-label`;新 session 选项 `pageAriaLabel`,office-viewer 传本地化 `T.pageLabel`(新增 `pageLabel` i18n key:en `Page {n} of {total}` / zh `第 {n} 页,共 {total} 页`),pdf-viewer 未传则用默认英文 `Page N of M`(本地化留待需要时)
 
-### 16.19 `outputScale` 魔法数 1.5
+### 16.19 `outputScale` 魔法数 1.5 ✅ 已修(2026-07-18)
 
-[src/extensions/office-viewer/index.ts:157](../src/extensions/office-viewer/index.ts) `outputScale = min(dpr, 2) * 1.5` 与 pdf-viewer 同款但无注释解释。挪到 `shared/pdfjs-config.ts` 加注释。
+原 office-viewer 内联 `outputScale = min(dpr, 2) * 1.5` 已随 §16.7 重构消除 —— 两侧统一走 [shared/pdfjs-in-iframe.ts](../src/extensions/shared/pdfjs-in-iframe.ts) 的 `defaultOutputScale()`,office-viewer 用 `session.renderPdfBytes` 内部消化。本次补齐"为什么 1.5"的注释(1.5× 固定超采样保小字清晰 + dpr cap 2 限 canvas 内存)。
 
-### 16.20 CSP `font-src` 未显式声明
+### 16.20 CSP `font-src` 未显式声明 ✅ 已修(2026-07-18)
 
 [src/extensions/office-viewer/index.html:7](../src/extensions/office-viewer/index.html) `default-src 'self'` 兜底 `font-src`,太宽。host 已经把 cMap / standardFont 经 IPC 供给,显式设 `font-src 'self' data: whale-extension://*` 更精确。
+
+**已修**:CSP meta 加 `font-src 'self' data: whale-extension://*`,与 img-src 同形。
 
 ### 16.21 soffice 不存在 / 失败时无回退 ✅ 已修(2026-07-16)
 
@@ -481,7 +489,7 @@ container.style.cssText =
 
 **对照基准**:[docs/07 §4.1](./07-extensions.md) — 完整 22 项按 P0/P1/P2 优先级 + 修法代码路径 + 落地周次表(5 周分批)。本节是分类索引 + 修法记录。
 
-**进度**(2026-07-06/07 Week 1+2+3+4+5+6):§18.1.1–5 / §18.2.1–7 / §18.3.1–3 / §18.3.5 / §18.3.6 / §18.4.1 / §18.4.2 / §18.4.4 已修(共 20 项)。**还剩** §18.3.4 persist(Week 3 #6 已落地,标 ✅ 重复登记) / §18.4.3 CSP unsafe-inline 收紧(Week 6 试过,mermaid SVG 注入需要 inline `<style>` + `style=`,回滚 — 详见 §18.4.3 段)。
+**进度**(2026-07-06/07 Week 1+2+3+4+5+6 + 2026-07-19 架构拆分):§18.1.1–5 / §18.2.1–7 / §18.3.1–3 / §18.3.5 / §18.3.6 / §18.4.1 / §18.4.2 / §18.4.4 已修(共 20 项);§4.1 架构债(index.ts 主体拆分)✅ 已修(2026-07-19)— `index.ts` 1616 → 441 行,按 feature 拆出 md-statusbar / md-theme / md-fold / md-toc / md-scroll / md-toolbar / md-keymaps 7 个模块,共享状态走 md-context 的 `ctx`/`dom` 单例,详见 [§4.1 架构债](./07-extensions.md)。**还剩**:§18.4.3 CSP `unsafe-inline` 收紧(Week 6 试过,mermaid SVG 注入需要 inline `<style>` + `style=`,回滚 — 详见 §18.4.3 段;二期思路 `style-src-elem` / `style-src-attr` 分离或 nonce 未做)。§4.1 深度审查清单的其余项(undo 泄漏 / 状态栏词数 / CJK 词数 / 预览缓存 / 滚动同步 rAF / `applyTheme` fallback / 死代码 / CSS 已折叠 / Mod-B/I/K 快捷键 / sandbox 工厂 / OR→AND 加固 / index.ts 架构拆分)均已修。
 
 **模块**:[src/extensions/md-editor/](../src/extensions/md-editor/) ~500 行 `index.ts` + ~700 行 `md-render.ts` + 182 行 `md-splitter.ts` + ~150 行 `md-sandbox.ts`(Week 6 新增沙箱管理) + ~1000 行测试(Week 1-6 共 104 case)+ ~700 行 `editor.css` + `mermaid-sandbox.html`(沙箱 iframe 页,3.4K)+ dist 里的 `mermaid.min.js`(3.4M,按需加载)。CodeMirror 6 + `marked` + DOMPurify + `highlight.js` + `mermaid`(沙箱隔离)+ `@codemirror/search`,左编辑右预览分屏 + 工具栏 + 状态栏 + TOC 侧栏 + 沙箱渲染 Mermaid。**Week 1-6 改造后**:`index.ts` 只剩 CodeMirror 生命周期 / 主题 / 消息路由 / 工具栏 wire / 状态栏 wire;`md-render.ts` 17 个纯函数;沙箱 iframe 隔离 mermaid v11 的 `unsafe-eval`,主 CSP 保持严格(不放宽)。
 
@@ -660,26 +668,32 @@ permissionMode 'bypassPermissions' auto-approves every tool call
 
 **教训**:`canUseTool` 是 SDK 在**非 bypass 模式**下的闸门;`allowDangerouslySkipPermissions` 只是 bypass 的**启用开关**,绝不能在 normal/plan 开(开了就把 `canUseTool` 整个废掉,且无编译/类型错误——只有真跑 AI 工具调用才暴露)。和 §19/§21 同类:协议层配置坑,smoke test 验证不可省。详见 [docs/11 §5](./11-ai.md)。
 
-## 23. AI 流式回复 thinking/text 重复 — partial/complete uuid 不匹配,streamed 去重失效 (2026-07-11)
+## 23. AI 流式回复 thinking/text 重复 — CLI uuid 每行随机,uuid 去重整体失效 (2026-07-11 发现,2026-07-18 确诊修复)
 
 **症状**:Claude CLI provider 的回复里,**1 个 assistant 气泡内出现两段一模一样的思考(thinking)块**;修好 thinking 后,**两段一模一样的正文(text)**浮出。partial 流(token by token)累积成一段,complete 消息又原样发一段。yolo / normal 模式均可复现。
 
-**根因(推测,未 log 证实)**:[transformSdkMessage.ts](../src/main/ai/providers/claude/stream/transformSdkMessage.ts) 的 `streamed` 去重依赖 per-uuid 的 `streamedMsgs` —— partial `stream_event`(text_delta/thinking_delta)把 `message.uuid` 加进 `streamedMsgs`,complete `assistant` 消息检查 `streamedMsgs.has(uuid)` 命中才跳过。实测 complete 的 text/thinking block **没被跳过**(重复 yield),说明 complete 的 uuid 没命中 `streamedMsgs` —— 极可能是 SDK 的 partial `stream_event.uuid` 与 complete `assistant.uuid` **不是同一个值**(SDK 内部 id 体系不同),`streamedMsgs.has(completeUuid)` 落空 → complete 再 yield 一遍。
+**根因(2026-07-18 实跑 CLI 抓 stream-json 确诊)**:直接跑 `claude.exe -p "..." --output-format stream-json --include-partial-messages --verbose` 抓输出(比 app 内加 log 干净),发现 **每一行(每条 `stream_event` / `assistant`)都带一个全新的随机 uuid** —— 不止 partial 与 complete 不匹配,partial 之间也互不相同。因此 [transformSdkMessage.ts](../src/main/ai/providers/claude/stream/transformSdkMessage.ts) 依赖 `message.uuid` 的 `startedMsgs`/`streamedMsgs` 去重**整体失效**:complete 的 uuid 永远查不到 → text/thinking 重发一遍;complete 还因 `startedMsgs` miss 再 yield 一个 `assistant_message_start` → **空气泡**。2026-07-11 观察到"只 1 个气泡"是当时旧版 CLI:`message_start` 与 complete 共享 uuid、delta 不共享 —— 所以 `startedMsgs` 半生效、`streamedMsgs` 失效;新版 CLI 改全行随机后还会多一个空气泡。subagent 文本同病且当时的 boolean 兜底没覆盖(parent 分支不置标志)→ 重复。
 
-> 注:`assistant_message_start` 的去重(`startedMsgs`)在同一 uuid 逻辑下却生效(只 1 个气泡),与 text/thinking 失效并存——矛盾没完全解明,确证需加 log 抓一次 uuid 流(见"遗留")。
+抓包同时证实两条之前未知的 wire 事实:
 
-**修复**:`TransformState` 加两个 per-turn boolean 标志:`thinkingStreamed` / `textStreamed`。partial 流经 thinking_delta/text_delta 时把对应标志置 true;complete 消息的 thinking/text block 检查 `streamed || thinkingStreamed` / `streamed || textStreamed` 命中则跳过。**绕过 uuid 匹配**(标志是 per-turn 全局,不依赖 complete uuid),且 per content-type(流过 thinking 不影响 complete-only text)。
+1. **complete `assistant` 在某块的 delta 流完即发出,早于该块的 `content_block_stop`**;且一条 API 消息可拆成**多个非累积 complete**(如 `[thinking]` 再 `[tool_use]`)。
+2. 块的完整文本 = 其 delta 拼接,**逐字节相等**(thinking 81 字符、text 4 字符实测一致);tool_use 块 id(`call_*`)在 stream 与 complete 间稳定。**这些才是真正的去重键,uuid 不是**。
 
-**为什么用 boolean 标志而非内容 includes**:中间曾用 `partialText.includes(block.text)`(内容子串匹配)做 backstop,但子串匹配有理论误判风险(一个 block 是另一个的真子串)且语义不直观;boolean 标志干净、无歧义。两者都是 backstop(治标),真治本要让 `streamed` 的 uuid 检查自己 work。
+**修复(2026-07-18)**:transformSdkMessage 重写,删 `startedMsgs` / `streamedMsgs` / `thinkingStreamed` / `textStreamed`(boolean 兜底一并移除):
 
-**遗留 / 未决**:
-- `streamed` 的 per-uuid 检查为什么失效(partial/complete uuid 是否真不匹配)**未 log 证实**。诊断被打断:dev 的 `electronmon` 在 Windows 上重启 electron 时杀不干净旧进程,反复 dev 累积 20+ 残留 electron,互相锁 userData disk cache(`Unable to move the cache: 拒绝访问 0x5`),新 electron `exit code 1`,无法稳定加 log 跑;重启电脑清残留后才稳定。需 log 抓 uuid 流确证。
-- 确证后可去掉 `thinkingStreamed`/`textStreamed` 标志,让 `streamed` 自然去重(complete 不 yield)。
-- 当前标志 backstop:work、不误判、好理解,可先这样。
+- **per-scope flow 状态机**:scope = `parent_tool_use_id`(顶层 `''`;subagent 流与顶层交错,各持一份);`message_start` 开新 flow;`bubbleOpen` 保证一条 API 消息只开一个气泡(没收到 `message_start` 时 complete 自己开 —— recovery 路径)。
+- **text/thinking 按内容精确匹配去重**:delta 按块 index 累积(`flow.acc`),complete 块与在途累积 + 已展示池(`flow.shown`)做**全串精确匹配**(非子串,无歧义),命中跳过;`content_block_stop` 把累积落进 shown;complete 发出的块也入 shown(防累积式 complete 重发)。已知取舍:同一 API 消息里两个**内容完全相同**的 text 块,complete 回声会坍缩(流式路径两块本身都正常显示,complete 不再多加)。
+- **tool_use 按稳定块 id 双向去重**:complete 先到(常见,见 wire 事实 1)则发 complete 版(顺带拿到完整解析好的 input)并删掉 pending 组装,stop 到时不再重发;stop 先到则 `emittedToolIds` 挡 complete。
+- `toolBlocks` 键从块 index 改为 `${scope}:${index}`(并行 subagent 同 index 不互撞)。
+
+**测试**:6 个真实 wire-shape 回归用例(逐行随机 uuid / 分裂 complete / complete 早于 stop / 无 stream 的 recovery / 累积重复 / subagent 不同 uuid)+ 原 12 个全过;两份真实抓包 JSONL 逐 chunk 回放校验正确。
+
+**遗留**:无。boolean 兜底已删,uuid 不再用作任何去重键(仅作气泡 `itemId` 展示标识,每行唯一即可)。
 
 **教训**:
 - 流式协议里"partial + complete"去重必须**实测验证**——光看代码"complete 检查 streamed 跳过"会以为没问题,但 uuid 匹配是隐含前提,SDK 内部 id 体系不一致就**静默失效**(无报错、无类型错,只有 UI 重复)。
-- dev 热重载(electronmon)在 Windows 的进程清理是独立坑(与 §1 `ELECTRON_RUN_AS_NODE` 同类 dev 黑魔法):诊断流式问题时先用**一次性冷启动**(重启电脑 / 不靠 watch 重启)再加 log,避免 dev 工具的进程残留干扰诊断。
+- **别把对端协议的 id 语义当契约**:CLI 的 uuid 是"每行一个"还是"每条消息一个"没有文档承诺,版本间还变过(旧版 message_start 与 complete 共享,新版全行随机);去重键要用有内容语义的字段(块文本 / 工具 id)。
+- dev 热重载(electronmon)在 Windows 的进程清理是独立坑(与 §1 `ELECTRON_RUN_AS_NODE` 同类 dev 黑魔法):诊断流式问题绕开 watch,直接跑 CLI 二进制抓 stream-json 输出,比 app 内加 log 更快更干净。
 
 **关联**:[docs/11 §4 流式与渲染](./11-ai.md)。
 
@@ -691,7 +705,7 @@ permissionMode 'bypassPermissions' auto-approves every tool call
 
 **处理**:[runUserCommand](../src/main/shell-command.ts) 在替换前检测 `targetPath.includes('%')` → 直接拒,renderer 映射到 `commandPathBlocked` 文案。`!`(cmd 默认 delayed expansion 关)放行。99.99% 文件名不含 `%`。用户解法:重命名文件去掉 `%`,或改用不含 `${path}` 的命令。
 
-**通用教训**:任何"用户模板 + 文件路径替换进 cmd"的功能,`%` 是 cmd 引号套不住的唯一元字符 —— 要么拒(当前方案)、要么改走 PowerShell(`psQuote` 单引号全安全,见 [ipc.ts runOsZip](../src/main/ipc.ts))、要么写临时 .bat(批处理内 `%%` 生效)。详见 [docs/13 §11](./13-security.md)。
+**通用教训**:任何"用户模板 + 文件路径替换进 cmd"的功能,`%` 是 cmd 引号套不住的唯一元字符 —— 要么拒(当前方案)、要么改走 PowerShell(`psQuote` 单引号全安全,见 [fs-write.ts runOsZip](../src/main/ipc/fs-write.ts))、要么写临时 .bat(批处理内 `%%` 生效)。详见 [docs/13 §11](./13-security.md)。
 
 ---
 
@@ -722,7 +736,7 @@ permissionMode 'bypassPermissions' auto-approves every tool call
 
 **症状**:`wsd.json` / `wsm.json` 里的老前缀日期标签(`today-YYYYMMDD` 等)在生产环境从未被迁移;启动日志恒为 `scanned=0 migrated=0`。
 
-**根因**:`bootstrap()` 在 `createWindow()` **之前**调 `runMigration(getAllowedRoots())`(原 [main.ts](../src/main/main.ts)),而 allowedRoots 只能由渲染层挂载后经 `fs:setAllowedRoots` 推送([Root.tsx](../src/renderer/containers/Root.tsx) → [ipc.ts](../src/main/ipc.ts))—— 启动时集合必为空,`runMigration` 对空数组直接 early-return。type-check / 单测全绿(单测直接传 roots 调 `runMigration`,不经启动路径),只有全链路审阅才暴露。
+**根因**:`bootstrap()` 在 `createWindow()` **之前**调 `runMigration(getAllowedRoots())`(原 [main.ts](../src/main/main.ts)),而 allowedRoots 只能由渲染层挂载后经 `fs:setAllowedRoots` 推送([Root.tsx](../src/renderer/containers/Root.tsx) → [fs-roots.ts](../src/main/ipc/fs-roots.ts))—— 启动时集合必为空,`runMigration` 对空数组直接 early-return。type-check / 单测全绿(单测直接传 roots 调 `runMigration`,不经启动路径),只有全链路审阅才暴露。
 
 **修复**:触发点移到 `fs:setAllowedRoots` handler —— 首次**非空**推送时 `triggerStartupMigration(getAllowedRoots())`([migrate-date-tags.ts](../src/main/migrate-date-tags.ts));模块级 once-guard 防后续 location 增删的重推送重跑,空推送不消耗 guard(渲染层 rehydration 前可能先推一次 `[]`)。
 

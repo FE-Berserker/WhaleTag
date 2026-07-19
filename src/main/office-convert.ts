@@ -97,6 +97,50 @@ export async function convertOfficeToPdfVia(
 }
 
 /**
+ * Stale `whale-office-*` tmpdirs leak permanently when the main process dies
+ * mid-conversion (kill -9 / power loss — the `finally` sweep never runs).
+ * Sweep them once per process, lazily before the first conversion: leftovers
+ * only matter when the user converts again, and a lazy sweep costs nothing at
+ * boot (docs/09 §16.6).
+ *
+ * Only dirs older than THIS process's start are removed — the app has no
+ * single-instance lock, so a concurrent second Whale instance may have a live
+ * conversion tmpdir right now; its mtime tracks the conversion writes and is
+ * therefore newer than our boot.
+ */
+let staleTmpSwept = false;
+
+/** Test hook: re-arm the once-guard so the sweep runs again. */
+export function _resetStaleTmpSweepForTest(): void {
+  staleTmpSwept = false;
+}
+
+async function sweepStaleOfficeTmpDirs(): Promise<void> {
+  const bootAt = Date.now() - process.uptime() * 1000;
+  const tmp = os.tmpdir();
+  let names: string[];
+  try {
+    names = await fsp.readdir(tmp);
+  } catch {
+    return; // tmpdir unreadable — the conversion itself surfaces real errors
+  }
+  await Promise.all(
+    names
+      .filter((n) => n.startsWith('whale-office-'))
+      .map(async (n) => {
+        const full = path.join(tmp, n);
+        try {
+          const st = await fsp.stat(full);
+          if (st.mtimeMs >= bootAt) return; // live (another instance) — keep
+          await fsp.rm(full, { recursive: true, force: true });
+        } catch {
+          // vanished between readdir and rm — fine
+        }
+      })
+  );
+}
+
+/**
  * Converts an Office document to PDF bytes. Thin shell over
  * `convertOfficeToPdfVia`: convert into a temp dir, read it back, clean up.
  *
@@ -110,6 +154,10 @@ export async function convertOfficeToPdf(
   srcPath: string,
   options: ConvertOfficeOptions = {}
 ): Promise<Buffer> {
+  if (!staleTmpSwept) {
+    staleTmpSwept = true;
+    await sweepStaleOfficeTmpDirs();
+  }
   const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-office-'));
   const baseName = path.basename(srcPath, path.extname(srcPath));
   const outPdfPath = path.join(tmpDir, `${baseName}.pdf`);

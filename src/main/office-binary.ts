@@ -79,8 +79,10 @@ export async function sofficeBinary(
 }
 
 /** Returns true when a LibreOffice `soffice` binary can be located. */
-export async function isSofficeAvailable(): Promise<boolean> {
-  return (await sofficeBinary(null)) !== null;
+export async function isSofficeAvailable(
+  override?: string | null
+): Promise<boolean> {
+  return (await sofficeBinary(override ?? null)) !== null;
 }
 
 /**

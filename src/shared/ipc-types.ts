@@ -115,6 +115,32 @@ export interface GenerateThumbnailOptions {
 }
 
 /**
+ * Server-pushed index build progress (docs/04 §10). Mirrors the worker
+ * protocol's progress event in `src/main/index-protocol.ts` — broadcast to
+ * every window on `index:progress`; consumers filter by `rootPath`.
+ */
+export interface IndexProgressEvent {
+  op: 'index:build' | 'fulltext:build';
+  rootPath: string;
+  phase: 'scan' | 'ingest' | 'extract' | 'delete';
+  processed: number;
+  total: number | null;
+  /** Terminal event for the build — observers clear their progress UI. */
+  done?: boolean;
+}
+
+/**
+ * Server-pushed external-change event from the location fs.watchers
+ * (docs/04 §10) — broadcast on `fs:dirChanged`. `paths` are relative to
+ * `rootPath` (forward slashes); empty means the watch buffer overflowed and
+ * anything may have changed.
+ */
+export interface DirChangedEvent {
+  rootPath: string;
+  paths: string[];
+}
+
+/**
  * The surface exposed on `window.whale` by preload.ts.
  * Mirrored here so both sides agree on the contract.
  */
@@ -225,11 +251,20 @@ export interface WhaleApi {
   indexTags: (rootPath: string) => Promise<string[]>;
   /** Index status: row count + whether a db exists. */
   indexStatus: (rootPath: string) => Promise<{ count: number; ready: boolean }>;
+  /** Server-pushed build progress for `buildLocationIndex` /
+   *  `buildFulltextIndex` (docs/04 §10). Returns an unsubscribe function. */
+  onIndexProgress: (cb: (ev: IndexProgressEvent) => void) => () => void;
+  /** Server-pushed external file changes under configured locations
+   *  (docs/04 §10, fs.watch). Returns an unsubscribe function. */
+  onDirChanged: (cb: (ev: DirChangedEvent) => void) => () => void;
 
   // Full-text index (Phase 2) — keyed by an arbitrary directory root.
   buildFulltextIndex: (rootPath: string) => Promise<{ count: number }>;
   searchFulltext: (rootPath: string, query: string) => Promise<FulltextHit[]>;
   hasFulltextIndex: (rootPath: string) => Promise<boolean>;
+  /** Sync `settings.fulltextPaths` to main so the fs.watch layer can rebuild
+   *  those indexes on external change (docs/04 §10). */
+  syncFulltextPaths: (paths: string[]) => Promise<void>;
 
   // Sidecar metadata (`.whale/<file>.json`)
   readSidecars: (
@@ -359,8 +394,15 @@ export interface WhaleApi {
   detectEbookConverter: () => Promise<{ calibre: string | null }>;
   /** Whether LibreOffice (`soffice`) is installed — office-viewer probes this
    *  up front to show install guidance instead of a "not found" dead-end
-   *  (docs/09 §16.16). */
-  isSofficeAvailable: () => Promise<boolean>;
+   *  (docs/09 §16.16). `options.sofficePath` = the user's explicit override
+   *  from settings (docs/09 §16.14); null/absent = auto-detect. */
+  isSofficeAvailable: (options?: {
+    sofficePath?: string | null;
+  }) => Promise<boolean>;
+  /** Main-process clipboard text read (Electron `clipboard.readText`) — used
+   *  by extension context menus' Paste (md-editor). Returns '' when the
+   *  clipboard holds no text. */
+  readClipboardText: () => Promise<string>;
   // Phase 4b — Archive viewer (main-process decoder)
   /** List the entries of a supported archive (zip/tar/tgz/7z/bz2/xz/gz).
    *  Throws if the format is unsupported or the archive is unreadable. */

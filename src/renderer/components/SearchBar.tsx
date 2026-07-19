@@ -99,7 +99,7 @@ function Highlighted({
  */
 export default function SearchBar() {
   const { t } = useTranslation();
-  const { status, build, search } = useLocationIndexContext();
+  const { status, progress, build, search } = useLocationIndexContext();
   const { currentLocation, navigateTo, navigateToInLocation } =
     useCurrentLocationContext();
   const fulltextPaths = useSelector(
@@ -118,6 +118,18 @@ export default function SearchBar() {
 
   const busy = status === 'loading' || status === 'building';
   const fulltextOn = fulltextPaths.length > 0;
+
+  // docs/04 §10: live build progress next to the spinner, e.g. "Indexing…
+  // 1,234" (scan, no total) or "Indexing… 1,234/5,000" (ingest).
+  const progressText =
+    status === 'building' && progress
+      ? progress.total != null
+        ? t('indexBuildingTotal', {
+            processed: progress.processed,
+            total: progress.total,
+          })
+        : t('indexBuilding', { processed: progress.processed })
+      : null;
 
   /** Run the search (Enter only). No-op if not ready or query too short. */
   const runSearch = async () => {
@@ -327,6 +339,15 @@ export default function SearchBar() {
           )}
         </Popover>
       </Box>
+      {progressText ? (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+        >
+          {progressText}
+        </Typography>
+      ) : null}
       {fulltextOn ? (
         <Tooltip title={t('searchContents')}>
           <IconButton
