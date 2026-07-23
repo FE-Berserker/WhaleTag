@@ -76,6 +76,27 @@ export default function AiPanel() {
   );
   const scrollRef = useRef<HTMLDivElement>(null);
   const confirm = useConfirm();
+  // Draft attachment handed over from a pdf-viewer marquee ("ask AI about
+  // this region") via the `whale:ai-draft` CustomEvent. One-shot: consumed
+  // by the next send. Not redux — must not survive a restart.
+  const [pdfDraft, setPdfDraft] = useState<{
+    path: string;
+    page?: number;
+    text: string;
+  } | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const onDraft = (e: Event) => {
+      const d = (
+        e as CustomEvent<{ path: string; page?: number; text: string }>
+      ).detail;
+      if (!d?.text) return;
+      setPdfDraft(d);
+      inputRef.current?.focus();
+    };
+    window.addEventListener('whale:ai-draft', onDraft);
+    return () => window.removeEventListener('whale:ai-draft', onDraft);
+  }, []);
   // Follow streaming output only while the user is already near the bottom —
   // scrolling up to read history must not yank the view back on every chunk.
   const nearBottomRef = useRef(true);
@@ -119,7 +140,16 @@ export default function AiPanel() {
     setInput('');
     nearBottomRef.current = true;
     let attachment: { path: string; content?: string } | null = null;
-    if (attachedFile) {
+    if (pdfDraft) {
+      // Marquee selection takes priority over the single-file attachment —
+      // the user explicitly boxed the region they want to ask about. The
+      // send() path wraps this in <current_note>; the inner tag preserves
+      // the page provenance.
+      attachment = {
+        path: pdfDraft.path,
+        content: `<pdf_selection page="${pdfDraft.page ?? '?'}">\n${pdfDraft.text}\n</pdf_selection>`,
+      };
+    } else if (attachedFile) {
       attachment = { path: attachedFile.path };
       const ext = attachedFile.extension.toLowerCase();
       if (
@@ -134,6 +164,7 @@ export default function AiPanel() {
         }
       }
     }
+    setPdfDraft(null);
     // Capture the current perspective so the main process can inject a
     // Perspectives section into the system prompt (undefined when unrecognized
     // → the section is omitted gracefully).
@@ -257,7 +288,7 @@ export default function AiPanel() {
           sx={{
             alignItems: 'center',
             gap: 0.5,
-            mb: attachedFile || multiSelectPaths.length > 0 ? 0.5 : 0,
+            mb: attachedFile || multiSelectPaths.length > 0 || pdfDraft ? 0.5 : 0,
           }}
         >
           <Tooltip title={t('aiAttachToggle')}>
@@ -286,6 +317,16 @@ export default function AiPanel() {
               color="primary"
             />
           ) : null}
+          {pdfDraft ? (
+            <Chip
+              size="small"
+              icon={<AttachFileIcon />}
+              label={t('aiPdfSelection', { page: pdfDraft.page ?? '?' })}
+              variant="outlined"
+              color="primary"
+              onDelete={() => setPdfDraft(null)}
+            />
+          ) : null}
         </Stack>
         <TextField
           multiline
@@ -293,6 +334,7 @@ export default function AiPanel() {
           maxRows={6}
           size="small"
           fullWidth
+          inputRef={inputRef}
           placeholder={
             currentLocation ? t('aiInputPlaceholder') : t('aiNoLocationHint')
           }

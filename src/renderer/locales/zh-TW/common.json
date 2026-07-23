@@ -658,6 +658,7 @@
   "aiThinking": "思考中",
   "aiAttachToggle": "將選取的檔案附加為內容參考",
   "aiMultiSelect": "已選取 {{count}} 個檔案",
+  "aiPdfSelection": "PDF 第 {{page}} 頁框選",
   "aiNewChat": "新對話",
   "aiHistory": "歷程",
   "aiHistoryEmpty": "尚無對話",

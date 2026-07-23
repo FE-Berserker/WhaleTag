@@ -43,7 +43,7 @@ import {
   setFileEditState,
   clearFileEditState,
 } from '-/reducers/extensions';
-import { setMdRenderTheme } from '-/reducers/settings';
+import { setAiSettings, setMdRenderTheme } from '-/reducers/settings';
 
 /** How long the extension iframe may take to post `ready` before the host
  *  shows a retry-able failure instead of an indefinite spinner. */
@@ -160,6 +160,7 @@ export default function ExtensionHost({
   const aiProvider = useSelector(
     (s: RootState) => s.settings.aiProvider ?? 'claude-cli'
   );
+  const aiEnabled = useSelector((s: RootState) => s.settings.aiEnabled);
   // Inline-edit is offered on the text/md editors across all providers. The
   // Claude CLI path uses a cold-start `query()` with a dedicated strict system
   // prompt (see src/main/ai/inlineEdit.ts); HTTP providers use a single
@@ -354,6 +355,14 @@ export default function ExtensionHost({
       postToExtension({ type: 'setLocale', locale });
     }
   }, [locale, ready, postToExtension]);
+
+  // AI availability (host → ext): extensions with AI-driven actions
+  // (pdf-viewer's marquee "ask AI") hide them when the assistant is off.
+  useEffect(() => {
+    if (ready) {
+      postToExtension({ type: 'setAiAvailable', available: aiEnabled });
+    }
+  }, [aiEnabled, ready, postToExtension]);
 
   useEffect(() => {
     return () => {
@@ -674,6 +683,20 @@ export default function ExtensionHost({
           dispatch(setMdRenderTheme(msg.theme));
           break;
         }
+        case 'askAi': {
+          // pdf-viewer marquee: the user boxed a region and asked about the
+          // extracted text. Open the panel and hand the payload to AiPanel
+          // as a draft attachment (CustomEvent — NOT redux: the `ai` slice is
+          // redux-persist'd wholesale, a draft must not survive restart).
+          if (!aiEnabled) break;
+          dispatch(setAiSettings({ aiPanelOpen: true }));
+          window.dispatchEvent(
+            new CustomEvent('whale:ai-draft', {
+              detail: { path: msg.path, page: msg.page, text: msg.text },
+            })
+          );
+          break;
+        }
         case 'error':
           console.error('[ExtensionHost] extension error:', msg.message);
           break;
@@ -687,6 +710,7 @@ export default function ExtensionHost({
   }, [
     dispatch,
     filePath,
+    aiEnabled,
     handleSave,
     handleRequestFileEmbed,
     postToExtension,

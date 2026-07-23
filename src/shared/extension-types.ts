@@ -303,6 +303,14 @@ export interface ClipboardTextMessage {
   text: string;
 }
 
+/** Host -> Extension: whether the AI assistant is enabled, so extensions with
+ *  AI-driven actions (pdf-viewer's marquee "ask AI") can hide them when the
+ *  feature is off. Pushed right after `ready` and on every change. */
+export interface SetAiAvailableMessage {
+  type: 'setAiAvailable';
+  available: boolean;
+}
+
 // md-editor render-theme preset + custom callouts (host → ext). The host
 // pushes these redux settings into the md-editor iframe (separate origin) so
 // its preview renders with the user's chosen preset + custom callout types.
@@ -398,7 +406,8 @@ export type HostMessage =
   | ApplyReplacementMessage
   | StreamingUrlMessage
   | ImageSavedMessage
-  | ClipboardTextMessage;
+  | ClipboardTextMessage
+  | SetAiAvailableMessage;
 
 // Extension -> Host messages
 
@@ -679,6 +688,19 @@ export interface RequestClipboardTextMessage {
   requestId: string;
 }
 
+/** Extension -> Host: the user boxed a region and wants to ask the AI about
+ *  the extracted text (pdf-viewer marquee). The host opens the AI panel and
+ *  forwards the payload as a draft attachment (`whale:ai-draft` event). */
+export interface AskAiMessage {
+  type: 'askAi';
+  /** PDF file path the selection came from (used as the attachment path). */
+  path: string;
+  /** 1-based page number of the selection. */
+  page?: number;
+  /** Extracted text inside the marquee (reading order). */
+  text: string;
+}
+
 export type ExtensionMessage =
   | ReadyMessage
   | LoadDefaultTextContentMessage
@@ -713,7 +735,8 @@ export type ExtensionMessage =
   | RequestOpenInViewMessage
   | RequestHideMessage
   | RequestSaveImageMessage
-  | RequestClipboardTextMessage;
+  | RequestClipboardTextMessage
+  | AskAiMessage;
 
 /** Runtime API injected into each extension iframe as `window.whaleExt`. */
 export interface WhaleExtApi {

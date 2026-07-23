@@ -651,6 +651,7 @@
   "aiThinking": "思考中",
   "aiAttachToggle": "選択したファイルをコンテキストとして添付",
   "aiMultiSelect": "{{count}} 個のファイルを選択中",
+  "aiPdfSelection": "PDF {{page}} ページの範囲選択",
   "aiNewChat": "新しいチャット",
   "aiHistory": "履歴",
   "aiHistoryEmpty": "会話はまだありません",

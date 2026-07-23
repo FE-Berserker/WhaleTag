@@ -323,3 +323,66 @@ body {
 .textLayer .highlight.selected {
   background-color: rgb(0 100 0 / 0.25);
 }
+
+/* --- Marquee "ask AI about a region" ------------------------------------ */
+/* Select mode turns the page area into a crosshair surface; the drag draws
+   a .marquee-rect overlay inside the page container (absolute, like the
+   textLayer). The finished box gets a .marquee-bar mini action row. */
+#pages.marquee-mode [data-page-container] {
+  cursor: crosshair;
+}
+/* While in select mode, suppress native text selection inside the
+   textLayer so the drag paints the marquee instead of selecting text. */
+#pages.marquee-mode .textLayer {
+  user-select: none;
+  pointer-events: none;
+}
+#toolbar button#ai-select[aria-pressed='true'] {
+  background-color: rgba(14, 165, 233, 0.35);
+  border-color: rgba(14, 165, 233, 0.8);
+}
+#toolbar button#ai-select[data-hidden='true'] {
+  display: none;
+}
+.marquee-rect {
+  position: absolute;
+  border: 1.5px dashed rgba(14, 165, 233, 0.95);
+  background: rgba(14, 165, 233, 0.15);
+  pointer-events: none;
+  z-index: 5;
+}
+.marquee-bar {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  background: rgba(20, 20, 22, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  font-size: 12px;
+  color: #e0e0e0;
+  z-index: 6;
+  white-space: nowrap;
+}
+.marquee-bar button {
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(14, 165, 233, 0.3);
+  color: inherit;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 8px;
+  line-height: 1.4;
+}
+.marquee-bar button[data-variant='ghost'] {
+  background: transparent;
+}
+.marquee-bar button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.marquee-bar .marquee-hint {
+  opacity: 0.75;
+  padding-right: 2px;
+}

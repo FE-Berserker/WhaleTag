@@ -672,6 +672,7 @@
   "aiThinking": "Thinking",
   "aiAttachToggle": "Attach the selected file as context",
   "aiMultiSelect": "{{count}} files selected",
+  "aiPdfSelection": "PDF p.{{page}} selection",
   "aiNewChat": "New chat",
   "aiHistory": "History",
   "aiHistoryEmpty": "No conversations yet",

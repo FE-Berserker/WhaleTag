@@ -7,6 +7,12 @@ import {
   type PdfjsSession,
   type OutlineNode,
 } from '../shared/pdfjs-in-iframe';
+import {
+  rectFromPoints,
+  spansInRect,
+  spansToText,
+  type SpanBox,
+} from './marquee';
 
 /**
  * Tier 3 (Phase §B) switch: run pdfjs's document parser on a real Worker so
@@ -50,6 +56,7 @@ const pagesLbl = document.getElementById('pages-lbl') as HTMLSpanElement;
 const loadingBarEl = document.getElementById('loading-bar') as HTMLDivElement;
 const outlineToggleBtn = document.getElementById('outline-toggle') as HTMLButtonElement;
 const outlineSidebarEl = document.getElementById('outline-sidebar') as HTMLDivElement;
+const aiSelectBtn = document.getElementById('ai-select') as HTMLButtonElement;
 
 // --- Shared pdfjs session -------------------------------------------------
 // Phase 1 §B1: pdf-viewer no longer runs its own render loop. It delegates
@@ -155,6 +162,8 @@ interface State {
   pageRotations: Map<number, number>;
   // Incremented on every load; in-flight renders check it before mutating UI.
   loadToken: number;
+  /** Absolute path of the open PDF (for the askAi attachment). */
+  filePath: string;
 }
 
 const state: State = {
@@ -165,6 +174,7 @@ const state: State = {
   manualZoom: 1,
   pageRotations: new Map(),
   loadToken: 0,
+  filePath: '',
 };
 
 function clampZoom(z: number): number {
@@ -195,6 +205,10 @@ interface Strings {
   currentPage: string; // status: "Page X of Y"
   outlineToggle: string; // outline button title / aria-label
   outlineEmpty: string; // sidebar empty state
+  aiSelect: string; // marquee "ask AI about a region" toggle tooltip
+  askAi: string; // marquee mini-bar confirm button
+  cancelAsk: string; // marquee mini-bar cancel button
+  noTextInSelection: string; // marquee finished but no text inside (scans)
   pageOf: (cur: number, total: number) => string;
 }
 
@@ -218,6 +232,10 @@ const I18N: Record<string, Omit<Strings, 'pageOf'>> = {
     currentPage: 'Page {cur} of {total}',
     outlineToggle: 'Outline',
     outlineEmpty: 'No outline',
+    aiSelect: 'Ask AI about a region',
+    askAi: 'Ask AI',
+    cancelAsk: 'Cancel',
+    noTextInSelection: 'No text in this region (scanned page?)',
   },
   zh: {
     ...PDFJS_I18N.zh,
@@ -236,6 +254,10 @@ const I18N: Record<string, Omit<Strings, 'pageOf'>> = {
     currentPage: '第 {cur} 页 / 共 {total} 页',
     outlineToggle: '目录',
     outlineEmpty: '无目录',
+    aiSelect: '框选提问',
+    askAi: '问 AI',
+    cancelAsk: '取消',
+    noTextInSelection: '框选区域没有文本(可能是扫描件)',
   },
 };
 
@@ -270,6 +292,8 @@ function applyLocale() {
   rotateRightBtn.setAttribute('aria-label', T.rotateRight);
   outlineToggleBtn.title = T.outlineToggle;
   outlineToggleBtn.setAttribute('aria-label', T.outlineToggle);
+  aiSelectBtn.title = T.aiSelect;
+  aiSelectBtn.setAttribute('aria-label', T.aiSelect);
   // If the sidebar is open but empty (no outline / not yet loaded), keep its
   // placeholder text in sync with the current locale.
   if (
@@ -776,6 +800,12 @@ pagesEl.addEventListener('scroll', () => {
 window.addEventListener('keydown', (e) => {
   // Ignore when the user is typing in the page input
   if (document.activeElement === pageInput) return;
+  // Esc cancels marquee mode before any other navigation handling.
+  if (e.key === 'Escape' && marqueeMode) {
+    e.preventDefault();
+    setMarqueeMode(false);
+    return;
+  }
   // Ignore when modifier keys other than Ctrl are pressed (don't hijack
   // browser shortcuts)
   if (e.altKey || e.metaKey || e.shiftKey) return;
@@ -833,6 +863,143 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
+// --- Marquee "ask AI about a region" --------------------------------------
+// Toolbar toggle → crosshair drag paints a dashed rect inside the page
+// container. On mouseup we hit-test the textLayer spans with client rects
+// (pdfjs positions spans in the rotated viewport, so DOM coordinates already
+// match the displayed canvas at any rotation), assemble reading-order text
+// (marquee.ts), and show a mini action bar. Pages are virtualized: only
+// rendered containers have a textLayer — but a marquee is inherently on a
+// visible page, so a container without one simply yields "no text".
+let marqueeMode = false;
+let marqueeContainer: HTMLElement | null = null;
+let marqueeStart: { x: number; y: number } | null = null;
+let marqueeRectEl: HTMLDivElement | null = null;
+let marqueeBarEl: HTMLDivElement | null = null;
+
+function setMarqueeMode(on: boolean): void {
+  marqueeMode = on;
+  aiSelectBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  pagesEl.classList.toggle('marquee-mode', on);
+  if (!on) clearMarquee();
+}
+
+function clearMarquee(): void {
+  marqueeContainer = null;
+  marqueeStart = null;
+  marqueeRectEl?.remove();
+  marqueeRectEl = null;
+  marqueeBarEl?.remove();
+  marqueeBarEl = null;
+}
+
+aiSelectBtn.addEventListener('click', () => setMarqueeMode(!marqueeMode));
+
+pagesEl.addEventListener('mousedown', (e) => {
+  if (!marqueeMode || e.button !== 0) return;
+  const container = (e.target as HTMLElement).closest(
+    '[data-page-container]'
+  ) as HTMLElement | null;
+  if (!container) return;
+  e.preventDefault(); // don't start a native text selection
+  clearMarquee();
+  marqueeContainer = container;
+  marqueeStart = { x: e.clientX, y: e.clientY };
+  marqueeRectEl = document.createElement('div');
+  marqueeRectEl.className = 'marquee-rect';
+  container.appendChild(marqueeRectEl);
+});
+
+window.addEventListener('mousemove', (e) => {
+  if (!marqueeStart || !marqueeContainer || !marqueeRectEl) return;
+  const cRect = marqueeContainer.getBoundingClientRect();
+  const rect = rectFromPoints(
+    marqueeStart.x - cRect.left,
+    marqueeStart.y - cRect.top,
+    e.clientX - cRect.left,
+    e.clientY - cRect.top
+  );
+  marqueeRectEl.style.left = `${rect.left}px`;
+  marqueeRectEl.style.top = `${rect.top}px`;
+  marqueeRectEl.style.width = `${rect.width}px`;
+  marqueeRectEl.style.height = `${rect.height}px`;
+});
+
+window.addEventListener('mouseup', (e) => {
+  if (!marqueeStart || !marqueeContainer) return;
+  const container = marqueeContainer;
+  const start = marqueeStart;
+  marqueeStart = null;
+  // Ignore accidental tiny drags (a click, not a box).
+  if (Math.abs(e.clientX - start.x) < 4 && Math.abs(e.clientY - start.y) < 4) {
+    marqueeRectEl?.remove();
+    marqueeRectEl = null;
+    return;
+  }
+  finishMarquee(container, start, { x: e.clientX, y: e.clientY });
+});
+
+function finishMarquee(
+  container: HTMLElement,
+  start: { x: number; y: number },
+  end: { x: number; y: number }
+): void {
+  const cRect = container.getBoundingClientRect();
+  const rect = rectFromPoints(start.x, start.y, end.x, end.y); // client coords
+  // Span boxes in the same client space — immune to how pdfjs positions
+  // spans internally (percent vs px + transforms).
+  const spans: SpanBox[] = [];
+  container.querySelectorAll('.textLayer span').forEach((el) => {
+    const r = (el as HTMLElement).getBoundingClientRect();
+    const text = (el.textContent ?? '').trim();
+    if (text) {
+      spans.push({
+        left: r.left,
+        top: r.top,
+        width: r.width,
+        height: r.height,
+        text,
+      });
+    }
+  });
+  const text = spansToText(spansInRect(spans, rect));
+  const page = Number(container.getAttribute('data-page-container')) || undefined;
+
+  marqueeBarEl?.remove();
+  const bar = document.createElement('div');
+  bar.className = 'marquee-bar';
+  bar.style.left = `${rect.left - cRect.left}px`;
+  bar.style.top = `${rect.top + rect.height - cRect.top + 6}px`;
+  if (text) {
+    const ask = document.createElement('button');
+    ask.type = 'button';
+    ask.textContent = T.askAi;
+    ask.addEventListener('click', () => {
+      window.whaleExt.postMessage({
+        type: 'askAi',
+        path: state.filePath,
+        page,
+        text,
+      });
+      setMarqueeMode(false);
+    });
+    bar.appendChild(ask);
+  } else {
+    const hint = document.createElement('span');
+    hint.className = 'marquee-hint';
+    hint.textContent = T.noTextInSelection;
+    bar.appendChild(hint);
+  }
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.dataset.variant = 'ghost';
+  cancel.textContent = T.cancelAsk;
+  cancel.addEventListener('click', () => setMarqueeMode(false));
+  bar.appendChild(cancel);
+  container.appendChild(bar);
+  marqueeBarEl = bar;
+}
+
 // --- Host message bridge --------------------------------------------------
 window.whaleExt.onMessage((msg) => {
   switch (msg.type) {
@@ -847,6 +1014,7 @@ window.whaleExt.onMessage((msg) => {
       // so pdfjs's getDocument({url}) Range path is out. Bytes-in is what
       // works.
       state.fileSize = msg.size;
+      state.filePath = msg.path;
       updateStatusBar();
       requestFileBytes(msg.path).then((bytes) => {
         if (bytes) {
@@ -873,6 +1041,12 @@ window.whaleExt.onMessage((msg) => {
       break;
     case 'setTheme':
       sessionApplyTheme(msg.theme);
+      break;
+    case 'setAiAvailable':
+      // Hide the marquee toggle entirely when the host's AI is disabled —
+      // better than letting the user box a region and then failing.
+      aiSelectBtn.dataset.hidden = String(!msg.available);
+      if (!msg.available) setMarqueeMode(false);
       break;
     default:
       break;
