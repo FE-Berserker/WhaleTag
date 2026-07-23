@@ -421,17 +421,17 @@ function FileListHeader(props: FileListHeaderProps) {
           if (mode) setViewMode(mode);
         }}
       >
-        <ToggleButton value="list" sx={{ px: 1, py: 0.25 }}>
+        <ToggleButton value="list" aria-label={t('viewList')} sx={{ px: 1, py: 0.25 }}>
           <Tooltip title={t('viewList')}>
             <ViewListIcon fontSize="small" />
           </Tooltip>
         </ToggleButton>
-        <ToggleButton value="grid" sx={{ px: 1, py: 0.25 }}>
+        <ToggleButton value="grid" aria-label={t('viewGrid')} sx={{ px: 1, py: 0.25 }}>
           <Tooltip title={t('viewGrid')}>
             <GridViewIcon fontSize="small" />
           </Tooltip>
         </ToggleButton>
-        <ToggleButton value="gallery" sx={{ px: 1, py: 0.25 }}>
+        <ToggleButton value="gallery" aria-label={t('viewGallery')} sx={{ px: 1, py: 0.25 }}>
           <Tooltip title={t('viewGallery')}>
             <PhotoLibraryIcon fontSize="small" />
           </Tooltip>
@@ -440,7 +440,7 @@ function FileListHeader(props: FileListHeaderProps) {
           ? specializedViews.map((v) => {
               const Icon = v.Icon;
               return (
-                <ToggleButton key={v.value} value={v.value} sx={{ px: 1, py: 0.25 }}>
+                <ToggleButton key={v.value} value={v.value} aria-label={v.label} sx={{ px: 1, py: 0.25 }}>
                   <Tooltip title={v.label}>
                     <Icon fontSize="small" />
                   </Tooltip>

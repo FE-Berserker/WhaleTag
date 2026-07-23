@@ -229,29 +229,14 @@ const DEFAULT_STAGES: WorkflowStage[] = [
   { id: '3', value: 'completed', color: '#22c55e' },
 ];
 
-function renderKanban(
-  data: FileCellData,
-  stages: WorkflowStage[] = DEFAULT_STAGES
-) {
+function kanbanTree(data: FileCellData, stages: WorkflowStage[]) {
   // KanbanColumn now uses useIOActionsContext() (for native OS-file drops
   // that import + stamp the column's tag), so the test render must wrap
   // the production IOActionsContextProvider. The stub override is applied
   // by mutating the returned context through a wrapper below — see
   // `withIOStub` if a test needs to assert on `importExternalFiles`
   // calls. The default stub just resolves no-op.
-  const ioStub: IOActionsContextValue = {
-    renameEntry: () => Promise.resolve(),
-    moveEntry: () => Promise.resolve(),
-    copyEntry: () => Promise.resolve(),
-    deleteEntry: () => Promise.resolve(),
-    createFolder: () => Promise.resolve(),
-    createFile: () => Promise.resolve(),
-    createTaggedEntry: () => Promise.resolve(),
-    importExternalFiles: () =>
-      Promise.resolve({ importedPaths: [], copied: 0, errors: [] }),
-    openNative: () => Promise.resolve(),
-  };
-  return render(
+  return (
     <I18nextProvider i18n={i18next} defaultNS="common">
       <Provider store={STUB_STORE}>
         <DndProvider backend={HTML5Backend}>
@@ -275,9 +260,28 @@ function renderKanban(
       </Provider>
     </I18nextProvider>
   );
+}
+
+function renderKanban(
+  data: FileCellData,
+  stages: WorkflowStage[] = DEFAULT_STAGES
+) {
+  const ioStub: IOActionsContextValue = {
+    renameEntry: () => Promise.resolve(),
+    moveEntry: () => Promise.resolve(),
+    copyEntry: () => Promise.resolve(),
+    deleteEntry: () => Promise.resolve(),
+    createFolder: () => Promise.resolve(),
+    createFile: () => Promise.resolve(),
+    createTaggedEntry: () => Promise.resolve(),
+    importExternalFiles: () =>
+      Promise.resolve({ importedPaths: [], copied: 0, errors: [] }),
+    openNative: () => Promise.resolve(),
+  };
   // Suppress unused warning for ioStub — kept as a future assertion
   // hook (tests can swap the provider value via re-render).
   void ioStub;
+  return render(kanbanTree(data, stages));
 }
 
 before(async () => {
@@ -365,6 +369,33 @@ describe('KanbanView #2: empty stages', () => {
     const data = makeData([], new Map());
     const { container } = renderKanban(data, []);
     // kanbanNoStages key is the i18n stub; in our makeT it returns the key.
+    assert.ok(container.textContent?.includes('kanbanNoStages'));
+  });
+});
+
+// ---------------------------------------------------------------------
+// Test #2b: stages 0↔N re-render must not crash. Regression: the empty
+// state used to be an early return ABOVE the component's hooks, so a
+// stages.length 0↔N transition changed the hooks count and React threw
+// "Rendered fewer hooks than expected", taking down the whole view.
+// ---------------------------------------------------------------------
+describe('KanbanView #2b: stages empty↔non-empty transitions', () => {
+  it('re-renders empty → populated → empty without a hooks crash', () => {
+    cleanup();
+    const data = makeData([], new Map());
+    const { container, rerender } = render(kanbanTree(data, []));
+    assert.ok(container.textContent?.includes('kanbanNoStages'));
+    // Add the first stage (empty → non-empty).
+    rerender(kanbanTree(data, DEFAULT_STAGES));
+    assert.ok(!container.textContent?.includes('kanbanNoStages'));
+    assert.equal(
+      container.querySelectorAll(
+        '[data-testid^="kanban-column-"]:not([data-testid="kanban-column-untagged"])'
+      ).length,
+      3
+    );
+    // Delete the last stage again (non-empty → empty).
+    rerender(kanbanTree(data, []));
     assert.ok(container.textContent?.includes('kanbanNoStages'));
   });
 });

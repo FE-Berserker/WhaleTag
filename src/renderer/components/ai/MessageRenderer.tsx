@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Box, Divider, IconButton, Tooltip, Typography } from '@mui/material';
 import ReplayIcon from '@mui/icons-material/Replay';
 
@@ -13,10 +14,11 @@ interface MessageRendererProps {
   onRewind?: (messageId: string) => void;
 }
 
-/** Hover-revealed rewind button (top-right of a message). */
+/** Hover/focus-revealed rewind button (top-right of a message). */
 function RewindButton({ onClick }: { onClick: () => void }) {
+  const { t } = useTranslation();
   return (
-    <Tooltip title="Rewind to here" placement="left">
+    <Tooltip title={t('aiRewindHere')} placement="left">
       <IconButton
         size="small"
         onClick={onClick}
@@ -28,7 +30,9 @@ function RewindButton({ onClick }: { onClick: () => void }) {
           transition: 'opacity 0.12s',
           bgcolor: 'background.paper',
           boxShadow: 1,
-          '.msg-row:hover &': { opacity: 1 },
+          // Reveal on row hover AND when keyboard focus lands anywhere inside
+          // the row (focus-within) — otherwise Tab reaches an invisible button.
+          '.msg-row:hover &, .msg-row:focus-within &': { opacity: 1 },
         }}
       >
         <ReplayIcon fontSize="small" />
@@ -66,6 +70,7 @@ const markdownSx = {
  * tool_use → ToolCall card, context_compacted → divider).
  */
 export default function MessageRenderer({ message, onRewind }: MessageRendererProps) {
+  const { t } = useTranslation();
   if (message.role === 'user') {
     return (
       <Box className="msg-row" sx={{ position: 'relative', alignSelf: 'flex-end', maxWidth: '85%' }}>
@@ -125,7 +130,7 @@ export default function MessageRenderer({ message, onRewind }: MessageRendererPr
             <Box key={i} sx={{ my: 1 }}>
               <Divider />
               <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
-                context compacted
+                {t('aiContextCompacted')}
               </Typography>
             </Box>
           );

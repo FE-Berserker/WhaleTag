@@ -99,6 +99,14 @@ export async function runUserCommand(
     name: path.basename(targetPath),
   };
   const finalCommand = substituteAndQuote(template, values);
+  // TEMP DEBUG (UNC slash investigation) — prints the raw template WhaleTag
+  // received + the final command handed to cmd.exe, so we can see exactly
+  // which backslashes WhaleTag rewrites (if any). JSON.stringify keeps
+  // backslashes visible. Remove once resolved.
+  // eslint-disable-next-line no-console
+  console.log('[user-command] template:', JSON.stringify(template));
+  // eslint-disable-next-line no-console
+  console.log('[user-command] final:   ', JSON.stringify(finalCommand));
   openTerminalWindow(finalCommand);
   return { ok: true };
 }

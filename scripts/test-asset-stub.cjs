@@ -30,3 +30,19 @@ for (const ext of [
 ]) {
   require.extensions[ext] = stub;
 }
+
+// `echarts-wordcloud`'s index.js does an ESM-style internal re-export
+// (`echarts-wordcloud/src/wordCloud`, no extension) that node's CJS resolver
+// can't resolve under ts-node — the app bundles it fine via webpack, but
+// component tests that transitively reach `services/echarts-setup` (Calendar /
+// TagCloud, via its side-effect `import 'echarts-wordcloud'`) crash at import.
+// The tests don't exercise wordcloud series, so short-circuit the bare
+// specifier to an empty exports object — the real index.js never runs, so its
+// bad internal import never fires.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const Module = require('module');
+const __originalModuleLoad = Module._load;
+Module._load = function (request) {
+  if (request === 'echarts-wordcloud') return {};
+  return __originalModuleLoad.apply(this, arguments);
+};

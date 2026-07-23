@@ -126,7 +126,13 @@ export default function InlineTagInput({
           placeholder={
             visibleTags.length === 0 ? t('addTagPlaceholder') : ''
           }
-          inputProps={{ 'data-tag-input': true }}
+          // Accessible name is constant even when the placeholder collapses
+          // to '' once tags exist (an empty placeholder leaves the input
+          // unnamed for screen readers).
+          inputProps={{
+            'data-tag-input': true,
+            'aria-label': t('addTagPlaceholder'),
+          }}
           sx={{
             flex: 1,
             minWidth: 80,

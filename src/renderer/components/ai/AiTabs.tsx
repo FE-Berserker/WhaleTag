@@ -16,6 +16,7 @@ import HistoryIcon from '@mui/icons-material/History';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlined';
 
 import type { RootState } from '-/reducers';
+import { useConfirm } from '-/components/ConfirmDialogProvider';
 import {
   DEFAULT_CONVERSATION_TITLE,
   closeTab,
@@ -44,6 +45,7 @@ export default function AiTabs() {
   const openTabs = useSelector((s: RootState) => s.ai.openTabs);
   const activeId = useSelector((s: RootState) => s.ai.activeId);
   const [historyAnchor, setHistoryAnchor] = useState<HTMLElement | null>(null);
+  const confirm = useConfirm();
 
   const title = (id: string) => {
     const c = conversations[id];
@@ -53,6 +55,7 @@ export default function AiTabs() {
 
   return (
     <Box
+      role="tablist"
       sx={{
         display: 'flex',
         alignItems: 'center',
@@ -69,6 +72,18 @@ export default function AiTabs() {
         <Stack
           key={id}
           direction="row"
+          // Tabs were pure onClick Stacks — unreachable by keyboard. Now a
+          // real tab: focusable, Enter/Space activates, aria-selected.
+          role="tab"
+          tabIndex={0}
+          aria-selected={id === activeId}
+          aria-label={title(id)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              dispatch(setActiveConversation(id));
+            }
+          }}
           onClick={() => dispatch(setActiveConversation(id))}
           sx={{
             alignItems: 'center',
@@ -88,6 +103,7 @@ export default function AiTabs() {
           </Typography>
           <IconButton
             size="small"
+            aria-label={t('close')}
             sx={{ p: 0.25 }}
             onClick={(e) => {
               e.stopPropagation();
@@ -140,11 +156,18 @@ export default function AiTabs() {
               </Box>
               <IconButton
                 size="small"
-                onClick={(e) => {
+                aria-label={t('delete')}
+                onClick={async (e) => {
                   e.stopPropagation();
                   const name =
                     c.title && c.title !== DEFAULT_CONVERSATION_TITLE ? c.title : t('aiNewChat');
-                  if (window.confirm(t('aiConfirmDelete', { name }))) {
+                  if (
+                    await confirm({
+                      message: t('aiConfirmDelete', { name }),
+                      confirmLabel: t('delete'),
+                      danger: true,
+                    })
+                  ) {
                     dispatch(deleteConversation(c.id));
                   }
                 }}

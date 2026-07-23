@@ -23,6 +23,7 @@ import type {
   AiApprovalRequest,
   AiQueryPayload,
   ApprovalDecision,
+  AskUserAnswers,
   StreamChunk,
 } from '../shared/ai-types';
 
@@ -300,8 +301,13 @@ const whaleApi: WhaleApi = {
   aiHasApiKey: () => ipcRenderer.invoke('ai:hasApiKey'),
   aiDiscoverCli: (override: string | null) =>
     ipcRenderer.invoke('ai:discoverCli', override),
-  aiResolveApproval: (reqId: string, decision: ApprovalDecision) =>
-    ipcRenderer.invoke('ai:resolveApproval', { reqId, decision }),
+  aiResolveApproval: (
+    reqId: string,
+    decision: ApprovalDecision,
+    answers?: AskUserAnswers,
+    note?: string
+  ) =>
+    ipcRenderer.invoke('ai:resolveApproval', { reqId, decision, answers, note }),
   aiSetOpenaiKey: (key: string) =>
     ipcRenderer.invoke('ai:setOpenaiKey', key),
   aiClearOpenaiKey: () => ipcRenderer.invoke('ai:clearOpenaiKey'),

@@ -290,12 +290,13 @@ describe('EntryContextMenu #3: closed state', () => {
 });
 
 // ---------------------------------------------------------------------
-// #4: "Commands" submenu — lists applicable user commands, hides when
-// none apply (empty / disabled / wrong entry kind), routes a click
-// through onRunCommand with the right entry + command.
+// #4: "Commands" flyout — the parent "Commands" item opens a hover flyout
+// listing applicable user commands; hides when none apply (empty /
+// disabled / wrong entry kind); a click routes through onRunCommand with
+// the right entry + command.
 // ---------------------------------------------------------------------
-describe('EntryContextMenu #4: Commands submenu', () => {
-  it('lists an applicable command + routes a click through onRunCommand', async () => {
+describe('EntryContextMenu #4: Commands flyout', () => {
+  it('lists an applicable command in the flyout + routes a click through onRunCommand', async () => {
     cleanup();
     const e = entry('data.csv');
     const cmds: UserCommand[] = [
@@ -314,11 +315,47 @@ describe('EntryContextMenu #4: Commands submenu', () => {
       spies,
       { userCommands: cmds }
     );
+    // The command label is not inline — it lives in the flyout that opens
+    // from the parent "Commands" item (click works for keyboard users too).
+    const parent = await findByText('runCommand');
+    fireEvent.click(parent);
     const item = await findByText('Process data');
     fireEvent.click(item);
     assert.equal(spies.runCommand?.called, 1);
     assert.equal(spies.runCommand?.last?.entry.path, '/root/data.csv');
     assert.equal(spies.runCommand?.last?.command.id, 'c1');
+  });
+
+  it('opens the flyout on hover (mouseOver) and lists every applicable command', async () => {
+    cleanup();
+    const e = entry('data.csv');
+    const cmds: UserCommand[] = [
+      {
+        id: 'c1',
+        label: 'Process data',
+        template: 'python process.py ${path}',
+        applyToFiles: true,
+        applyToFolders: false,
+        enabled: true,
+      },
+      {
+        id: 'c2',
+        label: 'Compress',
+        template: 'zip out.zip ${path}',
+        applyToFiles: true,
+        applyToFolders: true,
+        enabled: true,
+      },
+    ];
+    const { findByText } = renderMenu(
+      { x: 0, y: 0, entry: e },
+      {},
+      { userCommands: cmds }
+    );
+    const parent = await findByText('runCommand');
+    fireEvent.mouseOver(parent);
+    assert.ok(await findByText('Process data'));
+    assert.ok(await findByText('Compress'));
   });
 
   it('hides the submenu when the command only applies to folders (entry is a file)', async () => {

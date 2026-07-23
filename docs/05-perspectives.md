@@ -20,7 +20,7 @@
 | `mapique` | active | MapiqueView | Leaflet 地图 + 右侧详情托盘 |
 | `folderviz` | active | FolderVizView | 4 图:tree / radial / treemap / sunburst(递归结构,直接调 `listDirectoryRecursive`) |
 | `tagcloud` | active | TagCloudView | echarts-wordcloud,字号按文件数 sqrt |
-| `knowledge-graph` | active | KnowledgeGraphView | xyflow(react-flow v12)标签↔文件二部图 |
+| `knowledge-graph` | active | KnowledgeGraphView | xyflow(react-flow v12)标签↔文件二部图;导出三件套(save / save-as / copy,2026-07-22 补齐 copy);节点拖拽位置按 location 持久化(`whale.kg.<id>` prefs,2026-07-22) |
 | `mindmap` | **legacy** | (无对应视图) | 旧 `ViewMode = 'mindmap'` 迁移为 `knowledge-graph` |
 | `kanban` / `matrix` | **legacy 字面量** | (无对应视图) | 通过 `migrateViewMode` 映射为 `task` |
 
@@ -47,10 +47,11 @@
 - 卡片右键:`KanbanEntryMenu` 领域菜单(移动阶段 / 优先级 / 期间 / 编辑标签 / 打开 / 删除 / 更多文件操作)
 - 多选拖拽:一组选中一起移动到目标阶段(由 `EntryCard.dragItem.paths` 携带所有选中 path)
 - 拖 `period:` chip 到卡片 → 弹 `PeriodTagDialog`
+- 无阶段空态(`kanbanNoStages`)在**所有 hooks 之后**渲染(2026-07-22 修:曾在 hooks 前 early-return,删光最后一个 stage 时 hooks 数变化 → "Rendered fewer hooks" 整视角崩溃);空态下 `WorkflowManagerDialog` 保持挂载,可就地补回阶段
 
 ### 2b. Matrix
 
-Eisenhower 2×2 四象限 + 底部未分类托盘:
+Eisenhower 2×2 四象限 + 底部未分类托盘(**常显**,2026-07-22:空了显示 `matrixUntaggedEmpty` 提示而不再消失——托盘消失就没有"拖回未标记"的放置目标;托盘同 quadrant 一样接受系统文件拖入,`tagToApply: null` 不盖章):
 
 - 卡片拖拽到不同象限写互斥 quadrant 智能标签
 - 卡片右键:`MatrixEntryMenu`(同 KanbanEntryMenu 三段式,只是 "Move to stage" 那一段的工作流值从 props 传入)
@@ -76,7 +77,7 @@ Eisenhower 2×2 四象限 + 底部未分类托盘:
 - **空态引导**(P0 #3,2026-07-05):无 scheduled 且 Triage 非空时,空态文案显示 `ganttNoTasksHint`(“把 Triage 卡片拖到时间轴任意一天开始排期”);Triage 托盘首次出现时有 3 秒一次性呼吸描边(`@keyframes whale-gantt-breath`),标志位存 `sessionStorage`
 - **数据源** = period 标签(`YYYYMMDD-YYYYMMDD`),**不发明新元数据**
 - **Triage drop** = `onRemoveEntryDateTag(entry)`(清 period)
-- **底部 Triage** 沿用 Matrix `UntaggedTray` 模式
+- **底部 Triage** 沿用 Matrix `UntaggedTray` 模式(**常显**,2026-07-22:空了显示 `ganttTriageEmpty` 提示而不消失,保留"拖回取消排期"的放置目标)
 
 P0 已完整实现;后续 P1/P2 扩展点见 [§9 Gantt 扩展点(roadmap)](#9-gantt-扩展点roadmap)。
 
@@ -135,8 +136,9 @@ Gallery 拖拽打标已实现 P0。
 - `KanbanEntryMenu` —— Task / Kanban 专用
 - `MatrixEntryMenu` —— Matrix 专用
 - `GanttEntryMenu` —— Gantt 专用
-- `CalendarEntryMenu` —— Calendar 专用
-- `MapiqueView` 内嵌 marker / tray 菜单
+- `CalendarEntryMenu` —— Calendar 专用;Calendar 条目**单击 = 选中、双击 = 打开**(2026-07-22,与其它视角一致;此前单击即打开,无法选中/拖拽)
+- `MapiqueView` 内嵌 marker / tray 菜单(2026-07-22 起含 **Delete** 项,置底 + canEdit 门控,与其它领域菜单一致)
+- Gallery 瓦片右键走**通用 EntryContextMenu**(2026-07-22 起;此前瓦片不处理 contextmenu,事件冒泡成"空白区菜单")
 - 目录树节点 + 位置条目用不同的菜单(不与 entry 菜单共用)
 - 通用 `EntryContextMenu` 共用基础项
 

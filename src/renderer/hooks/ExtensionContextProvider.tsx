@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   ReactNode,
 } from 'react';
@@ -14,6 +15,10 @@ import type {
   ExtensionEncoding,
 } from '../../shared/extension-types';
 import { ipcApi } from '-/services/ipc-api';
+import ConfirmDiscardDialog, {
+  ConfirmDiscardChoice,
+} from '-/components/ConfirmDiscardDialog';
+import { basename } from '-/services/path-util';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { selectExtension } from '-/services/extension-dispatch';
 import { useDispatch, useSelector } from 'react-redux';
@@ -45,6 +50,12 @@ export interface ExtensionContextValue {
   openWithExtension: (entry: DirEntry, manifest: ExtensionManifest) => Promise<void>;
   closeView: () => void;
   reloadContent: () => Promise<void>;
+  /** Close the current view, prompting to save if it has unsaved edits.
+   *  Resolves 'cancelled' if the user aborted (keep the view open). */
+  requestCloseCurrent: () => Promise<'closed' | 'cancelled'>;
+  /** Register the current view's save function (used by requestCloseCurrent's
+   *  "Save" branch). ExtensionHost sets it on mount, clears on unmount. */
+  registerSaveCurrent: (fn: (() => Promise<boolean>) | null) => void;
 }
 
 const ExtensionContext = createContext<ExtensionContextValue | null>(null);
@@ -148,8 +159,85 @@ export function ExtensionContextProvider({
     []
   );
 
+  // §unsaved-close — read dirty flags so we can prompt before closing or
+  // switching away from an edited document.
+  const editStateMap = useSelector((s: RootState) => s.extensions.editState);
+
+  // The current view's save function, registered by ExtensionHost on mount.
+  // Null when no editor is mounted (streamed viewers never register, and
+  // never report dirty either).
+  const saveCurrentRef = useRef<(() => Promise<boolean>) | null>(null);
+  const registerSaveCurrent = useCallback(
+    (fn: (() => Promise<boolean>) | null) => {
+      saveCurrentRef.current = fn;
+    },
+    []
+  );
+
+  // Reentry guard: while the discard dialog is open, a second close/switch
+  // attempt (e.g. user double-clicks another file) is treated as 'cancelled'
+  // so it can't open a second dialog or race the in-flight save.
+  const closeInProgressRef = useRef(false);
+
+  // Drive ConfirmDiscardDialog from a Promise: confirmDiscard resolves with
+  // the user's choice once onChoose fires (ESC / backdrop → 'cancel' via the
+  // Dialog's onClose, so the Promise never hangs).
+  const [confirmState, setConfirmState] = useState<{
+    fileName: string;
+    resolve: (c: ConfirmDiscardChoice) => void;
+  } | null>(null);
+  const confirmDiscard = useCallback((fileName: string) => {
+    return new Promise<ConfirmDiscardChoice>((resolve) => {
+      setConfirmState({ fileName, resolve });
+    });
+  }, []);
+  const resolveConfirm = useCallback(
+    (choice: ConfirmDiscardChoice) => {
+      confirmState?.resolve(choice);
+      setConfirmState(null);
+    },
+    [confirmState]
+  );
+
+  // Close the current view, prompting to save if it has unsaved edits. Used by
+  // the editor × button and by openWithExtension before replacing the view.
+  // Inlines closeView's two set calls so it doesn't depend on closeView
+  // (declared further down) — avoids a TDZ on this hook's deps array.
+  const requestCloseCurrent = useCallback(async (): Promise<
+    'closed' | 'cancelled'
+  > => {
+    if (closeInProgressRef.current) return 'cancelled';
+    const cur = activeView;
+    if (!cur) return 'closed';
+    const dirty = editStateMap[cur.filePath]?.dirty ?? false;
+    if (!dirty) {
+      setActiveView(null);
+      setError(null);
+      return 'closed';
+    }
+    closeInProgressRef.current = true;
+    try {
+      const choice = await confirmDiscard(basename(cur.filePath));
+      if (choice === 'cancel') return 'cancelled';
+      if (choice === 'save') {
+        const ok = (await saveCurrentRef.current?.()) ?? false;
+        if (!ok) return 'cancelled'; // save failed / timed out / read-only
+      }
+      // 'discard' or successful save
+      setActiveView(null);
+      setError(null);
+      return 'closed';
+    } finally {
+      closeInProgressRef.current = false;
+    }
+  }, [activeView, editStateMap, confirmDiscard]);
+
   const openWithExtension = useCallback(
     async (entry: DirEntry, manifest: ExtensionManifest) => {
+      // §unsaved-close — if the current view has unsaved edits, prompt before
+      // replacing it. Cancelled (user kept the old doc) aborts the open.
+      const closeResult = await requestCloseCurrent();
+      if (closeResult === 'cancelled') return;
       setLoading(true);
       setError(null);
       try {
@@ -193,7 +281,7 @@ export function ExtensionContextProvider({
         setLoading(false);
       }
     },
-    [currentLocation, readFileContent]
+    [currentLocation, readFileContent, requestCloseCurrent]
   );
 
   const openFile = useCallback(
@@ -262,6 +350,8 @@ export function ExtensionContextProvider({
       openWithExtension,
       closeView,
       reloadContent,
+      requestCloseCurrent,
+      registerSaveCurrent,
     }),
     [
       registry,
@@ -274,10 +364,19 @@ export function ExtensionContextProvider({
       openWithExtension,
       closeView,
       reloadContent,
+      requestCloseCurrent,
+      registerSaveCurrent,
     ]
   );
 
   return (
-    <ExtensionContext.Provider value={value}>{children}</ExtensionContext.Provider>
+    <ExtensionContext.Provider value={value}>
+      {children}
+      <ConfirmDiscardDialog
+        open={confirmState !== null}
+        fileName={confirmState?.fileName ?? ''}
+        onChoose={resolveConfirm}
+      />
+    </ExtensionContext.Provider>
   );
 }

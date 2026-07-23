@@ -1528,6 +1528,7 @@ export default function MapiqueView({
         onEditTags={handleEditTags}
         onClearGeo={onClearGeo}
         onCopyCoordinates={onCopyCoordinates}
+        onDelete={onDelete}
         onSave={handleSave}
         onSaveAs={handleSaveAs}
         onCopyMap={onCopyToClipboard}

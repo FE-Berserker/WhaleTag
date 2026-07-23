@@ -15,6 +15,7 @@ import {
   Box,
   CircularProgress,
   Divider,
+  IconButton,
   ListItemButton,
   ListItemIcon,
   ListItemText,
@@ -44,6 +45,7 @@ import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvide
 import { useDirectoryUI } from '-/hooks/DirectoryContentContextProvider';
 import { useIOActionsContext } from '-/hooks/IOActionsContextProvider';
 import { useExtensionContext } from '-/hooks/ExtensionContextProvider';
+import { useConfirm } from '-/components/ConfirmDialogProvider';
 import { useBackgroundPlayer } from '-/hooks/BackgroundPlayerContextProvider';
 import { useDirectoryTreeRefresh } from '-/hooks/DirectoryTreeRefreshContextProvider';
 import { ipcApi } from '-/services/ipc-api';
@@ -122,9 +124,13 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
   // While an extension view (e.g. the Excalidraw editor) is open, also list
   // files in the tree so they can be dragged into it.
   const { activeView } = useExtensionContext();
+  const confirm = useConfirm();
   const showFiles = !!activeView;
   const showHiddenFiles = useSelector(
     (s: RootState) => s.settings?.showHiddenFiles ?? false
+  );
+  const deleteToTrash = useSelector(
+    (s: RootState) => s.settings?.deleteToTrash ?? true
   );
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -357,7 +363,10 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
       await ipcApi.zipDirectory(dirPath);
       await refresh();
     } catch (e) {
-      console.error('package failed:', e);
+      setNotice({
+        kind: 'error',
+        msg: e instanceof Error ? e.message : String(e),
+      });
     }
   };
 
@@ -369,7 +378,18 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
     if (!currentLocation) return;
     if (normPath(dirPath) === normPath(currentLocation.path)) return;
     const name = basename(dirPath);
-    if (!window.confirm(t('confirmDelete', { name }))) return;
+    // The confirm copy must match what `deleteEntry` will actually do (trash
+    // by default) — claiming "unrecoverable" for a trash move is wrong.
+    if (
+      !(await confirm({
+        message: deleteToTrash
+          ? t('confirmDeleteTrash', { name })
+          : t('confirmDelete', { name }),
+        confirmLabel: t('delete'),
+        danger: true,
+      }))
+    )
+      return;
     try {
       // Resolve the parent via IPC (canonical) — `childrenByPath` is keyed by
       // the exact canonical path, so `joinPath(dir, '..')` (a literal `..`)
@@ -378,7 +398,10 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
       await deleteEntry(dirPath);
       reloadChildren(parent);
     } catch (e) {
-      console.error('delete failed:', e);
+      setNotice({
+        kind: 'error',
+        msg: e instanceof Error ? e.message : String(e),
+      });
     }
   };
 
@@ -396,7 +419,10 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
       await ipcApi.rename(dirPath, joinPath(parent, newName));
       reloadChildren(parent);
     } catch (e) {
-      console.error('rename failed:', e);
+      setNotice({
+        kind: 'error',
+        msg: e instanceof Error ? e.message : String(e),
+      });
     }
   };
 
@@ -411,8 +437,10 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
       // IOActionsContextProvider now refreshes the tree after folder creation;
       // files do not affect the directory tree.
     } catch (e) {
-      // DirectoryTree has no notice area — log so failures aren't fully silent.
-      console.error('create failed:', e);
+      setNotice({
+        kind: 'error',
+        msg: e instanceof Error ? e.message : String(e),
+      });
     }
   };
 
@@ -529,16 +557,21 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
             setEmptyCtxMenu(null); // close the empty-area menu if open
             setCtxMenu({ x: e.clientX, y: e.clientY, path });
           }}
-          title={t('dragIntoEditor')}
+          // "Drag into editor" only makes sense while an editor is open
+          // (file rows only exist then; folder rows always render).
+          title={activeView ? t('dragIntoEditor') : undefined}
           sx={{ pl: depth * 1.25 + 0.5, py: 0.25, minHeight: 32, cursor: 'grab' }}
         >
-          <Box
+          <IconButton
+            size="small"
+            aria-label={isExpanded ? t('collapse') : t('expand')}
             onClick={(e) => {
               e.stopPropagation();
               toggle(path);
             }}
             sx={{
               width: 20,
+              height: 20,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -554,7 +587,7 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
                 <ChevronRightIcon fontSize="small" />
               )
             ) : null}
-          </Box>
+          </IconButton>
           {/* Open-folder glyph marks the folder you're currently in (not every
               expanded folder), so it reverts when you navigate elsewhere. */}
           {isCurrent ? (
@@ -679,7 +712,12 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
                     const audio = children.filter(
                       (c) => !c.isDirectory && isAudioFile(c.name)
                     );
-                    if (audio.length === 0) return;
+                    if (audio.length === 0) {
+                      // Was a silent no-op — the user couldn't tell whether
+                      // the click registered at all.
+                      setNotice({ kind: 'error', msg: t('folderHasNoAudio') });
+                      return;
+                    }
                     backgroundPlayer.playEntries(audio);
                   })
                   .catch(() => undefined);
@@ -688,7 +726,7 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
               <ListItemIcon>
                 <PlayArrowIcon fontSize="small" />
               </ListItemIcon>
-              <ListItemText>播放此文件夹</ListItemText>
+              <ListItemText>{t('playFolder')}</ListItemText>
             </MenuItem>
             <MenuItem
               onClick={() => {
@@ -711,6 +749,7 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
             </MenuItem>
             <Divider />
             <MenuItem
+              disabled={!!currentLocation?.isReadOnly}
               onClick={() => {
                 setCreateKind({ kind: 'folder', parent: ctxMenu.path });
                 setCtxMenu(null);
@@ -722,6 +761,7 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
               <ListItemText>{t('newFolder')}</ListItemText>
             </MenuItem>
             <MenuItem
+              disabled={!!currentLocation?.isReadOnly}
               onClick={() => {
                 setCreateKind({ kind: 'file', parent: ctxMenu.path });
                 setCtxMenu(null);

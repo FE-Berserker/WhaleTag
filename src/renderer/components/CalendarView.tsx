@@ -1358,6 +1358,15 @@ function YearHeatmap({
                       aria-label={`${day.key}: ${count}`}
                       title={`${day.key} · ${count}`}
                       onClick={() => onSelectDate(day.date)}
+                      onKeyDown={(e) => {
+                        // role="button" cells don't fire click on Enter/Space —
+                        // without this the 371 heatmap cells are focusable but
+                        // never activatable by keyboard.
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          onSelectDate(day.date);
+                        }
+                      }}
                       sx={{
                         width: '100%',
                         aspectRatio: '1 / 1',
@@ -1368,6 +1377,9 @@ function YearHeatmap({
                         outline: isTodayCell ? `1px solid ${primary}` : 'none',
                         '&:hover': {
                           outline: `1px solid ${theme.palette.text.secondary}`,
+                        },
+                        '&:focus-visible': {
+                          outline: `2px solid ${primary}`,
                         },
                       }}
                     />
@@ -1979,11 +1991,16 @@ function CalendarEntryItem({
     [dragItem, readOnly]
   );
 
+  // Single-click selects (consistent with list/grid/gallery); double-click
+  // opens. Click-to-open made it impossible to select or start a drag
+  // without the file popping open.
   const handleClick = () => {
     const index = entries.findIndex((e) => e.path === entry.path);
     if (index >= 0) {
       onSelectRow(index, { shift: false, toggle: false });
     }
+  };
+  const handleDoubleClick = () => {
     onOpen(entry);
   };
 
@@ -2001,6 +2018,7 @@ function CalendarEntryItem({
       ref={dragRef}
       aria-label={t('calendarEntryAria', { name: entry.name })}
       onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
       onContextMenu={handleContext}
       sx={{
         display: 'flex',

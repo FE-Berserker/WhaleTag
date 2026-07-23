@@ -51,7 +51,13 @@ export function syncPreviewScroll(): void {
   const scrollTop = scroller.scrollTop;
   const editorMax = scroller.scrollHeight - scroller.clientHeight;
   if (editorMax <= 0) {
-    dom.previewPane.scrollTop = 0;
+    // 编辑器内容短(无滚动空间),但预览可能仍比编辑器高(大图片 / 表格
+    // 撑高)。这时预览靠 setupScroll 的 wheel-forwarder 独立滚动 —— 不要
+    // 钉回顶部,否则短文档 + 图片撑高的预览永远看不到下半部分。只有预览
+    // 也没滚动空间(纯短文档)时才归零。
+    const previewMaxBottom =
+      dom.previewPane.scrollHeight - dom.previewPane.clientHeight;
+    if (previewMaxBottom <= 0) dom.previewPane.scrollTop = 0;
     return;
   }
 
@@ -154,7 +160,19 @@ export function setupScroll(view: EditorView): void {
       let dy = e.deltaY;
       if (e.deltaMode === 1) dy *= 24;
       else if (e.deltaMode === 2) dy *= scroller.clientHeight;
+      // Forward to the editor's scroller first (single-scroll design: editor
+      // scrolls → syncPreviewScroll mirrors it onto the preview). When the
+      // editor has no scroll room (short doc) OR is already pinned at its
+      // top/bottom, it can't absorb the delta — hand the remainder to the
+      // preview so a tall preview (big images / tables) is still reachable.
+      // Without this, a short source whose preview is tall leaves the preview
+      // stuck with its bottom out of reach.
+      const before = scroller.scrollTop;
       scroller.scrollTop += dy;
+      const remaining = dy - (scroller.scrollTop - before);
+      if (remaining !== 0) {
+        dom.previewPane.scrollTop += remaining;
+      }
     },
     { passive: true }
   );

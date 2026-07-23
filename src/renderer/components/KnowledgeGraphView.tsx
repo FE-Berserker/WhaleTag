@@ -6,6 +6,7 @@ import {
   ListItemText,
   Menu,
   MenuItem,
+  Snackbar,
   Stack,
   ToggleButton,
   ToggleButtonGroup,
@@ -13,6 +14,7 @@ import {
   Typography,
   useTheme,
 } from '@mui/material';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import HubIcon from '@mui/icons-material/Hub';
 import SaveIcon from '@mui/icons-material/Save';
 import DriveFileMoveIcon from '@mui/icons-material/DriveFileMove';
@@ -68,6 +70,28 @@ const PREFS_KEY_PREFIX = 'whale.kg.';
 
 interface KgPrefs {
   shown: TagCategory[];
+  /** User-dragged node positions, keyed by node id (path / tag name). Wins
+   *  over the deterministic radial layout when present (2026-07-22). */
+  positions?: Record<string, { x: number; y: number }>;
+}
+
+/** Light shape check for persisted positions (drops malformed entries). */
+function sanitizeKgPositions(
+  raw: unknown
+): Record<string, { x: number; y: number }> | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+  const out: Record<string, { x: number; y: number }> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (
+      typeof v === 'object' &&
+      v !== null &&
+      typeof (v as { x?: unknown }).x === 'number' &&
+      typeof (v as { y?: unknown }).y === 'number'
+    ) {
+      out[k] = v as { x: number; y: number };
+    }
+  }
+  return Object.keys(out).length > 0 ? out : null;
 }
 
 const TAG_FALLBACK = '#7e9cd8';
@@ -237,6 +261,10 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   const [shown, setShown] = useState<TagCategory[]>(DEFAULT_SHOWN_CATEGORIES);
+  // User-dragged node positions for the current location (persisted in prefs).
+  const [storedPositions, setStoredPositions] = useState<
+    Record<string, { x: number; y: number }>
+  >({});
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   // H.24 R4: depth + loading come from the global directory content context
   // (single source); the recursive-scan truncation banner is at FileList level.
@@ -247,7 +275,7 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
   // switches perspectives within the 200ms debounce window.
   const prefsRef = useRef<KgPrefs>({ shown });
   useEffect(() => {
-    prefsRef.current = { shown };
+    prefsRef.current = { shown, positions: storedPositions };
   });
 
   // P2-2: restore / persist per-location prefs (depth + visible categories),
@@ -257,6 +285,9 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
     const id = currentLocation?.id;
     if (!id) return;
     const prefs = readPrefs<KgPrefs>(PREFS_KEY_PREFIX + id);
+    // Location switch: drop the previous location's drag map immediately so
+    // a stale position never leaks into another folder's graph.
+    setStoredPositions(sanitizeKgPositions(prefs?.positions) ?? {});
     if (!prefs) return;
     const shownV = sanitizeShownCategories(prefs.shown);
     if (shownV !== null) setShown(shownV);
@@ -283,7 +314,7 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
         ? {
             id: n.id,
             type: 'tag',
-            position: pos.get(n.id) ?? { x: 0, y: 0 },
+            position: storedPositions[n.id] ?? pos.get(n.id) ?? { x: 0, y: 0 },
             data: {
               label: tagDisplayLabel(n.tag, t),
               color: getTagColor(n.tag, tagColors, groups) ?? TAG_FALLBACK,
@@ -295,13 +326,13 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
           ? {
               id: n.id,
               type: 'directory',
-              position: pos.get(n.id) ?? { x: 0, y: 0 },
+              position: storedPositions[n.id] ?? pos.get(n.id) ?? { x: 0, y: 0 },
               data: { name: n.name, path: n.path, color: DIR_COLOR } satisfies DirectoryNodeData,
             }
           : {
               id: n.id,
               type: 'file',
-              position: pos.get(n.id) ?? { x: 0, y: 0 },
+              position: storedPositions[n.id] ?? pos.get(n.id) ?? { x: 0, y: 0 },
               data: { name: n.name, ext: n.ext, path: n.path, color: extColor(n.ext) } satisfies FileNodeData,
             }
     );
@@ -320,10 +351,19 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
       tagCount: graph.nodes.filter((n) => n.kind === 'tag').length,
       fileCount: graph.nodes.filter((n) => n.kind === 'file' || n.kind === 'directory').length,
     };
-  }, [entries, tagsByName, tagColors, groups, shown, t]);
+  }, [entries, tagsByName, tagColors, groups, shown, storedPositions, t]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(rfNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(rfEdges);
+  // Persist user-dragged positions per location. Fires once per drag gesture
+  // (not per mousemove), so the 200ms-debounced prefs write stays cheap.
+  const handleNodeDragStop = useCallback(() => {
+    setStoredPositions((prev) => {
+      const next = { ...prev };
+      for (const n of nodes) next[n.id] = { x: n.position.x, y: n.position.y };
+      return next;
+    });
+  }, [nodes]);
   const flowRef = useRef<ReactFlowInstance<Node, Edge> | null>(null);
   const fitTimer = useRef<number | undefined>(undefined);
   // Tracks the last node count we fitView'd to. fitView only re-runs when
@@ -396,10 +436,23 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
     });
   }, []);
 
-  const { saving, error, handleSave, handleSaveAs } = useImageExport({
-    capture: captureMindMap,
-    prefix: 'mind-map',
-  });
+  const { saving, error, handleSave, handleSaveAs, handleCopyToClipboard } =
+    useImageExport({
+      capture: captureMindMap,
+      prefix: 'mind-map',
+    });
+
+  // Copy-to-clipboard notice (mirrors FolderViz / TagCloud): image when the
+  // clipboard accepts PNG, base64 text otherwise.
+  const [notice, setNotice] = useState<string | null>(null);
+  const onCopyToClipboard = useCallback(async () => {
+    try {
+      const kind = await handleCopyToClipboard();
+      setNotice(kind === 'image' ? t('kgCopied') : t('kgCopiedAsBase64'));
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e));
+    }
+  }, [handleCopyToClipboard, t]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -480,6 +533,19 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
             </IconButton>
           </span>
         </Tooltip>
+
+        <Tooltip title={t('copy')}>
+          <span>
+            <IconButton
+              size="small"
+              onClick={() => void onCopyToClipboard()}
+              disabled={saving || loading || nodes.length === 0 || readOnly}
+              aria-label={t('copy')}
+            >
+              <ContentCopyIcon fontSize="small" />
+            </IconButton>
+          </span>
+        </Tooltip>
       </Stack>
 
       {error ? <ErrorBanner message={error} /> : null}
@@ -512,6 +578,7 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onNodeClick={onNodeClick}
+            onNodeDragStop={handleNodeDragStop}
             nodesConnectable={false}
             elementsSelectable
             fitView
@@ -568,7 +635,29 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
           </ListItemIcon>
           <ListItemText>{t('saveImageAs')}</ListItemText>
         </MenuItem>
+        <MenuItem
+          onClick={() => {
+            void onCopyToClipboard();
+            setCtxMenu(null);
+          }}
+          disabled={saving || loading || nodes.length === 0}
+        >
+          <ListItemIcon>
+            <ContentCopyIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText>{t('copy')}</ListItemText>
+        </MenuItem>
       </Menu>
+
+      {/* Copy result notice (image vs base64 fallback), same pattern as
+          FolderViz / TagCloud. */}
+      <Snackbar
+        open={notice !== null}
+        autoHideDuration={2400}
+        onClose={() => setNotice(null)}
+        message={notice ?? ''}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      />
     </Box>
   );
 }

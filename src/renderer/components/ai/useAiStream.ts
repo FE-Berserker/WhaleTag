@@ -31,6 +31,8 @@ export interface AiStreamState {
   /** True while any conversation is streaming (the CLI is serial). */
   streaming: boolean;
   error: string | null;
+  /** Dismiss the current error banner (user clicked the Alert's close). */
+  clearError: () => void;
   usage: UsageInfo | null;
   send: (
     text: string,
@@ -285,11 +287,14 @@ export function useAiStream(): AiStreamState {
     setStreamingConvId(null);
   }, [streamingConvId]);
 
+  const clearError = useCallback(() => setError(null), []);
+
   return {
     activeId,
     messages,
     streaming: streamingConvId !== null,
     error,
+    clearError,
     usage,
     send,
     cancel,

@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
 import {
@@ -5,6 +6,7 @@ import {
   Divider,
   ListItemIcon,
   ListItemText,
+  ListSubheader,
   Menu,
   MenuItem,
   Typography,
@@ -29,6 +31,8 @@ import PhotoLibraryIcon from '@mui/icons-material/PhotoLibrary';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import HeadphonesIcon from '@mui/icons-material/Headphones';
 import QueueMusicIcon from '@mui/icons-material/QueueMusic';
+import TerminalIcon from '@mui/icons-material/Terminal';
+import ArrowRightIcon from '@mui/icons-material/ArrowRight';
 
 import type { DirEntry } from '../../shared/ipc-types';
 import type { ExtensionManifest, ExtensionRegistry } from '../../shared/extension-types';
@@ -240,8 +244,45 @@ export default function EntryContextMenu(props: EntryContextMenuProps) {
   // here flows back into `currentTags` on the next render.
   const ctxEntry = ctx?.entry ?? null;
   const currentTags = ctxEntry ? tagsByName.get(ctxEntry.path) ?? [] : [];
+  // Applicable user commands for the right-clicked entry, hoisted to the top
+  // so the inline "Commands" parent item and its flyout <Menu> (a sibling
+  // after the main menu) share one filtered list.
+  const applicableCommands = ctxEntry
+    ? userCommands.filter(
+        (c) =>
+          c.enabled &&
+          ((ctxEntry.isFile && c.applyToFiles) ||
+            (ctxEntry.isDirectory && c.applyToFolders))
+      )
+    : [];
+  // Commands flyout anchor + hover-intent timer. Hovering (or clicking) the
+  // "Commands" item opens the flyout at its right edge; leaving the item
+  // starts a short grace timer so a diagonal mouse path into the flyout
+  // doesn't close it mid-flight — entering the flyout cancels the timer,
+  // leaving the flyout closes it immediately.
+  const [cmdAnchor, setCmdAnchor] = useState<HTMLElement | null>(null);
+  const cmdCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelCmdClose = () => {
+    if (cmdCloseTimer.current) {
+      clearTimeout(cmdCloseTimer.current);
+      cmdCloseTimer.current = null;
+    }
+  };
+  const scheduleCmdClose = () => {
+    cancelCmdClose();
+    cmdCloseTimer.current = setTimeout(() => setCmdAnchor(null), 250);
+  };
+  // Menu dismissed externally (backdrop / Escape) → drop the flyout anchor so
+  // it can't linger into the next open.
+  useEffect(() => {
+    if (!ctx) {
+      cancelCmdClose();
+      setCmdAnchor(null);
+    }
+  }, [ctx]);
 
   return (
+    <>
     <Menu
       open={ctx !== null}
       onClose={onClose}
@@ -433,7 +474,7 @@ export default function EntryContextMenu(props: EntryContextMenuProps) {
                   <ListItemIcon>
                     <HeadphonesIcon fontSize="small" />
                   </ListItemIcon>
-                  <ListItemText>后台播放</ListItemText>
+                  <ListItemText>{t('playInBackground')}</ListItemText>
                 </MenuItem>
               ) : null}
               {entry.isFile ? (
@@ -446,14 +487,11 @@ export default function EntryContextMenu(props: EntryContextMenuProps) {
                   if (compatibleExts.length === 0) return null;
                   return (
                     <>
-                      <MenuItem
-                        onClick={(e) => e.stopPropagation()}
-                        sx={{ pl: 2 }}
-                      >
-                        <ListItemText sx={{ pl: 2 }}>
-                          {t('openWith')}
-                        </ListItemText>
-                      </MenuItem>
+                      {/* Section header is a non-focusable ListSubheader — a
+                          dead MenuItem would trap keyboard arrow navigation. */}
+                      <ListSubheader component="div" disableSticky>
+                        {t('openWith')}
+                      </ListSubheader>
                       {compatibleExts.map((ext) => (
                         <MenuItem
                           key={ext.id}
@@ -548,39 +586,32 @@ export default function EntryContextMenu(props: EntryContextMenuProps) {
                   <ListItemText>{t('copyPath')}</ListItemText>
                 </MenuItem>
               ) : null}
-              {(() => {
-                const applicable = userCommands.filter(
-                  (c) =>
-                    c.enabled &&
-                    ((entry.isFile && c.applyToFiles) ||
-                      (entry.isDirectory && c.applyToFolders))
-                );
-                if (applicable.length === 0) return null;
-                return (
-                  <>
-                    <MenuItem
-                      onClick={(e) => e.stopPropagation()}
-                      sx={{ pl: 2 }}
-                    >
-                      <ListItemText sx={{ pl: 2 }}>
-                        {t('runCommand')}
-                      </ListItemText>
-                    </MenuItem>
-                    {applicable.map((c) => (
-                      <MenuItem
-                        key={c.id}
-                        onClick={() => {
-                          onRunCommand(entry, c);
-                          onClose();
-                        }}
-                        sx={{ pl: 4 }}
-                      >
-                        <ListItemText>{c.label}</ListItemText>
-                      </MenuItem>
-                    ))}
-                  </>
-                );
-              })()}
+              {/* User commands: single parent item; the commands themselves
+                  live in a hover flyout (sibling <Menu> after the main one)
+                  so a long command list never stretches this menu. */}
+              {applicableCommands.length > 0 ? (
+                <MenuItem
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    cancelCmdClose();
+                    setCmdAnchor(e.currentTarget);
+                  }}
+                  onMouseEnter={(e) => {
+                    cancelCmdClose();
+                    setCmdAnchor(e.currentTarget);
+                  }}
+                  onMouseLeave={scheduleCmdClose}
+                >
+                  <ListItemIcon>
+                    <TerminalIcon fontSize="small" />
+                  </ListItemIcon>
+                  <ListItemText>{t('runCommand')}</ListItemText>
+                  <ArrowRightIcon
+                    fontSize="small"
+                    sx={{ ml: 1, opacity: 0.6 }}
+                  />
+                </MenuItem>
+              ) : null}
               {entry.isDirectory ? (
                 <>
                   <Divider />
@@ -752,6 +783,51 @@ export default function EntryContextMenu(props: EntryContextMenuProps) {
         })()
       ) : null}
     </Menu>
+    {/* Commands flyout — sibling Menu anchored to the right edge of the
+        "Commands" item (same idiom as GanttEntryMenu's stage/priority
+        submenus, but hover-open via the anchor's onMouseEnter). Each row
+        carries the command template as a native tooltip for disambiguation. */}
+    <Menu
+      open={cmdAnchor !== null}
+      onClose={() => setCmdAnchor(null)}
+      anchorEl={cmdAnchor}
+      anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+      transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+      slotProps={{
+        // The flyout's Modal root is a fixed inset-0 layer that would cover
+        // the parent menu and steal hover from the "Commands" item —
+        // causing a phantom mouseLeave → timer-close → phantom mouseEnter
+        // reopen loop (visible as constant flickering). pointer-events:none
+        // on the root keeps hover on the parent menu; the paper re-enables
+        // its own events so the flyout stays interactive. Click-away falls
+        // through to the parent menu's backdrop, which closes both.
+        root: { sx: { pointerEvents: 'none' } },
+        paper: {
+          onMouseEnter: cancelCmdClose,
+          onMouseLeave: () => setCmdAnchor(null),
+          sx: { minWidth: 180, pointerEvents: 'auto' },
+        },
+        ...noTransitionMenuSlotProps,
+      }}
+      slots={noTransitionMenuSlots}
+    >
+      {applicableCommands.map((c) => (
+        <MenuItem
+          key={c.id}
+          title={c.template}
+          onClick={() => {
+            if (ctxEntry) onRunCommand(ctxEntry, c);
+            onClose();
+          }}
+        >
+          <ListItemIcon>
+            <TerminalIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText>{c.label}</ListItemText>
+        </MenuItem>
+      ))}
+    </Menu>
+    </>
   );
 }
 

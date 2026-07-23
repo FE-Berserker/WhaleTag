@@ -280,7 +280,16 @@ export function replaceMarkdownTableCellText(
     .replace(/[\r\n]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  const escaped = normalized.replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
+  // Only escape a BARE `|` (one not already preceded by `\`); otherwise it
+  // would split the GFM cell. We deliberately do NOT double-escape `\`:
+  // LaTeX commands (`\frac`, `\alpha`, `\sum`, …) need a single leading
+  // backslash, and `\\` would make KaTeX treat it as a line break — typing
+  // `$\frac{a}{b}$` into a preview cell used to write `$\\frac{a}{b}$` back
+  // to the source, breaking the formula. marked leaves a `\` that isn't
+  // followed by ASCII punctuation (e.g. `\f`, `\ `) as a literal `\`, so
+  // LaTeX commands AND plain content like `C:\Users` round-trip intact.
+  // The lookbehind keeps an already-escaped `\|` from becoming `\\|`.
+  const escaped = normalized.replace(/(?<!\\)\|/g, '\\|');
   return `${line.slice(0, range.from)} ${escaped} ${line.slice(range.to)}`;
 }
 

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useConfirm } from '-/components/ConfirmDialogProvider';
 import { useDispatch, useSelector } from 'react-redux';
 import {
   Box,
@@ -155,6 +156,7 @@ type DialogState =
 export default function TagGroups() {
   const { t } = useTranslation();
   const dispatch = useDispatch();
+  const confirm = useConfirm();
   const groups = useSelector(
     (s: RootState) => s.taglibrary?.groups ?? EMPTY_ARR
   );
@@ -202,8 +204,14 @@ export default function TagGroups() {
     setDialog(null);
   };
 
-  const handleRemoveGroup = (id: string, title: string) => {
-    if (window.confirm(t('confirmDeleteGroup', { name: title }))) {
+  const handleRemoveGroup = async (id: string, title: string) => {
+    if (
+      await confirm({
+        message: t('confirmDeleteGroup', { name: title }),
+        confirmLabel: t('delete'),
+        danger: true,
+      })
+    ) {
       dispatch(removeGroup(id));
     }
   };

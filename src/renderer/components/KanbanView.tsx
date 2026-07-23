@@ -67,24 +67,6 @@ export default function KanbanView({
 }: KanbanViewProps) {
   const { entries, tagsByName, t } = data;
 
-  if (stages.length === 0) {
-    return (
-      <Box
-        sx={{
-          flex: 1,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          p: 4,
-        }}
-      >
-        <Typography color="text.secondary" sx={{ textAlign: 'center' }}>
-          {t('kanbanNoStages')}
-        </Typography>
-      </Box>
-    );
-  }
-
   const stageValues = useMemo(() => stages.map((s) => s.value), [stages]);
   // P2-6 (perf audit): bucketEntries is O(N) over visible entries (one
   // tagsByName.get per file). Memoize so selection/menu/hover re-renders
@@ -151,6 +133,36 @@ export default function KanbanView({
     },
     []
   );
+
+  // The empty-stages state renders AFTER all hooks: the hooks count must stay
+  // stable across the `stages.length` 0↔N transition (deleting the last stage
+  // from the manager dialog, or adding the first one back). An early return
+  // above the hooks used to crash the whole view with "Rendered fewer hooks
+  // than expected". The dialog stays mounted so the user can re-add a stage
+  // right where they deleted the last one.
+  if (stages.length === 0) {
+    return (
+      <>
+        <Box
+          sx={{
+            flex: 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            p: 4,
+          }}
+        >
+          <Typography color="text.secondary" sx={{ textAlign: 'center' }}>
+            {t('kanbanNoStages')}
+          </Typography>
+        </Box>
+        <WorkflowManagerDialog
+          open={wfMgrOpen}
+          onClose={() => setWfMgrOpen(false)}
+        />
+      </>
+    );
+  }
 
   return (
     <>

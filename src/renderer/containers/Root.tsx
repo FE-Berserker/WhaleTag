@@ -5,6 +5,7 @@ import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 
 import MainLayout from '-/containers/MainLayout';
+import { ConfirmDialogProvider } from '-/components/ConfirmDialogProvider';
 import TaskReminder from '-/components/TaskReminder';
 import { CurrentLocationContextProvider } from '-/hooks/CurrentLocationContextProvider';
 import { DirectoryContentContextProvider } from '-/hooks/DirectoryContentContextProvider';
@@ -126,6 +127,9 @@ export default function Root() {
         <CurrentLocationContextProvider>
           <DirectoryContentContextProvider>
             <DirectoryTreeRefreshContextProvider>
+              {/* App-wide MUI confirm — mounted above IOActionsContextProvider
+                  so its trash-failure fallback can use it too. */}
+              <ConfirmDialogProvider>
               <IOActionsContextProvider>
                 <LocationIndexContextProvider>
                   <TagMetaContextProvider>
@@ -140,6 +144,7 @@ export default function Root() {
                   </TagMetaContextProvider>
                 </LocationIndexContextProvider>
               </IOActionsContextProvider>
+              </ConfirmDialogProvider>
             </DirectoryTreeRefreshContextProvider>
           </DirectoryContentContextProvider>
         </CurrentLocationContextProvider>

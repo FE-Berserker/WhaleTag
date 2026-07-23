@@ -79,6 +79,14 @@ export default function AddLocationDialog({
               setName(e.target.value);
               setError(null);
             }}
+            onKeyDown={(e) => {
+              // Enter submits (same as PromptDialog) — the form has no other
+              // single-line input competing for it.
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                submit();
+              }
+            }}
           />
           <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
             <TextField

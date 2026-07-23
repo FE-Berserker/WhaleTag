@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Box, IconButton, Tooltip, Typography } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import CropSquareIcon from '@mui/icons-material/CropSquare';
@@ -15,6 +16,7 @@ import { ipcApi } from '-/services/ipc-api';
  * name on the left; minimize / maximize-toggle / close on the right.
  */
 export default function TitleBar(): JSX.Element {
+  const { t } = useTranslation();
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -47,12 +49,12 @@ export default function TitleBar(): JSX.Element {
       </Typography>
       <Box sx={{ flex: 1 }} />
       <Box sx={{ display: 'flex', WebkitAppRegion: 'no-drag' }}>
-        <Tooltip title="最小化" enterDelay={500}>
+        <Tooltip title={t('minimize')} enterDelay={500}>
           <IconButton size="small" onClick={() => void ipcApi.windowMinimize()}>
             <RemoveIcon fontSize="small" />
           </IconButton>
         </Tooltip>
-        <Tooltip title={maximized ? '还原' : '最大化'} enterDelay={500}>
+        <Tooltip title={maximized ? t('restore') : t('maximize')} enterDelay={500}>
           <IconButton
             size="small"
             onClick={() => void ipcApi.windowMaximizeToggle()}
@@ -64,7 +66,7 @@ export default function TitleBar(): JSX.Element {
             )}
           </IconButton>
         </Tooltip>
-        <Tooltip title="关闭" enterDelay={500}>
+        <Tooltip title={t('close')} enterDelay={500}>
           <IconButton
             size="small"
             onClick={() => void ipcApi.windowClose()}

@@ -122,6 +122,28 @@ describe('parseMarkdown', () => {
     assert.match(html, /<table data-source-line="8">/);
   });
 
+  it('keeps table + row source lines correct when a paragraph precedes the table', () => {
+    // Regression for two compounding bugs that broke preview table editing:
+    //   1. markedFootnote injects a `footnotes` token at the HEAD of the
+    //      token stream. computeBlockLineNumbers used to count it, so the
+    //      lineNumbers array grew longer than the DOM blocks array and the
+    //      table (plus every block after the intro) got the intro's line.
+    //   2. computeTableRowLine used `tableLine + trIndex`, ignoring the
+    //      `|---|` separator — every tbody row was off by one, so typing
+    //      into a tbody cell wrote back to the separator / wrong row (or
+    //      null, so the source never changed at all).
+    // Source lines: 1 intro, 2 blank, 3 header, 4 separator, 5/6 data rows.
+    const md = 'intro\n\n| a | b |\n|---|---|\n| c | d |\n| e | f |';
+    const html = parseMarkdown(md);
+    assert.match(html, /<p data-source-line="1">/);
+    assert.match(html, /<table data-source-line="3">/);
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const trs = Array.from(doc.querySelectorAll('tr'));
+    assert.equal(trs[0].getAttribute('data-source-line'), '3', 'header row');
+    assert.equal(trs[1].getAttribute('data-source-line'), '5', 'first tbody row');
+    assert.equal(trs[2].getAttribute('data-source-line'), '6', 'second tbody row');
+  });
+
   it('does not annotate nested elements (only top-level blocks get the attribute)', () => {
     // Inside a list item, the inner <p> must NOT carry its own
     // data-source-line — that would break the 1:1 mapping to top-level
@@ -167,6 +189,48 @@ describe('parseMarkdown', () => {
     assert.match(html, /<code>\$code\$<\/code>/);
     // And NOT a katex placeholder for "$code$".
     assert.equal(/class="katex katex-inline" data-katex-source="\$code\$"/.test(html), false);
+  });
+
+  // §18.3.3 (table-math) — `$$…$$` inside a table cell. `katexBlock` is a
+  // block-level extension that only fires at line-start, so display math in a
+  // cell (which is inline context) must be handled by `katexInline`. Without
+  // the display branch, `$$E=mc^2$$` was mis-parsed as `$` + inline + `$`.
+  it('renders $$...$$ inside a table cell as display katex', () => {
+    const html = parseMarkdown('| a | b |\n|---|---|\n| $$E=mc^2$$ | plain |');
+    assert.match(
+      html,
+      /<div class="katex katex-block" data-katex-display="block"/
+    );
+    assert.match(html, /data-katex-source="E=mc\^2"/);
+    // No stray `$` leaked before the placeholder — the old mis-parse
+    // produced `<td>$<div class="katex…`.
+    assert.equal(/<td>[^<]*\$</.test(html), false);
+  });
+
+  it('renders $...$ inside a table cell as inline katex (regression)', () => {
+    const html = parseMarkdown('| a | b |\n|---|---|\n| $E=mc^2$ | plain |');
+    assert.match(
+      html,
+      /<td><span class="katex katex-inline" data-katex-source="E=mc\^2">/
+    );
+  });
+
+  it('renders multiple $...$ formulas across table cells', () => {
+    const html = parseMarkdown('| a | b |\n|---|---|\n| $x$ | $y$ |');
+    const matches = html.match(
+      /<span class="katex katex-inline" data-katex-source="/g
+    );
+    assert.equal(matches?.length, 2);
+  });
+
+  // Mid-paragraph `$$…$$` shares the same root cause as table cells (block
+  // extension never fires), so the inline display branch fixes both.
+  it('renders $$...$$ mid-paragraph as display katex', () => {
+    const html = parseMarkdown('Before $$\\alpha$$ after.');
+    assert.match(
+      html,
+      /<div class="katex katex-block" data-katex-display="block" data-katex-source="\\alpha">/
+    );
   });
 });
 
@@ -903,6 +967,25 @@ describe('resolveLocalImages', () => {
     resolveLocalImages(el, '/notes');
     assert.equal(el.querySelectorAll('img').length, 0);
   });
+
+  it('decodes marked-encoded CJK / space image paths (no double-encoding)', () => {
+    // marked percent-encodes non-ASCII in the emitted <img src>
+    // (`./截图/图.png` -> `./%E6%88%AA%E5%9B%BE/...`). resolveLocalImages must
+    // decodeURI that back BEFORE handing the path to encodeWhaleFileUrl,
+    // otherwise the `%`s get re-encoded to `%25`, the main-side decoder undoes
+    // only one layer, and fs stats a literal `%E6…` filename that 404s — so
+    // any image whose path has CJK / spaces fails to render. We feed the same
+    // encoded src marked produces (rather than calling parseMarkdown) so the
+    // assertion is independent of marked's version.
+    const el = document.createElement('div');
+    el.innerHTML = '<img src="./%E6%88%AA%E5%9B%BE/%E5%9B%BE%E7%89%87.png">';
+    resolveLocalImages(el, 'C:/notes');
+    const src = el.querySelector('img')!.getAttribute('src')!;
+    assert.match(src, /^whale-file:\/\/\/C:\/notes\//);
+    // Single-encoded CJK (%E6…), NOT double-encoded (%25E6…).
+    assert.ok(src.includes('%E6%88%AA'), `expected single-encoded CJK in ${src}`);
+    assert.equal(src.includes('%25'), false, `must not be double-encoded: ${src}`);
+  });
 });
 
 // --- shouldSkipRender / createRafScheduler (§18.2.4) ---------------------
@@ -1546,12 +1629,41 @@ describe('markdown insertion templates', () => {
     );
   });
 
-  it('escapes pipes and backslashes inside cell values', async () => {
+  it('escapes bare pipes inside cell values (keeps LaTeX backslashes)', async () => {
     const { replaceMarkdownTableCellText } = await import('./md-toolbar');
     const line = '|  |';
+    // A bare `|` is escaped to `\|` so it doesn't split the cell, but `\`
+    // itself is NOT double-escaped: LaTeX commands (`\frac` etc.) need a
+    // single backslash, and `\\` would make KaTeX treat it as a line break.
+    // An already-escaped `\|` is left alone (no `\\|`).
     assert.equal(
       replaceMarkdownTableCellText(line, 0, 'a | b \\ c'),
-      '| a \\| b \\\\ c |'
+      '| a \\| b \\ c |'
+    );
+    assert.equal(
+      replaceMarkdownTableCellText(line, 0, 'a \\| b'),
+      '| a \\| b |'
+    );
+  });
+
+  it('preserves LaTeX commands typed into a cell ($...$ math)', async () => {
+    const { replaceMarkdownTableCellText } = await import('./md-toolbar');
+    const line = '|  |';
+    // `\frac` keeps its single backslash — KaTeX receives `\frac{a}{b}`,
+    // not `\\frac{a}{b}` (which it renders as a line break, breaking the
+    // formula). This is the regression that made typing math into a
+    // preview table cell "not stick".
+    assert.equal(
+      replaceMarkdownTableCellText(line, 0, '$\\frac{a}{b}$'),
+      '| $\\frac{a}{b}$ |'
+    );
+    assert.equal(
+      replaceMarkdownTableCellText(line, 0, '$\\alpha + \\beta$'),
+      '| $\\alpha + \\beta$ |'
+    );
+    assert.equal(
+      replaceMarkdownTableCellText(line, 0, '$E = mc^2$'),
+      '| $E = mc^2$ |'
     );
   });
 
@@ -1581,9 +1693,10 @@ describe('markdown insertion templates', () => {
     firstDataCell.innerText = 'A2';
     firstDataCell.dispatchEvent(new window.Event('input', { bubbles: true }));
     // The table starts at source line 1; the header row is line 1, the
-    // data row is line 2 (the `| --- | --- |` separator doesn't emit a <tr>).
-    assert.deepEqual(changes, [[2, 0, 'A2']]);
+    // `| --- | --- |` separator is line 2 (emits no <tr>), so the data row
+    // is line 3 = tableLine(1) + 2 (skip header + separator).
+    assert.deepEqual(changes, [[3, 0, 'A2']]);
     const row = firstDataCell.closest('tr');
-    assert.equal(row?.getAttribute('data-source-line'), '2');
+    assert.equal(row?.getAttribute('data-source-line'), '3');
   });
 });

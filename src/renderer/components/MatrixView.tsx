@@ -175,15 +175,16 @@ export default function MatrixView({ data, onMoveToColumn, stages }: MatrixViewP
         ))}
       </Box>
 
-      {/* Untagged tray — triage files with no quadrant by dragging them up. */}
-      {untagged.length > 0 ? (
-        <UntaggedTray
-          entries={untagged}
-          data={data}
-          onMoveToColumn={onMoveToColumn}
-          onOpenEntryMenu={openEntryMenu}
-        />
-      ) : null}
+      {/* Untagged tray — triage files with no quadrant by dragging them up.
+          Always rendered (even when empty): a tray that vanishes once every
+          file is categorized leaves no drop target to drag a file BACK to
+          untagged, contradicting the drag gesture the view teaches. */}
+      <UntaggedTray
+        entries={untagged}
+        data={data}
+        onMoveToColumn={onMoveToColumn}
+        onOpenEntryMenu={openEntryMenu}
+      />
 
       {/* H.28 P0-1: per-card domain menu (Move to stage / Set priority /
           Set period / Edit tags / Open / Delete / More file actions).
@@ -406,16 +407,26 @@ function UntaggedTray({
   onOpenEntryMenu: (entry: DirEntry, x: number, y: number) => void;
 }) {
   const { t, readOnly } = data;
+  const { importExternalFiles } = useIOActionsContext();
 
+  // Accepts internal cards (clear their quadrant) AND native OS files
+  // (import without a quadrant tag — `tagToApply: null`), same contract as
+  // the quadrants and Gantt's triage tray.
   const [{ isOver, canDrop }, dropRef] = useDrop<
-    FileDragItem,
+    FileDragItem | { files: File[] },
     unknown,
     { isOver: boolean; canDrop: boolean }
   >(
     () => ({
-      accept: DND_TYPE_FILE,
+      accept: [DND_TYPE_FILE, NativeTypes.FILE],
       canDrop: () => !readOnly,
       drop: (item) => {
+        if ('files' in item) {
+          importExternalFiles(item.files, { tagToApply: null }).catch(
+            () => undefined
+          );
+          return;
+        }
         // H.25 P1-2 mirror: see Quadrant above — O(1) resolveEntry first.
         const sources = item.paths
           .map(
@@ -431,7 +442,7 @@ function UntaggedTray({
         canDrop: monitor.canDrop(),
       }),
     }),
-    [data.entries, data.resolveEntry, onMoveToColumn, readOnly]
+    [data.entries, data.resolveEntry, onMoveToColumn, readOnly, importExternalFiles]
   );
 
   const dropActive = isOver && canDrop;
@@ -484,19 +495,29 @@ function UntaggedTray({
           alignItems: 'flex-start',
         }}
       >
-        {entries.map((entry) => (
-          <Box key={entry.path} sx={{ width: 220, flexShrink: 0 }}>
-            <EntryCard
-              entry={entry}
-              data={data}
-              // H.28 P0-1: same domain menu injection as the quadrant
-              // body — card right-click opens MatrixEntryMenu. `onOpenEntryMenu`
-              // is already a stable useCallback from the parent (P0-4), so it
-              // doubles as the card's renderContextMenu without a wrapper.
-              renderContextMenu={onOpenEntryMenu}
-            />
-          </Box>
-        ))}
+        {entries.length === 0 ? (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ px: 0.5, py: 1 }}
+          >
+            {t('matrixUntaggedEmpty')}
+          </Typography>
+        ) : (
+          entries.map((entry) => (
+            <Box key={entry.path} sx={{ width: 220, flexShrink: 0 }}>
+              <EntryCard
+                entry={entry}
+                data={data}
+                // H.28 P0-1: same domain menu injection as the quadrant
+                // body — card right-click opens MatrixEntryMenu. `onOpenEntryMenu`
+                // is already a stable useCallback from the parent (P0-4), so it
+                // doubles as the card's renderContextMenu without a wrapper.
+                renderContextMenu={onOpenEntryMenu}
+              />
+            </Box>
+          ))
+        )}
       </Box>
     </Box>
   );

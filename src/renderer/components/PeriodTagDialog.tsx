@@ -60,14 +60,29 @@ const NoopTransition = forwardRef<
 /**
  * Same justification as `NoopTransition`, but for the Backdrop slot. The
  * default MUI Backdrop has its own Fade internally; replacing it with a
- * Fragment-backed version skips the reflow entirely. The semi-transparent
- * scrim is preserved via inline `sx` on the parent Box.
+ * plain fixed div skips the reflow entirely. It IS a real scrim — dimmed
+ * background + click target for MUI's backdrop-click close — because the
+ * previous `return null` version left the dialog with no scrim and no
+ * click-outside-to-close (the "parent container scrim" its comment
+ * referenced never existed), while the Modal's focus trap still blocked
+ * clicks on the app behind it.
  */
-function NoopBackdrop(props: { open?: boolean; onClick?: () => void }) {
-  // Render nothing — the dialog's parent container already provides the
-  // scrim via `sx={{ bgcolor: 'rgba(0,0,0,0.4)' }}` styling, so the user
-  // still sees a dimmed background without the transition dance.
-  return null;
+function NoopBackdrop(props: {
+  open?: boolean;
+  onClick?: (event: React.MouseEvent) => void;
+}) {
+  if (!props.open) return null;
+  return (
+    <div
+      data-testid="period-dialog-backdrop"
+      onClick={props.onClick}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      }}
+    />
+  );
 }
 
 /** `YYYY-MM-DD` — the HTML5 date input's native value format. */

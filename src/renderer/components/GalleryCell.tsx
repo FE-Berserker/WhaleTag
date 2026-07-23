@@ -50,6 +50,8 @@ export interface GalleryCellData {
   onOpen?: (entry: DirEntry) => void;
   /** Drop a tag chip onto the tile (single entry or batch when multi-selected). */
   onDropTag?: (entry: DirEntry, tag: string, functionality?: string) => void;
+  /** Right-click → the generic entry context menu (same as list/grid). */
+  onContextEntry?: (entry: DirEntry, x: number, y: number) => void;
   /** When true, tile-level write actions are disabled. */
   readOnly?: boolean;
   /** When false, hide the tag/rating overlay chips for a clean thumbnail view. */
@@ -81,6 +83,7 @@ export default function GalleryCell({
   onSelect,
   onOpen,
   onDropTag,
+  onContextEntry,
   readOnly,
   showTags = true,
   focusIndex,
@@ -176,6 +179,11 @@ export default function GalleryCell({
           });
         }}
         onDoubleClick={() => onOpen?.(entry)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onContextEntry?.(entry, e.clientX, e.clientY);
+        }}
         sx={{
           position: 'relative',
           width: '100%',

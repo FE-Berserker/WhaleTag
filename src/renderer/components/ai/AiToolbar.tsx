@@ -38,6 +38,7 @@ export default function AiToolbar({ usage }: { usage: UsageInfo | null }) {
         sx={{ minWidth: 110, typography: 'caption' }}
         variant="standard"
         disableUnderline
+        inputProps={{ 'aria-label': t('aiModel') }}
       >
         <MenuItem value="sonnet">Sonnet</MenuItem>
         <MenuItem value="opus">Opus</MenuItem>
@@ -56,6 +57,7 @@ export default function AiToolbar({ usage }: { usage: UsageInfo | null }) {
         sx={{ minWidth: 90, typography: 'caption' }}
         variant="standard"
         disableUnderline
+        inputProps={{ 'aria-label': t('aiPermission') }}
       >
         <MenuItem value="normal">{t('aiPermissionNormal')}</MenuItem>
         <MenuItem value="yolo">{t('aiPermissionYolo')}</MenuItem>

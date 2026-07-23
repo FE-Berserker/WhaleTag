@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import {
   Box,
+  Button,
   IconButton,
   Toolbar,
   Tooltip,
@@ -9,6 +10,7 @@ import {
   CircularProgress,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutlineOutlined';
 import SaveIcon from '@mui/icons-material/Save';
 import HistoryIcon from '@mui/icons-material/History';
 import DriveFileRenameOutlineIcon from '@mui/icons-material/DriveFileRenameOutline';
@@ -43,9 +45,12 @@ import {
 } from '-/reducers/extensions';
 import { setMdRenderTheme } from '-/reducers/settings';
 
+/** How long the extension iframe may take to post `ready` before the host
+ *  shows a retry-able failure instead of an indefinite spinner. */
+const READY_TIMEOUT_MS = 12_000;
+
 interface ExtensionHostProps {
-  manifest: ExtensionManifest;
-  filePath: string;
+  manifest: ExtensionManifest;  filePath: string;
   fileContent: string;
   encoding: 'utf8' | 'base64';
   readOnly: boolean;
@@ -125,7 +130,8 @@ export default function ExtensionHost({
   const { t, i18n } = useTranslation();
   const locale = i18n.language;
   const dispatch = useDispatch();
-  const { openWithExtension } = useExtensionContext();
+  const { openWithExtension, requestCloseCurrent, registerSaveCurrent } =
+    useExtensionContext();
   const { refresh } = useDirectoryUI();
   const { refreshTree } = useDirectoryTreeRefresh();
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -137,6 +143,12 @@ export default function ExtensionHost({
     >()
   );
   const [ready, setReady] = useState(false);
+  // Boot watchdog: the iframe must post `ready` within READY_TIMEOUT_MS of
+  // mount, else show a retry-able failure instead of a permanent blank area
+  // (extension crash / CSP block / protocol error all look identical from
+  // the outside). `retryKey` remounts the iframe for a fresh boot.
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
   const [saving, setSaving] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   // Inline-edit (AI rewrite of the editor selection).
@@ -189,6 +201,20 @@ export default function ExtensionHost({
     (s: RootState) => s.settings?.mdImageSubfolder ?? '${filename}.assets'
   );
   const dirty = editState?.dirty ?? false;
+
+  // Boot-watchdog timer: pending until `ready` (or the user retried into a
+  // failure); remounting the iframe (retryKey bump) re-arms it.
+  useEffect(() => {
+    if (ready || loadFailed) return;
+    const timer = setTimeout(() => setLoadFailed(true), READY_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [ready, loadFailed, retryKey]);
+
+  const retryExtensionLoad = () => {
+    setReady(false);
+    setLoadFailed(false);
+    setRetryKey((k) => k + 1);
+  };
 
   const postToExtension = useCallback(
     (message: HostMessage) => {
@@ -336,13 +362,14 @@ export default function ExtensionHost({
   }, [dispatch, filePath]);
 
   const handleSave = useCallback(
-    async (content: string) => {
-      if (readOnly || saving) return;
+    async (content: string): Promise<boolean> => {
+      if (readOnly || saving) return false;
       setSaving(true);
       try {
         await ipcApi.writeFileWithRevision(filePath, content);
         postToExtension({ type: 'savingFile', path: filePath });
         dispatch(setFileEditState(filePath, { dirty: false, saving: false }));
+        return true;
       } catch (e) {
         dispatch(
           setFileEditState(filePath, {
@@ -355,12 +382,57 @@ export default function ExtensionHost({
             message: e instanceof Error ? e.message : String(e),
           })
         );
+        return false;
       } finally {
         setSaving(false);
       }
     },
     [dispatch, filePath, postToExtension, readOnly, saving, t]
   );
+
+  // §unsaved-close — resolver for the in-flight `requestSave` round-trip. Set
+  // by `saveCurrent`, resolved by the `parentSaveDocument` case in onMessage
+  // once the extension hands back its latest content and `handleSave` writes
+  // it. Mirrors `requestSelection`'s pendingSelections pattern (resolver +
+  // timeout) so we don't add a second message listener.
+  const saveResolverRef = useRef<((ok: boolean) => void) | null>(null);
+
+  // Ask the extension to save its current document and wait for the write to
+  // land. Exposed to `requestCloseCurrent` (in the context provider, where
+  // closeView/setActiveView live) via the registered ref. Returns false on
+  // read-only, timeout (15s — covers large-file writes + revision backup), or
+  // write failure; the caller then keeps the view open.
+  const saveCurrent = useCallback(async (): Promise<boolean> => {
+    if (readOnly) return false;
+    return new Promise<boolean>((resolve) => {
+      const resolver = (ok: boolean) => {
+        clearTimeout(timer);
+        resolve(ok);
+      };
+      const timer = setTimeout(() => {
+        if (saveResolverRef.current === resolver) {
+          saveResolverRef.current = null;
+        }
+        resolve(false);
+      }, 15000);
+      saveResolverRef.current = resolver;
+      // If a save is already in flight (toolbar Save clicked a moment ago),
+      // don't fire a second requestSave — the pending parentSaveDocument will
+      // resolve this resolver. Otherwise ask the extension to save.
+      if (!saving) {
+        postToExtension({ type: 'requestSave', path: filePath });
+      }
+    });
+  }, [postToExtension, filePath, readOnly, saving]);
+
+  // Register saveCurrent into the context so requestCloseCurrent can trigger a
+  // save before closing. Cleared on unmount.
+  useEffect(() => {
+    registerSaveCurrent(saveCurrent);
+    return () => {
+      registerSaveCurrent(null);
+    };
+  }, [registerSaveCurrent, saveCurrent]);
 
   // Rename the open file: rename on disk, then reopen under the new path so the
   // editor, toolbar title, and subsequent saves all use it. Blocked while dirty
@@ -516,9 +588,18 @@ export default function ExtensionHost({
       switch (msg.type) {
         case 'ready':
           setReady(true);
+          setLoadFailed(false);
           break;
         case 'parentSaveDocument':
-          handleSave(msg.content).catch(() => undefined);
+          handleSave(msg.content)
+            .then((ok) => {
+              saveResolverRef.current?.(ok);
+              saveResolverRef.current = null;
+            })
+            .catch(() => {
+              saveResolverRef.current?.(false);
+              saveResolverRef.current = null;
+            });
           break;
         case 'requestFileEmbed':
           handleRequestFileEmbed(msg.path, !!msg.isDirectory).catch(
@@ -716,7 +797,12 @@ export default function ExtensionHost({
           </span>
         </Tooltip>
         <Tooltip title={t('close')}>
-          <IconButton size="small" onClick={onClose}>
+          <IconButton
+            size="small"
+            onClick={() => {
+              void requestCloseCurrent();
+            }}
+          >
             <CloseIcon fontSize="small" />
           </IconButton>
         </Tooltip>
@@ -739,6 +825,7 @@ export default function ExtensionHost({
         }}
       >
         <iframe
+          key={retryKey}
           ref={iframeRef}
           title={title}
           src={`whale-extension://${manifest.id}/${manifest.entryPoint}`}
@@ -766,6 +853,41 @@ export default function ExtensionHost({
             border: 'none',
           }}
         />
+        {/* Boot-state overlay: spinner while the extension loads; retry-able
+            failure when it never posts `ready` (crash / CSP block / protocol
+            error). Removed once ready so it never intercepts interaction. */}
+        {!ready ? (
+          <Box
+            sx={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 1.5,
+              bgcolor: 'background.default',
+            }}
+          >
+            {loadFailed ? (
+              <>
+                <ErrorOutlineIcon color="error" />
+                <Typography variant="body2" color="text.secondary">
+                  {t('extLoadFailed')}
+                </Typography>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={retryExtensionLoad}
+                >
+                  {t('extRetry')}
+                </Button>
+              </>
+            ) : (
+              <CircularProgress size={28} />
+            )}
+          </Box>
+        ) : null}
       </Box>
       <PromptDialog
         open={renameOpen}

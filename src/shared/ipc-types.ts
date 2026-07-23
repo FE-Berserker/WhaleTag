@@ -21,6 +21,7 @@ import type {
   AiComponentUninstallResult,
   AiQueryPayload,
   ApprovalDecision,
+  AskUserAnswers,
   StreamChunk,
 } from './ai-types';
 
@@ -473,10 +474,15 @@ export interface WhaleApi {
   aiDiscoverCli: (
     override: string | null
   ) => Promise<{ path: string | null }>;
-  /** Resolve a pushed approval request (from `onAiApprovalRequest`). */
+  /** Resolve a pushed approval request (from `onAiApprovalRequest`). For an
+   *  AskUserQuestion request, pass the user's `answers` with `decision='allow'`.
+   *  For a deny, `note` optionally carries feedback back to the model (plan
+   *  mode's "Request changes"). */
   aiResolveApproval: (
     reqId: string,
-    decision: ApprovalDecision
+    decision: ApprovalDecision,
+    answers?: AskUserAnswers,
+    note?: string
   ) => Promise<{ ok: true }>;
   /** OpenAI-compatible provider key (encrypted; never reveals plaintext). */
   aiSetOpenaiKey: (key: string) => Promise<{ ok: true }>;

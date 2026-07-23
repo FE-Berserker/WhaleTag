@@ -56,6 +56,9 @@ const result = spawnSync(
   electronBin,
   [
     '--test',
+    // node:test's parallel scheduler deadlocks under Electron's single-process
+    // model in this repo — serialize so the full suite runs reliably.
+    '--test-concurrency=1',
     '--require', 'ts-node/register',
     '--require', 'tsconfig-paths/register',
     '--require', path.resolve(ROOT, 'scripts/test-asset-stub.cjs'),

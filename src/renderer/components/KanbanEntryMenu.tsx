@@ -13,7 +13,7 @@ import CheckIcon from '@mui/icons-material/Check';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlined';
 import DateRangeIcon from '@mui/icons-material/DateRange';
 import FlagIcon from '@mui/icons-material/Flag';
-import LaunchIcon from '@mui/icons-material/Launch';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
 import ViewColumnIcon from '@mui/icons-material/ViewColumn';
 
@@ -381,7 +381,7 @@ export default function KanbanEntryMenu({
               }}
             >
               <ListItemIcon>
-                <LaunchIcon fontSize="small" />
+                <OpenInNewIcon fontSize="small" />
               </ListItemIcon>
               <ListItemText>{t('open')}</ListItemText>
             </MenuItem>

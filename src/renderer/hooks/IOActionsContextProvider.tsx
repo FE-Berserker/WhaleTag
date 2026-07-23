@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useConfirmOptional } from '-/components/ConfirmDialogProvider';
 import { useSelector } from 'react-redux';
 
 import { ipcApi } from '-/services/ipc-api';
@@ -132,6 +133,8 @@ export function IOActionsContextProvider({
   const { refresh } = useDirectoryContentContext();
   const { refreshTree } = useDirectoryTreeRefresh();
   const { t } = useTranslation();
+  // Optional: bare-mounted in component tests → window.confirm fallback.
+  const confirm = useConfirmOptional();
   const deleteToTrash = useSelector(
     (s: RootState) => s.settings?.deleteToTrash ?? true
   );
@@ -190,9 +193,13 @@ export function IOActionsContextProvider({
           // explicit confirm (still user-consented, never silent).
           if (!deleteToTrash) throw e;
           if (
-            !window.confirm(
-              t('confirmDeleteTrashFailed', { name: basename(targetPath) })
-            )
+            !(await confirm({
+              message: t('confirmDeleteTrashFailed', {
+                name: basename(targetPath),
+              }),
+              confirmLabel: t('delete'),
+              danger: true,
+            }))
           ) {
             throw e;
           }
@@ -200,7 +207,7 @@ export function IOActionsContextProvider({
         }
         refreshTree(parentDir(targetPath));
       }),
-    [runAndRefresh, deleteToTrash, refreshTree, t]
+    [runAndRefresh, deleteToTrash, refreshTree, t, confirm]
   );
 
   const createFolder = useCallback(

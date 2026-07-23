@@ -456,6 +456,7 @@ image-viewer 11 种格式,jpg/jpeg/png/gif/webp/bmp/avif/tiff/tif/ico/svg;Lightb
 ### 设置面板(8 个分类)
 
 - [ ] 左侧分类导航:`general` / `view` / `keyboard` / `mapique` / `tags` / `notifications` / `ai` / `advanced`
+- [ ] **Ctrl+, / Cmd+, 全局开关设置对话框**(SettingsDialogProvider 监听;扩展 iframe 内按键不触发)
 - [ ] `WorkflowManagerDialog` 从 Settings → Tags & Workflow 进入
 
 ### 通用 General

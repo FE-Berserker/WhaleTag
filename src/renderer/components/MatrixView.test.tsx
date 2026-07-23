@@ -295,7 +295,7 @@ describe('MatrixView #1: structure', () => {
     );
   });
 
-  it('hides the UntaggedTray when no file lacks a quadrant tag', () => {
+  it('keeps the UntaggedTray visible (with an empty hint) when no file lacks a quadrant tag', () => {
     cleanup();
     const entries = [entry('a.txt'), entry('b.txt')];
     const tags = new Map<string, string[]>([
@@ -304,10 +304,14 @@ describe('MatrixView #1: structure', () => {
     ]);
     const data = makeData(entries, tags);
     const { container } = renderMatrix(data);
-    // No untagged files → the "untagged" tray header is not rendered.
+    // The tray stays mounted even with zero untagged files — a tray that
+    // vanishes when empty leaves no drop target to drag a file BACK to
+    // untagged. It shows the empty hint instead of cards.
+    const text = container.textContent ?? '';
+    assert.ok(text.includes('untagged'), 'untagged tray header should stay visible');
     assert.ok(
-      !(container.textContent ?? '').includes('untagged'),
-      'untagged tray should be hidden when no untagged files'
+      text.includes('matrixUntaggedEmpty'),
+      'empty hint should replace the card strip'
     );
   });
 });

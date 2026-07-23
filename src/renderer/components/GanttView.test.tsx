@@ -334,16 +334,21 @@ describe('GanttView #2: Triage', () => {
     assert.ok(triage, 'Triage should render when unscheduled entries exist');
   });
 
-  it('hides Triage when every entry has a period', () => {
+  it('keeps Triage visible (with an empty hint) when every entry has a period', () => {
     const entries = [entry('a.txt')];
     const tags = new Map<string, string[]>([
       ['/root/a.txt', ['in-progress', '20260704-20260706']],
     ]);
     const data = makeData(entries, tags);
     const { container } = renderGantt(data);
-    assert.equal(
-      container.querySelector('[data-testid="gantt-triage"]'),
-      null
+    // The tray stays mounted even with zero unscheduled files — a tray that
+    // vanishes when empty leaves no drop target to drag a bar back to
+    // unscheduled. It shows the empty hint instead of cards.
+    const triage = container.querySelector('[data-testid="gantt-triage"]');
+    assert.ok(triage, 'Triage should stay visible when empty');
+    assert.ok(
+      (triage.textContent ?? '').includes('ganttTriageEmpty'),
+      'empty hint should replace the card strip'
     );
   });
 

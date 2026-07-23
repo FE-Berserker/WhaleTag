@@ -29,6 +29,10 @@ interface GalleryViewProps {
   tagColors?: Record<string, string>;
   groups?: TagGroup[];
   onDropTag?: (entry: DirEntry, tag: string, functionality?: string) => void;
+  /** Right-click a tile → the generic entry context menu (same as list/grid).
+   *  Without this the event bubbles to FileList's blank-area handler and the
+   *  user gets the "new folder/file" background menu for a real file. */
+  onContextEntry?: (entry: DirEntry, x: number, y: number) => void;
   readOnly?: boolean;
   /** Show tag/rating overlay chips on tiles. Defaults to true. */
   showTags?: boolean;
@@ -54,6 +58,7 @@ export default function GalleryView({
   tagColors,
   groups,
   onDropTag,
+  onContextEntry,
   readOnly,
   showTags = true,
 }: GalleryViewProps) {
@@ -191,6 +196,7 @@ export default function GalleryView({
       onSelect,
       onOpen,
       onDropTag,
+      onContextEntry,
       readOnly,
       showTags,
       focusIndex: focusedIndex,
@@ -208,6 +214,7 @@ export default function GalleryView({
       onSelect,
       onOpen,
       onDropTag,
+      onContextEntry,
       readOnly,
       showTags,
       focusedIndex,

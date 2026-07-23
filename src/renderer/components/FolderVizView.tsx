@@ -1,7 +1,9 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   Backdrop,
   Box,
+  Button,
   CircularProgress,
   Divider,
   IconButton,
@@ -570,7 +572,7 @@ export default function FolderVizView({ data }: FolderVizViewProps) {
     const target = nodeCtx.path;
     setNodeCtx(null);
     void ipcApi.revealPath(target).catch((e) => {
-      setError(e instanceof Error ? e.message : String(e));
+      setNotice(e instanceof Error ? e.message : String(e));
     });
   }, [nodeCtx]);
 
@@ -584,7 +586,7 @@ export default function FolderVizView({ data }: FolderVizViewProps) {
       try {
         await ipcApi.setFolderThumbnail(target, src);
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        setNotice(e instanceof Error ? e.message : String(e));
       }
     })();
   }, [nodeCtx]);
@@ -660,7 +662,7 @@ export default function FolderVizView({ data }: FolderVizViewProps) {
     const target = nodeCtx.path;
     setNodeCtx(null);
     void ipcApi.openNative(target).catch((e) => {
-      setError(e instanceof Error ? e.message : String(e));
+      setNotice(e instanceof Error ? e.message : String(e));
     });
   }, [nodeCtx]);
 
@@ -893,7 +895,20 @@ export default function FolderVizView({ data }: FolderVizViewProps) {
       </Stack>
 
       {error ? (
-        <Typography color="error" sx={{ p: 2 }}>{error}</Typography>
+        // Data-load failure: nothing to chart — show the error with a retry
+        // (transient right-click errors go to the Snackbar instead and never
+        // reach this branch).
+        <Alert
+          severity="error"
+          sx={{ m: 2 }}
+          action={
+            <Button color="inherit" size="small" onClick={() => void load()}>
+              {t('extRetry')}
+            </Button>
+          }
+        >
+          {error}
+        </Alert>
       ) : (
         <Box tabIndex={-1} sx={{ flex: 1, minHeight: 0, position: 'relative' }}>
           <ReactECharts

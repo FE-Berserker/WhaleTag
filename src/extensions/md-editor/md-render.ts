@@ -75,42 +75,89 @@ md.use(markedFootnote());
  *   - Single `$` at end of line without a closing `$` — NOT matched,
  *     falls back to plain text (no orphan `$`).
  */
+/**
+ * Escape raw LaTeX source so it is safe to embed both as an HTML
+ * attribute value (`data-katex-source`) and as visible fallback text.
+ * Covers the five characters that break attribute parsing / HTML
+ * structure (`&`, `<`, `>`, `"`, `'`). Shared by the inline + block
+ * renderers below so the escaping rule lives in exactly one place.
+ *
+ * The raw LaTeX is user content. It flows into `data-katex-source`,
+ * which DOMPurify later scrubs (`data-*` and `class` survive the
+ * allow-list). This escape is the first line of defense: it
+ * guarantees the attribute value can't break out of its quote
+ * context no matter what the user typed.
+ */
+function escapeKatexSource(math: string): string {
+  return math
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 md.use({
   extensions: [
     {
       name: 'katexInline',
       level: 'inline',
-      // Find the next unescaped `$` to anchor the tokenizer at.
-      // `[^$]` ensures we don't start at a `$` inside the math itself.
+      // Find the next unescaped `$` to anchor the tokenizer at. We do
+      // NOT require the following char to be non-`$` (the old `[^$]`
+      // rule), so `$$…$$` (display math) in an INLINE context is also
+      // picked up here. That matters for table cells and for `$$x$$`
+      // mid-paragraph: `katexBlock` only fires at the START of a line,
+      // so any `$$` that isn't line-leading used to fall through to
+      // this tokenizer and get mis-parsed as `$` + inline + `$`. See
+      // the table-math tests in md-render.test.ts (§18.3.3).
       start(src: string): number | undefined {
-        const m = /(?<!\\)\$[^$]/.exec(src);
+        const m = /(?<!\\)\$/.exec(src);
         return m?.index;
       },
       tokenizer(src: string) {
-        // Inline: `$...$` (no newlines; that's the block form).
-        const match = /^\$([^$\n]+?)\$(?!\d)/.exec(src);
-        if (!match) return undefined;
+        // Display first: `$$…$$` on a single line. A GFM table cell
+        // can't contain newlines (a row is one source line), so the
+        // multi-line block form can never appear in a cell — the
+        // single-line form here is the only display math reachable in
+        // inline context. `(?!\d)` keeps `$5` / `$$5$$`-style currency
+        // from matching.
+        const display = /^\$\$([^$\n]+?)\$\$(?!\d)/.exec(src);
+        if (display) {
+          return {
+            type: 'katexInline',
+            raw: display[0],
+            math: display[1],
+            displayMode: true,
+          };
+        }
+        // Inline: `$…$` (no newlines; multi-line is the block form).
+        const inline = /^\$([^$\n]+?)\$(?!\d)/.exec(src);
+        if (!inline) return undefined;
         return {
           type: 'katexInline',
-          raw: match[0],
-          math: match[1],
+          raw: inline[0],
+          math: inline[1],
+          displayMode: false,
         };
       },
-      // Renderer runs in the main iframe (NOT the sandbox); it
-      // emits a placeholder with the raw LaTeX as both visible
-      // fallback (`textContent`) and as `data-katex-source` for the
-      // sandbox renderer. Sanitized via DOMPurify (the raw LaTeX
-      // is user content; `escapeHtml` covers `<`, `>`, `&`, `"`,
-      // `'` which are the only chars needed to keep the attribute
-      // safe inside HTML).
+      // Renderer runs in the main iframe (NOT the sandbox); it emits a
+      // placeholder with the raw LaTeX as both visible fallback and as
+      // `data-katex-source` for the sandbox renderer. `displayMode`
+      // selects the block placeholder (carrying `data-katex-display=
+      // "block"`), so the SAME `extractKatexBlocks` + `renderKatex`
+      // pipeline that handles line-leading `$$…$$` also handles
+      // display math inside table cells / mid-paragraph. The output is
+      // later run through DOMPurify, which keeps `data-*` + `class`.
       renderer(token) {
-        const math = (token as unknown as { math: string }).math;
-        const safe = math
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;')
-          .replace(/'/g, '&#39;');
+        const t = token as unknown as { math: string; displayMode?: boolean };
+        const safe = escapeKatexSource(t.math);
+        if (t.displayMode) {
+          return (
+            `<div class="katex katex-block" data-katex-display="block" ` +
+            `data-katex-source="${safe}">` +
+            `<div class="katex-fallback">${safe}</div></div>`
+          );
+        }
         return (
           `<span class="katex katex-inline" data-katex-source="${safe}">` +
           `<span class="katex-fallback">${safe}</span></span>`
@@ -140,12 +187,7 @@ md.use({
       },
       renderer(token) {
         const math = (token as unknown as { math: string }).math;
-        const safe = math
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;')
-          .replace(/'/g, '&#39;');
+        const safe = escapeKatexSource(math);
         return (
           `<div class="katex katex-block" data-katex-display="block" ` +
           `data-katex-source="${safe}">` +
@@ -191,9 +233,16 @@ export function computeBlockLineNumbers(tokens: Token[]): number[] {
   for (const t of tokens) {
     const raw = (t as { raw?: string }).raw ?? '';
     const type = (t as { type?: string }).type;
-    if (type === 'space') {
-      // Blank-line separator — not rendered, but advances the line
-      // counter so the next block starts on the correct line.
+    if (type === 'space' || type === 'footnotes') {
+      // `space` = blank-line separator; `footnotes` = the container token
+      // `markedFootnote` injects at the HEAD of the stream even when the
+      // doc has no footnotes. Neither maps to a top-level rendered element,
+      // so both must be skipped here — otherwise `lineNumbers` grows longer
+      // than the DOM `blocks` array in `parseMarkdown`, and every block
+      // past the injection point is paired with the wrong source line
+      // (table-edit then writes back to the wrong row, or to null and not
+      // at all). We still advance `cur` by their newlines so subsequent
+      // blocks land on the correct line.
       cur += (raw.match(/\n/g) || []).length;
       continue;
     }
@@ -428,12 +477,26 @@ function computeTableRowLine(row: Element, tableLine: number | undefined): numbe
   if (tableLine === undefined) return null;
   const table = row.closest('table');
   if (!table) return null;
-  const rows = Array.from(table.querySelectorAll('tr'));
-  const index = rows.indexOf(row as HTMLTableRowElement);
-  if (index < 0) return null;
-  // First <tr> shares the table's source line; each subsequent <tr> is one
-  // source line further (the separator sits between data rows).
-  return tableLine + index;
+  // The table's `data-source-line` is the HEADER row's source line. A GFM
+  // table is always header + `|---|` separator + data rows, and marked
+  // renders it as <thead><tr>…</tr></thead><tbody><tr/>…</tbody> — the
+  // separator has NO <tr> of its own. So:
+  //   - a THEAD <tr> lives on `tableLine` itself;
+  //   - a TBODY <tr> lives on `tableLine + 2 + tbodyIndex` (+2 skips the
+  //     header row and the separator).
+  // The old `tableLine + index` form assumed one <tr> per source line, so
+  // every tbody row was off by one — typing into a tbody cell wrote back to
+  // the separator line (or, when the block line was also wrong, to null).
+  const section = (row as HTMLElement).parentElement;
+  const tag = section?.tagName;
+  if (tag === 'THEAD') return tableLine;
+  if (tag === 'TBODY') {
+    const tbodyRows = Array.from(section!.querySelectorAll('tr'));
+    const index = tbodyRows.indexOf(row as HTMLTableRowElement);
+    if (index < 0) return null;
+    return tableLine + 2 + index;
+  }
+  return null;
 }
 
 // --- DOMPurify allow-list -------------------------------------------------
@@ -850,8 +913,22 @@ export function resolveLocalImages(
   if (!currentDir) return;
   const imgs = container.querySelectorAll('img[src]');
   imgs.forEach((el) => {
-    const src = el.getAttribute('src');
-    if (!src) return;
+    const rawSrc = el.getAttribute('src');
+    if (!rawSrc) return;
+    // marked percent-encodes non-ASCII / spaces in the emitted <img src>
+    // (`./截图/图.png` -> `./%E6%88%AA%E5%9B%BE/...`). Without reversing it,
+    // `encodeWhaleFileUrl` re-encodes the `%`s (-> `%25E6…`), the main-side
+    // decoder undoes only ONE layer, and fs ends up stat'ing the literal
+    // `%E6%88%AA…` filename — which doesn't exist, so any image whose path
+    // has CJK / spaces / other non-ASCII 404s. decodeURI reverses marked's
+    // encoding (reserved chars like `/` `:` are kept) so the encoder gets a
+    // real path again. A malformed `%` falls back to the raw attribute.
+    let src = rawSrc;
+    try {
+      src = decodeURI(rawSrc);
+    } catch {
+      // malformed percent-escape — leave as-is
+    }
     const resolved = resolveRelativeImagePath(currentDir, src);
     if (resolved === null) return;
     const url = encodeWhaleFileUrl(resolved);
@@ -1174,7 +1251,11 @@ export function extractToc(markdown: string): TocEntry[] {
   const entries: TocEntry[] = [];
   let blockIdx = 0;
   for (const t of tokens) {
-    if ((t as { type?: string }).type === 'space') continue;
+    // Skip the same non-rendering tokens `computeBlockLineNumbers` skips
+    // (space + markedFootnote's injected `footnotes`), so `blockIdx` stays
+    // aligned with `allLines` and the heading id matches `parseMarkdown`'s.
+    const tt = (t as { type?: string }).type;
+    if (tt === 'space' || tt === 'footnotes') continue;
     if ((t as { type?: string }).type === 'heading') {
       const h = t as { depth: number; text: string };
       const level = h.depth;

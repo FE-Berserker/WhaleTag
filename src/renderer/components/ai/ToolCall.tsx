@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Box, IconButton, Typography } from '@mui/material';
+import { useTranslation } from 'react-i18next';
+import { Box, ButtonBase, Typography } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
@@ -27,6 +28,7 @@ function summarize(name: string, input: Record<string, unknown>): string {
 
 /** Collapsible card for a single tool call: name, summary, status, result. */
 export default function ToolCall({ call }: { call: ToolCallInfo }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const status = STATUS_ICON[call.status];
 
@@ -40,17 +42,21 @@ export default function ToolCall({ call }: { call: ToolCallInfo }) {
         overflow: 'hidden',
       }}
     >
-      <Box
+      <ButtonBase
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label={t('aiToggleDetail')}
         sx={{
           display: 'flex',
           alignItems: 'center',
           gap: 1,
           px: 1,
           py: 0.5,
-          cursor: 'pointer',
           bgcolor: 'action.hover',
+          width: '100%',
+          justifyContent: 'flex-start',
+          textAlign: 'left',
         }}
-        onClick={() => setOpen((v) => !v)}
       >
         <BuildIcon fontSize="small" color="action" />
         <Typography variant="caption" sx={{ fontWeight: 'medium' }}>
@@ -64,16 +70,16 @@ export default function ToolCall({ call }: { call: ToolCallInfo }) {
           {summarize(call.name, call.input)}
         </Typography>
         {status}
-        <IconButton size="small" aria-label="toggle detail">
-          <ExpandMoreIcon
-            fontSize="small"
-            sx={{
-              transition: 'transform 0.15s',
-              transform: open ? 'rotate(180deg)' : 'none',
-            }}
-          />
-        </IconButton>
-      </Box>
+        {/* Not an IconButton: the whole header IS the button (nested
+            interactives are invalid + double Tab stops). */}
+        <ExpandMoreIcon
+          fontSize="small"
+          sx={{
+            transition: 'transform 0.15s',
+            transform: open ? 'rotate(180deg)' : 'none',
+          }}
+        />
+      </ButtonBase>
       {open ? (
         <Box sx={{ px: 1, py: 0.75, typography: 'body2' }}>
           <Box

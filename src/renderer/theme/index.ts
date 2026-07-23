@@ -68,6 +68,20 @@ export function createWhaleTheme(
     },
     components: {
       MuiButton: { defaultProps: { disableElevation: true } },
+      // Global keyboard-focus indicator. MUI's default focus feedback is a
+      // near-invisible ripple; only a few views hand-rolled outlines, so Tab
+      // trails were lost across most of the app. One override covers every
+      // ButtonBase descendant (buttons, icon buttons, toggles, list items…).
+      MuiButtonBase: {
+        styleOverrides: {
+          root: {
+            '&.Mui-focusVisible': {
+              outline: `2px solid ${variant.primary}`,
+              outlineOffset: -2,
+            },
+          },
+        },
+      },
     },
   });
 }

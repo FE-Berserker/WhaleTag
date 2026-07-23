@@ -118,6 +118,8 @@
 
 日历 DayCell **不接** `period:` drop(期间属"跨日",日历单格无自然落入)。
 
+> **遮罩(2026-07-22 修)**:`NoopBackdrop` 此前 `return null` —— 对话框无暗化遮罩、点击外部不关闭(注释声称的"父容器 scrim"从不存在),而 Modal 焦点陷阱仍拦截背景点击。现为真实无过渡 scrim(`position:fixed; inset:0; rgba(0,0,0,0.5)`),点外部正常关闭。
+
 对话框状态住在 [src/renderer/containers/MainLayout.tsx](../src/renderer/containers/MainLayout.tsx),`usePeriodTagDialog()` hook 暴露:
 
 ```ts
@@ -151,8 +153,9 @@ closeDialog(): void;
 
 在 chip 上右键打开,编辑**单个标签的元数据**:
 
-- 改颜色(per-tag override)
+- 改颜色(per-tag override;色板为 `<button>` 可键盘聚焦,`aria-pressed` 标示选中)
 - 重命名
+- 保存失败内联显示错误(Alert,对话框保持打开可重试;此前 `catch {}` 静默吞错)
 
 不影响侧栏 / 标签库其它 chip。
 

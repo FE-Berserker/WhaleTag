@@ -92,6 +92,21 @@ export function SettingsDialogProvider({ children }: { children: ReactNode }) {
     if (!open) setRequestedSection(undefined);
   }, [open]);
 
+  // Global Ctrl+, / Cmd+, toggles Settings (VS Code convention). Lives here
+  // (not in the list/grid keybindings map, which is modifier-free by design)
+  // so it works from every perspective. Key events inside an extension
+  // iframe stay in the iframe — editing won't accidentally pop Settings.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === ',' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        setOpen((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   const value: SettingsDialogContextValue = {
     openDialog,
     closeDialog,

@@ -192,6 +192,72 @@ export type ApprovalDecision =
   | 'cancel';
 
 /**
+ * Answers to an `AskUserQuestion` tool call: question text → selected option
+ * label (multi-select answers are joined with `, `; free-text "Other" input
+ * is the answer value itself, never the word "Other"). Carried on the
+ * `ai:resolveApproval` payload when the request was an AskUserQuestion.
+ */
+export type AskUserAnswers = Record<string, string>;
+
+/** One option of an `AskUserQuestion` question (Claude Code tool schema). */
+export interface AskUserQuestionOption {
+  label: string;
+  description?: string;
+  /** Optional preview (only when toolConfig.askUserQuestion.previewFormat set). */
+  preview?: string;
+}
+
+/** One question of an `AskUserQuestion` tool call (1–4 per call). */
+export interface AskUserQuestionItem {
+  question: string;
+  /** Very short chip label (max 12 chars). */
+  header: string;
+  options: AskUserQuestionOption[];
+  multiSelect: boolean;
+}
+
+/**
+ * Leniently parse the `input.questions` array of an `AskUserQuestion` tool
+ * call. Returns `null` when the shape is unusable (caller falls back to the
+ * generic approval view). Tolerates missing option descriptions and coerces
+ * `multiSelect` to a boolean.
+ */
+export function parseAskUserQuestions(
+  input: Record<string, unknown>
+): AskUserQuestionItem[] | null {
+  const raw = input.questions;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const out: AskUserQuestionItem[] = [];
+  for (const q of raw) {
+    if (typeof q !== 'object' || q === null) return null;
+    const { question, header, options, multiSelect } = q as Record<
+      string,
+      unknown
+    >;
+    if (typeof question !== 'string' || !question) return null;
+    if (!Array.isArray(options) || options.length === 0) return null;
+    const opts: AskUserQuestionOption[] = [];
+    for (const o of options) {
+      if (typeof o !== 'object' || o === null) return null;
+      const { label, description, preview } = o as Record<string, unknown>;
+      if (typeof label !== 'string' || !label) return null;
+      opts.push({
+        label,
+        ...(typeof description === 'string' ? { description } : {}),
+        ...(typeof preview === 'string' ? { preview } : {}),
+      });
+    }
+    out.push({
+      question,
+      header: typeof header === 'string' ? header : '',
+      options: opts,
+      multiSelect: multiSelect === true,
+    });
+  }
+  return out;
+}
+
+/**
  * A request pushed to the renderer asking the user to approve a tool call.
  * The renderer resolves it via `ai:resolveApproval` keyed by `reqId`.
  */

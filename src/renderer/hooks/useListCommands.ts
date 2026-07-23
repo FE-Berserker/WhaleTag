@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import type { MutableRefObject } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useConfirm } from '-/components/ConfirmDialogProvider';
 
 import type { DirEntry } from '../../shared/ipc-types';
 import { ipcApi } from '-/services/ipc-api';
@@ -71,7 +72,13 @@ export interface ListCommandsDeps {
   selectedPathsRef: MutableRefObject<Set<string>>;
   bumpSelection: () => void;
   // —— FileList-owned UI sinks ——
-  showNotice: (msg: string) => void;
+  // Severity is carried explicitly (default error) — never inferred from the
+  // localized text downstream.
+  showNotice: (
+    msg: string,
+    severity?: 'success' | 'info' | 'warning' | 'error',
+    opts?: { openTrash?: boolean }
+  ) => void;
   setPackageOpen: (open: boolean) => void;
   setCreateKind: (kind: 'folder' | 'file' | null) => void;
   setCreateWithTag: (
@@ -146,6 +153,7 @@ export interface ListCommands {
  */
 export function useListCommands(deps: ListCommandsDeps): ListCommands {
   const { t } = useTranslation();
+  const confirm = useConfirm();
 
   return useMemo<ListCommands>(() => {
     const d = deps;
@@ -154,7 +162,7 @@ export function useListCommands(deps: ListCommandsDeps): ListCommands {
       const msg = d.deleteToTrash
         ? t('confirmDeleteTrash', { name: entry.name })
         : t('confirmDelete', { name: entry.name });
-      if (!window.confirm(msg)) return;
+      if (!(await confirm({ message: msg, confirmLabel: t('delete'), danger: true }))) return;
       try {
         await d.deleteEntry(entry.path);
         d.setSelected((prev) => {
@@ -162,9 +170,11 @@ export function useListCommands(deps: ListCommandsDeps): ListCommands {
           next.delete(entry.path);
           return next;
         });
-        d.showNotice(
-          d.deleteToTrash ? t('movedToTrash') : t('deletedPermanently')
-        );
+        if (d.deleteToTrash) {
+          d.showNotice(t('movedToTrash'), 'success', { openTrash: true });
+        } else {
+          d.showNotice(t('deletedPermanently'), 'warning');
+        }
       } catch (e) {
         d.showNotice(e instanceof Error ? e.message : String(e));
       }
@@ -265,7 +275,7 @@ export function useListCommands(deps: ListCommandsDeps): ListCommands {
           tags: d.normalize([...current, resolved]),
           ...(description ? { description } : {}),
         });
-        d.showNotice(t('tagsApplied', { count: 1 }));
+        d.showNotice(t('tagsApplied', { count: 1 }), 'success');
       } catch (e) {
         d.showNotice(e instanceof Error ? e.message : String(e));
       }
@@ -292,7 +302,7 @@ export function useListCommands(deps: ListCommandsDeps): ListCommands {
         }
       }
       if (ok > 0) {
-        d.showNotice(t('movedItems', { count: ok }));
+        d.showNotice(t('movedItems', { count: ok }), 'success');
         d.clearSelection();
       }
     };
@@ -300,7 +310,13 @@ export function useListCommands(deps: ListCommandsDeps): ListCommands {
     const handleBulkDelete: ListCommands['handleBulkDelete'] = async () => {
       const targets = d.selectedEntries;
       if (targets.length === 0) return;
-      if (!window.confirm(t('confirmDeleteMany', { count: targets.length })))
+      if (
+        !(await confirm({
+          message: t('confirmDeleteMany', { count: targets.length }),
+          confirmLabel: t('delete'),
+          danger: true,
+        }))
+      )
         return;
       let ok = 0;
       for (const entry of targets) {
@@ -312,9 +328,11 @@ export function useListCommands(deps: ListCommandsDeps): ListCommands {
         }
       }
       if (ok > 0) {
-        d.showNotice(
-          d.deleteToTrash ? t('movedToTrash') : t('deletedPermanently')
-        );
+        if (d.deleteToTrash) {
+          d.showNotice(t('movedToTrash'), 'success', { openTrash: true });
+        } else {
+          d.showNotice(t('deletedPermanently'), 'warning');
+        }
       }
       d.clearSelection();
     };
@@ -376,7 +394,7 @@ export function useListCommands(deps: ListCommandsDeps): ListCommands {
             zipPath
           );
           await d.refresh();
-          d.showNotice(t('packaged', { count: targets.length }));
+          d.showNotice(t('packaged', { count: targets.length }), 'success');
           d.clearSelection();
         } catch (e) {
           d.showNotice(e instanceof Error ? e.message : String(e));
@@ -467,7 +485,7 @@ export function useListCommands(deps: ListCommandsDeps): ListCommands {
       handleNewDrawio,
       handleInvertSelection,
     };
-  }, [deps, t]);
+  }, [deps, t, confirm]);
 }
 
 export type { DirEntry };

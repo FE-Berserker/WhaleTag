@@ -751,3 +751,25 @@ permissionMode 'bypassPermissions' auto-approves every tool call
 **修复**:① [exif.ts](../src/main/exif.ts) 删掉两条 per-file `console.debug`(批量扫描下本来就是刷屏);② [main.ts](../src/main/main.ts) 顶部加全局 EPIPE 守卫 —— `process.stdout/stderr.on('error')` 只吞 EPIPE、其余上抛;GUI 应用丢日志好过崩溃。
 
 **教训**:主进程任何 `console.*`(含 `process.stdout.write` 直写)都是潜在 EPIPE 崩溃点;per-file 调试日志不进库。清场重启(docs/01 §8)只缓解,守卫才是根治。
+
+## 28. 组件在 hooks 之前 early-return → 条件态切换时 hooks 数变化,React 整树崩溃(2026-07-22)
+
+**症状**:Kanban 视角打开 `WorkflowManagerDialog` 删掉最后一个阶段(或反过来,空阶段配置下新增首个),整个视角被 ErrorBoundary 接管,报 `Rendered fewer hooks than expected`。
+
+**根因**:[KanbanView.tsx](../src/renderer/components/KanbanView.tsx) 的 `if (stages.length === 0) return <空态/>` 写在全部 `useMemo`/`useState`/`useCallback` **之前**;`stages.length` 0↔N 切换改变 hooks 数,违反 Rules of Hooks。
+
+**修复**:空态 return 移到所有 hooks 之后(空态下 `WorkflowManagerDialog` 保持挂载,用户可就地补回阶段);回归测试 `KanbanView.test.tsx #2b` 锁住 empty→populated→empty 双向切换。
+
+**教训**:任何"空态提前 return"都必须放在组件 hooks 链末尾(或改为 JSX 条件分支)。MatrixView 本来就是对的;新写视角组件时把空态当一等分支审。
+
+> 同类陷阱(同日修):悬停打开的 MUI 嵌套子菜单,**子 Menu 的 ModalRoot 是 fixed inset-0 全屏层**,会盖住父菜单项制造幻影 mouseLeave/Enter 循环(飞窗闪烁)——flyout root 须 `pointer-events:none`(paper 恢复 `auto`)。详见 [docs/13 §11](./13-security.md) 菜单形态条。
+
+## 29. 用本地化文案前缀匹配推断 toast 严重度 → 五种语言全部误判(2026-07-22)
+
+**症状**:ja/ko 界面下所有 toast(包括真错误)显示绿色"成功";en/zh 下"移动/打包成功"反而显示红色错误。
+
+**根因**:FileList 的 Snackbar 拿 notice 文本去 `startsWith(t('tagsApplied',{count:0}).split('0')[0])` 等判断 severity。ja/ko 译文以 `{{count}}` 开头 → 前缀为空串,`startsWith('')` 恒真(全绿);`movedItems`/`packaged` 不在白名单 → 成功消息落到默认 error(全红)。
+
+**修复**:notice 结构化 `{ text, severity, openTrash? }`,严重度由产生处显式携带(`showNotice(msg, severity?, opts?)`,默认 error;`useListCommands` 同步)。**语义绝不从展示文案反推** —— 尤其文案是多语言可变的。
+
+**同类陷阱**(同日修):DirectoryTree 删除确认固定用 `confirmDelete`("不可撤销")但底层默认走回收站 —— 文案必须与 `deleteToTrash` 实际行为分支一致。

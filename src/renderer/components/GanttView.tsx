@@ -889,8 +889,9 @@ export default function GanttView({ data, stages, onMoveToColumn }: GanttViewPro
       />
 
       {/* Triage: entries with no period. Same horizontal-card tray pattern
-          Matrix's UntaggedTray uses. */}
-      {triage.length > 0 ? (
+          Matrix's UntaggedTray uses. Always rendered — a tray that vanishes
+          when empty leaves no drop target to drag a bar back to unscheduled. */}
+      {(
         <Box
           ref={triageDropRef}
           data-testid="gantt-triage"
@@ -959,18 +960,28 @@ export default function GanttView({ data, stages, onMoveToColumn }: GanttViewPro
               alignItems: 'flex-start',
             }}
           >
-            {triage.map((entry) => (
-              <Box key={entry.path} sx={{ width: 220, flexShrink: 0 }}>
-                <EntryCard
-                  entry={entry}
-                  data={data}
-                  renderContextMenu={openEntryMenu}
-                />
-              </Box>
-            ))}
+            {triage.length === 0 ? (
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ px: 0.5, py: 1 }}
+              >
+                {t('ganttTriageEmpty')}
+              </Typography>
+            ) : (
+              triage.map((entry) => (
+                <Box key={entry.path} sx={{ width: 220, flexShrink: 0 }}>
+                  <EntryCard
+                    entry={entry}
+                    data={data}
+                    renderContextMenu={openEntryMenu}
+                  />
+                </Box>
+              ))
+            )}
           </Box>
         </Box>
-      ) : null}
+      )}
 
       {/* Domain right-click menu. Identical props to the legacy view. */}
       <GanttEntryMenu

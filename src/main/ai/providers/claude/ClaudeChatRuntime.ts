@@ -13,7 +13,7 @@ import {
   createTransformState,
   transformSdkMessage,
 } from './stream/transformSdkMessage';
-import type { ApprovalCallback } from './approvalHandler';
+import type { ApprovalCallback, AskUserCallback } from './approvalHandler';
 import { consumeRecentSpawnExit } from './customSpawn';
 import { hasApiKey } from '../../security/secretStore';
 import { parseEnvironmentVariables } from '../../utils/env';
@@ -133,7 +133,8 @@ export class ClaudeChatRuntime implements AiProvider {
   /** Pre-warm a warm query for the given payload's options (panel-open / switch). */
   prewarm(
     payload: AiQueryPayload,
-    approvalCallback: ApprovalCallback
+    approvalCallback: ApprovalCallback,
+    askUserCallback?: AskUserCallback
   ): void {
     const cliPath = this.getCliPath(payload.settings.cliPath);
     if (!cliPath) return;
@@ -144,6 +145,7 @@ export class ClaudeChatRuntime implements AiProvider {
         cliPath,
         resumeSessionId: payload.sessionId,
         approvalCallback,
+        askUserCallback,
         abortController: controller,
       });
       this.startWarm(this.optionsKey(options), options, controller);
@@ -195,7 +197,8 @@ export class ClaudeChatRuntime implements AiProvider {
 
   async *runTurn(
     payload: AiQueryPayload,
-    approvalCallback: ApprovalCallback
+    approvalCallback: ApprovalCallback,
+    askUserCallback?: AskUserCallback
   ): AsyncGenerator<StreamChunk> {
     const cliPath = this.getCliPath(payload.settings.cliPath);
     if (!cliPath) {
@@ -229,7 +232,13 @@ export class ClaudeChatRuntime implements AiProvider {
     const transformState = createTransformState();
     try {
       const sdk = await loadClaudeSdk();
-      const warm = this.takeWarm(approvalCallback, payload, cliPath, prompt);
+      const warm = this.takeWarm(
+        approvalCallback,
+        payload,
+        cliPath,
+        prompt,
+        askUserCallback
+      );
       let iterator: AsyncIterable<unknown>;
       let liveController: AbortController;
       if (warm) {
@@ -247,6 +256,7 @@ export class ClaudeChatRuntime implements AiProvider {
             cliPath,
             resumeSessionId: payload.sessionId,
             approvalCallback,
+            askUserCallback,
             abortController: controller,
           });
           iterator = sdk.query({ prompt, options });
@@ -260,6 +270,7 @@ export class ClaudeChatRuntime implements AiProvider {
           cliPath,
           resumeSessionId: payload.sessionId,
           approvalCallback,
+          askUserCallback,
           abortController: controller,
         });
         iterator = sdk.query({ prompt, options });
@@ -284,7 +295,13 @@ export class ClaudeChatRuntime implements AiProvider {
 
     // Re-warm for the NEXT turn with the captured sessionId (resume), so the
     // following turn's process is already up. Best-effort.
-    this.prewarmNext(payload, cliPath, approvalCallback, sessionIdForNextPrewarm);
+    this.prewarmNext(
+      payload,
+      cliPath,
+      approvalCallback,
+      sessionIdForNextPrewarm,
+      askUserCallback
+    );
   }
 
   /** Take + clear a matching warm entry, or null if none / mismatch. */
@@ -292,7 +309,8 @@ export class ClaudeChatRuntime implements AiProvider {
     _approvalCallback: ApprovalCallback,
     payload: AiQueryPayload,
     cliPath: string,
-    _prompt: string
+    _prompt: string,
+    _askUserCallback?: AskUserCallback
   ): WarmEntry | null {
     if (!this.warm) return null;
     // Build the options this turn WOULD use, to compute its key for matching.
@@ -302,6 +320,7 @@ export class ClaudeChatRuntime implements AiProvider {
       cliPath,
       resumeSessionId: payload.sessionId,
       approvalCallback: _approvalCallback,
+      askUserCallback: _askUserCallback,
       abortController: controller,
     });
     const key = this.optionsKey(options);
@@ -320,7 +339,8 @@ export class ClaudeChatRuntime implements AiProvider {
     payload: AiQueryPayload,
     cliPath: string,
     approvalCallback: ApprovalCallback,
-    sessionId: string | null
+    sessionId: string | null,
+    askUserCallback?: AskUserCallback
   ): void {
     try {
       const controller = new AbortController();
@@ -329,6 +349,7 @@ export class ClaudeChatRuntime implements AiProvider {
         cliPath,
         resumeSessionId: sessionId,
         approvalCallback,
+        askUserCallback,
         abortController: controller,
       });
       this.startWarm(this.optionsKey(options), options, controller);

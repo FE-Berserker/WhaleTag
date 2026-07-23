@@ -258,7 +258,10 @@ export default function Row(props: RowComponentProps<FileCellData>) {
         e.stopPropagation();
         onContextEntry(entry, e.clientX, e.clientY);
       }}
-      title={desc}
+      // Tooltip shows the description when present, otherwise the full file
+      // name — the name column is noWrap-truncated, so hover is the only way
+      // to read a long name (GridCell already does this).
+      title={desc ?? entry.name}
       sx={{
         pl: 1,
         py: 0,

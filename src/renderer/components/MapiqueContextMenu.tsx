@@ -11,6 +11,7 @@ import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import EditIcon from '@mui/icons-material/Edit';
 import LocationOffIcon from '@mui/icons-material/LocationOff';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlined';
 import SaveIcon from '@mui/icons-material/Save';
 import DriveFileMoveIcon from '@mui/icons-material/DriveFileMove';
 import PhotoLibraryIcon from '@mui/icons-material/PhotoLibrary';
@@ -112,6 +113,8 @@ export interface MapiqueContextMenuProps {
   onEditTags?: (entry: DirEntry) => void;
   onClearGeo?: (entry: DirEntry) => void;
   onCopyCoordinates?: (lat: number, lng: number) => void;
+  /** Delete the right-clicked entry (trash or permanent per settings). */
+  onDelete?: (entries: DirEntry[]) => void;
   onSave?: () => void;
   onSaveAs?: () => void;
   onCopyMap?: () => void;
@@ -140,6 +143,7 @@ export default function MapiqueContextMenu({
   onEditTags,
   onClearGeo,
   onCopyCoordinates,
+  onDelete,
   onSave,
   onSaveAs,
   onCopyMap,
@@ -233,6 +237,23 @@ export default function MapiqueContextMenu({
               <ListItemText>{t('mapCopyCoords')}</ListItemText>
             </MenuItem>
           )}
+
+          {/* Delete lives at the bottom of the entry branch, matching the
+              Kanban/Gantt/Matrix domain menus; gated on canEdit like the
+              other write actions. */}
+          <MenuItem
+            onClick={() => {
+              onDelete?.([entry]);
+              onClose();
+            }}
+            disabled={!canEdit}
+            data-testid="mapique-menu-delete"
+          >
+            <ListItemIcon>
+              <DeleteOutlineIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>{t('delete')}</ListItemText>
+          </MenuItem>
         </>
       )}
 

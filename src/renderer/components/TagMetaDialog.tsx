@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDispatch, useSelector } from 'react-redux';
 import {
+  Alert,
   Box,
   Button,
   Dialog,
@@ -41,6 +42,7 @@ export default function TagMetaDialog({ open, tag, onClose }: TagMetaDialogProps
   const [color, setColor] = useState<string | null>(explicitColor ?? null);
   const [desc, setDesc] = useState(description);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Re-sync local state each time the dialog opens (or the target tag changes).
   useEffect(() => {
@@ -54,13 +56,15 @@ export default function TagMetaDialog({ open, tag, onClose }: TagMetaDialogProps
   const save = async () => {
     if (saving) return;
     setSaving(true);
+    setSaveError(null);
     try {
       dispatch(setTagColor(tag, color));
       await setDescription(tag, desc);
       onClose();
-    } catch {
-      // Keep the dialog open so the user can retry; surface a toast upstream
-      // if needed. (Settings / global snackbar already wired in MainPage.)
+    } catch (e) {
+      // Keep the dialog open so the user can retry; show WHY inline (the
+      // catch used to be empty, so a failed save looked like a no-op).
+      setSaveError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
     }
@@ -94,6 +98,10 @@ export default function TagMetaDialog({ open, tag, onClose }: TagMetaDialogProps
             return (
               <Box
                 key={c}
+                component="button"
+                type="button"
+                aria-label={c}
+                aria-pressed={selected}
                 onClick={() => setColor(c)}
                 sx={{
                   width: 26,
@@ -110,7 +118,9 @@ export default function TagMetaDialog({ open, tag, onClose }: TagMetaDialogProps
                   color: readableTextOn(c),
                   fontSize: 14,
                   fontWeight: 700,
+                  p: 0,
                   '&:hover': { transform: 'scale(1.1)' },
+                  '&:focus-visible': { outline: 2, outlineColor: 'primary.main', outlineStyle: 'solid', outlineOffset: 2 },
                   transition: 'transform 0.1s',
                 }}
               >
@@ -119,6 +129,9 @@ export default function TagMetaDialog({ open, tag, onClose }: TagMetaDialogProps
             );
           })}
           <Box
+            component="button"
+            type="button"
+            aria-label={t('clearColor')}
             onClick={() => setColor(null)}
             title={t('clearColor')}
             sx={{
@@ -133,7 +146,10 @@ export default function TagMetaDialog({ open, tag, onClose }: TagMetaDialogProps
               justifyContent: 'center',
               fontSize: 12,
               color: 'text.secondary',
+              bgcolor: 'background.paper',
+              p: 0,
               '&:hover': { transform: 'scale(1.1)' },
+              '&:focus-visible': { outline: 2, outlineColor: 'primary.main', outlineStyle: 'solid', outlineOffset: 2 },
               transition: 'transform 0.1s',
             }}
           >
@@ -157,6 +173,11 @@ export default function TagMetaDialog({ open, tag, onClose }: TagMetaDialogProps
             if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void save();
           }}
         />
+        {saveError ? (
+          <Alert severity="error" sx={{ mt: 1 }} onClose={() => setSaveError(null)}>
+            {saveError}
+          </Alert>
+        ) : null}
       </DialogContent>
       <DialogActions>
         <Button color="inherit" onClick={onClose} disabled={saving}>

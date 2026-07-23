@@ -599,7 +599,7 @@ export default function TagCloudView({ data }: TagCloudViewProps) {
                     <InputAdornment position="end">
                       <IconButton
                         size="small"
-                        aria-label="clear"
+                        aria-label={t('clear')}
                         onClick={() => setSearch('')}
                       >
                         <CloseIcon fontSize="small" />
@@ -763,7 +763,7 @@ export default function TagCloudView({ data }: TagCloudViewProps) {
         // P1-1: separate empty state when the *filter* (not the underlying data)
         // produced no matches. Distinct message so users don't think the
         // directory is empty when it's just their search that doesn't match.
-        <EmptyHint message={t('tagCloudEmpty')} />
+        <EmptyHint message={t('tagCloudNoMatch')} />
       ) : (
         <Box key="cloud" ref={containerRef} tabIndex={-1} sx={{ flex: 1, minHeight: 0 }}>
           <ReactECharts

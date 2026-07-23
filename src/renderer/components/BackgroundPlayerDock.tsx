@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Box, IconButton, Tooltip } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import { useSelector } from 'react-redux';
@@ -48,6 +49,7 @@ import { AUDIO_TRANSCODE_EXT, isAudioFile } from '../../shared/whale-meta';
 const DOCK_HEIGHT = 64;
 
 export default function BackgroundPlayerDock() {
+  const { t } = useTranslation();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [ready, setReady] = useState(false);
   // Mirror of media-player's volume / muted / playbackRate. We don't enforce
@@ -270,7 +272,7 @@ export default function BackgroundPlayerDock() {
       {/* Hide button. Hosted here (not inside the iframe) so it's always
           reachable even before the iframe finishes booting, and so it can
           trigger the persisted `dismissed` flag in BackgroundPlayerContext. */}
-      <Tooltip title="收起后台播放（队列保留）">
+      <Tooltip title={t('collapseBackgroundPlayer')}>
         <IconButton
           size="small"
           onClick={() => background.hide()}

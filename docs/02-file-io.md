@@ -29,6 +29,8 @@
 | 移动 | `fs:move` 优先 rename;**跨卷 EXDEV** 回退 `fs.copyFile + fs.rm`(确保不静默失败) |
 | 复制 | `fs:copyFile` 二进制复制;sidecar 单独 follow-up 写 |
 | 删除 | 默认走 **`shell.trashItem`**(系统回收站);设置 `deleteToTrash: false` 走 `fs.rm` 永久删除;toast 附"打开回收站"按钮 |
+
+> **Toast 严重度(2026-07-22)**:FileList 的 notice 是结构化 `{ text, severity, openTrash? }`,严重度由产生处显式携带(`showNotice(msg, severity?)`,默认 error)——**不再**从本地化文本前缀匹配推断(旧实现在 ja/ko 下前缀为空串恒真 → 错误全显示绿色成功;en/zh 下 moved/packaged 成功反显示红色)。成功:movedToTrash / deletedPermanently(warning) / tagsApplied / movedItems / packaged / importedItems / folderThumbnail·Background Set·Cleared。
 | 新建 | `createTextFile` / `createDirectory` —— **不覆盖已有**(不可变偏好) |
 | 打开 | 优先内置扩展(dispatch 选 `selectExtension`);无匹配走 `shell.openPath` |
 

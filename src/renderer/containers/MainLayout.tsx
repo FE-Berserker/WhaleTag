@@ -53,8 +53,12 @@ export default function MainLayout() {
   // Narrow viewport: collapse the Sidebar (locations) + DirectoryTree into one
   // tabbed panel so the left side takes a single column (~240px) instead of
   // two (~500px), giving the workspace room. Each renders "embedded" (no own
-  // header — the tab bar below replaces it).
-  const narrow = useMediaQuery('(max-width: 1400px)');
+  // header — the tab bar below replaces it). Also forced when the AI panel is
+  // open: its 380px right column would otherwise squeeze the workspace with
+  // both left columns still up, so opening AI trades the left pair for the
+  // tabbed panel (reverts when the panel closes).
+  const aiOpen = aiEnabled && aiPanelOpen;
+  const narrow = useMediaQuery('(max-width: 1400px)') || aiOpen;
   const [leftTab, setLeftTab] = useState<'locations' | 'tree'>(
     currentLocation ? 'tree' : 'locations'
   );
@@ -67,8 +71,8 @@ export default function MainLayout() {
   // inside FileList). When the AI panel is open, hide the tray so the two
   // "right-side detail" surfaces don't stack; it returns when the panel closes.
   useEffect(() => {
-    if (aiEnabled && aiPanelOpen) dispatch(setTrayVisible(false));
-  }, [aiEnabled, aiPanelOpen, dispatch]);
+    if (aiOpen) dispatch(setTrayVisible(false));
+  }, [aiOpen, dispatch]);
 
   const handleAdd = (name: string, path: string, readOnly: boolean) => {
     dispatch(addLocation(name, path, readOnly));
@@ -228,7 +232,7 @@ export default function MainLayout() {
                 </Box>
                 {backgroundPlayer.visible ? <BackgroundPlayerDock /> : null}
               </Box>
-              {aiEnabled && aiPanelOpen ? (
+              {aiOpen ? (
                 <Suspense fallback={null}>
                   <AiPanel />
                 </Suspense>

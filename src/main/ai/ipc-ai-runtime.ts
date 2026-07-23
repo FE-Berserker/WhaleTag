@@ -19,18 +19,32 @@ import type {
   AiProviderId,
   AiQueryPayload,
   ApprovalDecision,
+  AskUserAnswers,
 } from '../../shared/ai-types';
 import type { AiProvider } from './provider';
-import type { ApprovalCallback } from './providers/claude/approvalHandler';
+import type {
+  ApprovalCallback,
+  ApprovalResult,
+  AskUserCallback,
+} from './providers/claude/approvalHandler';
 import { ClaudeChatRuntime } from './providers/claude/ClaudeChatRuntime';
 import { HttpChatProvider } from './providers/http/HttpChatProvider';
 import { generateTitle } from './titleGen';
 import { generateInlineEdit } from './inlineEdit';
 
+/** Resolution of a pushed `ai:approvalRequest`, keyed by reqId. `answers` is
+ *  set only when the request was an AskUserQuestion (see ApprovalModal);
+ *  `note` is the optional deny feedback (plan mode "Request changes"). */
+interface ApprovalResolution {
+  decision: ApprovalDecision;
+  answers?: AskUserAnswers;
+  note?: string;
+}
+
 /** Pending approval requests, keyed by reqId; resolved by `ai:resolveApproval`. */
 const pendingApprovals = new Map<
   string,
-  (decision: ApprovalDecision) => void
+  (result: ApprovalResolution) => void
 >();
 
 /** Tools the user marked "allow-always" — skip the modal thereafter (process lifetime). */
@@ -74,15 +88,15 @@ function makeApprovalCallback(
   conversationId: string
 ): ApprovalCallback {
   return async (toolName, input, description) => {
-    if (allowAlwaysTools.has(toolName)) return 'allow';
+    if (allowAlwaysTools.has(toolName)) return { decision: 'allow' };
     const reqId = randomUUID();
-    return new Promise<ApprovalDecision>((resolve) => {
-      pendingApprovals.set(reqId, (decision) => {
+    return new Promise<ApprovalResult>((resolve) => {
+      pendingApprovals.set(reqId, ({ decision, note }) => {
         if (decision === 'allow-always') {
           allowAlwaysTools.add(toolName);
-          resolve('allow');
+          resolve({ decision: 'allow' });
         } else {
-          resolve(decision);
+          resolve({ decision, note });
         }
       });
       try {
@@ -96,7 +110,44 @@ function makeApprovalCallback(
       } catch {
         // Sender gone — auto-deny so the turn doesn't hang.
         pendingApprovals.delete(reqId);
-        resolve('deny');
+        resolve({ decision: 'deny' });
+      }
+    });
+  };
+}
+
+/**
+ * AskUserQuestion bridge. The SDK's canUseTool routes the tool call here; we
+ * push the raw `input.questions` to the renderer via the same
+ * `ai:approvalRequest` channel (ApprovalModal detects the tool name and renders
+ * a question UI instead of the generic JSON approval). Resolves to the answers
+ * map, or `null` when the user declined / the renderer went away — the SDK
+ * then sees a clean deny instead of a hang.
+ *
+ * Never auto-allowed and never subject to `allowAlwaysTools`: a question is a
+ * request for input, not a permission decision.
+ */
+function makeAskUserCallback(
+  sender: WebContents,
+  conversationId: string
+): AskUserCallback {
+  return (input) => {
+    const reqId = randomUUID();
+    return new Promise<AskUserAnswers | null>((resolve) => {
+      pendingApprovals.set(reqId, ({ decision, answers }) => {
+        resolve(decision === 'allow' && answers ? answers : null);
+      });
+      try {
+        sender.send('ai:approvalRequest', {
+          reqId,
+          conversationId,
+          toolName: 'AskUserQuestion',
+          input,
+          description: 'AskUserQuestion',
+        });
+      } catch {
+        pendingApprovals.delete(reqId);
+        resolve(null);
       }
     });
   };
@@ -108,10 +159,15 @@ function makeApprovalCallback(
  */
 function streamTurn(event: IpcMainInvokeEvent, payload: AiQueryPayload): void {
   const approvalCallback = makeApprovalCallback(event.sender, payload.conversationId);
+  const askUserCallback = makeAskUserCallback(event.sender, payload.conversationId);
   const provider = providerFor(payload.settings.provider);
   void (async () => {
     try {
-      for await (const chunk of provider.runTurn(payload, approvalCallback)) {
+      for await (const chunk of provider.runTurn(
+        payload,
+        approvalCallback,
+        askUserCallback
+      )) {
         pushChunk(event, payload.conversationId, chunk);
       }
     } catch (e) {
@@ -146,18 +202,34 @@ export function registerAiRuntimeHandlers(): void {
         event.sender,
         payload.conversationId
       );
-      getClaudeRuntime().prewarm(payload, approvalCallback);
+      const askUserCallback = makeAskUserCallback(
+        event.sender,
+        payload.conversationId
+      );
+      getClaudeRuntime().prewarm(payload, approvalCallback, askUserCallback);
     }
     return { ok: true };
   });
 
   ipcMain.handle(
     'ai:resolveApproval',
-    (_event, args: { reqId: string; decision: ApprovalDecision }) => {
+    (
+      _event,
+      args: {
+        reqId: string;
+        decision: ApprovalDecision;
+        answers?: AskUserAnswers;
+        note?: string;
+      }
+    ) => {
       const resolver = pendingApprovals.get(args.reqId);
       if (resolver) {
         pendingApprovals.delete(args.reqId);
-        resolver(args.decision);
+        resolver({
+          decision: args.decision,
+          answers: args.answers,
+          note: args.note,
+        });
       }
       return { ok: true };
     }

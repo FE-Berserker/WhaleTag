@@ -269,11 +269,20 @@ export default function SearchBar() {
               ),
               endAdornment: query ? (
                 <InputAdornment position="end">
-                  <IconButton size="small" onClick={clear}>
-                    <CloseIcon fontSize="small" />
-                  </IconButton>
+                  <Tooltip title={t('clear')}>
+                    <IconButton
+                      size="small"
+                      aria-label={t('clear')}
+                      onClick={clear}
+                    >
+                      <CloseIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
                 </InputAdornment>
               ) : null,
+            },
+            htmlInput: {
+              'aria-label': contentMode ? t('searchContents') : t('search'),
             },
           }}
         />

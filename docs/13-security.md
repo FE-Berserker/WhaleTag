@@ -84,6 +84,8 @@
 
 用户在设置里录入命令行模板(如 `python process.py ${path}`),右键文件/文件夹 → "命令" 子菜单运行,弹**新终端窗口**显示输出。本地优先 power-user 能力,安全模型见 [src/main/shell-command.ts](../src/main/shell-command.ts):
 
+- **菜单形态(2026-07-22)**:"命令"是右键菜单里**单项父条目**(Terminal 图标 + 右侧 ▸),悬停/点击在其右缘开**飞窗子菜单**列出全部适用命令(各带 Terminal 图标,模板作原生 tooltip)——命令再多也不撑长主菜单。实现在 [EntryContextMenu.tsx](../src/renderer/components/EntryContextMenu.tsx)(flyout 复用 GanttEntryMenu 的兄弟 `<Menu anchorEl>` 模式,悬停开 + 250ms 关窗宽限计时器防斜线误关;flyout Modal root 须设 `pointer-events:none`(paper 恢复 `auto`),否则全屏 root 层盖住父菜单项 → 幻影 mouseLeave/Enter 循环 = 飞窗闪烁)。
+
 - **opt-in**:模板存 redux-persist `settings.userCommands`(默认空 `[]`),未配置则右键菜单不显示"命令"子菜单。
 - **路径不可信,模板可信**:模板是用户显式录入;被替换进去的**文件路径**不可信(文件名可能含 `&` `|` `"` `%` 元字符 → 命令注入)。
 - **主进程做替换 + 引号**:renderer 只传 `{ template, targetPath }`;主进程 `runUserCommand` 把 `${path}` / `${dir}` / `${name}` 替换成**加好引号的值**再拼命令。renderer 永不构造 shell 字符串。

@@ -12,7 +12,11 @@ import type { Options } from '@anthropic-ai/claude-agent-sdk';
 
 import type { AiQueryPayload, ManagedMcpServer } from '../../../../shared/ai-types';
 import { buildSystemPrompt } from '../../prompt';
-import { createCanUseTool, type ApprovalCallback } from './approvalHandler';
+import {
+  createCanUseTool,
+  type ApprovalCallback,
+  type AskUserCallback,
+} from './approvalHandler';
 import { createCustomSpawnFunction } from './customSpawn';
 import { getEnhancedPath, parseEnvironmentVariables } from '../../utils/env';
 import { getApiKey } from '../../security/secretStore';
@@ -40,6 +44,10 @@ export interface BuildOptionsInput {
   resumeSessionId: string | null;
   /** Phase A: auto-allow callback. Phase B: IPC approval modal callback. */
   approvalCallback: ApprovalCallback;
+  /** AskUserQuestion bridge: pushes the questions to the renderer and awaits
+   *  the user's answers. Optional — when absent, AskUserQuestion is denied
+   *  with a clear message instead of hanging the turn. */
+  askUserCallback?: AskUserCallback;
   /** Abort controller for cancel; also wired into the custom spawn. */
   abortController: AbortController;
 }
@@ -49,6 +57,7 @@ export interface BuildOptionsInput {
 export function buildClaudeOptions(input: BuildOptionsInput): Options {
   const { payload, cliPath, resumeSessionId, approvalCallback, abortController } =
     input;
+  const { askUserCallback } = input;
   const { settings, cwd, locationRoots } = payload;
 
   const readOnlyRoots = locationRoots
@@ -109,7 +118,12 @@ export function buildClaudeOptions(input: BuildOptionsInput): Options {
     // and tools fall through to the CLI's own permission path, which returns a
     // malformed deny for un-allowed MCP tools → the SDK validator throws.
     allowDangerouslySkipPermissions: settings.permissionMode === 'yolo',
-    canUseTool: createCanUseTool(approvalCallback, guardCtx, settings.permissionMode),
+    canUseTool: createCanUseTool(
+      approvalCallback,
+      guardCtx,
+      settings.permissionMode,
+      askUserCallback
+    ),
     // 'yolo' = full autonomy: bypass claude.exe's OWN permission checks too
     // (it otherwise blocks high-risk Bash like `python -c` / redirections at the
     // schema level, which our canUseTool can't override). normal/plan keep the

@@ -62,6 +62,8 @@ interface PropertiesTrayProps {
   onWidthChange: (width: number) => void;
   onOpen: (entry: DirEntry) => void;
   onDelete: (entry: DirEntry) => void;
+  /** Failure sink for silent-on-success saves (description blur-save). */
+  onError?: (msg: string) => void;
 }
 
 const MIN_WIDTH = 260;
@@ -204,6 +206,7 @@ export default function PropertiesTray({
   onWidthChange,
   onOpen,
   onDelete,
+  onError,
 }: PropertiesTrayProps) {
   const { t } = useTranslation();
   // H.24 R1: tagsByName/descByName now live on DirectoryContentContext
@@ -290,8 +293,14 @@ export default function PropertiesTray({
     if (!single) return;
     const current = descByName.get(single.path) ?? '';
     if (desc.trim() === current.trim()) return;
-    await save(single, { description: desc.trim() });
-  }, [single, desc, descByName, save]);
+    try {
+      await save(single, { description: desc.trim() });
+    } catch (e) {
+      // Blur-save is otherwise silent — a failure must surface somewhere
+      // (and must not become an unhandled rejection from onBlur).
+      onError?.(e instanceof Error ? e.message : String(e));
+    }
+  }, [single, desc, descByName, save, onError]);
 
   const handleAddTag = useCallback(
     (tag: string) => {

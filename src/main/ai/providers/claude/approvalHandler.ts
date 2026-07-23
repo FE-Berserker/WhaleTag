@@ -16,7 +16,7 @@ import type {
   PermissionResult,
 } from '@anthropic-ai/claude-agent-sdk';
 
-import type { ApprovalDecision } from '../../../../shared/ai-types';
+import type { ApprovalDecision, AskUserAnswers } from '../../../../shared/ai-types';
 import {
   checkReadOnlyGuard,
   type ReadOnlyGuardContext,
@@ -26,7 +26,25 @@ export type ApprovalCallback = (
   toolName: string,
   input: Record<string, unknown>,
   description: string
-) => Promise<ApprovalDecision>;
+) => Promise<ApprovalResult>;
+
+/** The user's verdict on one approval prompt, plus an optional free-text
+ *  note. The note is forwarded to the model as the deny message (plan mode's
+ *  "Request changes" uses it to say WHAT to change). */
+export interface ApprovalResult {
+  decision: ApprovalDecision;
+  note?: string;
+}
+
+/**
+ * Ask the user an `AskUserQuestion` tool call's questions. `input` is the raw
+ * tool input (`{ questions: [...] }`). Returns the answers map
+ * (question text → selected label(s)), or `null` when the user declined /
+ * the requester went away.
+ */
+export type AskUserCallback = (
+  input: Record<string, unknown>
+) => Promise<AskUserAnswers | null>;
 
 /** Provider-neutral allow/deny decision. */
 export type ToolDecision =
@@ -83,12 +101,16 @@ export async function decideToolCall(
     return { behavior: 'allow' };
   }
   const description = getActionDescription(toolName, input);
-  const decision = await approvalCallback(toolName, input, description);
+  const { decision, note } = await approvalCallback(toolName, input, description);
   if (decision === 'deny' || decision === 'cancel') {
     return {
       behavior: 'deny',
       message:
-        decision === 'cancel' ? 'User interrupted.' : 'User denied this action.',
+        decision === 'cancel'
+          ? 'User interrupted.'
+          : note?.trim()
+            ? `User requested changes: ${note.trim()}`
+            : 'User denied this action.',
       ...(decision === 'cancel' ? { interrupt: true } : {}),
     };
   }
@@ -98,9 +120,36 @@ export async function decideToolCall(
 export function createCanUseTool(
   approvalCallback: ApprovalCallback,
   guardCtx: ReadOnlyGuardContext,
-  permissionMode?: 'yolo' | 'plan' | 'normal'
+  permissionMode?: 'yolo' | 'plan' | 'normal',
+  askUserCallback?: AskUserCallback
 ): CanUseTool {
   return async (toolName, input): Promise<PermissionResult> => {
+    // AskUserQuestion is not a permission decision — it is the model asking the
+    // user a multiple-choice question. It MUST be answered with
+    // `updatedInput.answers`; a bare allow without updatedInput is rejected by
+    // the CLI (< 2.1.207) and carries no answers on any version, which is why
+    // the generic approval modal can never satisfy it. Intercept before the
+    // guard/yolo/read-tool shortcuts (none apply to a pure question tool).
+    // Note: in 'yolo' the SDK shadows canUseTool entirely (bypassPermissions),
+    // so this never fires there — the CLI auto-denies questions in that mode.
+    if (toolName === 'AskUserQuestion') {
+      if (!askUserCallback) {
+        return {
+          behavior: 'deny',
+          message:
+            'AskUserQuestion is not available in this context. Proceed with a reasonable default and note the assumption for the user.',
+        };
+      }
+      const answers = await askUserCallback(input);
+      if (!answers) {
+        return {
+          behavior: 'deny',
+          message:
+            'The user declined to answer. Proceed with a reasonable default and note the assumption, or ask in plain text.',
+        };
+      }
+      return { behavior: 'allow', updatedInput: { ...input, answers } };
+    }
     const decision = await decideToolCall(
       toolName,
       input,

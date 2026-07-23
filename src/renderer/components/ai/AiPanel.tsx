@@ -29,6 +29,7 @@ import { ipcApi } from '-/services/ipc-api';
 import { useAiStream } from './useAiStream';
 import MessageRenderer from './MessageRenderer';
 import ApprovalModal from './ApprovalModal';
+import { useConfirm } from '-/components/ConfirmDialogProvider';
 import AiToolbar from './AiToolbar';
 import AiTabs from './AiTabs';
 
@@ -67,13 +68,17 @@ export default function AiPanel() {
   const { currentLocation } = useCurrentLocationContext();
   const { selectedEntries } = useFileSelectionContext();
   const { viewMode } = useDirectoryUI();
-  const { messages, streaming, error, usage, activeId, send, cancel } = useAiStream();
+  const { messages, streaming, error, clearError, usage, activeId, send, cancel } = useAiStream();
   const [input, setInput] = useState('');
   const [attachEnabled, setAttachEnabled] = useState(true);
   const hasConversations = useSelector(
     (s: RootState) => Object.keys(s.ai.conversations).length > 0
   );
   const scrollRef = useRef<HTMLDivElement>(null);
+  const confirm = useConfirm();
+  // Follow streaming output only while the user is already near the bottom —
+  // scrolling up to read history must not yank the view back on every chunk.
+  const nearBottomRef = useRef(true);
 
   // The single selected file becomes the AI's "current note" when attachment is
   // on. No selection or multi-selection → nothing attached.
@@ -101,16 +106,18 @@ export default function AiPanel() {
     }
   }, [hasConversations, dispatch]);
 
-  // Keep the latest message in view as it streams.
+  // Keep the latest message in view as it streams — but only when the user
+  // hasn't scrolled up. Sending a message always re-engages follow mode.
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && nearBottomRef.current) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
   const handleSend = async () => {
     const text = input.trim();
     if (!text || streaming) return;
     setInput('');
+    nearBottomRef.current = true;
     let attachment: { path: string; content?: string } | null = null;
     if (attachedFile) {
       attachment = { path: attachedFile.path };
@@ -185,7 +192,17 @@ export default function AiPanel() {
 
       <AiTabs />
 
-      <Box ref={scrollRef} sx={{ flex: 1, overflowY: 'auto', p: 1.5 }}>
+      <Box
+        ref={scrollRef}
+        onScroll={() => {
+          const el = scrollRef.current;
+          if (el) {
+            nearBottomRef.current =
+              el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+          }
+        }}
+        sx={{ flex: 1, overflowY: 'auto', p: 1.5 }}
+      >
         {messages.length === 0 ? (
           <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
             {currentLocation
@@ -200,8 +217,8 @@ export default function AiPanel() {
                 message={m}
                 onRewind={
                   activeId && !streaming
-                    ? (id) => {
-                        if (window.confirm(t('aiRewindConfirm'))) {
+                    ? async (id) => {
+                        if (await confirm({ message: t('aiRewindConfirm') })) {
                           dispatch(rewindConversation(activeId, id));
                         }
                       }
@@ -225,7 +242,7 @@ export default function AiPanel() {
         <Alert
           severity="error"
           sx={{ mx: 1, mb: 0.5, alignItems: 'flex-start' }}
-          onClose={() => undefined}
+          onClose={clearError}
         >
           {/* pre-wrap so multi-line claude.exe stderr (joined with \n upstream)
               renders as separate lines instead of collapsing to one. */}
@@ -283,7 +300,9 @@ export default function AiPanel() {
           disabled={!currentLocation}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            // isComposing: CJK IME users press Enter to commit the candidate
+            // — that must not send the half-composed text.
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               handleSend();
             }

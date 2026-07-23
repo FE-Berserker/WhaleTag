@@ -53,6 +53,7 @@ import { ipcApi } from '-/services/ipc-api';
 import { DND_TYPE_LOCATION, type LocationDragItem } from '-/services/dnd';
 import type { WhaleLocation } from '../../shared/ipc-types';
 import { useSettingsDialog } from '-/components/SettingsDialogProvider';
+import { useConfirm } from '-/components/ConfirmDialogProvider';
 import TagGroups from '-/components/TagGroups';
 import TagLibrary from '-/components/TagLibrary';
 
@@ -251,13 +252,21 @@ function LocationRow({
         // Suppress MUI ListItemButton's default selected / hover / active / focus
         // background tints — user reports a persistent grey shadow on the
         // selected location row. Current location is signalled by the folder
-        // icon + the breadcrumb in the file area instead of a row tint.
+        // icon (open vs closed) + the breadcrumb in the file area instead of
+        // a row tint. Focus keeps a primary outline so keyboard navigation
+        // stays visible without re-introducing the grey wash.
         '&.Mui-selected, &.Mui-selected:hover, &:hover, &:active, &:focus, &.Mui-focusVisible':
           { backgroundColor: 'transparent' },
+        '&.Mui-focusVisible': {
+          outline: 2,
+          outlineColor: 'primary.main',
+          outlineStyle: 'solid',
+          outlineOffset: -2,
+        },
       }}
     >
       <ListItemIcon>
-        <FolderIcon />
+        {selected ? <FolderOpenIcon color="primary" /> : <FolderIcon />}
       </ListItemIcon>
       <ListItemText
         primary={loc.name}
@@ -325,6 +334,7 @@ export default function Sidebar({ onAddLocation, embedded = false }: SidebarProp
     (s: RootState) => s.settings?.taskReminderLocationId ?? null
   );
   const { currentLocation, openLocation } = useCurrentLocationContext();
+  const confirm = useConfirm();
   const [ctxMenu, setCtxMenu] = useState<{
     x: number;
     y: number;
@@ -380,8 +390,14 @@ export default function Sidebar({ onAddLocation, embedded = false }: SidebarProp
     return () => document.removeEventListener('contextmenu', handleContextMenu);
   }, [ctxMenu, emptyCtxMenu]);
 
-  const handleRemove = (id: string, name: string) => {
-    if (window.confirm(t('confirmRemoveLocation', { name }))) {
+  const handleRemove = async (id: string, name: string) => {
+    if (
+      await confirm({
+        message: t('confirmRemoveLocation', { name }),
+        confirmLabel: t('remove'),
+        danger: true,
+      })
+    ) {
       dispatch(removeLocation(id));
     }
   };

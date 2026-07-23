@@ -12,10 +12,9 @@ import {
   executeTool,
   type ParsedToolCall,
 } from './tools';
-import { decideToolCall } from '../claude/approvalHandler';
+import { decideToolCall, type ApprovalResult } from '../claude/approvalHandler';
 import { setAllowedRoots } from '../../../allowed-roots';
 import { META_DIR } from '../../../../shared/whale-meta';
-import type { ApprovalDecision } from '../../../../shared/ai-types';
 
 let tmp: string;
 
@@ -424,8 +423,8 @@ describe('executeTool — apply_tag', () => {
 
 describe('decideToolCall', () => {
   const guardCtx = { readOnlyRoots: [], cwd: tmp };
-  const allowCb = async (): Promise<ApprovalDecision> => 'allow';
-  const denyCb = async (): Promise<ApprovalDecision> => 'deny';
+  const allowCb = async (): Promise<ApprovalResult> => ({ decision: 'allow' });
+  const denyCb = async (): Promise<ApprovalResult> => ({ decision: 'deny' });
 
   it('allows when the approval callback allows', async () => {
     const d = await decideToolCall('read_file', { path: '/x' }, guardCtx, allowCb);
@@ -446,7 +445,7 @@ describe('decideToolCall', () => {
       roCtx,
       async () => {
         asked = true;
-        return 'allow';
+        return { decision: 'allow' as const };
       }
     );
     assert.equal(d.behavior, 'deny');
@@ -483,7 +482,7 @@ describe('decideToolCall', () => {
       roCtx,
       async () => {
         asked = true;
-        return 'allow';
+        return { decision: 'allow' as const };
       }
     );
     assert.equal(d.behavior, 'deny');

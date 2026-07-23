@@ -124,9 +124,9 @@ const SORT_KEYS: SortKey[] = ['name', 'size', 'modified', 'extension'];
  */
 const FROZEN_NOW = new Date(0);
 
-function copyDefaultName(name: string): string {
+function copyDefaultName(name: string, suffix: string): string {
   const { base, ext } = splitNameExt(name);
-  return `${base} - copy${ext || ''}`;
+  return `${base} ${suffix}${ext || ''}`;
 }
 
 /** H.23 P1-3: density preset → px row height. Single source of truth. */
@@ -423,7 +423,25 @@ export default function FileList() {
   const [renameTarget, setRenameTarget] = useState<DirEntry | null>(null);
   const [copyTarget, setCopyTarget] = useState<DirEntry | null>(null);
   const [packageOpen, setPackageOpen] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  // Structured notice: severity is decided at the call site, never inferred
+  // from the localized text (prefix-matching translations mislabeled error
+  // toasts as success in ja/ko and success toasts as errors in en/zh).
+  const [notice, setNotice] = useState<{
+    text: string;
+    severity: 'success' | 'info' | 'warning' | 'error';
+    /** Show the "open trash" action button. */
+    openTrash?: boolean;
+  } | null>(null);
+  // Reporter for success/warning/info + every error path (`showNotice(msg)`
+  // defaults to error). `setNotice` itself stays for the close handlers.
+  const showNotice = useCallback(
+    (
+      text: string,
+      severity: 'success' | 'info' | 'warning' | 'error' = 'error',
+      opts?: { openTrash?: boolean }
+    ) => setNotice({ text, severity, ...opts }),
+    []
+  );
   // Context menu: entry === null means a right-click on blank space.
   const [ctxMenu, setCtxMenu] = useState<{
     x: number;
@@ -715,7 +733,7 @@ export default function FileList() {
       // bump fn to the hook. Avoids an O(n) re-derive per click.
       selectedPathsRef,
       bumpSelection,
-      showNotice: setNotice,
+      showNotice,
       currentLocation,
       currentDirectoryPath,
       deleteToTrash,
@@ -780,11 +798,11 @@ export default function FileList() {
       });
       if (manifest) {
         openWithExtension(entry, manifest).catch((e: unknown) =>
-          setNotice(e instanceof Error ? e.message : String(e))
+          showNotice(e instanceof Error ? e.message : String(e))
         );
       } else {
         openNative(entry.path).catch((e: unknown) =>
-          setNotice(e instanceof Error ? e.message : String(e))
+          showNotice(e instanceof Error ? e.message : String(e))
         );
       }
     }
@@ -807,7 +825,7 @@ export default function FileList() {
     try {
       await renameEntry(target.path, newName);
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e));
+      showNotice(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -834,7 +852,7 @@ export default function FileList() {
       try {
         await renameEntry(entry.path, newName);
       } catch (e) {
-        setNotice(e instanceof Error ? e.message : String(e));
+        showNotice(e instanceof Error ? e.message : String(e));
       }
     },
     [renameEntry]
@@ -847,7 +865,7 @@ export default function FileList() {
     try {
       await copyEntry(target.path, newName);
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e));
+      showNotice(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -875,10 +893,10 @@ export default function FileList() {
         tagToApply,
       });
       if (copied > 0) {
-        setNotice(t('importedItems', { count: copied }));
-      } else if (errors.length) setNotice(errors[0]);
+        showNotice(t('importedItems', { count: copied }), 'success');
+      } else if (errors.length) showNotice(errors[0]);
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e));
+      showNotice(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -936,7 +954,7 @@ export default function FileList() {
         .filter(Boolean) as { entry: DirEntry; meta: SidecarMeta }[];
       if (updates.length === 0) return;
       void saveMany(updates).catch((e: unknown) =>
-        setNotice(e instanceof Error ? e.message : String(e))
+        showNotice(e instanceof Error ? e.message : String(e))
       );
     },
     [
@@ -967,7 +985,7 @@ export default function FileList() {
         tags: normalize([...nextTags, formatGeoTag(lat, lng)]),
         ...(description ? { description } : {}),
       }).catch((e: unknown) =>
-        setNotice(e instanceof Error ? e.message : String(e))
+        showNotice(e instanceof Error ? e.message : String(e))
       );
     },
     [tagsByName, descByName, normalize, save]
@@ -989,7 +1007,7 @@ export default function FileList() {
         tags: normalize([...withoutGeoTags(current), formatGeoTag(lat, lng)]),
         ...(description ? { description } : {}),
       }).catch((e: unknown) =>
-        setNotice(e instanceof Error ? e.message : String(e))
+        showNotice(e instanceof Error ? e.message : String(e))
       );
     },
     [currentLocation, tagsByName, descByName, normalize, save]
@@ -1004,7 +1022,7 @@ export default function FileList() {
         tags: withoutGeoTags(current),
         ...(description ? { description } : {}),
       }).catch((e: unknown) =>
-        setNotice(e instanceof Error ? e.message : String(e))
+        showNotice(e instanceof Error ? e.message : String(e))
       );
     },
     [currentLocation, tagsByName, descByName, save]
@@ -1026,7 +1044,7 @@ export default function FileList() {
         tags: normalize([...current, resolved]),
         ...(description ? { description } : {}),
       }).catch((e: unknown) =>
-        setNotice(e instanceof Error ? e.message : String(e))
+        showNotice(e instanceof Error ? e.message : String(e))
       );
     },
     [currentLocation, tagsByName, descByName, normalize, save, now]
@@ -1042,7 +1060,7 @@ export default function FileList() {
         tags: current.filter((tg) => tg !== tag),
         ...(description ? { description } : {}),
       }).catch((e: unknown) =>
-        setNotice(e instanceof Error ? e.message : String(e))
+        showNotice(e instanceof Error ? e.message : String(e))
       );
     },
     [currentLocation, tagsByName, descByName, save]
@@ -1061,7 +1079,7 @@ export default function FileList() {
         tags: normalizeSmartTags([...kept, dateKey]),
         ...(description ? { description } : {}),
       }).catch((e: unknown) =>
-        setNotice(e instanceof Error ? e.message : String(e))
+        showNotice(e instanceof Error ? e.message : String(e))
       );
     },
     [currentLocation, tagsByName, descByName, save]
@@ -1082,7 +1100,7 @@ export default function FileList() {
         tags: normalizeSmartTags(kept),
         ...(description ? { description } : {}),
       }).catch((e: unknown) =>
-        setNotice(e instanceof Error ? e.message : String(e))
+        showNotice(e instanceof Error ? e.message : String(e))
       );
     },
     [currentLocation, tagsByName, descByName, save]
@@ -1200,7 +1218,7 @@ export default function FileList() {
         }
         if (!target) target = visible[0];
         if (!target) {
-          setNotice(t('noRowToRename'));
+          showNotice(t('noRowToRename'), 'info');
           return;
         }
         // Keep the keyboard cursor on the row we just started renaming so
@@ -1614,6 +1632,7 @@ export default function FileList() {
                 // dashed outline. command-layer defense also lives in
                 // `commands.handleDropTag` (see useListCommands.ts).
                 onDropTag={commands.handleDropTag}
+                onContextEntry={onContextEntry}
                 readOnly={!!currentLocation?.isReadOnly}
                 showTags={galleryShowTags}
               />
@@ -1678,6 +1697,7 @@ export default function FileList() {
               onWidthChange={(w) => dispatch(setTrayWidth(w))}
               onOpen={handleOpen}
               onDelete={commands.handleDelete}
+              onError={(msg) => showNotice(msg)}
             />
           )}
         </Box>
@@ -1696,7 +1716,7 @@ export default function FileList() {
         open={copyTarget !== null}
         title={t('copy')}
         label={t('name')}
-        defaultValue={copyTarget ? copyDefaultName(copyTarget.name) : ''}
+        defaultValue={copyTarget ? copyDefaultName(copyTarget.name, t('copySuffix')) : ''}
         onConfirm={handleCopyConfirm}
         onClose={() => setCopyTarget(null)}
       />
@@ -1752,19 +1772,11 @@ export default function FileList() {
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       >
         <Alert
-          severity={
-            notice?.startsWith(t('tagsApplied', { count: 0 }).split('0')[0]) ||
-            notice?.startsWith(t('movedToTrash')) ||
-            notice?.startsWith(t('importedItems', { count: 0 }).split('0')[0])
-              ? 'success'
-              : notice?.startsWith(t('deletedPermanently'))
-                ? 'warning'
-                : 'error'
-          }
+          severity={notice.severity}
           variant="filled"
           onClose={() => setNotice(null)}
           action={
-            notice === t('movedToTrash') ? (
+            notice.openTrash ? (
               <Button
                 color="inherit"
                 size="small"
@@ -1775,7 +1787,7 @@ export default function FileList() {
             ) : undefined
           }
         >
-          {notice}
+          {notice.text}
         </Alert>
       </Snackbar>
 
@@ -1788,7 +1800,7 @@ export default function FileList() {
         readOnly={!!currentLocation?.isReadOnly}
         tagsByName={tagsByName}
         thumbCacheClear={() => thumbCache.current.clear()}
-        showError={(msg) => setNotice(msg)}
+        showError={(msg) => showNotice(msg)}
         setCreateKind={setCreateKind}
         refresh={refresh}
         revealCurrentDir={async () => {
@@ -1811,14 +1823,14 @@ export default function FileList() {
         // so the user can retry / use the toolbar Copy-Past instead.
         copyPath={(e) => {
           if (!navigator.clipboard) {
-            setNotice(t('clipboardUnavailable'));
+            showNotice(t('clipboardUnavailable'));
             return;
           }
           navigator.clipboard.writeText(e.path).catch(() => {
             // Permission denied / sandbox rejected the write — surface the
             // same localized notice as the no-clipboard branch rather than
             // a raw English error string (H.23 P1-7 clipboard checklist).
-            setNotice(t('clipboardUnavailable'));
+            showNotice(t('clipboardUnavailable'));
           });
         }}
         newExcalidrawAvailable={newExcalidraw.available}
@@ -1840,22 +1852,22 @@ export default function FileList() {
           if (!src) return;
           await ipcApi.setFolderThumbnail(e.path, src);
           thumbCache.current.clear();
-          setNotice(t('folderThumbnailSet'));
+          showNotice(t('folderThumbnailSet'), 'success');
         }}
         setFolderBackground={async (e) => {
           const src = await ipcApi.openImageFileDialog();
           if (!src) return;
           await ipcApi.setFolderBackground(e.path, src);
-          setNotice(t('folderBackgroundSet'));
+          showNotice(t('folderBackgroundSet'), 'success');
         }}
         clearFolderThumbnail={async (e) => {
           await ipcApi.clearFolderThumbnail(e.path);
           thumbCache.current.clear();
-          setNotice(t('folderThumbnailCleared'));
+          showNotice(t('folderThumbnailCleared'), 'success');
         }}
         clearFolderBackground={async (e) => {
           await ipcApi.clearFolderBackground(e.path);
-          setNotice(t('folderBackgroundCleared'));
+          showNotice(t('folderBackgroundCleared'), 'success');
         }}
         removeAllTags={commands.removeAllTags}
         // H.27 P0-1: inline "Edit tags" editor inside the file/folder
@@ -1881,7 +1893,7 @@ export default function FileList() {
             // The main process throws Error(COMMAND_PATH_BLOCKED) when the path
             // can't be safely substituted (e.g. `%` in a filename on Windows);
             // map that sentinel to a localized message instead of raw English.
-            setNotice(msg === COMMAND_PATH_BLOCKED ? t('commandPathBlocked') : msg);
+            showNotice(msg === COMMAND_PATH_BLOCKED ? t('commandPathBlocked') : msg);
           });
         }}
       />
