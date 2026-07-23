@@ -773,3 +773,13 @@ permissionMode 'bypassPermissions' auto-approves every tool call
 **修复**:notice 结构化 `{ text, severity, openTrash? }`,严重度由产生处显式携带(`showNotice(msg, severity?, opts?)`,默认 error;`useListCommands` 同步)。**语义绝不从展示文案反推** —— 尤其文案是多语言可变的。
 
 **同类陷阱**(同日修):DirectoryTree 删除确认固定用 `confirmDelete`("不可撤销")但底层默认走回收站 —— 文案必须与 `deleteToTrash` 实际行为分支一致。
+
+## 30. MUI Snackbar 关闭时仍渲染子元素 + 项目级 strictNullChecks 未开 → 空引用崩溃编译期不可见(2026-07-22)
+
+**症状**:FileList 渲染即崩 `TypeError: Cannot read properties of null (reading 'severity')`,整树被 ErrorBoundary 接管。
+
+**根因**:两条叠加 —— ① MUI `Snackbar` 为了退出过渡,**`open=false` 时也保持子元素挂载**,子元素内的任何表达式都会在 `notice === null` 时执行;notice 结构化改造时把 `notice?.severity` 写成了 `notice.severity`。② 项目 `tsconfig.json` **从未开启 `strict` / `strictNullChecks`**,`T | null` 上直接读属性编译不报错 —— 这类崩溃在 `npm run type-check` 下完全不可见。
+
+**修复**:Snackbar 子元素内恢复可选链(`notice?.severity ?? 'info'` / `notice?.text ?? ''` / `notice?.openTrash`),并留注释说明子元素常驻挂载。
+
+**教训**:① Snackbar 的子元素是"常驻渲染"的,任何读状态的表达式都必须 null-safe(或把条件判断挪到 Snackbar 外面,代价是失去退出动画)。② 本项目 null 安全靠人工,不靠编译器 —— 评审 `| null` 状态的渲染路径时要主动找 naked property access;若未来开 `strictNullChecks`,这是一大波既有错误的入口,需专项评估。

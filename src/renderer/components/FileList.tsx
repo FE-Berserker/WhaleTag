@@ -1771,12 +1771,14 @@ export default function FileList() {
         onClose={() => setNotice(null)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       >
+        {/* Snackbar keeps its child mounted while closed (exit transition),
+            so every read here must be null-safe even though `open` is false. */}
         <Alert
-          severity={notice.severity}
+          severity={notice?.severity ?? 'info'}
           variant="filled"
           onClose={() => setNotice(null)}
           action={
-            notice.openTrash ? (
+            notice?.openTrash ? (
               <Button
                 color="inherit"
                 size="small"
@@ -1787,7 +1789,7 @@ export default function FileList() {
             ) : undefined
           }
         >
-          {notice.text}
+          {notice?.text ?? ''}
         </Alert>
       </Snackbar>
 
