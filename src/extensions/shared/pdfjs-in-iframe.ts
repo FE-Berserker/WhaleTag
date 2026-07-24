@@ -189,6 +189,25 @@ export interface OutlineNode {
   items: OutlineNode[];
 }
 
+/**
+ * Minimal shape of pdfjs's `PDFDataRangeTransport` as consumed by
+ * `getDocument({ range })` — declared here so pdf-viewer's postMessage-backed
+ * transport doesn't need to subclass the pdfjs class (which carries private
+ * fields). `transportReady` receives the pdfjs listener once; each
+ * `requestDataRange(begin, end)` must push the slice back via
+ * `listener({ type: 'range', begin, chunk })`.
+ */
+export interface PdfRangeTransportLike {
+  length: number;
+  transportReady(listener: (msg: {
+    type: string;
+    begin: number;
+    chunk: Uint8Array;
+  }) => void): void;
+  requestDataRange(begin: number, end: number): void;
+  abort?(): void;
+}
+
 export interface PdfjsSession {
   /** Decode + render all pages of `bytes` into the `pagesEl` container.
    *  Bumps internal cancellation token; bumps-on-second-call cancel
@@ -196,14 +215,13 @@ export interface PdfjsSession {
    *  Resolves when the entire document has been rendered (or rejects on
    *  decode / render error). */
   renderPdfBytes(bytes: Uint8Array): Promise<void>;
-  /** Stream + render a PDF from a URL via pdfjs's Range path (pdfjs pulls
-   *  bytes on demand). pdf-viewer's primary open path (2026-07-23): the
-   *  `whale-file://` protocol handler echoes the extension origin for CORS
-   *  (`applyExtensionCors` + `extensionCorsPreflight` in
-   *  `src/main/protocol-range.ts`), so the fetch that used to fail with
-   *  `net::ERR_FAILED` now works. `renderPdfBytes` remains as the fallback
-   *  bridge; lifecycle matches. */
-  renderPdfUrl(url: string): Promise<void>;
+  /** Stream + render a PDF through a custom pdfjs range transport (pdfjs
+   *  pulls byte slices via `requestDataRange` on demand). pdf-viewer's
+   *  primary open path (2026-07-25): Chromium's XHR scheme allow-list makes
+   *  `whale-file://` unfetchable from extension iframes, so the transport is
+   *  bridged over postMessage to the host's `fs:readFileRange` IPC — no URL
+   *  fetch involved. `renderPdfBytes` remains the whole-file fallback. */
+  renderPdfRange(transport: PdfRangeTransportLike): Promise<void>;
   /** Re-render a single page at a new rotation (Phase 1 §B1). The session
    *  tears down the existing canvas and paints a fresh one. */
   rerenderPage(pageNum: number, newRotation: number): Promise<void>;
@@ -613,7 +631,8 @@ export function createPdfjsSession(opts: PdfjsSessionOptions): PdfjsSession {
    * Shared render lifecycle from the resolved `PDFDocumentProxy` onward:
    * cancellation check → metadata (/Info + /Lang) → onDocumentLoaded →
    * virtualized or full pre-render loop → finally `doc.cleanup()`. Used by
-   * both `renderPdfBytes` (in-memory bytes) and `renderPdfUrl` (streaming
+   * both `renderPdfBytes` (in-memory bytes) and `renderPdfRange` (range
+   * transport streaming)
    * URL). Errors from `loadingTask.promise` are surfaced via `onStatus`
    * (when this call is still current) and re-thrown for the caller.
    */
@@ -728,14 +747,16 @@ export function createPdfjsSession(opts: PdfjsSessionOptions): PdfjsSession {
   }
 
   /**
-   * Stream + render a PDF from a URL via pdfjs's Range path — pdf-viewer's
-   * PRIMARY open path (2026-07-23): the `whale-file://` protocol handler
-   * echoes the extension origin for CORS (`applyExtensionCors`), so
-   * `getDocument({url})` fetches the xref tail + page objects on demand
-   * instead of receiving the whole file up front. `renderPdfBytes` remains
-   * as the fallback bridge.
+   * Stream + render a PDF through a custom range transport — pdf-viewer's
+   * PRIMARY open path (2026-07-25). Replaces the URL Range path: Chromium's
+   * XHR scheme allow-list makes `whale-file://` unfetchable from extension
+   * iframes (supportFetchAPI covers fetch(), not XHR, and pdfjs's legacy
+   * build uses XHR), so byte slices are bridged over postMessage instead.
+   * `renderPdfBytes` remains as the fallback bridge.
    */
-  async function renderPdfUrl(url: string): Promise<void> {
+  async function renderPdfRange(
+    transport: PdfRangeTransportLike
+  ): Promise<void> {
     currentToken = getToken();
     const myToken = currentToken;
     pagesEl.innerHTML = '';
@@ -744,7 +765,7 @@ export function createPdfjsSession(opts: PdfjsSessionOptions): PdfjsSession {
     let loadingTask: { promise: Promise<unknown> };
     try {
       loadingTask = buildLoadingTask({
-        url,
+        range: transport,
         rangeChunkSize: 65536,
         disableRange: false,
       });
@@ -972,7 +993,7 @@ export function createPdfjsSession(opts: PdfjsSessionOptions): PdfjsSession {
 
   return {
     renderPdfBytes,
-    renderPdfUrl,
+    renderPdfRange,
     rerenderPage,
     getOutline,
     resolveDest,

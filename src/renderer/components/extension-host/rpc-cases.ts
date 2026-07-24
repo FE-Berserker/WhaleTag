@@ -184,15 +184,18 @@ export function createRpcHandler(post: Post, paths: RpcPaths) {
         return true;
 
       case 'requestFileBytes':
-        // pdf-viewer can't `fetch(whale-file://)` — Chromium CORS blocks
-        // cross-origin fetch to custom schemes (only http/https/data/chrome
-        // are allowed) — so it asks the host to read the file and ship the
-        // raw bytes back. Electron structured-clones the Uint8Array through
-        // postMessage (one memcpy, no base64, no O(n²) decode). Mirrors
+        // pdf-viewer streams large PDFs through this bridge: with
+        // offset+length it's a byte-slice read for the custom pdfjs range
+        // transport (`fs:readFileRange`); without them it's the legacy
+        // whole-file fallback. Electron structured-clones the Uint8Array
+        // through postMessage (one memcpy, no base64). Mirrors
         // office-viewer's officePdfContent path.
         forwardRpc(
           post,
-          () => ipcApi.readFile(msg.path),
+          () =>
+            msg.offset != null && msg.length != null
+              ? ipcApi.readFileRange(msg.path, msg.offset, msg.length)
+              : ipcApi.readFile(msg.path),
           (buf) => ({
             type: 'fileBytes',
             requestId: msg.requestId,

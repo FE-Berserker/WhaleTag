@@ -51,6 +51,8 @@ const whaleApi: WhaleApi = {
   readTextFile: (filePath: string) =>
     ipcRenderer.invoke('fs:readTextFile', filePath),
   readFile: (filePath: string) => ipcRenderer.invoke('fs:readFile', filePath),
+  readFileRange: (filePath: string, offset: number, length: number) =>
+    ipcRenderer.invoke('fs:readFileRange', filePath, offset, length),
   pathExists: (targetPath: string) => ipcRenderer.invoke('fs:pathExists', targetPath),
   openDirectoryDialog: () => ipcRenderer.invoke('dialog:openDirectory'),
   openImageFileDialog: () => ipcRenderer.invoke('dialog:openImageFile'),

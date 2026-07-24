@@ -549,13 +549,20 @@ export interface RequestStreamingUrlMessage {
   path: string;
 }
 
-/** Extension -> Host: pdf-viewer requests the raw bytes of `path`. See
- *  `FileBytesMessage` for why pdf-viewer can't stream via `whale-file://`
- *  (Chromium CORS blocks fetch to custom schemes). */
+/** Extension -> Host: pdf-viewer requests the raw bytes of `path`. With
+ *  `offset` + `length` set it's a byte-slice read (pdfjs custom range
+ *  transport — Chromium's XHR scheme allow-list makes `whale-file://`
+ *  unfetchable from extension iframes, so range streaming goes over this
+ *  bridge); without them it's the legacy whole-file read. See
+ *  `FileBytesMessage` for the reply shape. */
 export interface RequestFileBytesMessage {
   type: 'requestFileBytes';
   requestId: string;
   path: string;
+  /** Byte offset of the slice start (clamped to the file bounds). */
+  offset?: number;
+  /** Slice length in bytes (truncated at EOF). */
+  length?: number;
 }
 
 /** Options for `requestRenderPdf` / `renderHtmlToPdf`. All optional — the

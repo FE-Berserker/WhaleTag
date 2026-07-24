@@ -123,8 +123,7 @@ async function listDirectoryRecursive(
 }
 
 /** Reads a text file and returns it as UTF-8, auto-detecting non-UTF-8 encodings. */
-async function readTextFile(filePath: string): Promise<string> {
-  const buf = await fsp.readFile(filePath);
+async function readTextFile(filePath: string): Promise<string> {  const buf = await fsp.readFile(filePath);
 
   // UTF-8 BOM: strip the marker and decode the remainder as UTF-8.
   if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
@@ -182,6 +181,39 @@ async function readTextFile(filePath: string): Promise<string> {
   return decodedBad <= utf8Bad ? decoded : utf8;
 }
 
+/**
+ * Read a byte slice of a file — the backing store for pdfjs's custom range
+ * transport (Chromium's XHR scheme allow-list makes `whale-file://` unfetchable
+ * from extension iframes, so range streaming goes over IPC instead). Offsets
+ * are clamped to the file bounds; reads past EOF truncate, never throw.
+ * Exported for tests.
+ */
+export async function readFileRange(
+  filePath: string,
+  offset: number,
+  length: number
+): Promise<Uint8Array> {
+  const fh = await fsp.open(filePath, 'r');
+  try {
+    const st = await fh.stat();
+    const start =
+      Number.isFinite(offset) && offset > 0
+        ? Math.min(Math.floor(offset), st.size)
+        : 0;
+    const end =
+      Number.isFinite(length) && length >= 0
+        ? Math.min(start + Math.floor(length), st.size)
+        : st.size;
+    const buf = new Uint8Array(Math.max(0, end - start));
+    if (buf.length > 0) {
+      await fh.read(buf, 0, buf.length, start);
+    }
+    return buf;
+  } finally {
+    await fh.close();
+  }
+}
+
 export function registerFsReadHandlers(): void {
   ipcMain.handle('fs:listDirectory', (_event, dirPath: string) =>
     listDirectory(dirPath)
@@ -204,6 +236,16 @@ export function registerFsReadHandlers(): void {
     assertWithinAllowedRoot(filePath);
     return fsp.readFile(filePath);
   });
+
+  // Byte-slice read for pdfjs's custom range transport (pdf-viewer streams
+  // large PDFs in 64KB chunks instead of one whole-file read).
+  ipcMain.handle(
+    'fs:readFileRange',
+    (_event, filePath: string, offset: number, length: number) => {
+      assertWithinAllowedRoot(filePath);
+      return readFileRange(filePath, offset, length);
+    }
+  );
 
   ipcMain.handle('fs:pathExists', (_event, targetPath: string) =>
     existsSync(targetPath)

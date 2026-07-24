@@ -873,13 +873,19 @@ describe('createPdfjsSession: destroy-and-recreate layout (Phase 2 §A3 fix)', (
 // pdf-viewer switched from `renderPdfBytes(base64-decoded Uint8Array)` to
 // `renderPdfUrl(whale-file:// URL)`: pdfjs reads bytes on demand via Range
 // requests instead of materializing the whole file. These tests pin the
-// session contract: `renderPdfUrl` passes `url` (never `data`) plus the
-// range params to `getDocument`, while `renderPdfBytes` is unchanged
-// (office-viewer regression guard — its PDF comes from an in-memory
-// LibreOffice conversion).
+// session contract: `renderPdfRange` passes the custom `range` transport
+// (never `url` / `data`) plus the range params to `getDocument`, while
+// `renderPdfBytes` is unchanged (office-viewer regression guard — its PDF
+// comes from an in-memory LibreOffice conversion).
 
-describe('createPdfjsSession: renderPdfUrl (streaming)', () => {
-  it('passes `url` (not `data`) to getDocument with range params + shared base', async () => {
+describe('createPdfjsSession: renderPdfRange (range transport)', () => {
+  const fakeTransport = {
+    length: 1234,
+    transportReady: () => undefined,
+    requestDataRange: () => undefined,
+  };
+
+  it('passes `range` (not `url`/`data`) to getDocument with range params', async () => {
     const doc = new FakeDoc(1);
     let capturedOpts: Record<string, unknown> | null = null;
     const session = createPdfjsSession({
@@ -892,9 +898,10 @@ describe('createPdfjsSession: renderPdfUrl (streaming)', () => {
         },
       },
     });
-    await session.renderPdfUrl('whale-file:///x/test.pdf');
+    await session.renderPdfRange(fakeTransport);
     assert.ok(capturedOpts, 'getDocument should have been called');
-    assert.equal(capturedOpts!.url, 'whale-file:///x/test.pdf');
+    assert.equal(capturedOpts!.range, fakeTransport);
+    assert.equal(capturedOpts!.url, undefined);
     assert.equal(
       capturedOpts!.data,
       undefined,
@@ -933,7 +940,7 @@ describe('createPdfjsSession: renderPdfUrl (streaming)', () => {
     assert.equal(capturedOpts!.disableRange, undefined);
   });
 
-  it('renderPdfUrl surfaces a load error via onStatus and re-throws', async () => {
+  it('renderPdfRange surfaces a load error via onStatus and re-throws', async () => {
     let status: { kind: string; text: string } | null = null;
     const session = createPdfjsSession({
       pagesEl: new FakePagesEl() as any,
@@ -948,7 +955,7 @@ describe('createPdfjsSession: renderPdfUrl (streaming)', () => {
       },
     });
     await assert.rejects(
-      session.renderPdfUrl('whale-file:///x/broken.pdf'),
+      session.renderPdfRange(fakeTransport),
       /range request denied/,
     );
     assert.ok(status);

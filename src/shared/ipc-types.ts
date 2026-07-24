@@ -162,6 +162,13 @@ export interface WhaleApi {
   readTextFile: (filePath: string) => Promise<string>;
   /** Reads an arbitrary file as an ArrayBuffer (for creating blob URLs in the renderer). */
   readFile: (filePath: string) => Promise<ArrayBuffer>;
+  /** Reads a byte slice of a file (pdfjs range transport; offsets clamped
+   *  to the file bounds, reads past EOF truncate). */
+  readFileRange: (
+    filePath: string,
+    offset: number,
+    length: number
+  ) => Promise<ArrayBuffer>;
   pathExists: (targetPath: string) => Promise<boolean>;
   openDirectoryDialog: () => Promise<string | null>;
   /** Shows the native file picker restricted to images. Returns null if cancelled. */

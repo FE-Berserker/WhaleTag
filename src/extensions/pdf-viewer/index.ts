@@ -5,6 +5,7 @@ import {
   applyTheme as sessionApplyTheme,
   PDFJS_I18N,
   type PdfjsSession,
+  type PdfRangeTransportLike,
   type OutlineNode,
 } from '../shared/pdfjs-in-iframe';
 import {
@@ -13,7 +14,6 @@ import {
   spansToText,
   type SpanBox,
 } from './marquee';
-import { encodeWhaleFileUrl } from '../../shared/whale-file-url';
 
 /**
  * Tier 3 (Phase §B) switch: run pdfjs's document parser on a real Worker so
@@ -22,9 +22,9 @@ import { encodeWhaleFileUrl } from '../../shared/whale-file-url';
  * (`pdf.worker.mjs`, served at `whale-extension://pdf-viewer/pdf.worker.mjs`)
  * and the iframe CSP `worker-src` allows that origin (index.html).
  *
- * Default `false`: Range streaming over `whale-file://` (2026-07-23, the
- * protocol handler echoes the extension origin for CORS) already loads
- * bytes on demand — the large-PDF freeze from whole-file reads is gone.
+ * Default `false`: the custom range transport (WhaleRangeTransport,
+ * 2026-07-25) already streams slices on demand — the large-PDF freeze from
+ * whole-file reads is gone.
  * The real Worker is an additional improvement (CPU parse off the main
  * thread) but depends on `new Worker()` accepting the `whale-extension://`
  * privileged scheme — no prior art in this repo (cad/heic fetch wasm, they
@@ -557,18 +557,22 @@ function rotateCurrentPage(direction: 1 | -1) {
 
 // --- Wiring ---------------------------------------------------------------
 // --- File-bytes bridge (fallback) -----------------------------------------
-// Primary path is `renderPdfUrl` (Range streaming over whale-file:// — the
-// protocol handler echoes the extension origin for CORS). This bridge is
-// the fallback: the host reads the whole file and posts the raw bytes back
-// (Uint8Array via structured clone — one memcpy, no base64, no O(n²)
-// decode). Kept for any environment where the Range fetch fails.
+// Primary path is `WhaleRangeTransport` (pdfjs pulls slices through this
+// same channel with offset+length). Without offset/length the host reads
+// the whole file and posts the raw bytes back (Uint8Array via structured
+// clone — one memcpy, no base64, no O(n²) decode) — the fallback when the
+// file size is unknown or the transport fails.
 let fileBytesReqId = 0;
 const pendingFileBytes = new Map<
   string,
   (data: Uint8Array | null, error?: string) => void
 >();
 
-function requestFileBytes(path: string): Promise<Uint8Array | null> {
+function requestFileBytes(
+  path: string,
+  offset?: number,
+  length?: number
+): Promise<Uint8Array | null> {
   const requestId = `pb${(fileBytesReqId += 1)}`;
   return new Promise<Uint8Array | null>((resolve) => {
     pendingFileBytes.set(requestId, (data, error) => {
@@ -577,8 +581,57 @@ function requestFileBytes(path: string): Promise<Uint8Array | null> {
       }
       resolve(data ?? null);
     });
-    window.whaleExt.postMessage({ type: 'requestFileBytes', requestId, path });
+    window.whaleExt.postMessage({
+      type: 'requestFileBytes',
+      requestId,
+      path,
+      offset,
+      length,
+    });
   });
+}
+
+/** pdfjs `PDFDataRangeTransport` bridged over the file-bytes message
+ *  channel: pdfjs calls `requestDataRange(begin, end)` (xref tail first,
+ *  then page objects on demand) and the host ships exactly that slice back
+ *  (`fs:readFileRange`). This is the large-PDF open path — the whole file
+ *  is never read up front. (The `whale-file://` URL fetch route is dead:
+ *  Chromium's XHR scheme allow-list doesn't cover custom schemes, and
+ *  pdfjs's legacy build uses XHR.) */
+class WhaleRangeTransport implements PdfRangeTransportLike {
+  readonly length: number;
+  #listener:
+    | ((msg: { type: string; begin: number; chunk: Uint8Array }) => void)
+    | null = null;
+  #aborted = false;
+
+  constructor(length: number) {
+    this.length = length;
+  }
+
+  transportReady(
+    listener: (msg: { type: string; begin: number; chunk: Uint8Array }) => void
+  ): void {
+    this.#listener = listener;
+  }
+
+  abort(): void {
+    this.#aborted = true;
+    this.#listener = null;
+  }
+
+  requestDataRange(begin: number, end: number): void {
+    requestFileBytes(state.filePath, begin, end - begin).then((chunk) => {
+      if (this.#aborted) return;
+      // A failed slice read must not hang pdfjs silently — push an empty
+      // chunk so the parser fails loudly instead.
+      this.#listener?.({
+        type: 'range',
+        begin,
+        chunk: chunk ?? new Uint8Array(0),
+      });
+    });
+  }
 }
 
 /**
@@ -636,11 +689,12 @@ async function renderPdfBytes(bytes: Uint8Array) {
   return renderWithLifecycle(() => session.renderPdfBytes(bytes));
 }
 
-/** Stream the PDF via pdfjs's Range path over `whale-file://` (fetches the
- *  xref tail + page objects on demand instead of the whole file up front —
- *  the large-PDF open-time win). Same lifecycle as the bytes path. */
-async function renderPdfUrl(url: string) {
-  return renderWithLifecycle(() => session.renderPdfUrl(url));
+/** Stream the PDF through the custom range transport (64KB slices pulled
+ *  on demand). Same lifecycle as the bytes path. */
+async function renderPdfRangeStream(
+  transport: WhaleRangeTransport
+): Promise<void> {
+  return renderWithLifecycle(() => session.renderPdfRange(transport));
 }
 
 /**
@@ -1065,38 +1119,21 @@ function finishMarquee(
 window.whaleExt.onMessage((msg) => {
   switch (msg.type) {
     case 'fileContent':
-      // The host no longer base64-encodes the whole PDF into `content` (that
-      // froze the renderer on large files — a 50 MB PDF → O(n²)
-      // `binary += String.fromCharCode(...)` on the main thread). It sends an
-      // empty content blob + the path + size; we ask it to read the file and
-      // ship the raw bytes back via postMessage (Uint8Array structured clone
-      // — no base64, no O(n²) decode). We can't fetch(whale-file://) here:
-      // Chromium's CORS policy blocks cross-origin fetch to custom schemes,
-      // so pdfjs's getDocument({url}) Range path is out. Bytes-in is what
-      // works.
+      // The host sends an empty content blob + path + size. pdfjs can't
+      // fetch(whale-file://) — Chromium's XHR scheme allow-list doesn't
+      // cover custom schemes (supportFetchAPI gates fetch(), not XHR, and
+      // pdfjs's legacy build uses XHR) — so the URL Range path is out.
+      // Instead, pdfjs's custom range transport pulls byte slices through
+      // the postMessage bridge (WhaleRangeTransport → fs:readFileRange).
       state.fileSize = msg.size;
       state.filePath = msg.path;
       updateStatusBar();
-      // Prefer Range streaming over whale-file:// (pdfjs fetches the xref
-      // tail + page objects on demand) — a large document's first page
-      // paints after a few small reads instead of the entire file. Falls
-      // back to the whole-file byte bridge if the fetch ever fails.
-      {
-        const url = encodeWhaleFileUrl(msg.path);
-        if (url) {
-          renderPdfUrl(url).catch(() => {
-            requestFileBytes(msg.path).then((bytes) => {
-              if (bytes) {
-                renderPdfBytes(bytes).catch(() => undefined);
-              } else {
-                setLoadingBar(
-                  T.failedRender.replace('{msg}', 'file read failed'),
-                  'error',
-                );
-              }
-            });
-          });
-        } else {
+      // Primary: custom range transport (pdfjs pulls 64KB slices on demand
+      // — the first page paints after a few small reads instead of the
+      // whole file). The whole-file byte bridge is the fallback for a
+      // missing size or a transport failure.
+      if (msg.size && msg.size > 0) {
+        renderPdfRangeStream(new WhaleRangeTransport(msg.size)).catch(() => {
           requestFileBytes(msg.path).then((bytes) => {
             if (bytes) {
               renderPdfBytes(bytes).catch(() => undefined);
@@ -1107,7 +1144,18 @@ window.whaleExt.onMessage((msg) => {
               );
             }
           });
-        }
+        });
+      } else {
+        requestFileBytes(msg.path).then((bytes) => {
+          if (bytes) {
+            renderPdfBytes(bytes).catch(() => undefined);
+          } else {
+            setLoadingBar(
+              T.failedRender.replace('{msg}', 'file read failed'),
+              'error',
+            );
+          }
+        });
       }
       break;
     case 'fileBytes': {

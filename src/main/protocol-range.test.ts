@@ -3,12 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  applyExtensionCors,
-  createFileRangeResponse,
-  extensionCorsPreflight,
-  parseRange,
-} from './protocol-range';
+import { parseRange, createFileRangeResponse } from './protocol-range';
 
 const enc = new TextEncoder();
 const bytes = enc.encode('0123456789ABCDEFGHIJ'); // 20 bytes
@@ -145,79 +140,3 @@ describe('createFileRangeResponse', () => {
   });
 });
 
-describe('applyExtensionCors', () => {
-  it('echoes a whale-extension origin and exposes the Range headers', () => {
-    const headers = new Headers({ 'Content-Type': 'application/pdf' });
-    const req = new Request('whale-file:///x', {
-      headers: { Origin: 'whale-extension://pdf-viewer' },
-    });
-    applyExtensionCors(headers, req);
-    assert.equal(
-      headers.get('Access-Control-Allow-Origin'),
-      'whale-extension://pdf-viewer'
-    );
-    assert.equal(
-      headers.get('Access-Control-Expose-Headers'),
-      'Accept-Ranges, Content-Range, Content-Length'
-    );
-  });
-
-  it('sets nothing for a non-extension origin', () => {
-    const headers = new Headers();
-    const req = new Request('whale-file:///x', {
-      headers: { Origin: 'https://evil.example' },
-    });
-    applyExtensionCors(headers, req);
-    assert.equal(headers.get('Access-Control-Allow-Origin'), null);
-    assert.equal(headers.get('Access-Control-Expose-Headers'), null);
-  });
-
-  it('sets nothing when no Origin header is present', () => {
-    const headers = new Headers();
-    applyExtensionCors(headers, new Request('whale-file:///x'));
-    assert.equal(headers.get('Access-Control-Allow-Origin'), null);
-  });
-});
-
-describe('extensionCorsPreflight', () => {
-  it('returns null for non-OPTIONS requests', () => {
-    assert.equal(
-      extensionCorsPreflight(new Request('whale-file:///x')),
-      null
-    );
-  });
-
-  it('answers 204 with Range method+headers for an extension origin', () => {
-    const res = extensionCorsPreflight(
-      new Request('whale-file:///x', {
-        method: 'OPTIONS',
-        headers: { Origin: 'whale-extension://office-viewer' },
-      })
-    );
-    assert.ok(res);
-    assert.equal(res.status, 204);
-    assert.equal(
-      res.headers.get('Access-Control-Allow-Origin'),
-      'whale-extension://office-viewer'
-    );
-    assert.equal(
-      res.headers.get('Access-Control-Allow-Methods'),
-      'GET, OPTIONS'
-    );
-    assert.equal(
-      res.headers.get('Access-Control-Allow-Headers'),
-      'Range, Content-Type'
-    );
-  });
-
-  it('refuses OPTIONS from a non-extension origin', () => {
-    const res = extensionCorsPreflight(
-      new Request('whale-file:///x', {
-        method: 'OPTIONS',
-        headers: { Origin: 'https://evil.example' },
-      })
-    );
-    assert.ok(res);
-    assert.equal(res.status, 403);
-  });
-});
