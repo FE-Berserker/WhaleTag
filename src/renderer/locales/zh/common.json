@@ -659,6 +659,7 @@
   "aiAttachToggle": "把选中的文件作为上下文附加",
   "aiMultiSelect": "已选中 {{count}} 个文件",
   "aiPdfSelection": "PDF 第 {{page}} 页框选",
+  "aiPdfScreenshot": "PDF 第 {{page}} 页截图",
   "aiNewChat": "新对话",
   "aiHistory": "历史",
   "aiHistoryEmpty": "还没有对话",

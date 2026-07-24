@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 
 import { ClaudeChatRuntime } from './ClaudeChatRuntime';
-import { activeMcpServers, buildTurnPrompt } from './buildQueryOptions';
+import {
+  activeMcpServers,
+  buildTurnPrompt,
+  buildTurnPromptInput,
+} from './buildQueryOptions';
 import type {
   AiQueryPayload,
   ManagedMcpServer,
@@ -149,5 +153,55 @@ describe('activeMcpServers', () => {
       activeMcpServers([{ name: 'a', enabled: false, config: { type: 'http', url: 'u' } }]),
       {}
     );
+  });
+});
+
+describe('buildTurnPromptInput', () => {
+  const payload = (over: Partial<AiQueryPayload['turn']>): AiQueryPayload => ({
+    conversationId: 'c1',
+    cwd: '/a',
+    locationRoots: [],
+    settings: baseSettings,
+    sessionId: null,
+    history: [],
+    turn: { text: 'hello', ...over },
+  });
+
+  it('returns a plain string for text-only turns', () => {
+    assert.equal(buildTurnPromptInput(payload({})), 'hello');
+  });
+
+  it('returns a single-message iterable with image + text blocks when images are present', async () => {
+    const input = buildTurnPromptInput(
+      payload({
+        images: [
+          {
+            id: 'i1',
+            name: 'sel.png',
+            mediaType: 'image/png',
+            data: 'QUJD',
+            size: 3,
+            source: 'paste',
+          },
+        ],
+      })
+    );
+    assert.notEqual(typeof input, 'string');
+    const seen: unknown[] = [];
+    for await (const m of input as AsyncIterable<unknown>) seen.push(m);
+    assert.equal(seen.length, 1);
+    const msg = seen[0] as {
+      type: string;
+      parent_tool_use_id: null;
+      message: { role: string; content: unknown[] };
+    };
+    assert.equal(msg.type, 'user');
+    assert.equal(msg.parent_tool_use_id, null);
+    assert.equal(msg.message.role, 'user');
+    assert.deepEqual(msg.message.content[0], {
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'QUJD' },
+    });
+    assert.deepEqual(msg.message.content[1], { type: 'text', text: 'hello' });
   });
 });

@@ -21,6 +21,7 @@ import AttachFileIcon from '@mui/icons-material/AttachFile';
 import { setAiSettings } from '-/reducers/settings';
 import { newConversation, rewindConversation } from '-/reducers/ai';
 import type { RootState } from '-/reducers';
+import type { ImageAttachment } from '../../../shared/ai-types';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { useFileSelectionContext } from '-/hooks/FileSelectionContextProvider';
 import { useDirectoryUI } from '-/hooks/DirectoryContentContextProvider';
@@ -83,14 +84,22 @@ export default function AiPanel() {
     path: string;
     page?: number;
     text: string;
+    imageDataUrl?: string;
   } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const onDraft = (e: Event) => {
       const d = (
-        e as CustomEvent<{ path: string; page?: number; text: string }>
+        e as CustomEvent<{
+          path: string;
+          page?: number;
+          text: string;
+          imageDataUrl?: string;
+        }>
       ).detail;
-      if (!d?.text) return;
+      // Accept text and/or a screenshot — a scanned page has no text but
+      // still carries the screenshot.
+      if (!d || (!d.text && !d.imageDataUrl)) return;
       setPdfDraft(d);
       inputRef.current?.focus();
     };
@@ -144,10 +153,15 @@ export default function AiPanel() {
       // Marquee selection takes priority over the single-file attachment —
       // the user explicitly boxed the region they want to ask about. The
       // send() path wraps this in <current_note>; the inner tag preserves
-      // the page provenance.
+      // the page provenance. Text may be empty (scanned page) — the
+      // screenshot below carries the content then.
       attachment = {
         path: pdfDraft.path,
-        content: `<pdf_selection page="${pdfDraft.page ?? '?'}">\n${pdfDraft.text}\n</pdf_selection>`,
+        ...(pdfDraft.text
+          ? {
+              content: `<pdf_selection page="${pdfDraft.page ?? '?'}">\n${pdfDraft.text}\n</pdf_selection>`,
+            }
+          : {}),
       };
     } else if (attachedFile) {
       attachment = { path: attachedFile.path };
@@ -164,6 +178,22 @@ export default function AiPanel() {
         }
       }
     }
+    // Build the image attachment from the marquee screenshot (if any) — a
+    // scanned page has no text but the model can still see the region.
+    const draftImages: ImageAttachment[] = [];
+    if (pdfDraft?.imageDataUrl) {
+      const m = pdfDraft.imageDataUrl.match(/^data:(image\/[a-z]+);base64,(.+)$/i);
+      if (m) {
+        draftImages.push({
+          id: `pdf-sel-${Date.now()}`,
+          name: `pdf-p${pdfDraft.page ?? '?'}-selection.png`,
+          mediaType: m[1].toLowerCase() as ImageAttachment['mediaType'],
+          data: m[2],
+          size: Math.floor(m[2].length * 0.75),
+          source: 'paste',
+        });
+      }
+    }
     setPdfDraft(null);
     // Capture the current perspective so the main process can inject a
     // Perspectives section into the system prompt (undefined when unrecognized
@@ -178,7 +208,8 @@ export default function AiPanel() {
       text,
       attachment,
       perspective,
-      multiSelectPaths.length > 0 ? multiSelectPaths : undefined
+      multiSelectPaths.length > 0 ? multiSelectPaths : undefined,
+      draftImages.length > 0 ? draftImages : undefined
     );
   };
 
@@ -321,7 +352,11 @@ export default function AiPanel() {
             <Chip
               size="small"
               icon={<AttachFileIcon />}
-              label={t('aiPdfSelection', { page: pdfDraft.page ?? '?' })}
+              label={
+                pdfDraft.text
+                  ? t('aiPdfSelection', { page: pdfDraft.page ?? '?' })
+                  : t('aiPdfScreenshot', { page: pdfDraft.page ?? '?' })
+              }
               variant="outlined"
               color="primary"
               onDelete={() => setPdfDraft(null)}

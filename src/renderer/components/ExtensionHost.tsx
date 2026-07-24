@@ -692,7 +692,12 @@ export default function ExtensionHost({
           dispatch(setAiSettings({ aiPanelOpen: true }));
           window.dispatchEvent(
             new CustomEvent('whale:ai-draft', {
-              detail: { path: msg.path, page: msg.page, text: msg.text },
+              detail: {
+                path: msg.path,
+                page: msg.page,
+                text: msg.text,
+                imageDataUrl: msg.imageDataUrl,
+              },
             })
           );
           break;

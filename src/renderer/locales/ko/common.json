@@ -652,6 +652,7 @@
   "aiAttachToggle": "선택한 파일을 컨텍스트로 첨부",
   "aiMultiSelect": "파일 {{count}}개 선택됨",
   "aiPdfSelection": "PDF {{page}}페이지 영역 선택",
+  "aiPdfScreenshot": "PDF {{page}}페이지 스크린샷",
   "aiNewChat": "새 대화",
   "aiHistory": "기록",
   "aiHistoryEmpty": "아직 대화가 없습니다",

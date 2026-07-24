@@ -1,11 +1,11 @@
-import type { Options, WarmQuery } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, SDKUserMessage, WarmQuery } from '@anthropic-ai/claude-agent-sdk';
 
 import type { AiProvider } from '../../provider';
 import type { AiQueryPayload, StreamChunk } from '../../../../shared/ai-types';
 import {
   buildClaudeOptions,
   buildColdStartOptions,
-  buildTurnPrompt,
+  buildTurnPromptInput,
 } from './buildQueryOptions';
 import { findClaudeCLIPath } from './cli/findClaudeCliPath';
 import { loadClaudeSdk } from '../../component-resolver';
@@ -228,7 +228,7 @@ export class ClaudeChatRuntime implements AiProvider {
     // process failed to start (startup rejected), fall back to a cold query
     // rather than erroring out — a warm-pool hiccup should never break a turn.
     let sessionIdForNextPrewarm = payload.sessionId;
-    const prompt = buildTurnPrompt(payload);
+    const prompt = buildTurnPromptInput(payload);
     const transformState = createTransformState();
     try {
       const sdk = await loadClaudeSdk();
@@ -309,7 +309,7 @@ export class ClaudeChatRuntime implements AiProvider {
     _approvalCallback: ApprovalCallback,
     payload: AiQueryPayload,
     cliPath: string,
-    _prompt: string,
+    _prompt: string | AsyncIterable<SDKUserMessage>,
     _askUserCallback?: AskUserCallback
   ): WarmEntry | null {
     if (!this.warm) return null;

@@ -8,9 +8,9 @@
  * CLI replays its native session history. This avoids the persistent-query
  * machinery while keeping multi-turn memory.
  */
-import type { Options } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
-import type { AiQueryPayload, ManagedMcpServer } from '../../../../shared/ai-types';
+import type { AiQueryPayload, ImageAttachment, ManagedMcpServer } from '../../../../shared/ai-types';
 import { buildSystemPrompt } from '../../prompt';
 import {
   createCanUseTool,
@@ -152,11 +152,11 @@ export function buildClaudeOptions(input: BuildOptionsInput): Options {
 
 /** Build the SDK options + the prompt string for a cold-start turn. */
 export function buildColdStartOptions(input: BuildOptionsInput): {
-  prompt: string;
+  prompt: string | AsyncIterable<SDKUserMessage>;
   options: Options;
 } {
   return {
-    prompt: buildTurnPrompt(input.payload),
+    prompt: buildTurnPromptInput(input.payload),
     options: buildClaudeOptions(input),
   };
 }
@@ -192,4 +192,45 @@ export function formatSelectedFilesBlock(selectedPaths: string[]): string {
   const count = selectedPaths.length;
   const body = selectedPaths.map((p) => `  - ${p}`).join('\n');
   return `<selected_files count="${count}">\n${body}\n</selected_files>`;
+}
+
+/**
+ * The turn prompt in the shape `query()` / `WarmQuery.query()` accepts: a
+ * plain string for text-only turns, or a single-message async iterable when
+ * the turn carries images (pdf-viewer marquee screenshots). The image blocks
+ * use the Anthropic API's base64 source shape, so the model sees the region
+ * even when it has no extractable text (scanned pages). Pure except the lazy
+ * iteration; exported for tests.
+ */
+export function buildTurnPromptInput(
+  payload: AiQueryPayload
+): string | AsyncIterable<SDKUserMessage> {
+  const text = buildTurnPrompt(payload);
+  const images = payload.turn.images;
+  if (!images || images.length === 0) return text;
+  return singleUserMessagePrompt(text, images);
+}
+
+async function* singleUserMessagePrompt(
+  text: string,
+  images: ImageAttachment[]
+): AsyncIterable<SDKUserMessage> {
+  yield {
+    type: 'user',
+    message: {
+      role: 'user',
+      content: [
+        ...images.map((img) => ({
+          type: 'image' as const,
+          source: {
+            type: 'base64' as const,
+            media_type: img.mediaType,
+            data: img.data,
+          },
+        })),
+        { type: 'text' as const, text },
+      ],
+    },
+    parent_tool_use_id: null,
+  };
 }

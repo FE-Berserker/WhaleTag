@@ -86,6 +86,24 @@ export default function MessageRenderer({ message, onRewind }: MessageRendererPr
             typography: 'body2',
           }}
         >
+          {message.images && message.images.length > 0 ? (
+            <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 0.5 }}>
+              {message.images.map((img) => (
+                <Box
+                  component="img"
+                  key={img.id}
+                  src={`data:${img.mediaType};base64,${img.data}`}
+                  alt={img.name}
+                  sx={{
+                    maxWidth: 200,
+                    maxHeight: 140,
+                    borderRadius: 1,
+                    display: 'block',
+                  }}
+                />
+              ))}
+            </Box>
+          ) : null}
           {message.content}
         </Box>
         {onRewind ? <RewindButton onClick={() => onRewind(message.id)} /> : null}

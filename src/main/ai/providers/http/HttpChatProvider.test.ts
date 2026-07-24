@@ -103,8 +103,10 @@ describe('HttpChatProvider.buildMessages', () => {
       },
     });
     const last = msgs[msgs.length - 1];
-    assert.match(last.content, /<current_note path="\/tmp\/a\.txt">file body<\/current_note>/);
-    assert.match(last.content, /summarize/);
+    assert.equal(typeof last.content, 'string');
+    const content = last.content as string;
+    assert.match(content, /<current_note path="\/tmp\/a\.txt">file body<\/current_note>/);
+    assert.match(content, /summarize/);
   });
 
   it('renders multi-selection as a selected_files envelope in the user message', () => {
@@ -121,8 +123,42 @@ describe('HttpChatProvider.buildMessages', () => {
       },
     });
     const last = msgs[msgs.length - 1];
-    assert.match(last.content, /<selected_files count="2">/);
-    assert.match(last.content, /\/a\/txt|a\.txt/);
-    assert.match(last.content, /tag all of these urgent/);
+    assert.equal(typeof last.content, 'string');
+    const content = last.content as string;
+    assert.match(content, /<selected_files count="2">/);
+    assert.match(content, /\/a\/txt|a\.txt/);
+    assert.match(content, /tag all of these urgent/);
+  });
+
+  it('builds an OpenAI vision content array when the turn carries images', () => {
+    const msgs = buildMessages({
+      conversationId: 'c1',
+      cwd: '/tmp',
+      locationRoots: [{ path: '/tmp', readOnly: false }],
+      settings: baseSettings,
+      sessionId: null,
+      history: [],
+      turn: {
+        text: 'what is in this region?',
+        images: [
+          {
+            id: 'i1',
+            name: 'sel.png',
+            mediaType: 'image/png',
+            data: 'QUJD',
+            size: 3,
+            source: 'paste',
+          },
+        ],
+      },
+    });
+    const last = msgs[msgs.length - 1];
+    assert.ok(Array.isArray(last.content));
+    const parts = last.content as Array<Record<string, unknown>>;
+    assert.deepEqual(parts[0], {
+      type: 'image_url',
+      image_url: { url: 'data:image/png;base64,QUJD' },
+    });
+    assert.deepEqual(parts[1], { type: 'text', text: 'what is in this region?' });
   });
 });

@@ -697,8 +697,12 @@ export interface AskAiMessage {
   path: string;
   /** 1-based page number of the selection. */
   page?: number;
-  /** Extracted text inside the marquee (reading order). */
+  /** Extracted text inside the marquee (reading order). '' for scans. */
   text: string;
+  /** Cropped region screenshot as a PNG data URL — the vision fallback for
+   *  scanned pages (and layout context when text exists). Capped in size by
+   *  the extension before posting. */
+  imageDataUrl?: string;
 }
 
 export type ExtensionMessage =

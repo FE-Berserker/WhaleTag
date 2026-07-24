@@ -56,7 +56,7 @@ function errorMessage(e: unknown): string {
   return String(e);
 }
 
-type ChatMessageLike = { role: string; content: string | null } & Record<
+type ChatMessageLike = { role: string; content: string | null | unknown[] } & Record<
   string,
   unknown
 >;
@@ -82,8 +82,14 @@ export function buildMessages(
   return messages;
 }
 
-/** Inline the attached file content into the user message. */
-function buildUserContent(turn: ChatTurnRequest): string {
+/** Inline the attached file content into the user message. When the turn
+ *  carries images (e.g. a pdf-viewer marquee screenshot), the message becomes
+ *  an OpenAI vision content array (`image_url` parts + the text part);
+ *  Ollama's OpenAI-compatible endpoint accepts the same shape for
+ *  multimodal models. Exported for tests. */
+export function buildUserContent(
+  turn: ChatTurnRequest
+): string | Array<Record<string, unknown>> {
   const parts: string[] = [];
   if (turn.currentNotePath) {
     const body = turn.editorSelection?.text ?? '';
@@ -97,7 +103,16 @@ function buildUserContent(turn: ChatTurnRequest): string {
     parts.push(`<selected_files count="${count}">\n${body}\n</selected_files>`);
   }
   parts.push(turn.text);
-  return parts.join('\n\n');
+  const text = parts.join('\n\n');
+  const images = turn.images;
+  if (!images || images.length === 0) return text;
+  return [
+    ...images.map((img) => ({
+      type: 'image_url',
+      image_url: { url: `data:${img.mediaType};base64,${img.data}` },
+    })),
+    { type: 'text', text },
+  ];
 }
 
 /** Parse an SSE byte stream into JSON payloads, ending at `data: [DONE]`. */

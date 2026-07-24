@@ -208,7 +208,8 @@ interface Strings {
   aiSelect: string; // marquee "ask AI about a region" toggle tooltip
   askAi: string; // marquee mini-bar confirm button
   cancelAsk: string; // marquee mini-bar cancel button
-  noTextInSelection: string; // marquee finished but no text inside (scans)
+  noTextInSelection: string; // marquee finished but no text AND no canvas
+  willSendScreenshot: string; // no text, but screenshot will be sent
   pageOf: (cur: number, total: number) => string;
 }
 
@@ -235,7 +236,8 @@ const I18N: Record<string, Omit<Strings, 'pageOf'>> = {
     aiSelect: 'Ask AI about a region',
     askAi: 'Ask AI',
     cancelAsk: 'Cancel',
-    noTextInSelection: 'No text in this region (scanned page?)',
+    noTextInSelection: 'Nothing to ask about in this region',
+    willSendScreenshot: 'No text — will send a screenshot',
   },
   zh: {
     ...PDFJS_I18N.zh,
@@ -257,7 +259,8 @@ const I18N: Record<string, Omit<Strings, 'pageOf'>> = {
     aiSelect: '框选提问',
     askAi: '问 AI',
     cancelAsk: '取消',
-    noTextInSelection: '框选区域没有文本(可能是扫描件)',
+    noTextInSelection: '框选区域没有可提问的内容',
+    willSendScreenshot: '无文本,将发送截图',
   },
 };
 
@@ -868,9 +871,11 @@ window.addEventListener('keydown', (e) => {
 // container. On mouseup we hit-test the textLayer spans with client rects
 // (pdfjs positions spans in the rotated viewport, so DOM coordinates already
 // match the displayed canvas at any rotation), assemble reading-order text
-// (marquee.ts), and show a mini action bar. Pages are virtualized: only
-// rendered containers have a textLayer — but a marquee is inherently on a
-// visible page, so a container without one simply yields "no text".
+// (marquee.ts), and ALWAYS crop the region off the page canvas as a PNG —
+// scanned pages have no textLayer text, so the screenshot is the vision
+// fallback (and layout context when text exists). Pages are virtualized:
+// only rendered containers have canvas + textLayer — but a marquee is
+// inherently on a visible page, so a missing textLayer simply yields "".
 let marqueeMode = false;
 let marqueeContainer: HTMLElement | null = null;
 let marqueeStart: { x: number; y: number } | null = null;
@@ -939,6 +944,42 @@ window.addEventListener('mouseup', (e) => {
   finishMarquee(container, start, { x: e.clientX, y: e.clientY });
 });
 
+/** Cap the cropped region's longest side (px, intrinsic) so the base64
+ *  data-URL payload stays in the low-MB range. */
+const MARQUEE_IMG_MAX_SIDE = 1400;
+
+/** Crop the marquee rect off the page canvas as a PNG data URL. The canvas
+ *  may render at a higher intrinsic resolution than its CSS size, so client
+ *  coordinates are scaled up; oversized regions are downscaled. */
+function cropMarqueeImage(
+  container: HTMLElement,
+  rectClient: { left: number; top: number; width: number; height: number }
+): string | undefined {
+  const canvas = container.querySelector('canvas');
+  if (!canvas) return undefined;
+  const cRect = canvas.getBoundingClientRect();
+  if (cRect.width === 0 || cRect.height === 0) return undefined;
+  const sx = canvas.width / cRect.width;
+  const sy = canvas.height / cRect.height;
+  const x = Math.max(0, (rectClient.left - cRect.left) * sx);
+  const y = Math.max(0, (rectClient.top - cRect.top) * sy);
+  const w = Math.min(canvas.width - x, rectClient.width * sx);
+  const h = Math.min(canvas.height - y, rectClient.height * sy);
+  if (w < 2 || h < 2) return undefined;
+  const scale = Math.min(1, MARQUEE_IMG_MAX_SIDE / Math.max(w, h));
+  const out = document.createElement('canvas');
+  out.width = Math.max(1, Math.round(w * scale));
+  out.height = Math.max(1, Math.round(h * scale));
+  const ctx = out.getContext('2d');
+  if (!ctx) return undefined;
+  ctx.drawImage(canvas, x, y, w, h, 0, 0, out.width, out.height);
+  try {
+    return out.toDataURL('image/png');
+  } catch {
+    return undefined;
+  }
+}
+
 function finishMarquee(
   container: HTMLElement,
   start: { x: number; y: number },
@@ -963,6 +1004,7 @@ function finishMarquee(
     }
   });
   const text = spansToText(spansInRect(spans, rect));
+  const imageDataUrl = cropMarqueeImage(container, rect);
   const page = Number(container.getAttribute('data-page-container')) || undefined;
 
   marqueeBarEl?.remove();
@@ -970,7 +1012,14 @@ function finishMarquee(
   bar.className = 'marquee-bar';
   bar.style.left = `${rect.left - cRect.left}px`;
   bar.style.top = `${rect.top + rect.height - cRect.top + 6}px`;
-  if (text) {
+  if (text || imageDataUrl) {
+    if (!text) {
+      // Scanned page: no text, but the screenshot carries the content.
+      const hint = document.createElement('span');
+      hint.className = 'marquee-hint';
+      hint.textContent = T.willSendScreenshot;
+      bar.appendChild(hint);
+    }
     const ask = document.createElement('button');
     ask.type = 'button';
     ask.textContent = T.askAi;
@@ -980,6 +1029,7 @@ function finishMarquee(
         path: state.filePath,
         page,
         text,
+        imageDataUrl,
       });
       setMarqueeMode(false);
     });

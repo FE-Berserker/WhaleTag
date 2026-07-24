@@ -13,6 +13,7 @@ import type {
   AiSettingsSnapshot,
   ChatMessage,
   Conversation,
+  ImageAttachment,
   StreamChunk,
   UsageInfo,
 } from '../../../shared/ai-types';
@@ -38,7 +39,8 @@ export interface AiStreamState {
     text: string,
     attachment?: { path: string; content?: string } | null,
     perspective?: PerspectiveState,
-    selectedPaths?: string[]
+    selectedPaths?: string[],
+    images?: ImageAttachment[]
   ) => Promise<void>;
   cancel: () => void;
 }
@@ -228,7 +230,8 @@ export function useAiStream(): AiStreamState {
       text: string,
       attachment?: { path: string; content?: string } | null,
       perspective?: PerspectiveState,
-      selectedPaths?: string[]
+      selectedPaths?: string[],
+      images?: ImageAttachment[]
     ) => {
       if (!text.trim() || !currentLocation || streamingConvId) return;
       // Ensure there's an active conversation.
@@ -247,6 +250,7 @@ export function useAiStream(): AiStreamState {
         content: text,
         timestamp: Date.now(),
         currentNote: attachment?.path,
+        ...(images && images.length > 0 ? { images } : {}),
       };
       dispatch(setConversationMessages(id, [...prior, userMsg]));
 
@@ -266,6 +270,7 @@ export function useAiStream(): AiStreamState {
           subview: perspective?.subview,
           viewDepth: perspective?.viewDepth,
           selectedPaths: selectedPaths && selectedPaths.length > 0 ? selectedPaths : undefined,
+          images: images && images.length > 0 ? images : undefined,
         },
         settings: buildSnapshot(settings),
         sessionId: conversations[id]?.sessionId ?? null,
