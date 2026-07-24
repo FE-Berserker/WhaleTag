@@ -34,7 +34,11 @@ import { buildMenu } from './menu';
 import { assertWithinAllowedRoot } from './allowed-roots';
 import { getWhaleAppVersion } from './app-version';
 import { decodeWhaleFileUrl } from '../shared/whale-file-url';
-import { createFileRangeResponse } from './protocol-range';
+import {
+  applyExtensionCors,
+  createFileRangeResponse,
+  extensionCorsPreflight,
+} from './protocol-range';
 import { registerWhaleAudioProtocol, killAllAudioTranscodes } from './whale-audio-protocol';
 import {
   resolveExtensionRequest,
@@ -599,6 +603,10 @@ function registerExtensionProtocol(): void {
  */
 function registerWhaleFileProtocol(): void {
   protocol.handle('whale-file', async (request) => {
+    // CORS preflight for extension iframes (pdfjs Range streaming) — answered
+    // before any path work; non-extension origins get 403.
+    const preflight = extensionCorsPreflight(request);
+    if (preflight) return preflight;
     try {
       const filePath = decodeWhaleFileUrl(request.url);
       if (!filePath) {
@@ -616,6 +624,9 @@ function registerWhaleFileProtocol(): void {
         'Content-Type': mimeForPath(filePath),
         'Cache-Control': 'no-cache',
       });
+      // Echo the extension origin for CORS (pdfjs's range transport reads
+      // Accept-Ranges / Content-Range cross-origin) — echo-only, never `*`.
+      applyExtensionCors(headers, request);
       return createFileRangeResponse(filePath, request, headers);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

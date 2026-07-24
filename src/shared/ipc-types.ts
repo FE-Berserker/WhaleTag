@@ -4,7 +4,11 @@
  */
 import type { LocationType, SidecarMeta, FolderMeta } from './whale-meta';
 import type { SearchQuery } from './search-query';
-import type { ExtensionRegistry, RevisionInfo } from './extension-types';
+import type {
+  ExtensionRegistry,
+  RenderPdfOptions,
+  RevisionInfo,
+} from './extension-types';
 import type { EbookAnnotations } from './ebook-annotations';
 import type {
   ListArchiveOptions,
@@ -404,6 +408,15 @@ export interface WhaleApi {
    *  by extension context menus' Paste (md-editor). Returns '' when the
    *  clipboard holds no text. */
   readClipboardText: () => Promise<string>;
+  /** Render an HTML document to a PDF via the main process's hidden
+   *  Chromium window (`webContents.printToPDF`). Used by md-editor's PDF
+   *  export. The HTML is the fully-rendered, self-contained preview output
+   *  (KaTeX/Mermaid already rendered, images as `whale-file://` URLs). Returns
+   *  the PDF bytes. */
+  renderHtmlToPdf: (
+    html: string,
+    options?: RenderPdfOptions
+  ) => Promise<Uint8Array>;
   // Phase 4b — Archive viewer (main-process decoder)
   /** List the entries of a supported archive (zip/tar/tgz/7z/bz2/xz/gz).
    *  Throws if the format is unsupported or the archive is unreadable. */

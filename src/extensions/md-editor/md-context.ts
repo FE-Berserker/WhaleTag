@@ -185,6 +185,7 @@ export const dom = typeof document === 'undefined'
       toggleTocBtn: null,
       gotoLineBtn: null,
       exportHtmlBtn: null,
+      exportPdfBtn: null,
       themeSelectEl: null,
       tocSidebarEl: null,
       tocListEl: null,
@@ -216,6 +217,7 @@ export const dom = typeof document === 'undefined'
       toggleTocBtn: HTMLButtonElement;
       gotoLineBtn: HTMLButtonElement;
       exportHtmlBtn: HTMLButtonElement;
+      exportPdfBtn: HTMLButtonElement;
       themeSelectEl: HTMLSelectElement;
       tocSidebarEl: HTMLElement;
       tocListEl: HTMLElement;
@@ -248,6 +250,7 @@ export const dom = typeof document === 'undefined'
       toggleTocBtn: document.getElementById('btn-toggle-toc') as HTMLButtonElement,
       gotoLineBtn: document.getElementById('btn-goto-line') as HTMLButtonElement,
       exportHtmlBtn: document.getElementById('btn-export-html') as HTMLButtonElement,
+      exportPdfBtn: document.getElementById('btn-export-pdf') as HTMLButtonElement,
       themeSelectEl: document.getElementById('select-theme') as HTMLSelectElement,
       tocSidebarEl: document.getElementById('toc-sidebar') as HTMLElement,
       tocListEl: document.getElementById('toc-list') as HTMLElement,

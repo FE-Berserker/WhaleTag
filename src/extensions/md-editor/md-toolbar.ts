@@ -25,6 +25,9 @@ import {
   parseLineInput,
   triggerDownload,
   wrapHtmlDocument,
+  buildPrintableHtml,
+  renderMermaid,
+  renderKatex,
 } from './md-render';
 import { applyFontSize, applyWrap, readMdThemeVars } from './md-theme';
 import { refreshToc } from './md-toc';
@@ -543,6 +546,96 @@ export function exportPreviewAsHtml(): void {
   );
 }
 
+// §18.3.2 (PDF) — pending requestRenderPdf round-trips, keyed by requestId.
+const pendingPdfExport = new Map<
+  string,
+  (data: Uint8Array | null, error?: string) => void
+>();
+let pdfReqId = 0;
+
+/** Ensure the sandbox-rendered blocks (Mermaid SVGs, KaTeX spans) have
+ *  replaced their placeholders in the live preview DOM before we snapshot
+ *  it for PDF. Both `renderMermaid` / `renderKatex` are already async +
+ *  idempotent (cache hits are instant); the race caps the wait so a stuck
+ *  sandbox can't hang export. */
+async function ensureRenderSettled(timeoutMs = 1500): Promise<void> {
+  await Promise.race([
+    Promise.allSettled([
+      renderMermaid(dom.previewPane),
+      renderKatex(dom.previewPane),
+    ]),
+    new Promise((r) => setTimeout(r, timeoutMs)),
+  ]);
+}
+
+/** Resolve the pending `requestRenderPdf` promise when the host returns the
+ *  PDF bytes (or null + error). Called from index.ts's handleMessage. */
+export function handleRenderedPdf(msg: {
+  requestId: string;
+  data: Uint8Array | null;
+  error?: string;
+}): void {
+  const resolve = pendingPdfExport.get(msg.requestId);
+  if (!resolve) return;
+  pendingPdfExport.delete(msg.requestId);
+  resolve(msg.data, msg.error);
+}
+
+/** Derive the PDF filename stem + document title from `ctx.currentPath`
+ *  (mirrors exportPreviewAsHtml's basename logic). */
+function pdfNameParts(): { stem: string; title: string } {
+  if (!ctx.currentPath) return { stem: 'untitled', title: 'Untitled' };
+  const sep = Math.max(
+    ctx.currentPath.lastIndexOf('/'),
+    ctx.currentPath.lastIndexOf('\\')
+  );
+  const fileName = sep >= 0 ? ctx.currentPath.slice(sep + 1) : ctx.currentPath;
+  const dot = fileName.lastIndexOf('.');
+  const stem = dot > 0 ? fileName.slice(0, dot) : fileName;
+  return { stem, title: stem || 'Untitled' };
+}
+
+/**
+ * §18.3.2 (PDF) — export the current preview as a PDF. Awaits the async
+ * sandbox renders (Mermaid/KaTeX), snapshots the rendered preview HTML into
+ * a print-optimized document, ships it to the host (hidden Chromium window +
+ * `printToPDF`), and downloads the returned bytes. Filename mirrors HTML
+ * export (basename + `.pdf`). Disables the button while in flight so spam-
+ * clicks can't stack round-trips.
+ */
+export async function exportPreviewAsPdf(): Promise<void> {
+  if (dom.exportPdfBtn.disabled) return;
+  dom.exportPdfBtn.disabled = true;
+  try {
+    await ensureRenderSettled();
+    const themeVars = readMdThemeVars();
+    const bodyHtml = dom.previewPane.innerHTML;
+    const { stem, title } = pdfNameParts();
+    const html = buildPrintableHtml(title, bodyHtml, themeVars);
+    const requestId = `pdf-${++pdfReqId}`;
+    const bytes = await new Promise<Uint8Array | null>((resolve) => {
+      pendingPdfExport.set(requestId, (data) => resolve(data));
+      window.whaleExt.postMessage({
+        type: 'requestRenderPdf',
+        requestId,
+        html,
+      });
+    });
+    if (!bytes) {
+      // eslint-disable-next-line no-console
+      console.warn('[md-editor] PDF export failed (no bytes returned)');
+      return;
+    }
+    triggerDownload(
+      `${stem}.pdf`,
+      new Blob([new Uint8Array(bytes)], { type: 'application/pdf' }),
+      'application/pdf'
+    );
+  } finally {
+    dom.exportPdfBtn.disabled = false;
+  }
+}
+
 /**
  * §toolbar — wire the toolbar buttons (find/wrap/zoom/toc/export/goto-line)
  * + the initial wrap indicator. Called once from createEditor after the view
@@ -590,6 +683,11 @@ export function setupToolbar(): void {
   // innerHTML (which has been sanitized + highlighted + image-resolved).
   dom.exportHtmlBtn.addEventListener('click', () => {
     exportPreviewAsHtml();
+  });
+
+  // §18.3.2 (PDF) — Export Preview as PDF (hidden Chromium + printToPDF).
+  dom.exportPdfBtn.addEventListener('click', () => {
+    void exportPreviewAsPdf();
   });
 
   // Initial toolbar state indicator.

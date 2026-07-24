@@ -13,6 +13,7 @@ import {
   spansToText,
   type SpanBox,
 } from './marquee';
+import { encodeWhaleFileUrl } from '../../shared/whale-file-url';
 
 /**
  * Tier 3 (Phase §B) switch: run pdfjs's document parser on a real Worker so
@@ -21,15 +22,16 @@ import {
  * (`pdf.worker.mjs`, served at `whale-extension://pdf-viewer/pdf.worker.mjs`)
  * and the iframe CSP `worker-src` allows that origin (index.html).
  *
- * Default `false`: Tier 1+2 (whale-file:// streaming + pdfjs Range reads)
- * already eliminate the large-PDF freeze by removing the base64 round-trip
- * and loading bytes on demand. The real Worker is an additional improvement
- * (CPU parse off the main thread) but depends on `new Worker()` accepting
- * the `whale-extension://` privileged scheme — no prior art in this repo
- * (cad/heic fetch wasm, they don't spawn a Worker). Verify by opening a PDF
- * with this set to `true` and checking the browser Workers tab + console for
- * load/CSP errors. If the worker fails to spawn pdfjs rejects the load;
- * flip back to `false` to restore the fake-worker path (Tier 1+2 still apply).
+ * Default `false`: Range streaming over `whale-file://` (2026-07-23, the
+ * protocol handler echoes the extension origin for CORS) already loads
+ * bytes on demand — the large-PDF freeze from whole-file reads is gone.
+ * The real Worker is an additional improvement (CPU parse off the main
+ * thread) but depends on `new Worker()` accepting the `whale-extension://`
+ * privileged scheme — no prior art in this repo (cad/heic fetch wasm, they
+ * don't spawn a Worker). Verify by opening a PDF with this set to `true`
+ * and checking the browser Workers tab + console for load/CSP errors. If
+ * the worker fails to spawn pdfjs rejects the load; flip back to `false`
+ * to restore the fake-worker path.
  */
 const USE_PDFJS_WORKER = false;
 const PDFJS_WORKER_SRC = 'whale-extension://pdf-viewer/pdf.worker.mjs';
@@ -554,14 +556,12 @@ function rotateCurrentPage(direction: 1 | -1) {
 }
 
 // --- Wiring ---------------------------------------------------------------
-// --- File-bytes bridge ----------------------------------------------------
-// The host sends an empty `fileContent` blob + path + size; we ask it to
-// read the file and post the raw bytes back (Uint8Array via structured
-// clone — one memcpy, no base64, no O(n²) decode). We can't `fetch(whale-
-// file://)` here: Chromium's CORS policy blocks cross-origin fetch to
-// custom schemes (only http/https/data/chrome are allowed), which rules out
-// pdfjs's `getDocument({url})` Range path. Mirrors office-viewer's
-// `requestOfficeConvert` → `officePdfContent` byte-bridge pattern.
+// --- File-bytes bridge (fallback) -----------------------------------------
+// Primary path is `renderPdfUrl` (Range streaming over whale-file:// — the
+// protocol handler echoes the extension origin for CORS). This bridge is
+// the fallback: the host reads the whole file and posts the raw bytes back
+// (Uint8Array via structured clone — one memcpy, no base64, no O(n²)
+// decode). Kept for any environment where the Range fetch fails.
 let fileBytesReqId = 0;
 const pendingFileBytes = new Map<
   string,
@@ -586,7 +586,7 @@ function requestFileBytes(path: string): Promise<Uint8Array | null> {
  * `requestFileBytes`. `fileSize` is set in the `fileContent` handler (the
  * host sends size but an empty content blob).
  */
-async function renderPdfBytes(bytes: Uint8Array) {
+async function renderWithLifecycle(doRender: () => Promise<void>) {
   const token = (state.loadToken += 1);
   // Reset transient state
   state.pageRotations.clear();
@@ -616,7 +616,7 @@ async function renderPdfBytes(bytes: Uint8Array) {
   // text through the localised loading-bar template. We re-check the load
   // token after the await via the session's `getToken` plumbing.
   try {
-    await session.renderPdfBytes(bytes);
+    await doRender();
     if (token !== state.loadToken) return;
     setLoadingBar('', 'progress');
   } catch (e) {
@@ -630,6 +630,17 @@ async function renderPdfBytes(bytes: Uint8Array) {
       );
     }
   }
+}
+
+async function renderPdfBytes(bytes: Uint8Array) {
+  return renderWithLifecycle(() => session.renderPdfBytes(bytes));
+}
+
+/** Stream the PDF via pdfjs's Range path over `whale-file://` (fetches the
+ *  xref tail + page objects on demand instead of the whole file up front —
+ *  the large-PDF open-time win). Same lifecycle as the bytes path. */
+async function renderPdfUrl(url: string) {
+  return renderWithLifecycle(() => session.renderPdfUrl(url));
 }
 
 /**
@@ -1066,16 +1077,38 @@ window.whaleExt.onMessage((msg) => {
       state.fileSize = msg.size;
       state.filePath = msg.path;
       updateStatusBar();
-      requestFileBytes(msg.path).then((bytes) => {
-        if (bytes) {
-          renderPdfBytes(bytes).catch(() => undefined);
+      // Prefer Range streaming over whale-file:// (pdfjs fetches the xref
+      // tail + page objects on demand) — a large document's first page
+      // paints after a few small reads instead of the entire file. Falls
+      // back to the whole-file byte bridge if the fetch ever fails.
+      {
+        const url = encodeWhaleFileUrl(msg.path);
+        if (url) {
+          renderPdfUrl(url).catch(() => {
+            requestFileBytes(msg.path).then((bytes) => {
+              if (bytes) {
+                renderPdfBytes(bytes).catch(() => undefined);
+              } else {
+                setLoadingBar(
+                  T.failedRender.replace('{msg}', 'file read failed'),
+                  'error',
+                );
+              }
+            });
+          });
         } else {
-          setLoadingBar(
-            T.failedRender.replace('{msg}', 'file read failed'),
-            'error',
-          );
+          requestFileBytes(msg.path).then((bytes) => {
+            if (bytes) {
+              renderPdfBytes(bytes).catch(() => undefined);
+            } else {
+              setLoadingBar(
+                T.failedRender.replace('{msg}', 'file read failed'),
+                'error',
+              );
+            }
+          });
         }
-      });
+      }
       break;
     case 'fileBytes': {
       const pending = pendingFileBytes.get(msg.requestId);

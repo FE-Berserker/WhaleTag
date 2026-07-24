@@ -1466,6 +1466,89 @@ export function wrapHtmlDocument(
   );
 }
 
+// --- Print / PDF export (§18.3.2 printToPDF) -----------------------------
+
+/** Print-only CSS layered on top of EXPORT_CSS: drop the on-screen max-width
+ *  + centering, keep blocks from splitting across pages, wrap long code, and
+ *  don't append `href` after links (Chromium's print default in some CSS). */
+const PRINT_CSS = `
+  @media print {
+    body { max-width: none; margin: 0; padding: 0; }
+    .callout, .callout-content, pre, table, figure { break-inside: avoid; }
+    h1, h2, h3, h4 { break-after: avoid; }
+    pre, code { white-space: pre-wrap; word-break: break-word; }
+    a { color: inherit; text-decoration: underline; }
+    a[href]:after { content: ""; }
+  }
+`.trim();
+
+/** CSP for the print document (loaded from `file://` by the hidden window, so
+ *  it needs its own meta — the live iframe's CSP doesn't apply). Allows the
+ *  process-level `whale-extension://` (KaTeX CSS + fonts) and `whale-file://`
+ *  (images) protocols; inline styles for EXPORT_CSS/PRINT_CSS/callout block;
+ *  no scripts (KaTeX/Mermaid are pre-rendered to static HTML/SVG). */
+const PRINT_CSP = [
+  "default-src 'none'",
+  "style-src 'unsafe-inline' whale-extension:",
+  "img-src data: blob: whale-file: whale-extension:",
+  "font-src whale-extension:",
+  "connect-src 'none'",
+].join('; ');
+
+/**
+ * Emit a `.callout-<type> { ... }` rule for each custom callout so the PDF
+ * (and HTML export) keeps their colors even though DOMPurify stripped the
+ *  inline `style` attr from the preview DOM (`FORBID_ATTR: ['style']`). Uses
+ *  the same tint helper as `transformCallouts`. Returns '' when there are no
+ *  custom callouts.
+ */
+export function getCustomCalloutStyles(): string {
+  const entries = Object.entries(customCalloutMap);
+  if (entries.length === 0) return '';
+  return entries
+    .map(
+      ([type, c]) =>
+        `.callout-${type} { border-color: ${c.color}; border-left-color: ${c.color}; ` +
+        `background: ${mixTowardWhite(c.color, 0.85)}; }`
+    )
+    .join('\n');
+}
+
+/**
+ * Build a self-contained HTML document optimized for `webContents.printToPDF`:
+ * layers EXPORT_CSS + PRINT_CSS (print pagination rules) + the custom-callout
+ * color block, links KaTeX's CSS+fonts via the process-level `whale-extension://`
+ * protocol (no base64 inlining), and pins a print CSP that allows that
+ * protocol for styles/images/fonts but no scripts.
+ *
+ * Mirrors `wrapHtmlDocument`'s title-escaping + EXPORT_CSS reuse (which the
+ * HTML export still uses) without changing it — the print variant adds the
+ * KaTeX `<link>`, CSP `<meta>`, and `@media print` rules on top.
+ */
+export function buildPrintableHtml(
+  title: string,
+  bodyHtml: string,
+  themeRootVars?: string
+): string {
+  const safeTitle = title
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  const rootBlock = themeRootVars ? `:root{${themeRootVars}}` : '';
+  const calloutBlock = getCustomCalloutStyles();
+  return (
+    `<!DOCTYPE html>\n<html lang="en">\n<head>\n` +
+    `<meta charset="UTF-8" />\n` +
+    `<meta http-equiv="Content-Security-Policy" content="${PRINT_CSP}" />\n` +
+    `<title>${safeTitle}</title>\n` +
+    `<link rel="stylesheet" href="whale-extension://md-editor/katex.min.css" />\n` +
+    `<style>${rootBlock}${EXPORT_CSS}\n${PRINT_CSS}${calloutBlock ? '\n' + calloutBlock : ''}</style>\n` +
+    `</head>\n<body>\n` +
+    `${bodyHtml}\n` +
+    `</body>\n</html>\n`
+  );
+}
+
 /**
  * Trigger a browser download of `content` as `filename`. Creates a
  * `Blob` with the given MIME type, a temporary `<a download>`, a

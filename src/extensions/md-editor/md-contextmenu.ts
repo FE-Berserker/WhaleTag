@@ -31,6 +31,7 @@ import {
   openTableDialog,
   promptForLine,
   exportPreviewAsHtml,
+  exportPreviewAsPdf,
 } from './md-toolbar';
 import { applyWrap, applyFontSize } from './md-theme';
 import { T } from './md-i18n';
@@ -104,6 +105,7 @@ function editorMenuEntries(): MenuEntry[] {
     } },
     { type: 'separator' },
     { type: 'item', label: T.exportAsHtml, onSelect: () => { exportPreviewAsHtml(); } },
+    { type: 'item', label: T.exportAsPdf, onSelect: () => { exportPreviewAsPdf(); } },
   ];
 }
 
@@ -115,6 +117,7 @@ function previewMenuEntries(): MenuEntry[] {
     } },
     { type: 'separator' },
     { type: 'item', label: T.exportAsHtml, onSelect: () => { exportPreviewAsHtml(); } },
+    { type: 'item', label: T.exportAsPdf, onSelect: () => { exportPreviewAsPdf(); } },
   ];
 }
 

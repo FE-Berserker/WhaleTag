@@ -397,6 +397,7 @@ export type HostMessage =
   | FileEmbedMessage
   | SiblingsMessage
   | FileBytesMessage
+  | RenderedPdfMessage
   | SetMdRenderThemeMessage
   | SetCustomCalloutsMessage
   | SetKeybindingsMessage
@@ -555,6 +556,37 @@ export interface RequestFileBytesMessage {
   type: 'requestFileBytes';
   requestId: string;
   path: string;
+}
+
+/** Options for `requestRenderPdf` / `renderHtmlToPdf`. All optional — the
+ *  main-process printer falls back to A4 + 0.4" margins + printBackground. */
+export interface RenderPdfOptions {
+  pageSize?: 'A4' | 'Letter';
+  landscape?: boolean;
+  scale?: number;
+  marginInches?: { top: number; bottom: number; left: number; right: number };
+}
+
+/** Extension -> Host: render an HTML document to a PDF via the main process's
+ *  hidden Chromium window (`webContents.printToPDF`). The HTML is the fully-
+ *  rendered, sanitized preview output (`buildPrintableHtml` in md-render.ts)
+ *  — KaTeX/Mermaid already rendered to static HTML/SVG, images already
+ *  resolved to `whale-file://` URLs. The host writes it to a temp file, loads
+ *  it in an offscreen BrowserWindow, waits for images, prints, returns bytes. */
+export interface RequestRenderPdfMessage {
+  type: 'requestRenderPdf';
+  requestId: string;
+  html: string;
+  options?: RenderPdfOptions;
+}
+
+/** Host -> Extension: the PDF bytes (or null + error on failure). Mirrors
+ *  `FileBytesMessage`'s null-on-error shape. */
+export interface RenderedPdfMessage {
+  type: 'renderedPdf';
+  requestId: string;
+  data: Uint8Array | null;
+  error?: string;
 }
 
 /** Extension -> Host: request the main-process archive decoder list entries. */
@@ -726,6 +758,7 @@ export type ExtensionMessage =
   | RequestEbookConvertMessage
   | RequestStreamingUrlMessage
   | RequestFileBytesMessage
+  | RequestRenderPdfMessage
   | MdRenderThemeChangedMessage
   | RequestArchiveListMessage
   | RequestArchiveEntryMessage

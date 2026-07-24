@@ -18,7 +18,11 @@ type AppUpdateEventPayload =
   | string;
 import type { SidecarMeta, FolderMeta } from '../shared/whale-meta';
 import type { SearchQuery } from '../shared/search-query';
-import type { ExtensionRegistry, RevisionInfo } from '../shared/extension-types';
+import type {
+  ExtensionRegistry,
+  RenderPdfOptions,
+  RevisionInfo,
+} from '../shared/extension-types';
 import type {
   AiApprovalRequest,
   AiQueryPayload,
@@ -240,6 +244,8 @@ const whaleApi: WhaleApi = {
     ipcRenderer.invoke('ext:isSofficeAvailable', options) as Promise<boolean>,
   readClipboardText: () =>
     ipcRenderer.invoke('ext:readClipboardText') as Promise<string>,
+  renderHtmlToPdf: (html: string, options?: RenderPdfOptions) =>
+    ipcRenderer.invoke('ext:renderHtmlToPdf', html, options) as Promise<Uint8Array>,
 
   // Phase 4b — Archive viewer main-process decoder
   listArchive: (filePath: string, options?) =>

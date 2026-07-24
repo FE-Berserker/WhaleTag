@@ -45,6 +45,9 @@ import {
   extractToc,
   renderToc,
   wrapHtmlDocument,
+  buildPrintableHtml,
+  getCustomCalloutStyles,
+  setCustomCallouts,
   triggerDownload,
   extractMermaidBlocks,
   extractKatexBlocks,
@@ -1340,6 +1343,89 @@ describe('wrapHtmlDocument', () => {
     const out = wrapHtmlDocument('T', '');
     assert.match(out, /<style>/);
     assert.equal(/<link\s+rel="stylesheet"/.test(out), false);
+  });
+});
+
+describe('buildPrintableHtml (§18.3.2 PDF)', () => {
+  // Restore the default (empty) custom-callout map so the getCustomCalloutStyles
+  // suite below doesn't leak state into other suites.
+  after(() => setCustomCallouts([]));
+
+  it('links KaTeX CSS via the whale-extension:// protocol (no base64)', () => {
+    const out = buildPrintableHtml('T', '<p>x</p>');
+    assert.match(
+      out,
+      /<link rel="stylesheet" href="whale-extension:\/\/md-editor\/katex\.min\.css"/
+    );
+  });
+
+  it('pins a print CSP allowing whale-extension: for styles + fonts', () => {
+    const out = buildPrintableHtml('T', '<p>x</p>');
+    assert.match(out, /style-src 'unsafe-inline' whale-extension:/);
+    assert.match(out, /font-src whale-extension:/);
+    assert.match(out, /img-src[^;]*whale-file:/);
+    // No script-src relaxation — the doc is declarative only (KaTeX/Mermaid
+    // are pre-rendered to static HTML/SVG).
+    assert.equal(/script-src/.test(out), false);
+  });
+
+  it('includes print pagination rules (@media print)', () => {
+    const out = buildPrintableHtml('T', '<p>x</p>');
+    assert.match(out, /@media print/);
+    assert.match(out, /break-inside: avoid/);
+  });
+
+  it('still embeds EXPORT_CSS (wrapHtmlDocument parity, no regression)', () => {
+    const out = buildPrintableHtml('T', '<p>hi</p>');
+    // EXPORT_CSS carries `pre {` styling — a representative selector.
+    assert.match(out, /<style>[\s\S]*pre \{/);
+    assert.match(out, /<p>hi<\/p>/);
+  });
+
+  it('escapes the title (no injected markup)', () => {
+    const out = buildPrintableHtml('<script>alert(1)</script>', '');
+    assert.equal(/<script>alert/.test(out), false);
+  });
+});
+
+describe('getCustomCalloutStyles', () => {
+  after(() => setCustomCallouts([]));
+
+  it('returns "" when no custom callouts are registered', () => {
+    setCustomCallouts([]);
+    assert.equal(getCustomCalloutStyles(), '');
+  });
+
+  it('emits a .callout-<type> rule per enabled custom callout', () => {
+    setCustomCallouts([
+      {
+        id: 'u1',
+        type: 'warn',
+        label: 'Warn',
+        color: '#ff0000',
+        icon: '⚠',
+        enabled: true,
+      },
+    ]);
+    const css = getCustomCalloutStyles();
+    assert.match(css, /\.callout-warn \{/);
+    assert.match(css, /#ff0000/);
+    // background is a tint (mix toward white), not the raw hex.
+    assert.equal(/background: #ff0000/.test(css), false);
+  });
+
+  it('skips disabled custom callouts', () => {
+    setCustomCallouts([
+      {
+        id: 'u2',
+        type: 'secret',
+        label: 'Secret',
+        color: '#00ff00',
+        icon: '🤫',
+        enabled: false,
+      },
+    ]);
+    assert.equal(getCustomCalloutStyles(), '');
   });
 });
 

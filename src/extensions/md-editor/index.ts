@@ -52,6 +52,7 @@ import {
   toggleTaskInEditor,
   setupToolbar,
   replaceTableCellInEditor,
+  handleRenderedPdf,
 } from './md-toolbar';
 import { buildEditorKeymaps } from './md-keymaps';
 import { applyLocale } from './md-i18n';
@@ -500,6 +501,10 @@ function handleMessage(msg: HostMessage) {
           selection: { anchor: msg.from + msg.text.length },
         });
       }
+      break;
+    case 'renderedPdf':
+      // §18.3.2 (PDF) — host returned the rendered PDF bytes (or null+error).
+      handleRenderedPdf(msg);
       break;
     case 'imageSaved': {
       // §paste-image — host saved the pasted image; insert ![](./rel) where

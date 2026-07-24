@@ -80,6 +80,9 @@ export interface Strings {
   zoomOutMenu: string;
   zoomResetMenu: string;
   exportAsHtml: string;
+  exportPdfTitle: string;
+  exportPdfLabel: string;
+  exportAsPdf: string;
 }
 
 const I18N: Record<string, Strings> = {
@@ -143,6 +146,9 @@ const I18N: Record<string, Strings> = {
     zoomOutMenu: 'Zoom Out',
     zoomResetMenu: 'Reset Zoom',
     exportAsHtml: 'Export as HTML',
+    exportPdfTitle: 'Export Preview as PDF',
+    exportPdfLabel: 'PDF',
+    exportAsPdf: 'Export as PDF',
   },
   zh: {
     findTitle: '查找 / 替换 (Ctrl+F)',
@@ -204,6 +210,9 @@ const I18N: Record<string, Strings> = {
     zoomOutMenu: '缩小',
     zoomResetMenu: '重置缩放',
     exportAsHtml: '导出为 HTML',
+    exportPdfTitle: '导出预览为 PDF',
+    exportPdfLabel: 'PDF',
+    exportAsPdf: '导出为 PDF',
   },
   'zh-TW': {
     findTitle: '尋找 / 取代 (Ctrl+F)',
@@ -265,6 +274,9 @@ const I18N: Record<string, Strings> = {
     zoomOutMenu: '縮小',
     zoomResetMenu: '重設縮放',
     exportAsHtml: '匯出為 HTML',
+    exportPdfTitle: '匯出預覽為 PDF',
+    exportPdfLabel: 'PDF',
+    exportAsPdf: '匯出為 PDF',
   },
   ja: {
     findTitle: '検索 / 置換 (Ctrl+F)',
@@ -326,6 +338,9 @@ const I18N: Record<string, Strings> = {
     zoomOutMenu: '縮小',
     zoomResetMenu: 'ズームをリセット',
     exportAsHtml: 'HTML にエクスポート',
+    exportPdfTitle: 'プレビューを PDF にエクスポート',
+    exportPdfLabel: 'PDF',
+    exportAsPdf: 'PDF にエクスポート',
   },
   ko: {
     findTitle: '찾기 / 바꾸기 (Ctrl+F)',
@@ -387,6 +402,9 @@ const I18N: Record<string, Strings> = {
     zoomOutMenu: '축소',
     zoomResetMenu: '확대/축소 재설정',
     exportAsHtml: 'HTML로 내보내기',
+    exportPdfTitle: '미리보기를 PDF로 내보내기',
+    exportPdfLabel: 'PDF',
+    exportAsPdf: 'PDF로 내보내기',
   },
 };
 
@@ -413,6 +431,7 @@ export function applyLocale(): void {
     [dom.toggleTocBtn, T.tocTitle, `≡ ${T.tocLabel}`],
     [dom.gotoLineBtn, T.gotoLineTitle, `↦ ${T.gotoLineLabel}`],
     [dom.exportHtmlBtn, T.exportHtmlTitle, `⇩ ${T.exportHtmlLabel}`],
+    [dom.exportPdfBtn, T.exportPdfTitle, `⇩ ${T.exportPdfLabel}`],
   ];
   for (const [btn, title, text] of labelled) {
     btn.title = title;

@@ -12,6 +12,45 @@
 import { createReadStream, statSync } from 'fs';
 
 /**
+ * CORS for extension iframes fetching `whale-file://` — this is what makes
+ * `fetch(whale-file://)` from a `whale-extension://<id>` origin legal at all
+ * (pdfjs's `getDocument({url})` Range streaming lives on it). The extension
+ * origin is echoed verbatim (never `*`, so no other scheme gains cross-origin
+ * file reads), and the Range-family headers pdfjs inspects are exposed.
+ */
+export function applyExtensionCors(headers: Headers, request: Request): void {
+  const origin = request.headers.get('origin');
+  if (origin && origin.startsWith('whale-extension://')) {
+    headers.set('Access-Control-Allow-Origin', origin);
+    headers.set(
+      'Access-Control-Expose-Headers',
+      'Accept-Ranges, Content-Range, Content-Length'
+    );
+  }
+}
+
+/**
+ * Answer a CORS preflight for the same origin set: 204 with the Range method
+ * + headers allowed. Non-OPTIONS requests return `null` (caller proceeds);
+ * OPTIONS from a non-extension origin is refused outright.
+ */
+export function extensionCorsPreflight(request: Request): Response | null {
+  if (request.method !== 'OPTIONS') return null;
+  const origin = request.headers.get('origin');
+  if (!origin || !origin.startsWith('whale-extension://')) {
+    return new Response('Forbidden', { status: 403 });
+  }
+  return new Response(null, {
+    status: 204,
+    headers: {
+      'Access-Control-Allow-Origin': origin,
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Range, Content-Type',
+    },
+  });
+}
+
+/**
  * Parse an HTTP `Range:` header value into a single `{ start, end }` slice.
  * Returns `null` for malformed input or an out-of-bounds request so the
  * caller can fall back to a full 200. Only the `bytes=START-END` form is

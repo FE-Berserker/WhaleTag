@@ -197,14 +197,12 @@ export interface PdfjsSession {
    *  decode / render error). */
   renderPdfBytes(bytes: Uint8Array): Promise<void>;
   /** Stream + render a PDF from a URL via pdfjs's Range path (pdfjs pulls
-   *  bytes on demand). Currently UNUSED at the call sites: pdf-viewer tried
-   *  `getDocument({url: 'whale-file://…'})` but Chromium's CORS policy
-   *  blocks cross-origin fetch to custom schemes (only http/https/data/
-   *  chrome are allowed), so it failed with `net::ERR_FAILED` from the
-   *  `whale-extension://` origin. pdf-viewer instead uses `renderPdfBytes`
-   *  with bytes shipped via postMessage (Uint8Array structured clone — see
-   *  `requestFileBytes`/`fileBytes`). Kept + unit-tested for the day a
-   *  fetch-able scheme exists; lifecycle matches `renderPdfBytes`. */
+   *  bytes on demand). pdf-viewer's primary open path (2026-07-23): the
+   *  `whale-file://` protocol handler echoes the extension origin for CORS
+   *  (`applyExtensionCors` + `extensionCorsPreflight` in
+   *  `src/main/protocol-range.ts`), so the fetch that used to fail with
+   *  `net::ERR_FAILED` now works. `renderPdfBytes` remains as the fallback
+   *  bridge; lifecycle matches. */
   renderPdfUrl(url: string): Promise<void>;
   /** Re-render a single page at a new rotation (Phase 1 §B1). The session
    *  tears down the existing canvas and paints a fresh one. */
@@ -730,12 +728,12 @@ export function createPdfjsSession(opts: PdfjsSessionOptions): PdfjsSession {
   }
 
   /**
-   * Stream + render a PDF from a URL via pdfjs's Range path. UNUSED at the
-   * call sites — pdf-viewer hit Chromium's CORS block on
-   * `fetch(whale-file://)` (custom schemes aren't in the cross-origin
-   * fetch allow-list) and fell back to `renderPdfBytes` with postMessage
-   * bytes. Kept for a future fetch-able scheme; see `renderPdfUrl` on
-   * `PdfjsSession`.
+   * Stream + render a PDF from a URL via pdfjs's Range path — pdf-viewer's
+   * PRIMARY open path (2026-07-23): the `whale-file://` protocol handler
+   * echoes the extension origin for CORS (`applyExtensionCors`), so
+   * `getDocument({url})` fetches the xref tail + page objects on demand
+   * instead of receiving the whole file up front. `renderPdfBytes` remains
+   * as the fallback bridge.
    */
   async function renderPdfUrl(url: string): Promise<void> {
     currentToken = getToken();

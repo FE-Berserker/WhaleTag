@@ -207,6 +207,29 @@ export function createRpcHandler(post: Post, paths: RpcPaths) {
         );
         return true;
 
+      case 'requestRenderPdf':
+        // md-editor PDF export: ship the fully-rendered preview HTML to the
+        // main process, which loads it in a hidden Chromium window and prints
+        // it to PDF bytes. `whale-extension://` (KaTeX CSS/fonts) and
+        // `whale-file://` (images) resolve inside that window because both are
+        // process-level privileged protocols. Mirrors requestFileBytes.
+        forwardRpc(
+          post,
+          () => ipcApi.renderHtmlToPdf(msg.html, msg.options),
+          (data) => ({
+            type: 'renderedPdf',
+            requestId: msg.requestId,
+            data,
+          }),
+          (error) => ({
+            type: 'renderedPdf',
+            requestId: msg.requestId,
+            data: null,
+            error,
+          })
+        );
+        return true;
+
       case 'requestSaveImage':
         // §paste-image (md-editor): save the pasted clipboard image into the
         // .md's directory, return the absolute path so the editor can link it.

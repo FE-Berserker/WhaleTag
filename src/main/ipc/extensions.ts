@@ -1,6 +1,6 @@
 import path from 'path';
 import { existsSync, promises as fsp } from 'fs';
-import { ipcMain, clipboard } from 'electron';
+import { app, ipcMain, clipboard, BrowserWindow, WebContents } from 'electron';
 import { createRequire } from 'module';
 import {
   backupRevision,
@@ -16,7 +16,10 @@ import { convertDwgToDxf, dwg2dxfBinary, odaConverterBinary } from '../cad-conve
 import { convertEbookToEpub, ebookConvertBinary } from '../ebook-convert';
 import { listArchive, readArchiveEntry, extractArchive } from '../archive';
 import { getAllowedRoots, assertWithinAllowedRoot } from '../allowed-roots';
-import type { ExtensionRegistry } from '../../shared/extension-types';
+import type {
+  ExtensionRegistry,
+  RenderPdfOptions,
+} from '../../shared/extension-types';
 
 /**
  * Extension-system handlers (`ext:*` + `archive:*`): registry, revisions,
@@ -149,6 +152,16 @@ export function registerExtensionHandlers(): void {
   // round trip like the iframe's Clipboard API would need).
   ipcMain.handle('ext:readClipboardText', () => clipboard.readText());
 
+  // md-editor PDF export: render the fully-rendered preview HTML to a PDF in
+  // a hidden Chromium window. See `renderHtmlToPdf` below.
+  ipcMain.handle(
+    'ext:renderHtmlToPdf',
+    async (_event, html: string, options?: RenderPdfOptions) =>
+      renderHtmlToPdf(html, options)
+  );
+  // Clean up temp HTML left by a previous session that crashed mid-render.
+  sweepStalePrintHtml();
+
   // Archive decoder for archive-viewer Phase 2+.
   ipcMain.handle(
     'archive:listArchive',
@@ -164,6 +177,141 @@ export function registerExtensionHandlers(): void {
     async (_event, filePath: string, destDir: string, options?) =>
       extractArchive(filePath, destDir, options)
   );
+}
+
+// ---------------------------------------------------------------------------
+// md-editor PDF export: hidden Chromium window + printToPDF.
+// ---------------------------------------------------------------------------
+
+const PRINT_HTML_PREFIX = 'whalepdf-';
+
+/** Wait for every `<img>` in the loaded document to settle (load or error),
+ *  so `printToPDF` captures real images instead of broken/placeholder boxes.
+ *  `whale-file://` images load fast (local + Range); 8s is a generous cap.
+ *  A 404 (file deleted / outside allowed roots) counts as settled — the
+ *  broken-image icon renders. */
+async function waitForImagesReady(
+  wc: WebContents,
+  timeoutMs = 8000
+): Promise<void> {
+  const ready = wc.executeJavaScript(
+    `new Promise((resolve) => {
+       const imgs = Array.from(document.images);
+       const pending = imgs.filter((i) => !i.complete && i.src);
+       if (pending.length === 0) return resolve(true);
+       let left = pending.length;
+       const done = () => { if (--left === 0) resolve(true); };
+       pending.forEach((img) => {
+         img.addEventListener('load', done, { once: true });
+         img.addEventListener('error', done, { once: true });
+       });
+     })`,
+    true
+  );
+  await Promise.race([
+    ready,
+    new Promise((r) => setTimeout(r, timeoutMs)),
+  ]);
+}
+
+/** Remove `whalepdf-*.html` leftovers from a previous session that crashed
+ *  mid-render. Called once at handler registration. */
+function sweepStalePrintHtml(): void {
+  let tmp: string;
+  try {
+    tmp = app.getPath('temp');
+  } catch {
+    // `app.getPath` is unavailable in some test environments (no real
+    // Electron app) — skip the sweep rather than crash registration.
+    return;
+  }
+  fsp
+    .readdir(tmp)
+    .then((names) =>
+      Promise.all(
+        names
+          .filter(
+            (n) => n.startsWith(PRINT_HTML_PREFIX) && n.endsWith('.html')
+          )
+          .map((n) => fsp.rm(path.join(tmp, n), { force: true }).catch(() => {}))
+      )
+    )
+    .catch(() => {
+      /* temp dir unreadable — ignore */
+    });
+}
+
+/** Render `html` to a PDF via an offscreen Chromium window. Writes the HTML
+ *  to a temp file (data URLs hit Chromium's ~2MB cap and bloat on CJK), loads
+ *  it, waits for images, prints with `printBackground` so callout/hljs colors
+ *  are preserved, then tears down the window + temp file. Returns PDF bytes.
+ *
+ *  `whale-extension://` (KaTeX CSS + fonts) and `whale-file://` (images) are
+ *  process-level privileged protocols, so they resolve inside the hidden
+ *  window without any extra wiring. */
+async function renderHtmlToPdf(
+  html: string,
+  options?: RenderPdfOptions
+): Promise<Uint8Array> {
+  const tmpHtml = path.join(
+    app.getPath('temp'),
+    `${PRINT_HTML_PREFIX}${process.pid}-${Date.now()}.html`
+  );
+  await atomicWriteText(tmpHtml, html);
+  const win = new BrowserWindow({
+    show: false,
+    webPreferences: { sandbox: true, contextIsolation: true },
+  });
+  try {
+    // `loadFile` resolves on did-finish-load; race against did-fail-load + a
+    // 30s cap so a stuck render can't hang the export (and leak the window).
+    const settled = new Promise<void>((resolve, reject) => {
+      win.webContents.once('did-finish-load', () => resolve());
+      win.webContents.once('did-fail-load', (_e, code, desc) =>
+        reject(
+          new Error(`renderHtmlToPdf: load failed (${code}) ${desc ?? ''}`)
+        )
+      );
+    });
+    await Promise.race([
+      Promise.all([win.loadFile(tmpHtml), settled]),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error('renderHtmlToPdf: load timeout')),
+          30000
+        )
+      ),
+    ]);
+    await waitForImagesReady(win.webContents).catch(() => {
+      /* timeout → proceed with whatever loaded */
+    });
+    const buf = await win.webContents.printToPDF({
+      printBackground: true,
+      pageSize: options?.pageSize ?? 'A4',
+      landscape: options?.landscape ?? false,
+      scale: options?.scale ?? 1.0,
+      preferCSSPageSize: false,
+      margins: options?.marginInches
+        ? {
+            marginType: 'custom' as const,
+            top: options.marginInches.top,
+            bottom: options.marginInches.bottom,
+            left: options.marginInches.left,
+            right: options.marginInches.right,
+          }
+        : {
+            marginType: 'custom' as const,
+            top: 0.4,
+            bottom: 0.4,
+            left: 0.4,
+            right: 0.4,
+          },
+    });
+    return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+  } finally {
+    if (!win.isDestroyed()) win.destroy();
+    await fsp.rm(tmpHtml, { force: true });
+  }
 }
 
 // ---------------------------------------------------------------------------
