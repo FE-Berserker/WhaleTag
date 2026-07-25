@@ -30,6 +30,11 @@ import { ipcApi } from '-/services/ipc-api';
 import { useAiStream } from './useAiStream';
 import MessageRenderer from './MessageRenderer';
 import ApprovalModal from './ApprovalModal';
+import {
+  AI_DRAFT_EVENT,
+  consumeAiDraft,
+  type AiDraftPayload,
+} from './aiDraftBus';
 import { useConfirm } from '-/components/ConfirmDialogProvider';
 import AiToolbar from './AiToolbar';
 import AiTabs from './AiTabs';
@@ -88,23 +93,23 @@ export default function AiPanel() {
   } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    const onDraft = (e: Event) => {
-      const d = (
-        e as CustomEvent<{
-          path: string;
-          page?: number;
-          text: string;
-          imageDataUrl?: string;
-        }>
-      ).detail;
+    const apply = (d: AiDraftPayload | null) => {
       // Accept text and/or a screenshot — a scanned page has no text but
       // still carries the screenshot.
       if (!d || (!d.text && !d.imageDataUrl)) return;
       setPdfDraft(d);
       inputRef.current?.focus();
     };
-    window.addEventListener('whale:ai-draft', onDraft);
-    return () => window.removeEventListener('whale:ai-draft', onDraft);
+    // The host opens the panel and fires the draft synchronously — on first
+    // use this lazy chunk is still loading, so the event is already gone.
+    // Drain the pending slot it left behind, then listen live.
+    apply(consumeAiDraft());
+    const onDraft = (e: Event) => {
+      apply((e as CustomEvent<AiDraftPayload>).detail);
+      consumeAiDraft(); // drop the pending copy so remounts don't re-apply
+    };
+    window.addEventListener(AI_DRAFT_EVENT, onDraft);
+    return () => window.removeEventListener(AI_DRAFT_EVENT, onDraft);
   }, []);
   // Follow streaming output only while the user is already near the bottom —
   // scrolling up to read history must not yank the view back on every chunk.

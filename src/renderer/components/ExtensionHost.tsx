@@ -38,6 +38,7 @@ import { useDirectoryTreeRefresh } from '-/hooks/DirectoryTreeRefreshContextProv
 import { createRpcHandler } from './extension-host/rpc-cases';
 import PromptDialog from '-/components/PromptDialog';
 import InlineEditModal from '-/components/ai/InlineEditModal';
+import { postAiDraft } from '-/components/ai/aiDraftBus';
 import { RootState } from '-/reducers';
 import {
   setFileEditState,
@@ -686,20 +687,16 @@ export default function ExtensionHost({
         case 'askAi': {
           // pdf-viewer marquee: the user boxed a region and asked about the
           // extracted text. Open the panel and hand the payload to AiPanel
-          // as a draft attachment (CustomEvent — NOT redux: the `ai` slice is
-          // redux-persist'd wholesale, a draft must not survive restart).
+          // as a draft (postAiDraft = CustomEvent + a pending slot, because
+          // the panel is React.lazy and the event alone races its mount).
           if (!aiEnabled) break;
           dispatch(setAiSettings({ aiPanelOpen: true }));
-          window.dispatchEvent(
-            new CustomEvent('whale:ai-draft', {
-              detail: {
-                path: msg.path,
-                page: msg.page,
-                text: msg.text,
-                imageDataUrl: msg.imageDataUrl,
-              },
-            })
-          );
+          postAiDraft({
+            path: msg.path,
+            page: msg.page,
+            text: msg.text,
+            imageDataUrl: msg.imageDataUrl,
+          });
           break;
         }
         case 'error':

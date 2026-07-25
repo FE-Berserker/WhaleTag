@@ -783,3 +783,13 @@ permissionMode 'bypassPermissions' auto-approves every tool call
 **修复**:Snackbar 子元素内恢复可选链(`notice?.severity ?? 'info'` / `notice?.text ?? ''` / `notice?.openTrash`),并留注释说明子元素常驻挂载。
 
 **教训**:① Snackbar 的子元素是"常驻渲染"的,任何读状态的表达式都必须 null-safe(或把条件判断挪到 Snackbar 外面,代价是失去退出动画)。② 本项目 null 安全靠人工,不靠编译器 —— 评审 `| null` 状态的渲染路径时要主动找 naked property access;若未来开 `strictNullChecks`,这是一大波既有错误的入口,需专项评估。
+
+## 31. pdfjs 自定义 range transport 必须 `extends PDFDataRangeTransport` —— 鸭子类型被 `instanceof` 静默吞掉(2026-07-25)
+
+**症状**:pdf-viewer 打开任何 PDF 报 `PDF render failed: getDocument - expected either 'data', 'range', or 'url' parameter`。
+
+**根因**:`getDocument` 对 `src.range` 做 `src.range instanceof PDFDataRangeTransport ? src.range : null`(pdf.mjs:21803)——鸭子类型对象(字段齐全但不继承基类)被判为"没传 range",落到 data/url 检查 → 抛错。**不报"transport 类型不对",报"参数缺失",极具误导性**。
+
+**修复**:`WhaleRangeTransport extends PDFDataRangeTransport`(基类自带 `transportReady` / `onDataRange` 管道,只实现 `requestDataRange`;`.d.ts` 把 `initialData` 标为必填,`super(length, null)`)。`#ready` / `#aborted` 双闸防"read 晚于 transportReady"与"abort 后推流"两个竞争。
+
+**教训**:第三方库的"鸭子类型接口"一律先查源码有没有 `instanceof` 品牌检查;pdfjs 尤甚(Worker 边界强制结构化克隆,主线程侧则爱用品牌检查)。

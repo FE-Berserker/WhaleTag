@@ -191,11 +191,13 @@ export interface OutlineNode {
 
 /**
  * Minimal shape of pdfjs's `PDFDataRangeTransport` as consumed by
- * `getDocument({ range })` — declared here so pdf-viewer's postMessage-backed
- * transport doesn't need to subclass the pdfjs class (which carries private
- * fields). `transportReady` receives the pdfjs listener once; each
- * `requestDataRange(begin, end)` must push the slice back via
- * `listener({ type: 'range', begin, chunk })`.
+ * `getDocument({ range })`. Implementations must ALSO pass pdfjs's own
+ * `instanceof PDFDataRangeTransport` check (pdf.mjs does the brand check
+ * and silently treats duck-typed objects as "no range given"), i.e. extend
+ * the real base class — this interface only narrows what the session's
+ * `renderPdfRange` needs at the type level. `transportReady` receives the
+ * pdfjs listener once; each `requestDataRange(begin, end)` must push the
+ * slice back via the base's `onDataRange(begin, chunk)`.
  */
 export interface PdfRangeTransportLike {
   length: number;

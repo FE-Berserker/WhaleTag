@@ -8,6 +8,7 @@ import {
   type PdfRangeTransportLike,
   type OutlineNode,
 } from '../shared/pdfjs-in-iframe';
+import { PDFDataRangeTransport } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import {
   rectFromPoints,
   spansInRect,
@@ -597,39 +598,45 @@ function requestFileBytes(
  *  (`fs:readFileRange`). This is the large-PDF open path — the whole file
  *  is never read up front. (The `whale-file://` URL fetch route is dead:
  *  Chromium's XHR scheme allow-list doesn't cover custom schemes, and
- *  pdfjs's legacy build uses XHR.) */
-class WhaleRangeTransport implements PdfRangeTransportLike {
-  readonly length: number;
-  #listener:
-    | ((msg: { type: string; begin: number; chunk: Uint8Array }) => void)
-    | null = null;
+ *  pdfjs's legacy build uses XHR.)
+ *
+ *  NOTE: must EXTEND pdfjs's base class — `getDocument` does an
+ *  `instanceof PDFDataRangeTransport` check on `src.range` and silently
+ *  treats duck-typed objects as "no range given" ("expected either `data`,
+ *  `range`, or `url` parameter"). The base class owns the listener plumbing
+ *  (`transportReady` / `onDataRange`); we only implement `requestDataRange`.
+ */
+class WhaleRangeTransport
+  extends PDFDataRangeTransport
+  implements PdfRangeTransportLike
+{
+  #ready = false;
   #aborted = false;
 
   constructor(length: number) {
-    this.length = length;
+    // .d.ts marks `initialData` as required (runtime JS treats all four
+    // constructor args as optional) — pass null, we stream everything.
+    super(length, null);
   }
 
-  transportReady(
+  override transportReady(
     listener: (msg: { type: string; begin: number; chunk: Uint8Array }) => void
   ): void {
-    this.#listener = listener;
+    this.#ready = true;
+    super.transportReady(listener);
   }
 
-  abort(): void {
+  override abort(): void {
+    // Late slice reads must not push into a torn-down transport.
     this.#aborted = true;
-    this.#listener = null;
   }
 
-  requestDataRange(begin: number, end: number): void {
+  override requestDataRange(begin: number, end: number): void {
     requestFileBytes(state.filePath, begin, end - begin).then((chunk) => {
-      if (this.#aborted) return;
+      if (this.#aborted || !this.#ready) return;
       // A failed slice read must not hang pdfjs silently — push an empty
       // chunk so the parser fails loudly instead.
-      this.#listener?.({
-        type: 'range',
-        begin,
-        chunk: chunk ?? new Uint8Array(0),
-      });
+      this.onDataRange(begin, chunk ?? new Uint8Array(0));
     });
   }
 }
