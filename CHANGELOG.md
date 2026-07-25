@@ -7,6 +7,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),并遵循[语义化版本](https://semver.org/spec/v2.0.0.html)。
 
+## [0.4.4] - 2026-07-25
+
+### Added
+
+- **md-editor HTML 模板**:设置 ▸ 扩展 ▸ HTML 模板 管理可复用 HTML 片段,编辑区右键「模板」子菜单插入到光标处;预览经既有 DOMPurify 过滤(inline style 移除,可用 class),不改安全配置。
+  **md-editor HTML templates**: manage reusable HTML snippets in Settings ▸ Extensions; insert at the cursor via the editor's right-click "Templates" submenu; preview sanitized by the existing DOMPurify pipeline (inline styles stripped, classes kept) — no config change.
+
+### Fixed
+
+- **office-viewer 请求悬挂**:三个 pending Map(转换 180s / 缩略图、soffice 探测各 15s)套超时,主进程崩溃或 IPC 丢响应时 resolver 不再永久驻留。
+  **office-viewer pending resolver leak**: the three pending Maps (conversion 180s / thumbnail + soffice probe 15s each) now time out so resolvers don't hang forever when the main process drops a reply (crash / IPC drop).
+- **Gantt 右键文案脱钩**:GanttEntryMenu 改用独立 gantt* i18n key(5 语言),不再复用 Kanban 的 key。
+  **Gantt menu i18n decoupled**: GanttEntryMenu now uses its own gantt* keys (5 locales) instead of borrowing Kanban's.
+
 ## [0.4.3] - 2026-07-25
 
 ### Added
