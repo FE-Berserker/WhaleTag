@@ -974,7 +974,15 @@ aiSelectBtn.addEventListener('click', () => setMarqueeMode(!marqueeMode));
 
 pagesEl.addEventListener('mousedown', (e) => {
   if (!marqueeMode || e.button !== 0) return;
-  const container = (e.target as HTMLElement).closest(
+  const target = e.target as HTMLElement;
+  // CRITICAL: clicks inside the mini action bar are NOT a new marquee —
+  // the bar lives inside a page container, so its mousedown bubbles here;
+  // treating it as a new box runs clearMarquee() and destroys the very
+  // button the user is pressing, before the click can fire (the "问 AI
+  // does nothing" bug — synthetic tests passed because they clicked the
+  // button directly without a bubbling mousedown).
+  if (target.closest('.marquee-bar')) return;
+  const container = target.closest(
     '[data-page-container]'
   ) as HTMLElement | null;
   if (!container) return;

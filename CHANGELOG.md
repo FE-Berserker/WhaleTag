@@ -7,6 +7,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),并遵循[语义化版本](https://semver.org/spec/v2.0.0.html)。
 
+## [0.4.2] - 2026-07-25
+
+### Added
+
+- **AI AskUserQuestion 问答链路**:Claude CLI 提问工具接入应用内问答弹窗(单选/多选/Other 自由文本),修复此前提问必然失败的问题(allow 不带 updatedInput.answers)。
+  **AI AskUserQuestion bridge**: in-app question dialog for the CLI's question tool (single/multi-select + free-text Other) — previously always failed (allow without updatedInput.answers).
+- **plan 模式反馈通道**:ExitPlanMode 弹窗可填修改意见,经 ai:resolveApproval(note) 回传模型。
+  **plan-mode feedback**: ExitPlanMode dialog takes revision notes, forwarded to the model.
+- **pdf-viewer 框选提问**:拖框提取文本/截图,弹出可编辑提问框,AI 面板用框选内容回答(扫描件走模型视觉)。
+  **pdf-viewer marquee ask-AI**: box-select extracts text + screenshot; editable question dialog; AI panel answers with the region (scans via vision).
+
+### Fixed
+
+- **大 PDF 打开缓慢**:改为 pdfjs 自定义 range transport 经 IPC 按需取 64KB 分片,首页不再等整份读入。
+  **large-PDF open time**: custom pdfjs range transport pulls 64KB slices over IPC — first page no longer waits for the whole file.
+- **KanbanView stages 空↔非空 hooks 崩溃**;**FileList Snackbar 空引用崩溃**;**toast 严重度五语言误判**(改为结构化 severity)。
+  **Kanban hooks crash** on stages 0↔N; **FileList Snackbar null crash**; **toast severity mis-detection** in all 5 languages (now structured).
+- **「问 AI」按钮点击无反应**:mousedown 冒泡销毁迷你条按钮;草稿懒加载竞态(aiDraftBus 槽+事件双通道)。
+  **dead "Ask AI" button**: bubbling mousedown destroyed the mini bar mid-click; lazy-mount draft race (aiDraftBus slot + event).
+- 主布局 AI 面板打开时左栏自动折叠;命令菜单改悬停飞窗;Silent failures 全面接入用户可见反馈;40+ 项 UI/UX 打磨(i18n 硬编码、aria、focus-visible、键盘可达)。
+  Left columns auto-collapse when the AI panel opens; commands flyout menu; silent failures now surface; 40+ UI/UX fixes (hardcoded i18n strings, aria, focus-visible, keyboard).
+
 ## [0.4.0] - 2026-07-19
 
 ### Added

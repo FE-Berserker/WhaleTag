@@ -20,6 +20,9 @@ export interface AiDraftPayload {
   text: string;
   /** Cropped region screenshot as a PNG data URL. */
   imageDataUrl?: string;
+  /** The user's (edited) question — set when it came from the
+   *  AskQuestionDialog; the panel sends it immediately. */
+  question?: string;
 }
 
 export const AI_DRAFT_EVENT = 'whale:ai-draft';

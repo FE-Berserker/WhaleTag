@@ -38,7 +38,8 @@ import { useDirectoryTreeRefresh } from '-/hooks/DirectoryTreeRefreshContextProv
 import { createRpcHandler } from './extension-host/rpc-cases';
 import PromptDialog from '-/components/PromptDialog';
 import InlineEditModal from '-/components/ai/InlineEditModal';
-import { postAiDraft } from '-/components/ai/aiDraftBus';
+import { postAiDraft, type AiDraftPayload } from '-/components/ai/aiDraftBus';
+import AskQuestionDialog from '-/components/ai/AskQuestionDialog';
 import { RootState } from '-/reducers';
 import {
   setFileEditState,
@@ -158,6 +159,10 @@ export default function ExtensionHost({
     from: number;
     to: number;
   } | null>(null);
+  // pdf-viewer marquee → question editor (user edits before sending).
+  const [questionDraft, setQuestionDraft] = useState<AiDraftPayload | null>(
+    null
+  );
   const aiProvider = useSelector(
     (s: RootState) => s.settings.aiProvider ?? 'claude-cli'
   );
@@ -685,13 +690,12 @@ export default function ExtensionHost({
           break;
         }
         case 'askAi': {
-          // pdf-viewer marquee: the user boxed a region and asked about the
-          // extracted text. Open the panel and hand the payload to AiPanel
-          // as a draft (postAiDraft = CustomEvent + a pending slot, because
-          // the panel is React.lazy and the event alone races its mount).
+          // pdf-viewer marquee: the user boxed a region. Open the question
+          // editor (InlineEditModal-style) so they can EDIT the question
+          // before anything is sent — on confirm we open the panel and post
+          // the draft with their question attached.
           if (!aiEnabled) break;
-          dispatch(setAiSettings({ aiPanelOpen: true }));
-          postAiDraft({
+          setQuestionDraft({
             path: msg.path,
             page: msg.page,
             text: msg.text,
@@ -932,6 +936,17 @@ export default function ExtensionHost({
             applyReplacement(inlineEditSel.from, inlineEditSel.to, replacement);
           }
           setInlineEditSel(null);
+        }}
+      />
+      <AskQuestionDialog
+        draft={questionDraft}
+        onClose={() => setQuestionDraft(null)}
+        onSend={(question) => {
+          if (questionDraft) {
+            dispatch(setAiSettings({ aiPanelOpen: true }));
+            postAiDraft({ ...questionDraft, question });
+          }
+          setQuestionDraft(null);
         }}
       />
     </Box>
