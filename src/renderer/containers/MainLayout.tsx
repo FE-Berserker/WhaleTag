@@ -220,11 +220,42 @@ export default function MainLayout() {
                   {currentLocation ? (
                     <>
                       <FileToolbar />
-                      {activeView ? (
-                        <ExtensionViewPanel theme={resolvedThemeMode} />
-                      ) : (
-                        <FileList />
-                      )}
+                      {/* FileList stays mounted at the base layer (its
+                          MediaLightbox is driven by lightboxEntry and must
+                          survive tab open/close). When a tab is open, the
+                          ExtensionViewPanel overlays it absolutely; closing
+                          every tab drops the overlay and FileList shows
+                          through. */}
+                      <Box
+                        sx={{
+                          flex: 1,
+                          minHeight: 0,
+                          display: 'flex',
+                          flexDirection: 'column',
+                        }}
+                      >
+                        <Box
+                          sx={{
+                            flex: 1,
+                            minHeight: 0,
+                            display: activeView ? 'none' : 'flex',
+                          }}
+                        >
+                          <FileList />
+                        </Box>
+                        {activeView ? (
+                          <Box
+                            sx={{
+                              flex: 1,
+                              minHeight: 0,
+                              display: 'flex',
+                              flexDirection: 'column',
+                            }}
+                          >
+                            <ExtensionViewPanel theme={resolvedThemeMode} />
+                          </Box>
+                        ) : null}
+                      </Box>
                     </>
                   ) : (
                     <WelcomePanel onAddLocation={() => setAddOpen(true)} />

@@ -487,6 +487,18 @@ export default function FileList() {
   // Full-screen media lightbox state.
   const [lightboxEntry, setLightboxEntry] = useState<DirEntry | null>(null);
 
+  // Allow other UI (the directory tree) to request the lightbox without a ref
+  // into FileList: it dispatches a `whale:open-lightbox` CustomEvent whose
+  // detail is the DirEntry to show (images only — see openEntryInTab).
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const entry = (e as CustomEvent<DirEntry>).detail;
+      if (entry && !entry.isDirectory) setLightboxEntry(entry);
+    };
+    window.addEventListener('whale:open-lightbox', handler);
+    return () => window.removeEventListener('whale:open-lightbox', handler);
+  }, []);
+
   // Only the `date:` / `smart:*` fold filters classify tag freshness against
   // wall-clock — gate the memo's `now` dependency on them so the per-minute
   // `useNow` tick doesn't recompute (and re-render all visible rows) for

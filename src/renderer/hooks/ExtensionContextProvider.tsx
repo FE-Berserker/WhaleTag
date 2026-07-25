@@ -23,9 +23,17 @@ import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvide
 import { selectExtension } from '-/services/extension-dispatch';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState } from '-/reducers';
-import { loadExtensionRegistry } from '-/reducers/extensions';
+import {
+  loadExtensionRegistry,
+  clearFileEditState,
+} from '-/reducers/extensions';
 
-import { isBinaryExtension, isAudioTranscodeFile } from '../../shared/whale-meta';
+import {
+  isBinaryExtension,
+  isAudioTranscodeFile,
+  isImageFile,
+} from '../../shared/whale-meta';
+import { MAX_TABS, makeTabId, pickLruEvict } from './extension-tabs';
 
 export interface ActiveExtensionView {
   manifest: ExtensionManifest;
@@ -39,23 +47,57 @@ export interface ActiveExtensionView {
   fileSize?: number;
 }
 
+/** A single open tab. Carries everything `ExtensionHost` needs to render the
+ *  file plus tab-specific bookkeeping (`title`, `lastAccessed` for LRU). Kept
+ *  mounted (display:none) while inactive so switching back is instant and
+ *  doesn't reload the file — see ExtensionViewPanel's layering. */
+export interface ExtensionTab {
+  /** `${filePath}::${manifestId}` — dedup key + React key. */
+  id: string;
+  filePath: string;
+  manifestId: string;
+  manifest: ExtensionManifest;
+  fileContent: string;
+  encoding: ExtensionEncoding;
+  readOnly: boolean;
+  fileSize?: number;
+  title: string;
+  lastAccessed: number;
+}
+
 export interface ExtensionContextValue {
   registry: ExtensionRegistry | null;
   userDefaults: Record<string, string>;
   enabledOverrides: Record<string, boolean>;
+  /** Derived from the active tab. Retained for consumers that haven't
+   *  migrated to `tabs`/`activeTabId` yet (MainLayout, DirectoryTree). */
   activeView: ActiveExtensionView | null;
   loading: boolean;
   error: string | null;
+  tabs: ExtensionTab[];
+  activeTabId: string | null;
   openFile: (entry: DirEntry, preferredManifest?: ExtensionManifest) => Promise<void>;
   openWithExtension: (entry: DirEntry, manifest: ExtensionManifest) => Promise<void>;
-  closeView: () => void;
+  /** Unified "open this entry" for any UI (directory tree, etc.) without
+   *  direct access to the lightbox. Images dispatch a `whale:open-lightbox`
+   *  CustomEvent (FileList → MediaLightbox); other files open in a tab, or
+   *  the OS default app if no extension matches. */
+  openEntryInTab: (entry: DirEntry) => Promise<void>;
+  activateTab: (tabId: string) => void;
+  closeTab: (tabId: string) => Promise<'closed' | 'cancelled'>;
   reloadContent: () => Promise<void>;
-  /** Close the current view, prompting to save if it has unsaved edits.
-   *  Resolves 'cancelled' if the user aborted (keep the view open). */
+  /** Close the active tab, prompting to save if it has unsaved edits.
+   *  Resolves 'cancelled' if the user aborted (keep the tab open). Alias for
+   *  `closeTab(activeTabId)`; kept for legacy callers. */
   requestCloseCurrent: () => Promise<'closed' | 'cancelled'>;
-  /** Register the current view's save function (used by requestCloseCurrent's
-   *  "Save" branch). ExtensionHost sets it on mount, clears on unmount. */
-  registerSaveCurrent: (fn: (() => Promise<boolean>) | null) => void;
+  /** Close the active tab (with dirty check). Kept for legacy callers. */
+  closeView: () => void;
+  /** Register a tab's save function (used by closeTab's "Save" branch).
+   *  ExtensionHost sets it on mount, clears on unmount. */
+  registerSaveCurrent: (
+    tabId: string,
+    fn: (() => Promise<boolean>) | null
+  ) => void;
 }
 
 const ExtensionContext = createContext<ExtensionContextValue | null>(null);
@@ -98,9 +140,16 @@ export function ExtensionContextProvider({
     (s: RootState) => s.extensions.enabledOverrides
   );
 
-  const [activeView, setActiveView] = useState<ActiveExtensionView | null>(
-    null
-  );
+  const [tabs, setTabs] = useState<ExtensionTab[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  // Mirror `tabs` into a ref so async open/close handlers can read the latest
+  // list without depending on it in their deps (which would re-create them on
+  // every tab change and race in-flight reads). Same pattern DirectoryTree
+  // uses for childrenByPath.
+  const tabsRef = useRef(tabs);
+  useEffect(() => {
+    tabsRef.current = tabs;
+  }, [tabs]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -119,14 +168,6 @@ export function ExtensionContextProvider({
       mounted = false;
     };
   }, [dispatch]);
-
-  // Sync allowed roots with main whenever locations change.
-  useEffect(() => {
-    // Roots come from the locations slice; this provider only knows the active
-    // location, but the full list is needed for allowedRoots. We read it from
-    // window.whale via ipcApi by piggybacking on the next setAllowedRoots call.
-    // The actual roots are set in MainLayout from the locations slice.
-  }, []);
 
   const readFileContent = useCallback(
     async (
@@ -159,17 +200,46 @@ export function ExtensionContextProvider({
     []
   );
 
-  // §unsaved-close — read dirty flags so we can prompt before closing or
-  // switching away from an edited document.
-  const editStateMap = useSelector((s: RootState) => s.extensions.editState);
+  // Read a file's content for a given extension, applying the streamed-viewer
+  // short-circuit (pdf-viewer / non-transcode media-player pull bytes via
+  // `whale-file://` themselves, so we hand them empty content + the file size).
+  const readTabContent = useCallback(
+    async (
+      entry: Pick<DirEntry, 'path' | 'name' | 'size'>,
+      manifest: ExtensionManifest
+    ): Promise<{ content: string; encoding: ExtensionEncoding; size: number }> => {
+      const isStreamed =
+        manifest.id === 'pdf-viewer' ||
+        (manifest.id === 'media-player' && !isAudioTranscodeFile(entry.name));
+      if (isStreamed) {
+        return { content: '', encoding: 'base64', size: entry.size };
+      }
+      return readFileContent(entry.path);
+    },
+    [readFileContent]
+  );
 
-  // The current view's save function, registered by ExtensionHost on mount.
-  // Null when no editor is mounted (streamed viewers never register, and
-  // never report dirty either).
-  const saveCurrentRef = useRef<(() => Promise<boolean>) | null>(null);
+  // §unsaved-close — read dirty flags so we can prompt before closing a tab.
+  const editStateMap = useSelector((s: RootState) => s.extensions.editState);
+  // editStateMap mirror: read inside callbacks without re-creating them on
+  // every dirty-flag toggle (which would churn the context value and force
+  // every consumer to re-render).
+  const editStateMapRef = useRef(editStateMap);
+  useEffect(() => {
+    editStateMapRef.current = editStateMap;
+  }, [editStateMap]);
+
+  // Per-tab save functions, registered by each ExtensionHost on mount. Keyed
+  // by tab id (not a single ref) so multiple tabs can each save correctly — a
+  // single ref would let a newly-mounted tab clobber the previous one's
+  // handler and the wrong file would save on close.
+  const saveHandlersRef = useRef<Map<string, () => Promise<boolean>>>(
+    new Map()
+  );
   const registerSaveCurrent = useCallback(
-    (fn: (() => Promise<boolean>) | null) => {
-      saveCurrentRef.current = fn;
+    (tabId: string, fn: (() => Promise<boolean>) | null) => {
+      if (fn) saveHandlersRef.current.set(tabId, fn);
+      else saveHandlersRef.current.delete(tabId);
     },
     []
   );
@@ -199,89 +269,127 @@ export function ExtensionContextProvider({
     [confirmState]
   );
 
-  // Close the current view, prompting to save if it has unsaved edits. Used by
-  // the editor × button and by openWithExtension before replacing the view.
-  // Inlines closeView's two set calls so it doesn't depend on closeView
-  // (declared further down) — avoids a TDZ on this hook's deps array.
-  const requestCloseCurrent = useCallback(async (): Promise<
-    'closed' | 'cancelled'
-  > => {
-    if (closeInProgressRef.current) return 'cancelled';
-    const cur = activeView;
-    if (!cur) return 'closed';
-    const dirty = editStateMap[cur.filePath]?.dirty ?? false;
-    if (!dirty) {
-      setActiveView(null);
-      setError(null);
-      return 'closed';
-    }
-    closeInProgressRef.current = true;
-    try {
-      const choice = await confirmDiscard(basename(cur.filePath));
-      if (choice === 'cancel') return 'cancelled';
-      if (choice === 'save') {
-        const ok = (await saveCurrentRef.current?.()) ?? false;
-        if (!ok) return 'cancelled'; // save failed / timed out / read-only
+  // The active tab + a backwards-compatible `activeView` projection for
+  // consumers that still read the single-view shape.
+  const activeTab = useMemo(
+    () => tabs.find((t) => t.id === activeTabId) ?? null,
+    [tabs, activeTabId]
+  );
+  const activeView = useMemo<ActiveExtensionView | null>(() => {
+    if (!activeTab) return null;
+    return {
+      manifest: activeTab.manifest,
+      filePath: activeTab.filePath,
+      fileContent: activeTab.fileContent,
+      encoding: activeTab.encoding,
+      readOnly: activeTab.readOnly,
+      fileSize: activeTab.fileSize,
+    };
+  }, [activeTab]);
+
+  const activateTab = useCallback((tabId: string) => {
+    setActiveTabId(tabId);
+    setTabs((prev) =>
+      prev.map((t) => (t.id === tabId ? { ...t, lastAccessed: Date.now() } : t))
+    );
+  }, []);
+
+  // Close a tab, prompting to save if it has unsaved edits. Resolves
+  // 'cancelled' if the user aborted (tab stays open). On close: drop the tab,
+  // clear its edit state, and move focus to the nearest surviving tab.
+  const closeTab = useCallback(
+    async (tabId: string): Promise<'closed' | 'cancelled'> => {
+      if (closeInProgressRef.current) return 'cancelled';
+      const tab = tabsRef.current.find((t) => t.id === tabId);
+      if (!tab) return 'closed';
+      const dirty = editStateMapRef.current[tab.filePath]?.dirty ?? false;
+      if (dirty) {
+        closeInProgressRef.current = true;
+        try {
+          // Focus the tab being closed so the user sees which document
+          // they're being asked to save.
+          setActiveTabId(tabId);
+          const choice = await confirmDiscard(basename(tab.filePath));
+          if (choice === 'cancel') return 'cancelled';
+          if (choice === 'save') {
+            const save = saveHandlersRef.current.get(tabId);
+            const ok = (await save?.()) ?? false;
+            if (!ok) return 'cancelled'; // save failed / timed out / read-only
+          }
+          // 'discard' or successful save — fall through to close.
+        } finally {
+          closeInProgressRef.current = false;
+        }
       }
-      // 'discard' or successful save
-      setActiveView(null);
-      setError(null);
+      const idx = tabsRef.current.findIndex((t) => t.id === tabId);
+      const remaining = tabsRef.current.filter((t) => t.id !== tabId);
+      setTabs(remaining);
+      // display:none keeps inactive tabs mounted, so ExtensionHost's unmount
+      // cleanup only fires now (when the tab leaves the list). Clear edit
+      // state explicitly too — the unmount handler does the same and the
+      // reducer delete is idempotent.
+      dispatch(clearFileEditState(tab.filePath));
+      setActiveTabId((prev) => {
+        if (prev !== tabId) return prev; // closed a background tab — keep focus
+        if (remaining.length === 0) return null;
+        // Favor the tab that took the closed tab's slot (right neighbor),
+        // else the left neighbor.
+        const nextIdx = Math.min(idx, remaining.length - 1);
+        return remaining[nextIdx].id;
+      });
       return 'closed';
-    } finally {
-      closeInProgressRef.current = false;
-    }
-  }, [activeView, editStateMap, confirmDiscard]);
+    },
+    [confirmDiscard, dispatch]
+  );
 
   const openWithExtension = useCallback(
     async (entry: DirEntry, manifest: ExtensionManifest) => {
-      // §unsaved-close — if the current view has unsaved edits, prompt before
-      // replacing it. Cancelled (user kept the old doc) aborts the open.
-      const closeResult = await requestCloseCurrent();
-      if (closeResult === 'cancelled') return;
+      const tabId = makeTabId(entry.path, manifest.id);
+      // Dedup: this file is already open in this extension — just focus it
+      // (and bump its LRU timestamp) instead of reloading. No dirty check:
+      // background tabs are kept alive, so activating one loses nothing.
+      const existing = tabsRef.current.find((t) => t.id === tabId);
+      if (existing) {
+        activateTab(tabId);
+        return;
+      }
       setLoading(true);
       setError(null);
       try {
-        // These viewers stream their file via `whale-file://` (Range-served by
-        // the main process) instead of receiving the whole file base64-encoded
-        // through IPC + postMessage. The iframe asks the host for a streaming
-        // URL via `requestStreamingUrl` and feeds it to its player/viewer.
-        // Avoids freezing the renderer on large files — a 50 MB PDF → ~67 MB
-        // base64 + O(n²) `binary += String.fromCharCode(...)` string concat on
-        // the main thread; same shape for big APE rips that media-player
-        // throws away after transcoding. `isAudioTranscodeFile` is handled by
-        // `readFileContent`'s own short-circuit (returns empty), so it stays
-        // on the non-streamed branch.
-        const isStreamed =
-          manifest.id === 'pdf-viewer' ||
-          (manifest.id === 'media-player' && !isAudioTranscodeFile(entry.name));
-        let content: string;
-        let encoding: ExtensionEncoding;
-        let size: number;
-        if (isStreamed) {
-          content = '';
-          encoding = 'base64';
-          size = entry.size;
-        } else {
-          const result = await readFileContent(entry.path);
-          content = result.content;
-          encoding = result.encoding;
-          size = result.size;
-        }
-        setActiveView({
-          manifest,
+        const { content, encoding, size } = await readTabContent(entry, manifest);
+        const newTab: ExtensionTab = {
+          id: tabId,
           filePath: entry.path,
+          manifestId: manifest.id,
+          manifest,
           fileContent: content,
           encoding,
           readOnly: currentLocation?.isReadOnly ?? false,
           fileSize: size,
+          title: basename(entry.path),
+          lastAccessed: Date.now(),
+        };
+        const dirtyPaths = new Set(
+          Object.entries(editStateMapRef.current)
+            .filter(([, v]) => v?.dirty)
+            .map(([k]) => k)
+        );
+        setTabs((prev) => {
+          const next = [newTab, ...prev];
+          if (next.length > MAX_TABS) {
+            const evictId = pickLruEvict(next, newTab.id, dirtyPaths);
+            if (evictId) return next.filter((t) => t.id !== evictId);
+          }
+          return next;
         });
+        setActiveTabId(tabId);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
         setLoading(false);
       }
     },
-    [currentLocation, readFileContent, requestCloseCurrent]
+    [currentLocation, readTabContent, activateTab]
   );
 
   const openFile = useCallback(
@@ -302,37 +410,62 @@ export function ExtensionContextProvider({
     [registry, userDefaults, enabledOverrides, openWithExtension]
   );
 
+  /** Unified "open this entry" used by the directory tree (and any other UI
+   *  without direct access to the lightbox). Images are routed to MediaLightbox
+   *  via a CustomEvent FileList listens for; everything else opens in a tab,
+   *  or the OS default app when no extension matches. */
+  const openEntryInTab = useCallback(
+    async (entry: DirEntry) => {
+      // Directories are navigated by the tree itself; never reach here.
+      if (entry.isDirectory) return;
+      if (isImageFile(entry.name)) {
+        window.dispatchEvent(
+          new CustomEvent('whale:open-lightbox', { detail: entry })
+        );
+        return;
+      }
+      const manifest = selectExtension(entry, {
+        registry,
+        userDefaults,
+        enabledOverrides,
+      });
+      if (manifest) {
+        await openWithExtension(entry, manifest);
+      } else {
+        await ipcApi.openNative(entry.path);
+      }
+    },
+    [registry, userDefaults, enabledOverrides, openWithExtension]
+  );
+
+  const requestCloseCurrent = useCallback(async (): Promise<
+    'closed' | 'cancelled'
+  > => {
+    if (!activeTabId) return 'closed';
+    return closeTab(activeTabId);
+  }, [activeTabId, closeTab]);
+
   const closeView = useCallback(() => {
-    setActiveView(null);
-    setError(null);
-  }, []);
+    if (activeTabId) void closeTab(activeTabId);
+  }, [activeTabId, closeTab]);
 
   const reloadContent = useCallback(async () => {
-    if (!activeView) return;
+    const t = activeTab;
+    if (!t) return;
     // Streamed viewers (pdf-viewer / non-transcode media-player) don't carry
     // file bytes in `fileContent` — they re-request a `whale-file://` URL on
     // every content push. Keep them on the empty-content path so a reload
-    // doesn't base64 a 50 MB PDF back into the renderer (same freeze the
-    // initial open avoids — see openWithExtension).
-    const manifestId = activeView.manifest.id;
-    const isStreamed =
-      manifestId === 'pdf-viewer' ||
-      (manifestId === 'media-player' && !isAudioTranscodeFile(activeView.filePath));
-    let content: string;
-    let encoding: ExtensionEncoding;
-    let size: number;
-    if (isStreamed) {
-      content = '';
-      encoding = 'base64';
-      size = activeView.fileSize ?? 0;
-    } else {
-      const result = await readFileContent(activeView.filePath);
-      content = result.content;
-      encoding = result.encoding;
-      size = result.size;
-    }
-    setActiveView({ ...activeView, fileContent: content, encoding, fileSize: size });
-  }, [activeView, readFileContent]);
+    // doesn't base64 a 50 MB PDF back into the renderer.
+    const { content, encoding, size } = await readTabContent(
+      { path: t.filePath, name: t.title, size: t.fileSize ?? 0 },
+      t.manifest
+    );
+    setTabs((prev) =>
+      prev.map((x) =>
+        x.id === t.id ? { ...x, fileContent: content, encoding, fileSize: size } : x
+      )
+    );
+  }, [activeTab, readTabContent]);
 
   // Memoize the context value: every member is already a stable useSelector
   // reference / useState value / useCallback, so without this wrapper ANY
@@ -346,11 +479,16 @@ export function ExtensionContextProvider({
       activeView,
       loading,
       error,
+      tabs,
+      activeTabId,
       openFile,
       openWithExtension,
-      closeView,
+      openEntryInTab,
+      activateTab,
+      closeTab,
       reloadContent,
       requestCloseCurrent,
+      closeView,
       registerSaveCurrent,
     }),
     [
@@ -360,11 +498,16 @@ export function ExtensionContextProvider({
       activeView,
       loading,
       error,
+      tabs,
+      activeTabId,
       openFile,
       openWithExtension,
-      closeView,
+      openEntryInTab,
+      activateTab,
+      closeTab,
       reloadContent,
       requestCloseCurrent,
+      closeView,
       registerSaveCurrent,
     ]
   );

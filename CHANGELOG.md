@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),并遵循[语义化版本](https://semver.org/spec/v2.0.0.html)。
 
+## [0.4.3] - 2026-07-25
+
+### Added
+
+- **多标签页查看文件**:打开新文件不再关闭当前文件,而是开一个标签页;已打开的标签保活、切换不重新加载;同文件去重(激活已有标签)、LRU 上限(默认 8)、关闭前未保存弹确认。目录树支持双击文件打开。
+  **Multi-tab file viewing**: opening a file no longer replaces the current one — each open gets its own tab; open tabs stay alive and don't reload on switch; same-file dedup (activates its tab), LRU cap (default 8), dirty-check before close. Directory tree supports double-click to open files.
+
 ## [0.4.2] - 2026-07-25
 
 ### Added

@@ -121,11 +121,12 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
   const { createFolder, createFile, deleteEntry } = useIOActionsContext();
   const { refresh } = useDirectoryUI();
   const backgroundPlayer = useBackgroundPlayer();
-  // While an extension view (e.g. the Excalidraw editor) is open, also list
-  // files in the tree so they can be dragged into it.
-  const { activeView } = useExtensionContext();
+  // Always list files in the tree so they can be double-clicked to open (and
+  // dragged into an editor). The tree is virtualized, so a directory full of
+  // files stays cheap to render.
+  const { openEntryInTab, activeView } = useExtensionContext();
   const confirm = useConfirm();
-  const showFiles = !!activeView;
+  const showFiles = true;
   const showHiddenFiles = useSelector(
     (s: RootState) => s.settings?.showHiddenFiles ?? false
   );
@@ -492,13 +493,18 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
     return out;
   }, [currentLocation, expanded, childrenByPath, showFiles]);
 
-  // Leaf node for a file (only shown while an extension view is open). Dragging
-  // it starts a native OS drag so it can be dropped into the editor iframe.
+  // Leaf node for a file. Double-click opens it (image → full-screen lightbox,
+  // everything else → a tab); dragging starts a native OS drag into the editor
+  // iframe; right-click opens the shared context menu.
   const renderFileNode = (entry: DirEntry, depth: number): ReactNode => (
     <ListItemButton
       key={entry.path}
       draggable
       onDragStart={startEntryDrag(entry)}
+      onDoubleClick={(e) => {
+        e.stopPropagation();
+        void openEntryInTab(entry);
+      }}
       // Right-click a file row opens the same `ctxMenu` the folder rows use,
       // so the new "Copy Path" item is available without a separate template.
       // `setEmptyCtxMenu(null)` mirrors `renderNode`'s handler to close any
@@ -557,8 +563,8 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
             setEmptyCtxMenu(null); // close the empty-area menu if open
             setCtxMenu({ x: e.clientX, y: e.clientY, path });
           }}
-          // "Drag into editor" only makes sense while an editor is open
-          // (file rows only exist then; folder rows always render).
+          // File rows always exist now (double-click to open), so the
+          // "drag into editor" hint applies whenever an editor is open.
           title={activeView ? t('dragIntoEditor') : undefined}
           sx={{ pl: depth * 1.25 + 0.5, py: 0.25, minHeight: 32, cursor: 'grab' }}
         >

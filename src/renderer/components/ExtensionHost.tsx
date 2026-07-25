@@ -52,6 +52,9 @@ import { setAiSettings, setMdRenderTheme } from '-/reducers/settings';
 const READY_TIMEOUT_MS = 12_000;
 
 interface ExtensionHostProps {
+  /** Identity of the tab hosting this view; used to key the per-tab save
+   *  handler so `closeTab(tabId)` saves the right file. */
+  tabId: string;
   manifest: ExtensionManifest;  filePath: string;
   fileContent: string;
   encoding: 'utf8' | 'base64';
@@ -117,6 +120,7 @@ function genericFileIcon(name: string): string {
 }
 
 export default function ExtensionHost({
+  tabId,
   manifest,
   filePath,
   fileContent,
@@ -440,14 +444,14 @@ export default function ExtensionHost({
     });
   }, [postToExtension, filePath, readOnly, saving]);
 
-  // Register saveCurrent into the context so requestCloseCurrent can trigger a
-  // save before closing. Cleared on unmount.
+  // Register this tab's saveCurrent into the context so closeTab(tabId) can
+  // trigger a save before closing. Keyed by tab id; cleared on unmount.
   useEffect(() => {
-    registerSaveCurrent(saveCurrent);
+    registerSaveCurrent(tabId, saveCurrent);
     return () => {
-      registerSaveCurrent(null);
+      registerSaveCurrent(tabId, null);
     };
-  }, [registerSaveCurrent, saveCurrent]);
+  }, [registerSaveCurrent, saveCurrent, tabId]);
 
   // Rename the open file: rename on disk, then reopen under the new path so the
   // editor, toolbar title, and subsequent saves all use it. Blocked while dirty
