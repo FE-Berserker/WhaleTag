@@ -300,7 +300,7 @@ export default function GanttEntryMenu({
               <ListItemIcon>
                 <ViewColumnIcon fontSize="small" />
               </ListItemIcon>
-              <ListItemText>{t('kanbanMoveToStage')}</ListItemText>
+              <ListItemText>{t('ganttMoveToStage')}</ListItemText>
               <ArrowRightIcon fontSize="small" sx={{ ml: 1, opacity: 0.6 }} />
             </MenuItem>
 
@@ -313,7 +313,7 @@ export default function GanttEntryMenu({
               <ListItemIcon>
                 <FlagIcon fontSize="small" />
               </ListItemIcon>
-              <ListItemText>{t('kanbanSetPriority')}</ListItemText>
+              <ListItemText>{t('ganttSetPriority')}</ListItemText>
               <ArrowRightIcon fontSize="small" sx={{ ml: 1, opacity: 0.6 }} />
             </MenuItem>
 
@@ -331,7 +331,7 @@ export default function GanttEntryMenu({
               <ListItemIcon>
                 <DateRangeIcon fontSize="small" />
               </ListItemIcon>
-              <ListItemText>{t('kanbanSetPeriod')}</ListItemText>
+              <ListItemText>{t('ganttSetPeriod')}</ListItemText>
             </MenuItem>
             <MenuItem
               data-testid="gantt-clear-period"
@@ -341,7 +341,7 @@ export default function GanttEntryMenu({
               <ListItemIcon>
                 <DeleteOutlineIcon fontSize="small" />
               </ListItemIcon>
-              <ListItemText>{t('kanbanClearPeriod')}</ListItemText>
+              <ListItemText>{t('ganttClearPeriod')}</ListItemText>
             </MenuItem>
 
             <Divider />
@@ -357,7 +357,7 @@ export default function GanttEntryMenu({
                 color="text.secondary"
                 sx={{ pl: 0.5, mb: 0.5, display: 'block' }}
               >
-                {t('kanbanEditTags')}
+                {t('ganttEditTags')}
               </Typography>
               <InlineTagInput
                 tags={currentTags}

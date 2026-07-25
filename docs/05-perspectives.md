@@ -286,8 +286,8 @@ Gallery 拖拽打标已实现 P0。
 
 | 项 | 说明 | 工作量 |
 |---|---|---|
-| **GanttEntryMenu 文案脱钩 Kanban** | 当前 [src/renderer/components/GanttEntryMenu.tsx](../src/renderer/components/GanttEntryMenu.tsx) 用了 `kanbanMoveToStage` / `kanbanSetPriority` / `kanbanSetPeriod` / `kanbanClearPeriod` / `kanbanEditTags` 5 个 Kanban 复用 key。语义本来就不同(Matrix 有 priority,Kanban 是 workflow;Gantt 两者都要),补独立 `ganttMoveToStage` / `ganttSetPriority` / `ganttSetPeriod` / `ganttClearPeriod` / `ganttEditTags` | i18n en/zh 各加 5 key + GanttEntryMenu 5 处替换,~30 行 |
-| **`useBarDrag` 状态机单测** | 388 行的 hook 一个测试没有。3 态转换(threshold 边界 / Escape / commit 时机)必须先补再上 P0 #4 键盘扩展 | 新增 `useBarDrag.test.ts`,~150 行 |
+| ✅ **GanttEntryMenu 文案脱钩 Kanban** | [GanttEntryMenu.tsx](../src/renderer/components/GanttEntryMenu.tsx) 已改用独立 `ganttMoveToStage` / `ganttSetPriority` / `ganttSetPeriod` / `ganttClearPeriod` / `ganttEditTags` 5 个 key(en/zh/zh-TW/ja/ko 各 5),不再复用 Kanban。Matrix 仍用 kanban key(文案同,未列入脱钩范围)。 | ✅ 已实现 |
+| ✅ **`useBarDrag` 状态机单测** | [useBarDrag.test.tsx](../src/renderer/components/gantt/useBarDrag.test.tsx) 覆盖 3 态转换:click path、drag→commit 算术、Escape 取消、readOnly 拦截、非左键 / 修饰键、sub-day no-commit(共 8 用例);写测试时定位并修复了 pending→dragging 转换 bug(见 hook 文件头)。 | ✅ 已实现 |
 | **新 i18n key 同步** | 一次性补齐本节所有新 key:`ganttNoTasksHint` / `ganttOverdue` / `ganttInProgress` / `ganttFilterWorkflow` / `ganttFilterPriority` / `ganttFilterClear` / `ganttFilteredEmpty` / `ganttResetFilters` / `ganttFilterLaneHidden` / `ganttShortcut1w` / `ganttShortcut2w` / `ganttShortcut1m` / `ganttShortcut1q` / `ganttExportFail` / `ganttExportCopied` / `ganttExportCopiedAsBase64` | ~16 key × 2 locale |
 
 ### 9.4 已敲定决策
