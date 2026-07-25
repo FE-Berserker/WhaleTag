@@ -22,6 +22,7 @@ import {
   createRafScheduler,
   detectInitialTheme,
 } from './md-render';
+import type { MdTemplate } from '../../shared/md-template-types';
 
 // --- localStorage keys + limits (font / wrap / theme) --------------------
 export const MD_FONT_SIZE_KEY = 'md-editor-font-size';
@@ -136,6 +137,9 @@ export const ctx = {
   //  host pushes setImageSaveConfig.
   mdImageSaveMode: 'subfolder' as 'current' | 'subfolder',
   mdImageSubfolder: '${filename}.assets',
+  // §md-templates — host-pushed HTML snippet templates for the right-click
+  //  "Templates" submenu; empty until the host pushes setMdTemplates.
+  mdTemplates: [] as MdTemplate[],
   previewLineMap: new Map<number, HTMLElement>(),
   scrollSyncRaf: 0,
   wordCountTimer: null as ReturnType<typeof setTimeout> | null,

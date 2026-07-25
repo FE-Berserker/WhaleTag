@@ -73,6 +73,7 @@ export interface Strings {
   headingDecrease: string;
   insertCallout: string;
   insertTable: string;
+  templates: string;
   findReplace: string;
   gotoLineMenu: string;
   wordWrap: string;
@@ -139,6 +140,7 @@ const I18N: Record<string, Strings> = {
     headingDecrease: 'Decrease Heading',
     insertCallout: 'Insert Callout',
     insertTable: 'Insert Table…',
+    templates: 'Templates',
     findReplace: 'Find & Replace',
     gotoLineMenu: 'Go to Line',
     wordWrap: 'Word Wrap',
@@ -203,6 +205,7 @@ const I18N: Record<string, Strings> = {
     headingDecrease: '降低标题级别',
     insertCallout: '插入提示框',
     insertTable: '插入表格…',
+    templates: '模板',
     findReplace: '查找和替换',
     gotoLineMenu: '跳转到行',
     wordWrap: '自动换行',
@@ -267,6 +270,7 @@ const I18N: Record<string, Strings> = {
     headingDecrease: '降低標題層級',
     insertCallout: '插入提示方塊',
     insertTable: '插入表格…',
+    templates: '範本',
     findReplace: '尋找和取代',
     gotoLineMenu: '跳轉到行',
     wordWrap: '自動換行',
@@ -331,6 +335,7 @@ const I18N: Record<string, Strings> = {
     headingDecrease: '見出しレベルを下げる',
     insertCallout: 'コールアウトを挿入',
     insertTable: '表を挿入…',
+    templates: 'テンプレート',
     findReplace: '検索と置換',
     gotoLineMenu: '指定行へ移動',
     wordWrap: '折り返し',
@@ -395,6 +400,7 @@ const I18N: Record<string, Strings> = {
     headingDecrease: '제목 수준 내리기',
     insertCallout: '콜아웃 삽입',
     insertTable: '표 삽입…',
+    templates: '템플릿',
     findReplace: '찾기 및 바꾸기',
     gotoLineMenu: '줄로 이동',
     wordWrap: '자동 줄 바꿈',

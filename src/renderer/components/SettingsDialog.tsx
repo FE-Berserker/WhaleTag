@@ -48,6 +48,7 @@ import { AiComponentSection } from './AiComponentSection';
 import UpdateSection from './UpdateSection';
 import UserCommandsSection from './UserCommandsSection';
 import CustomCalloutsSection from './CustomCalloutsSection';
+import MdTemplatesSection from './MdTemplatesSection';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import ExtensionIcon from '@mui/icons-material/Extension';
 import MapIcon from '@mui/icons-material/Map';
@@ -1515,6 +1516,8 @@ function PerExtensionSettingsSection() {
       )}
       <Divider />
       <CustomCalloutsSection />
+      <Divider />
+      <MdTemplatesSection />
     </Stack>
   );
 }

@@ -4,6 +4,7 @@ import type {
   MdRenderThemePref,
   MdImageSaveMode,
   CustomCallout,
+  MdTemplate,
 } from './types';
 import {
   DEFAULT_MD_KEYBINDINGS,
@@ -68,6 +69,9 @@ export interface IntegrationsFields {
   /** User-defined callout types for md-editor's `> [!TYPE]` syntax (extend
    *  the 15 built-ins). Pushed to the iframe via setCustomCallouts. */
   customCallouts: CustomCallout[];
+  /** User-defined HTML snippet templates for md-editor's right-click "Templates"
+   *  submenu. Pushed to the iframe via setMdTemplates. */
+  mdTemplates: MdTemplate[];
   /** User-configured shell commands (right-click → Commands). See `shared/shell-types`. */
   userCommands: import('../../../shared/shell-types').UserCommand[];
   /** md-editor keymap overrides (action → CodeMirror combo, e.g. 'Mod-s').
@@ -97,6 +101,7 @@ export const integrationsInitial: IntegrationsFields = {
   mapProvider: 'gaode',
   mdEditorRenderTheme: 'auto',
   customCallouts: [],
+  mdTemplates: [],
   userCommands: [],
   mdKeybindings: { ...DEFAULT_MD_KEYBINDINGS },
   mdImageSaveMode: 'subfolder',
@@ -114,6 +119,7 @@ export const SET_MAP_TILE_URL = 'settings/SET_MAP_TILE_URL';
 export const SET_MAP_PROVIDER = 'settings/SET_MAP_PROVIDER';
 export const SET_MD_RENDER_THEME = 'settings/SET_MD_RENDER_THEME';
 export const SET_CUSTOM_CALLOUTS = 'settings/SET_CUSTOM_CALLOUTS';
+export const SET_MD_TEMPLATES = 'settings/SET_MD_TEMPLATES';
 export const SET_USER_COMMANDS = 'settings/SET_USER_COMMANDS';
 export const SET_MD_KEYBINDING = 'settings/SET_MD_KEYBINDING';
 export const RESET_MD_KEYBINDINGS = 'settings/RESET_MD_KEYBINDINGS';
@@ -155,6 +161,10 @@ export interface SetMdRenderThemeAction extends AnyAction {
 export interface SetCustomCalloutsAction extends AnyAction {
   type: typeof SET_CUSTOM_CALLOUTS;
   payload: CustomCallout[];
+}
+export interface SetMdTemplatesAction extends AnyAction {
+  type: typeof SET_MD_TEMPLATES;
+  payload: MdTemplate[];
 }
 export interface SetUserCommandsAction extends AnyAction {
   type: typeof SET_USER_COMMANDS;
@@ -220,6 +230,14 @@ export function setCustomCallouts(
   callouts: CustomCallout[]
 ): SetCustomCalloutsAction {
   return { type: SET_CUSTOM_CALLOUTS, payload: callouts };
+}
+
+/** Replace the whole md-editor HTML-template list (Settings ▸ Extensions ▸
+ *  Templates). Same whole-array-replace pattern as `setCustomCallouts`. */
+export function setMdTemplates(
+  templates: MdTemplate[]
+): SetMdTemplatesAction {
+  return { type: SET_MD_TEMPLATES, payload: templates };
 }
 
 /**
@@ -293,6 +311,7 @@ export function migrateIntegrations<T extends IntegrationsFields>(base: T): T {
   if (next.mdEditorRenderTheme === undefined)
     next = { ...next, mdEditorRenderTheme: 'auto' };
   if (next.customCallouts === undefined) next = { ...next, customCallouts: [] };
+  if (next.mdTemplates === undefined) next = { ...next, mdTemplates: [] };
   if (next.mdKeybindings === undefined) {
     next = { ...next, mdKeybindings: { ...DEFAULT_MD_KEYBINDINGS } };
   } else {
@@ -347,6 +366,8 @@ export function reduceIntegrations<T extends IntegrationsFields>(
       return { ...state, mdEditorRenderTheme: action.payload };
     case SET_CUSTOM_CALLOUTS:
       return { ...state, customCallouts: action.payload };
+    case SET_MD_TEMPLATES:
+      return { ...state, mdTemplates: action.payload };
     case SET_USER_COMMANDS:
       return { ...state, userCommands: action.payload };
     case SET_MD_KEYBINDING: {

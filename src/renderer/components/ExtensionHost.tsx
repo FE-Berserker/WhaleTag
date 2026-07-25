@@ -202,6 +202,9 @@ export default function ExtensionHost({
   const customCallouts = useSelector(
     (s: RootState) => s.settings?.customCallouts ?? []
   );
+  const mdTemplates = useSelector(
+    (s: RootState) => s.settings?.mdTemplates ?? []
+  );
   const mdKeybindings = useSelector(
     (s: RootState) => s.settings?.mdKeybindings
   );
@@ -338,6 +341,13 @@ export default function ExtensionHost({
       postToExtension({ type: 'setCustomCallouts', callouts: customCallouts });
     }
   }, [customCallouts, ready, postToExtension]);
+
+  // md-editor HTML templates (right-click → Templates submenu).
+  useEffect(() => {
+    if (ready) {
+      postToExtension({ type: 'setMdTemplates', templates: mdTemplates });
+    }
+  }, [mdTemplates, ready, postToExtension]);
 
   // md-editor keymap overrides (action → CodeMirror combo). The editor
   // reconfigures its keymapCompartment on receipt, so rebinding applies live.

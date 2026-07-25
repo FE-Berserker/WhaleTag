@@ -431,6 +431,13 @@ function handleMessage(msg: HostMessage) {
       if (ctx.currentPath !== null) schedulePreview();
       break;
     }
+    case 'setMdTemplates': {
+      // §md-templates — host pushed the HTML-template list. Store on ctx; the
+      // right-click menu reads it lazily on next open. No re-render needed
+      // (templates are menu data, not rendered content).
+      ctx.mdTemplates = msg.templates;
+      break;
+    }
     case 'setKeybindings': {
       // §md-keybindings — host pushed action→combo overrides. Reconfigure the
       // keymapCompartment so the change applies to the already-open editor.

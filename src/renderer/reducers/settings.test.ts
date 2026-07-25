@@ -13,6 +13,7 @@ import settingsReducer, {
   setKeybinding,
   resetKeybindings,
   setGalleryShowTags,
+  setMdTemplates,
   MAX_VIEW_DEPTH,
   MIN_VIEW_DEPTH,
 } from './settings';
@@ -531,5 +532,29 @@ describe('settings.galleryShowTags', () => {
     const legacy = { ...initialState, galleryShowTags: undefined } as unknown as SettingsState;
     const next = settingsReducer(legacy, { type: 'no-op' });
     assert.equal(next.galleryShowTags, true);
+  });
+});
+
+describe('settings.mdTemplates', () => {
+  it('defaults to [] in initialState', () => {
+    assert.deepEqual(initialState.mdTemplates, []);
+  });
+
+  it('replaces the whole list via setMdTemplates (not merge)', () => {
+    const templates = [
+      { id: 'a', label: 'Card', template: '<div class="card">…</div>', enabled: true },
+      { id: 'b', label: 'Fold', template: '<details><summary>…</summary></details>', enabled: false },
+    ];
+    const next = settingsReducer(initialState, setMdTemplates(templates));
+    assert.deepEqual(next.mdTemplates, templates);
+    // A second set overwrites the first (whole-array replace, like setCustomCallouts).
+    const next2 = settingsReducer(next, setMdTemplates([]));
+    assert.deepEqual(next2.mdTemplates, []);
+  });
+
+  it('migrates a legacy state without mdTemplates to []', () => {
+    const legacy = { ...initialState, mdTemplates: undefined } as unknown as SettingsState;
+    const migrated = settingsReducer(legacy, { type: 'no-op' });
+    assert.deepEqual(migrated.mdTemplates, []);
   });
 });

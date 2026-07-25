@@ -87,6 +87,21 @@ function editorMenuEntries(): MenuEntry[] {
     { type: 'separator' },
     { type: 'item', label: T.insertCallout, disabled: readOnly, onSelect: () => { insertCallout(v); } },
     { type: 'item', label: T.insertTable, disabled: readOnly, onSelect: () => { openTableDialog(v); } },
+    {
+      type: 'item',
+      label: T.templates,
+      // Disabled when read-only or no enabled template (empty submenu is useless).
+      disabled: readOnly || !ctx.mdTemplates.some((t) => t.enabled),
+      submenu: ctx.mdTemplates
+        .filter((t) => t.enabled)
+        .map((t) => ({
+          type: 'item' as const,
+          label: t.label,
+          onSelect: () => {
+            v.dispatch(v.state.replaceSelection(t.template));
+          },
+        })),
+    },
     { type: 'separator' },
     { type: 'item', label: T.findReplace, shortcut: 'Ctrl+F', onSelect: () => { openSearchPanel(v); } },
     { type: 'item', label: T.gotoLineMenu, shortcut: 'Ctrl+G', onSelect: () => { promptForLine(v); } },

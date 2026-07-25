@@ -347,6 +347,13 @@ export interface SetCustomCalloutsMessage {
   type: 'setCustomCallouts';
   callouts: import('./callout-types').CustomCallout[];
 }
+/** Host → Extension (md-editor): replace the HTML-template list shown in the
+ *  editor's right-click "Templates" submenu. Each entry's `template` is
+ *  inserted at the cursor on select (sanitized on preview by md-render). */
+export interface SetMdTemplatesMessage {
+  type: 'setMdTemplates';
+  templates: import('./md-template-types').MdTemplate[];
+}
 /** Host → Extension (md-editor): replace the keymap bindings. Payload is an
  *  action→CodeMirror-combo map (e.g. `{ save: 'Mod-s', bold: 'Mod-b' }`). The
  *  editor reconfigures its keymapCompartment so the change applies live to an
@@ -400,6 +407,7 @@ export type HostMessage =
   | RenderedPdfMessage
   | SetMdRenderThemeMessage
   | SetCustomCalloutsMessage
+  | SetMdTemplatesMessage
   | SetKeybindingsMessage
   | SetImageSaveConfigMessage
   | EbookAnnotationsMessage
