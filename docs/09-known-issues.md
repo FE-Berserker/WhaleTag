@@ -316,7 +316,7 @@ office-viewer 当前只支持手动缩放(+/− 两按钮),**无** fit / 旋转 
 
 ### 16.12 pending resolver 无超时 ✅ 已修(2026-07-06,随 §16.7)
 
-[src/extensions/office-viewer/index.ts](../src/extensions/office-viewer/index.ts) 两个 `Map<string, PendingResolver>`,**主进程响应丢失**(IPC 中断 / iframe reload / 主进程 OOM kill)时悬挂 resolver 永久驻留。**已修**:共享 `pdfjs-in-iframe.ts` 的 `requestAsset` 加 30s `setTimeout` 超时,`destroy()` 时遍历 Map reject 全部。注意 office-viewer 的 `pendingConversions`(soffice 转换)未套超时 —— 大文件 PPTX 可能合法地 60s+,不在本 PR。
+[src/extensions/office-viewer/index.ts](../src/extensions/office-viewer/index.ts) 两个 `Map<string, PendingResolver>`,**主进程响应丢失**(IPC 中断 / iframe reload / 主进程 OOM kill)时悬挂 resolver 永久驻留。**已修**:共享 `pdfjs-in-iframe.ts` 的 `requestAsset` 加 30s `setTimeout` 超时,`destroy()` 时遍历 Map reject 全部。office-viewer 自身的 `pendingConversions`(soffice 转换)2026-07-25 补超时:180s(> 主进程 `office-convert.ts` execFile 默认 120s 硬超时,大 PPTX 合法 60s+ 不会被误杀,仅在主进程失联时兜底);同文件 `pendingThumbnails` / `pendingSofficeChecks`(同类悬挂)各套 15s。三处均 `setTimeout` + 响应 `clearTimeout`,与 `pendingAssets` 同范式。
 
 ### 16.13 soffice stderr 丢弃 ✅ 已修(2026-07-06)
 

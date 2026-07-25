@@ -36,9 +36,29 @@ const rotateLeftBtn = document.getElementById('rotate-left') as HTMLButtonElemen
 const rotateRightBtn = document.getElementById('rotate-right') as HTMLButtonElement;
 
 // --- Conversion bridge: still office-specific (soffice → PDF), not shared.
+//
+// Front-end timeouts for the three host-request Maps below. These are leak
+// guards for the case where the main process never replies at all (crash /
+// IPC drop / OOM kill mid-conversion): under normal operation the host always
+// replies and `clearTimeout` fires first, so a timeout never surfaces to the
+// user. Mirrors the `pendingAssets` pattern in `shared/pdfjs-in-iframe.ts`.
+//
+// `CONVERSION_TIMEOUT_MS` MUST exceed the main-process hard cap
+// (`office-convert.ts` execFile default 120_000ms): a large PPTX can
+// legitimately take 60s+, and a client-side timeout shorter than the host's
+// would reject a conversion that is still happily running (the host's late
+// reply then arrives at a deleted entry and is silently ignored — harmless
+// but a false failure for the user). 180s = 120s host + 60s slack.
+//
+// Thumbnails (a cached JPEG read) and the soffice availability probe (a binary
+// stat) are near-instant host ops; 15s is a generous cap, never a UX path.
+const CONVERSION_TIMEOUT_MS = 180_000;
+const PROBE_TIMEOUT_MS = 15_000;
+
 type PendingResolver = {
   resolve: (data: Uint8Array) => void;
   reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
 };
 const pendingConversions = new Map<string, PendingResolver>();
 let convertReqId = 0;
@@ -56,7 +76,13 @@ let fileSizeBytes: number | null = null;
 function requestOfficeConvert(path: string): Promise<Uint8Array> {
   const requestId = `o${(convertReqId += 1)}`;
   return new Promise<Uint8Array>((resolve, reject) => {
-    pendingConversions.set(requestId, { resolve, reject });
+    const timer = setTimeout(() => {
+      if (pendingConversions.has(requestId)) {
+        pendingConversions.delete(requestId);
+        reject(new Error('office conversion request timeout'));
+      }
+    }, CONVERSION_TIMEOUT_MS);
+    pendingConversions.set(requestId, { resolve, reject, timer });
     window.whaleExt.postMessage({ type: 'requestOfficeConvert', requestId, path });
   });
 }
@@ -66,13 +92,25 @@ function requestOfficeConvert(path: string): Promise<Uint8Array> {
 // placeholder while LibreOffice cold-converts the document to PDF (2-5s on a
 // cold Windows install). Same JPEG the file browser already generated; null
 // when no thumbnail exists yet (the viewer then just keeps "Converting…").
-const pendingThumbnails = new Map<string, (dataUrl: string | null) => void>();
+type PendingThumbnail = {
+  resolve: (dataUrl: string | null) => void;
+  timer: ReturnType<typeof setTimeout>;
+};
+const pendingThumbnails = new Map<string, PendingThumbnail>();
 let thumbReqId = 0;
 
 function requestThumbnail(path: string): Promise<string | null> {
   const requestId = `t${(thumbReqId += 1)}`;
   return new Promise<string | null>((resolve) => {
-    pendingThumbnails.set(requestId, resolve);
+    const timer = setTimeout(() => {
+      if (pendingThumbnails.has(requestId)) {
+        pendingThumbnails.delete(requestId);
+        // Best-effort placeholder: a timeout means no cached thumbnail, so the
+        // viewer just keeps "Converting…" until the real render lands.
+        resolve(null);
+      }
+    }, PROBE_TIMEOUT_MS);
+    pendingThumbnails.set(requestId, { resolve, timer });
     window.whaleExt.postMessage({ type: 'requestThumbnail', requestId, path });
   });
 }
@@ -81,7 +119,11 @@ function requestThumbnail(path: string): Promise<string | null> {
 // When LibreOffice is missing, the viewer shows install guidance + an "open
 // with system default" fallback instead of a bare "soffice not found"
 // dead-end. Probed up front so we never attempt the doomed convert.
-const pendingSofficeChecks = new Map<string, (available: boolean) => void>();
+type PendingSofficeCheck = {
+  resolve: (available: boolean) => void;
+  timer: ReturnType<typeof setTimeout>;
+};
+const pendingSofficeChecks = new Map<string, PendingSofficeCheck>();
 let sofficeReqId = 0;
 const LIBREOFFICE_DOWNLOAD_URL =
   'https://www.libreoffice.org/download/download-libreoffice/';
@@ -89,7 +131,16 @@ const LIBREOFFICE_DOWNLOAD_URL =
 function requestSofficeCheck(): Promise<boolean> {
   const requestId = `s${(sofficeReqId += 1)}`;
   return new Promise<boolean>((resolve) => {
-    pendingSofficeChecks.set(requestId, resolve);
+    const timer = setTimeout(() => {
+      if (pendingSofficeChecks.has(requestId)) {
+        pendingSofficeChecks.delete(requestId);
+        // Host didn't reply — treat as "unavailable" so the viewer shows the
+        // install-guidance + open-with-system fallback rather than hanging on
+        // an await that will never settle.
+        resolve(false);
+      }
+    }, PROBE_TIMEOUT_MS);
+    pendingSofficeChecks.set(requestId, { resolve, timer });
     window.whaleExt.postMessage({ type: 'requestSofficeCheck', requestId });
   });
 }
@@ -704,6 +755,7 @@ window.whaleExt.onMessage((msg) => {
     case 'officePdfContent': {
       const pending = pendingConversions.get(msg.requestId);
       if (!pending) break;
+      clearTimeout(pending.timer);
       pendingConversions.delete(msg.requestId);
       if (msg.data) {
         // msg.data arrives as a Uint8Array (the main process returns a Buffer;
@@ -716,18 +768,20 @@ window.whaleExt.onMessage((msg) => {
       break;
     }
     case 'thumbnailContent': {
-      const resolve = pendingThumbnails.get(msg.requestId);
-      if (resolve) {
+      const pending = pendingThumbnails.get(msg.requestId);
+      if (pending) {
+        clearTimeout(pending.timer);
         pendingThumbnails.delete(msg.requestId);
-        resolve(msg.dataUrl ?? null);
+        pending.resolve(msg.dataUrl ?? null);
       }
       break;
     }
     case 'sofficeCheckResult': {
-      const resolve = pendingSofficeChecks.get(msg.requestId);
-      if (resolve) {
+      const pending = pendingSofficeChecks.get(msg.requestId);
+      if (pending) {
+        clearTimeout(pending.timer);
         pendingSofficeChecks.delete(msg.requestId);
-        resolve(msg.available);
+        pending.resolve(msg.available);
       }
       break;
     }

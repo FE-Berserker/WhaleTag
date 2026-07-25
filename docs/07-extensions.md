@@ -331,7 +331,7 @@ src/extensions/
 - 进度 / 状态:`#loading-bar` 显 Converting → Loading → Rendering N/M(或错误,`data-state='error'`),`:empty` 隐藏 + `role="status"`;底部 `#status` 左文件大小(`fileContent.size`)右页数
 - 主题:启动时 `applyTheme(detectInitialTheme())`(与 pdf-viewer 同款,消除深色用户白闪)
 - 取消:`renderToken`(单调递增)在 `requestOfficeConvert` 之后每步 await 前比对;只取消 pdfjs 阶段,**soffice 阶段无法取消**(用户切换文件时旧进程继续跑完)
-- `pendingAssets` / `pendingConversions` 两个 Map,**无超时清理**(主进程响应丢失时悬挂 resolver 永久驻留)
+- ~~`pendingAssets` / `pendingConversions` 两个 Map 无超时清理~~ ✅ 已修:`pendingAssets`(共享 `pdfjs-in-iframe.ts`)30s;office-viewer 的 `pendingConversions` 180s(> 主进程 `office-convert.ts` execFile 默认 120s 硬超时,仅失联兜底,大 PPTX 合法 60s+ 不会被误杀)+ 同类 `pendingThumbnails` / `pendingSofficeChecks` 各 15s;均 `setTimeout` reject/resolve + 响应 `clearTimeout`(详见 [docs/09 §16.12](./09-known-issues.md))
 
 **i18n**:Strings + I18N 复用 pdf-viewer 共享的 7 个 key(`loading / failedDecode / rendering / failedRender / zoomIn / zoomOut / pageLabel`,见 `PDFJS_I18N`),`failedConvert` 等是 office-viewer 独有。
 
