@@ -22,13 +22,23 @@ import TerminalIcon from '@mui/icons-material/Terminal';
 import ArchitectureIcon from '@mui/icons-material/Architecture';
 import DesignServicesIcon from '@mui/icons-material/DesignServices';
 import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing';
-import JavascriptIcon from '@mui/icons-material/Javascript';
-import HtmlIcon from '@mui/icons-material/Html';
-import CssIcon from '@mui/icons-material/Css';
+import {
+  PythonIcon,
+  TypescriptIcon,
+  JavascriptIcon,
+  JavaIcon,
+  CppIcon,
+  CsharpIcon,
+  GoIcon,
+  RustIcon,
+  BashIcon,
+  HtmlIcon,
+  CssIcon,
+  JupyterIcon,
+} from '../assets/brand-icons';
 import StorageIcon from '@mui/icons-material/Storage';
 import FunctionsIcon from '@mui/icons-material/Functions';
 import DataArrayIcon from '@mui/icons-material/DataArray';
-import ScienceIcon from '@mui/icons-material/Science';
 import BrushIcon from '@mui/icons-material/Brush';
 import MailIcon from '@mui/icons-material/Mail';
 import LinkIcon from '@mui/icons-material/Link';
@@ -76,6 +86,13 @@ const MODEL3D_BRAND: Record<
   // ZBrush
   ztl: { color: '#f68b1f' },
   zpr: { color: '#f68b1f' },
+  // CATIA (Dassault Systèmes) — aerospace / automotive CAD.
+  catpart: { color: '#1b3a6b', Icon: ArchitectureIcon },
+  catproduct: { color: '#1b3a6b', Icon: ArchitectureIcon },
+  catdrawing: { color: '#1b3a6b', Icon: ArchitectureIcon },
+  // Creo (PTC). `.prt` is the Creo/NX part file (`.asm` skipped — collides
+  // with assembly-language source).
+  prt: { color: '#e87722', Icon: DesignServicesIcon },
 };
 
 /** Returns the lowercase extension of `name` (no dot); '' if none. Mirrors
@@ -104,20 +121,20 @@ const CATEGORY_ICON: Record<
   ppt: { Icon: SlideshowIcon, color: '#d24726' },
   archive: { Icon: FolderZipIcon, color: '#d99e2b' },
   javascript: { Icon: JavascriptIcon, color: '#f7df1e' },
-  typescript: { Icon: CodeIcon, color: '#3178c6' },
+  typescript: { Icon: TypescriptIcon, color: '#3178c6' },
   html: { Icon: HtmlIcon, color: '#e34f26' },
   css: { Icon: CssIcon, color: '#264de4' },
-  python: { Icon: CodeIcon, color: '#3776ab' },
-  java: { Icon: CodeIcon, color: '#b07219' },
-  cpp: { Icon: CodeIcon, color: '#00599c' },
-  csharp: { Icon: CodeIcon, color: '#178600' },
-  go: { Icon: CodeIcon, color: '#00add8' },
-  rust: { Icon: CodeIcon, color: '#dea584' },
-  shell: { Icon: TerminalIcon, color: '#43a047' },
+  python: { Icon: PythonIcon, color: '#3776ab' },
+  java: { Icon: JavaIcon, color: '#b07219' },
+  cpp: { Icon: CppIcon, color: '#00599c' },
+  csharp: { Icon: CsharpIcon, color: '#178600' },
+  go: { Icon: GoIcon, color: '#00add8' },
+  rust: { Icon: RustIcon, color: '#dea584' },
+  shell: { Icon: BashIcon, color: '#43a047' },
   database: { Icon: StorageIcon, color: '#607d8b' },
   matlab: { Icon: FunctionsIcon, color: '#0076a8' },
   json: { Icon: DataArrayIcon, color: '#f5b041' },
-  notebook: { Icon: ScienceIcon, color: '#f37626' },
+  notebook: { Icon: JupyterIcon, color: '#f37626' },
   design: { Icon: BrushIcon, color: '#31a8ff' },
   email: { Icon: MailIcon, color: '#5c6bc0' },
   link: { Icon: LinkIcon, color: '#42a5f5' },

@@ -187,6 +187,27 @@ const MODEL3D_EXT = new Set([
   'blend',
   'dae',
   '3mf',
+  // Proprietary CAD / 3D-software native formats — listed here (in addition to
+  // the open exchange formats above) so the MODEL3D_BRAND overrides in
+  // FileTypeIcon actually fire. Without these the brand entries were dead
+  // code: files fell through to 'generic' because they never matched 'model3d'.
+  'ma',
+  'mb',
+  'max',
+  'skp',
+  'c4d',
+  'sldprt',
+  'sldasm',
+  'slddrw',
+  '3dm',
+  'ztl',
+  'zpr',
+  // CATIA (Dassault Systèmes) + Creo (PTC) — proprietary CAD.
+  // `.asm` deliberately omitted: collides with assembly-language source.
+  'catpart',
+  'catproduct',
+  'catdrawing',
+  'prt',
 ]);
 
 const EXECUTABLE_EXT = new Set([
