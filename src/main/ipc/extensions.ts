@@ -285,27 +285,28 @@ async function renderHtmlToPdf(
     await waitForImagesReady(win.webContents).catch(() => {
       /* timeout → proceed with whatever loaded */
     });
+    // When header/footer is on, force top/bottom margins >= 0.5" so the
+    // header/footer (rendered in the margin area) isn't clipped against the
+    // content; left/right are unaffected.
+    const wantHeaderFooter = options?.displayHeaderFooter === true;
+    const um = options?.marginInches;
+    const minTB = wantHeaderFooter ? 0.5 : 0;
     const buf = await win.webContents.printToPDF({
       printBackground: true,
       pageSize: options?.pageSize ?? 'A4',
       landscape: options?.landscape ?? false,
       scale: options?.scale ?? 1.0,
       preferCSSPageSize: false,
-      margins: options?.marginInches
-        ? {
-            marginType: 'custom' as const,
-            top: options.marginInches.top,
-            bottom: options.marginInches.bottom,
-            left: options.marginInches.left,
-            right: options.marginInches.right,
-          }
-        : {
-            marginType: 'custom' as const,
-            top: 0.4,
-            bottom: 0.4,
-            left: 0.4,
-            right: 0.4,
-          },
+      displayHeaderFooter: options?.displayHeaderFooter,
+      headerTemplate: options?.headerTemplate,
+      footerTemplate: options?.footerTemplate,
+      margins: {
+        marginType: 'custom' as const,
+        top: Math.max(um?.top ?? 0.4, minTB),
+        bottom: Math.max(um?.bottom ?? 0.4, minTB),
+        left: um?.left ?? 0.4,
+        right: um?.right ?? 0.4,
+      },
     });
     return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
   } finally {

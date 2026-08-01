@@ -34,6 +34,9 @@ export interface RpcPaths {
   odaPath: string | null;
   calibrePath: string | null;
   sofficePath: string | null;
+  /** Whether deletes go to the OS trash (settings.deleteToTrash). md-editor
+   *  image cleanup forwards it to `ipcApi.deletePath`'s `useTrash`. */
+  deleteToTrash: boolean;
 }
 
 /**
@@ -42,7 +45,7 @@ export interface RpcPaths {
  * `false` so the caller falls through to its component-level switch.
  */
 export function createRpcHandler(post: Post, paths: RpcPaths) {
-  const { dwg2dxfPath, odaPath, calibrePath, sofficePath } = paths;
+  const { dwg2dxfPath, odaPath, calibrePath, sofficePath, deleteToTrash } = paths;
   return (msg: ExtensionMessage): boolean => {
     switch (msg.type) {
       case 'requestPdfAsset':
@@ -250,6 +253,41 @@ export function createRpcHandler(post: Post, paths: RpcPaths) {
             path: null,
             error,
           })
+        );
+        return true;
+
+      case 'requestListDirectory':
+        // §image-cleanup (md-editor): list the paste subfolder so the editor
+        // can diff its entries against the .md's referenced images.
+        forwardRpc(
+          post,
+          () => ipcApi.listDirectory(msg.dirPath),
+          (entries) => ({ type: 'directoryListed', requestId: msg.requestId, entries }),
+          (error) => ({ type: 'directoryListed', requestId: msg.requestId, entries: [], error })
+        );
+        return true;
+
+      case 'requestDeleteFiles':
+        // §image-cleanup (md-editor): delete the orphan images. useTrash
+        // follows the global deleteToTrash setting; per-file failures are
+        // collected rather than aborting the whole batch.
+        forwardRpc(
+          post,
+          async () => {
+            const deleted: string[] = [];
+            const errors: string[] = [];
+            for (const p of msg.paths) {
+              try {
+                await ipcApi.deletePath(p, deleteToTrash);
+                deleted.push(p);
+              } catch (e: unknown) {
+                errors.push(`${p}: ${e instanceof Error ? e.message : String(e)}`);
+              }
+            }
+            return { deleted, errors };
+          },
+          ({ deleted, errors }) => ({ type: 'filesDeleted', requestId: msg.requestId, deleted, errors }),
+          (error) => ({ type: 'filesDeleted', requestId: msg.requestId, deleted: [], errors: [error] })
         );
         return true;
 

@@ -293,6 +293,25 @@ export interface ImageSavedMessage {
   path: string | null;
   error?: string;
 }
+/** Host -> Extension: response to `requestListDirectory` (md-editor image
+ *  cleanup). The subfolder's entries; the editor diffs them against the .md's
+ *  referenced-image set to find orphans. */
+export interface DirectoryListedMessage {
+  type: 'directoryListed';
+  requestId: string;
+  entries: import('./ipc-types').DirEntry[];
+  /** Set when `listDirectory` failed (entries is then empty). */
+  error?: string;
+}
+/** Host -> Extension: response to `requestDeleteFiles` (md-editor image
+ *  cleanup). `deleted` holds paths actually removed; `errors` per-file
+ *  failures (empty on full success). */
+export interface FilesDeletedMessage {
+  type: 'filesDeleted';
+  requestId: string;
+  deleted: string[];
+  errors: string[];
+}
 
 /** Host -> Extension: response to `requestClipboardText` (md-editor context
  *  menu Paste). `text` is the clipboard's current text ('' when empty or
@@ -354,6 +373,15 @@ export interface SetMdTemplatesMessage {
   type: 'setMdTemplates';
   templates: import('./md-template-types').MdTemplate[];
 }
+/** Host → Extension (md-editor): replace the PDF export page header/footer
+ *  templates (Typora-style; empty string = none). The editor converts the
+ *  `${page}` / `${pages}` / `${title}` / `${date}` placeholders to Chromium
+ *  printToPDF span classes on export. */
+export interface SetMdPdfHeaderFooterMessage {
+  type: 'setMdPdfHeaderFooter';
+  header: string;
+  footer: string;
+}
 /** Host → Extension (md-editor): replace the keymap bindings. Payload is an
  *  action→CodeMirror-combo map (e.g. `{ save: 'Mod-s', bold: 'Mod-b' }`). The
  *  editor reconfigures its keymapCompartment so the change applies live to an
@@ -408,6 +436,7 @@ export type HostMessage =
   | SetMdRenderThemeMessage
   | SetCustomCalloutsMessage
   | SetMdTemplatesMessage
+  | SetMdPdfHeaderFooterMessage
   | SetKeybindingsMessage
   | SetImageSaveConfigMessage
   | EbookAnnotationsMessage
@@ -415,6 +444,8 @@ export type HostMessage =
   | ApplyReplacementMessage
   | StreamingUrlMessage
   | ImageSavedMessage
+  | DirectoryListedMessage
+  | FilesDeletedMessage
   | ClipboardTextMessage
   | SetAiAvailableMessage;
 
@@ -580,6 +611,13 @@ export interface RenderPdfOptions {
   landscape?: boolean;
   scale?: number;
   marginInches?: { top: number; bottom: number; left: number; right: number };
+  /** Chromium printToPDF header template (HTML; `<span class="pageNumber">`
+   *  etc. for variables). Only used when displayHeaderFooter is true. */
+  headerTemplate?: string;
+  /** Chromium printToPDF footer template. See {@link headerTemplate}. */
+  footerTemplate?: string;
+  /** Show header/footer on the PDF. False (default) = no header/footer. */
+  displayHeaderFooter?: boolean;
 }
 
 /** Extension -> Host: render an HTML document to a PDF via the main process's
@@ -726,6 +764,21 @@ export interface RequestSaveImageMessage {
   /** Absolute directory to save into (the .md's directory). */
   dirPath: string;
 }
+/** Extension -> Host: list a directory's entries (md-editor image cleanup —
+ *  find orphan images in the paste subfolder). Routed to `ipcApi.listDirectory`. */
+export interface RequestListDirectoryMessage {
+  type: 'requestListDirectory';
+  requestId: string;
+  dirPath: string;
+}
+/** Extension -> Host: delete files (md-editor image cleanup — remove the
+ *  orphan images). Routed to `ipcApi.deletePath` per file; the host decides
+ *  `useTrash` from `settings.deleteToTrash`. */
+export interface RequestDeleteFilesMessage {
+  type: 'requestDeleteFiles';
+  requestId: string;
+  paths: string[];
+}
 
 /** Extension -> Host: read the clipboard's text (md-editor context menu
  *  Paste). Routed through the host because an iframe's Clipboard API is
@@ -787,6 +840,8 @@ export type ExtensionMessage =
   | RequestOpenInViewMessage
   | RequestHideMessage
   | RequestSaveImageMessage
+  | RequestListDirectoryMessage
+  | RequestDeleteFilesMessage
   | RequestClipboardTextMessage
   | AskAiMessage;
 

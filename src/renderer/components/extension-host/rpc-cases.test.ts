@@ -32,6 +32,7 @@ const PATHS = {
   odaPath: null,
   calibrePath: null,
   sofficePath: 'C:/LO/soffice.exe',
+  deleteToTrash: true,
 };
 
 function rpc(type: string, extra: Record<string, unknown> = {}): ExtensionMessage {
