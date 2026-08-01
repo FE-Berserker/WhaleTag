@@ -23,6 +23,23 @@ export interface FolderVizNode {
 
 export type FolderVizType = 'tree' | 'radial' | 'treemap' | 'sunburst';
 
+/** ECharts series-data node emitted by `toEChartsTree/Treemap/Sunburst` and
+ *  mutated in place by FolderVizView (search highlight, collapse, file
+ *  filtering). Carries the source node's `path` / `isDirectory` / `fileCount`
+ *  so chart callbacks (tooltip, click) can reach back to it. Replaces the
+ *  previous `any` return type. */
+export interface EChartsFolderVizNode {
+  name: string;
+  value: number;
+  path: string;
+  isDirectory: boolean;
+  fileCount?: number;
+  itemStyle?: Record<string, unknown>;
+  label?: Record<string, unknown>;
+  collapsed?: boolean;
+  children?: EChartsFolderVizNode[];
+}
+
 /** Separator-tolerant basename. */
 function baseNameOf(p: string): string {
   const parts = p.replace(/\\/g, '/').split('/').filter(Boolean);
@@ -194,14 +211,15 @@ export function toEChartsTree(
     radial?: boolean;
     getColor?: (node: FolderVizNode) => string;
   } = {}
-): any {
+): EChartsFolderVizNode {
   const color = options.getColor?.(node);
-  const result: any = {
+  const result: EChartsFolderVizNode = {
     name: node.name,
     value: node.size,
     itemStyle: color ? { color } : undefined,
     path: node.path,
     isDirectory: node.isDirectory,
+    fileCount: node.fileCount,
   };
   if (node.children && node.children.length > 0) {
     result.children = node.children.map((c) => toEChartsTree(c, options));
@@ -213,14 +231,15 @@ export function toEChartsTree(
 export function toEChartsTreemap(
   node: FolderVizNode,
   options: { getColor?: (node: FolderVizNode) => string } = {}
-): any {
+): EChartsFolderVizNode {
   const color = options.getColor?.(node);
-  const result: any = {
+  const result: EChartsFolderVizNode = {
     name: node.name,
     value: node.size,
     itemStyle: color ? { color } : undefined,
     path: node.path,
     isDirectory: node.isDirectory,
+    fileCount: node.fileCount,
   };
   if (node.children && node.children.length > 0) {
     result.children = node.children.map((c) => toEChartsTreemap(c, options));
@@ -232,14 +251,15 @@ export function toEChartsTreemap(
 export function toEChartsSunburst(
   node: FolderVizNode,
   options: { getColor?: (node: FolderVizNode) => string } = {}
-): any {
+): EChartsFolderVizNode {
   const color = options.getColor?.(node);
-  const result: any = {
+  const result: EChartsFolderVizNode = {
     name: node.name,
     value: node.size,
     itemStyle: color ? { color } : undefined,
     path: node.path,
     isDirectory: node.isDirectory,
+    fileCount: node.fileCount,
   };
   if (node.children && node.children.length > 0) {
     result.children = node.children.map((c) => toEChartsSunburst(c, options));

@@ -29,6 +29,7 @@ const baseSettings = {
   anthropicAuthMode: 'apiKey' as const,
   mcpServers: [],
   aiHttpTools: true,
+  maxTurns: 200,
 };
 
 function opts(over: Partial<Options>): Options {

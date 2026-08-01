@@ -61,6 +61,7 @@ describe('HttpChatProvider.buildMessages', () => {
     anthropicAuthMode: 'apiKey' as const,
     mcpServers: [],
     aiHttpTools: false,
+    maxTurns: 200,
   };
 
   function payload(history: ChatMessage[], text: string): AiQueryPayload {

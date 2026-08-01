@@ -10,7 +10,6 @@ import {
 } from '-/reducers/ai';
 import type {
   AiQueryPayload,
-  AiSettingsSnapshot,
   ChatMessage,
   Conversation,
   ImageAttachment,
@@ -19,6 +18,7 @@ import type {
 } from '../../../shared/ai-types';
 import type { ViewMode } from '../../../shared/whale-meta';
 import { applyChunk } from './streamAccumulator';
+import { buildAiSnapshot } from './buildSnapshot';
 
 /**
  * Phase-B.7 chat hook bound to the redux `ai` slice (multi-tab + persisted
@@ -62,26 +62,6 @@ function newId(): string {
   } catch {
     return `id-${Math.random().toString(36).slice(2)}-${Date.now()}`;
   }
-}
-
-function buildSnapshot(s: RootState['settings']): AiSettingsSnapshot {
-  return {
-    provider: s.aiProvider,
-    model: s.aiModel,
-    permissionMode: s.aiPermissionMode,
-    effort: s.aiEffort,
-    safeMode: s.aiSafeMode,
-    customSystemPrompt: s.aiCustomSystemPrompt,
-    envVarOverrides: s.aiEnvVarOverrides,
-    cliPath: s.aiCliPath,
-    loadUserSettings: s.aiLoadUserSettings,
-    ollamaUrl: s.aiOllamaUrl,
-    openaiUrl: s.aiOpenaiUrl,
-    anthropicBaseUrl: s.aiAnthropicBaseUrl,
-    anthropicAuthMode: s.aiAnthropicAuthMode,
-    mcpServers: s.aiMcpServers,
-    aiHttpTools: s.aiHttpTools,
-  };
 }
 
 export function useAiStream(): AiStreamState {
@@ -140,7 +120,7 @@ export function useAiStream(): AiStreamState {
       );
       void ipcApi
         .aiGenerateTitle({
-          settings: buildSnapshot(settingsRef.current),
+          settings: buildAiSnapshot(settingsRef.current),
           history: conv.messages,
         })
         .then(({ title }) => {
@@ -175,7 +155,7 @@ export function useAiStream(): AiStreamState {
         readOnly: l.isReadOnly,
       })),
       turn: { text: '' },
-      settings: buildSnapshot(settings),
+      settings: buildAiSnapshot(settings),
       sessionId: active?.sessionId ?? null,
       history: [],
     };
@@ -272,7 +252,7 @@ export function useAiStream(): AiStreamState {
           selectedPaths: selectedPaths && selectedPaths.length > 0 ? selectedPaths : undefined,
           images: images && images.length > 0 ? images : undefined,
         },
-        settings: buildSnapshot(settings),
+        settings: buildAiSnapshot(settings),
         sessionId: conversations[id]?.sessionId ?? null,
         history: prior,
       };

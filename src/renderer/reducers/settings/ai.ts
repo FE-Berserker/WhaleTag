@@ -41,6 +41,11 @@ export interface AiFields {
   aiMcpServers: import('../../../shared/ai-types').ManagedMcpServer[];
   /** Advertise Whale-defined tools to HTTP providers (read/list/write). */
   aiHttpTools: boolean;
+  /** Max agent-loop turns (tool round-trips) per request, Claude provider
+   *  only. The SDK's `query()` caps the loop at this many turns before giving
+   *  up ("Reached maximum number of turns"). Raise it if a complex task runs
+   *  out of turns mid-request. Clamped to [1, 1000] in `buildAiSnapshot`. */
+  aiMaxTurns: number;
 }
 
 export const aiInitial: AiFields = {
@@ -62,6 +67,7 @@ export const aiInitial: AiFields = {
   aiLoadUserSettings: false,
   aiMcpServers: [],
   aiHttpTools: true,
+  aiMaxTurns: 200,
 };
 
 /**
@@ -94,6 +100,7 @@ export type AiSettingsPatch = Pick<
   | 'aiAnthropicAuthMode'
   | 'aiMcpServers'
   | 'aiHttpTools'
+  | 'aiMaxTurns'
 >;
 
 export interface SetAiSettingsAction extends AnyAction {
@@ -147,6 +154,7 @@ export function migrateAi<T extends AiFields>(base: T): T {
     next = { ...next, aiLoadUserSettings: false };
   if (next.aiMcpServers === undefined) next = { ...next, aiMcpServers: [] };
   if (next.aiHttpTools === undefined) next = { ...next, aiHttpTools: true };
+  if (next.aiMaxTurns === undefined) next = { ...next, aiMaxTurns: 200 };
   return next;
 }
 

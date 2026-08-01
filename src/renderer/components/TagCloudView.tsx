@@ -63,6 +63,28 @@ import EmptyHint from '-/components/perspective/EmptyHint';
 import ErrorBanner from '-/components/perspective/ErrorBanner';
 import type { FileCellData } from '-/components/file-cell';
 
+/** Minimal slice of ECharts' callback params for the wordCloud series — the
+ *  data item carries the tag's raw key + display color/count. */
+interface TagCloudWordParam {
+  name?: string;
+  value?: number;
+  data?: {
+    name?: string;
+    value?: number;
+    rawTag?: string;
+    color?: string;
+    count?: number;
+  };
+  event?: { event?: MouseEvent };
+}
+
+/** Minimal slice of ECharts' callback params for the co-occurrence heatmap
+ *  (data = [row, col, count]). */
+interface MatrixCellParam {
+  data?: [number, number, number];
+  event?: { event?: MouseEvent };
+}
+
 interface TagCloudViewProps {
   /** The shared per-cell handler bag from FileList. */
   data: FileCellData;
@@ -314,7 +336,7 @@ export default function TagCloudView({ data }: TagCloudViewProps) {
     () => ({
       tooltip: {
         show: true,
-        formatter: (params: any) =>
+        formatter: (params: TagCloudWordParam) =>
           `${params.name}<br/>${t('tagCloudCount', { count: params.data?.count ?? 0 })}`,
       },
       series: [
@@ -333,7 +355,7 @@ export default function TagCloudView({ data }: TagCloudViewProps) {
           layoutAnimation,
           textStyle: {
             fontWeight: 600,
-            color: (params: any) =>
+            color: (params: TagCloudWordParam) =>
               params.data?.rawTag === activeTag
                 ? '#ffffff'
                 : params.data?.color ?? FALLBACK_COLOR,
@@ -467,12 +489,12 @@ export default function TagCloudView({ data }: TagCloudViewProps) {
   // addition to the chart-wide save / copy-to-clipboard options.
   const onEvents = useMemo(
     () => ({
-      click: (params: any) => {
+      click: (params: TagCloudWordParam) => {
         const tag: string | undefined = params.data?.rawTag;
         if (tag) onClickTag(tag);
       },
-      contextmenu: (params: any) => {
-        const evt = params?.event?.event as MouseEvent | undefined;
+      contextmenu: (params: TagCloudWordParam) => {
+        const evt = params.event?.event;
         if (!evt) return;
         evt.preventDefault();
         evt.stopPropagation();
@@ -490,17 +512,17 @@ export default function TagCloudView({ data }: TagCloudViewProps) {
   // opens the tag-specific context menu for the row tag.
   const onMatrixEvents = useMemo(
     () => ({
-      click: (params: any) => {
-        const i = params.data?.[0] as number | undefined;
+      click: (params: MatrixCellParam) => {
+        const i = params.data?.[0];
         const tag = typeof i === 'number' ? matrixData.tags[i] : undefined;
         if (tag) onClickTag(tag);
       },
-      contextmenu: (params: any) => {
-        const evt = params?.event?.event as MouseEvent | undefined;
+      contextmenu: (params: MatrixCellParam) => {
+        const evt = params.event?.event;
         if (!evt) return;
         evt.preventDefault();
         evt.stopPropagation();
-        const i = params.data?.[0] as number | undefined;
+        const i = params.data?.[0];
         const tag = typeof i === 'number' ? matrixData.tags[i] : undefined;
         setCtxMenu({ x: evt.clientX, y: evt.clientY, tag });
       },

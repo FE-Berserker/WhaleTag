@@ -25,6 +25,7 @@ const baseSnapshot = (over: Partial<AiSettingsSnapshot>): AiSettingsSnapshot => 
   anthropicAuthMode: 'apiKey' as const,
   mcpServers: [],
   aiHttpTools: true,
+  maxTurns: 200,
   ...over,
 });
 

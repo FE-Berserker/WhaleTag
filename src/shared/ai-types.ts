@@ -354,6 +354,10 @@ export interface AiSettingsSnapshot {
    * roadmap's constrained-tool model. Writes are gated by the approval modal.
    */
   aiHttpTools: boolean;
+  /** Max agent-loop turns (tool round-trips) per request — Claude provider
+   *  only. Caps the SDK's `query()` loop. Inline-edit ignores this (it hard-
+   *  codes maxTurns: 1). Clamped to [1, 1000] in `buildAiSnapshot`. */
+  maxTurns: number;
 }
 
 /** Payload for `ai:query`. */

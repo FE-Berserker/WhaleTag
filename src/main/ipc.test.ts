@@ -420,3 +420,112 @@ describe('read-side allowedRoots guards', () => {
     );
   });
 });
+
+/**
+ * Write-side confinement + failure-contract (docs/19 P1-1). The file header
+ * promises "handlers reject on failure so the renderer can show an error and
+ * suppress the optimistic UI update — never resolve a failed IO as success".
+ * These pin: (a) `assertWithinAllowedRoot` refuses paths outside the
+ * configured locations for BOTH source and destination, (b) a pre-existing
+ * destination is never silently overwritten, and (c) IO failures reject
+ * rather than resolve. Same rig as the read-side guards above.
+ */
+describe('fs:write handlers — confinement + failure-contract', () => {
+  let rig: TestRig;
+  let root: string;
+
+  const exists = (p: string) => fsp.access(p).then(() => true).catch(() => false);
+
+  beforeEach(async () => {
+    clearInjectedMocks();
+    rig = await buildRig();
+    root = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-write-guard-'));
+    setAllowedRoots([root]);
+    rig.registerIpcHandlers();
+  });
+
+  afterEach(async () => {
+    setAllowedRoots([]);
+    clearInjectedMocks();
+    clearIpcModuleCache();
+    await fsp.rm(root, { recursive: true, force: true });
+  });
+
+  it('fs:rename moves a file inside an allowed root', async () => {
+    const src = path.join(root, 'a.txt');
+    const dst = path.join(root, 'b.txt');
+    await fsp.writeFile(src, 'data');
+    const handler = rig.ipcHandlers.get('fs:rename')!;
+    await handler({}, src, dst);
+    assert.equal(await fsp.readFile(dst, 'utf8'), 'data');
+    assert.equal(await exists(src), false, 'source must be gone after rename');
+  });
+
+  it('fs:rename refuses a source path outside every allowed root', async () => {
+    const outside = path.join(os.tmpdir(), 'whale-outside-src.txt');
+    await fsp.writeFile(outside, 'x');
+    try {
+      const handler = rig.ipcHandlers.get('fs:rename')!;
+      await assert.rejects(
+        async () => handler({}, outside, path.join(root, 'b.txt')),
+        /Refused/
+      );
+    } finally {
+      await fsp.rm(outside, { force: true });
+    }
+  });
+
+  it('fs:rename refuses a destination outside every allowed root', async () => {
+    const src = path.join(root, 'a.txt');
+    await fsp.writeFile(src, 'x');
+    const handler = rig.ipcHandlers.get('fs:rename')!;
+    await assert.rejects(
+      async () => handler({}, src, path.join(os.tmpdir(), 'whale-outside-dst.txt')),
+      /Refused/
+    );
+  });
+
+  it('fs:rename rejects (never silently overwrites) when the destination exists', async () => {
+    const src = path.join(root, 'a.txt');
+    const dst = path.join(root, 'b.txt');
+    await fsp.writeFile(src, 'src');
+    await fsp.writeFile(dst, 'existing');
+    const handler = rig.ipcHandlers.get('fs:rename')!;
+    await assert.rejects(async () => handler({}, src, dst), /already exists/);
+    assert.equal(await fsp.readFile(dst, 'utf8'), 'existing', 'destination must be untouched');
+  });
+
+  it('fs:rename rejects (never resolves as success) on a missing source', async () => {
+    // The core failure-contract: an IO error must reject so the renderer can
+    // surface it instead of treating the failed op as success.
+    const handler = rig.ipcHandlers.get('fs:rename')!;
+    await assert.rejects(
+      async () => handler({}, path.join(root, 'nope.txt'), path.join(root, 'b.txt'))
+    );
+  });
+
+  it('fs:mkdir creates a nested directory inside an allowed root', async () => {
+    const handler = rig.ipcHandlers.get('fs:mkdir')!;
+    const dir = path.join(root, 'sub', 'deep');
+    await handler({}, dir);
+    assert.ok((await fsp.stat(dir)).isDirectory());
+  });
+
+  it('fs:mkdir refuses a path outside every allowed root', async () => {
+    const handler = rig.ipcHandlers.get('fs:mkdir')!;
+    await assert.rejects(
+      async () => handler({}, path.join(os.tmpdir(), 'whale-outside-dir')),
+      /Refused/
+    );
+  });
+
+  it('fs:delete refuses a target outside every allowed root', async () => {
+    // useTrash is irrelevant here — assertWithinAllowedRoot runs first and
+    // rejects before any trash/rm call, so no shell.trashItem stub is needed.
+    const handler = rig.ipcHandlers.get('fs:delete')!;
+    await assert.rejects(
+      async () => handler({}, path.join(os.tmpdir(), 'whale-outside-del.txt'), false),
+      /Refused/
+    );
+  });
+});

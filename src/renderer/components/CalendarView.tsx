@@ -1484,7 +1484,9 @@ function YearTrendChart({
       tooltip: {
         trigger: 'axis',
         axisPointer: { type: 'shadow' },
-        formatter: (params: any) => {
+        formatter: (
+          params: { name?: string; value?: number } | Array<{ name?: string; value?: number }>
+        ) => {
           const p = Array.isArray(params) ? params[0] : params;
           return `${p.name}<br/>${t('files')}: ${p.value}`;
         },
@@ -1511,7 +1513,7 @@ function YearTrendChart({
           // bar tops on a 12-month chart at common widths.
           barWidth: '30%',
           itemStyle: {
-            color: new (echarts as any).graphic.LinearGradient(0, 0, 0, 1, [
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
               { offset: 0, color: theme.palette.primary.main },
               {
                 offset: 1,

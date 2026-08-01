@@ -136,7 +136,7 @@ export function buildClaudeOptions(input: BuildOptionsInput): Options {
           : 'default',
     pathToClaudeCodeExecutable: cliPath,
     spawnClaudeCodeProcess: createCustomSpawnFunction(enhancedPath),
-    maxTurns: 50,
+    maxTurns: settings.maxTurns,
     effort: settings.effort,
     // Stream assistant text token-by-token (Phase B). The transform assembles
     // the deltas and dedups the trailing complete assistant message.

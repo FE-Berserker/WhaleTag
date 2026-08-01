@@ -85,6 +85,22 @@ function ancestorChain(root: string, target: string): string[] {
  */
 const TREE_ROW_HEIGHT = 32;
 
+/** A flattened folder row in the virtualized tree. */
+interface TreeFolderNode {
+  kind: 'folder';
+  name: string;
+  path: string;
+  depth: number;
+}
+/** A flattened file row in the virtualized tree. */
+interface TreeFileNode {
+  kind: 'file';
+  entry: DirEntry;
+  depth: number;
+}
+/** Discriminated union of the two row shapes `TreeRow` renders. */
+type TreeNode = TreeFolderNode | TreeFileNode;
+
 /** react-window v2 row component for the virtualized tree. react-window types
  *  `rowProps` from this component's own props (minus reserved index/style), so
  *  the data flows as individual props, not a `data` bag. Only the visible
@@ -98,12 +114,9 @@ function TreeRow({
 }: {
   index: number;
   style: CSSProperties;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  nodes: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  renderFolder: (n: any) => ReactNode;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  renderFile: (n: any) => ReactNode;
+  nodes: TreeNode[];
+  renderFolder: (n: TreeFolderNode) => ReactNode;
+  renderFile: (n: TreeFileNode) => ReactNode;
 }) {
   const node = nodes[index];
   if (!node) return null;
@@ -498,6 +511,7 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
   // iframe; right-click opens the shared context menu.
   const renderFileNode = (entry: DirEntry, depth: number): ReactNode => (
     <ListItemButton
+      data-tree-row="true"
       key={entry.path}
       draggable
       onDragStart={startEntryDrag(entry)}
@@ -660,23 +674,18 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
             rowCount={visibleNodes.length}
             rowHeight={TREE_ROW_HEIGHT}
             rowComponent={TreeRow}
-            rowProps={
-              {
-                nodes: visibleNodes,
-                renderFolder: (n: {
-                  kind: 'folder';
-                  name: string;
-                  path: string;
-                  depth: number;
-                }) => renderNode(n.name, n.path, n.depth),
-                renderFile: (n: {
-                  kind: 'file';
-                  entry: DirEntry;
-                  depth: number;
-                }) => renderFileNode(n.entry, n.depth),
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              } as any
-            }
+            // react-window v2's `rowProps` type is derived from the row
+            // component's full props and then demands the reserved `index`/
+            // `style` it actually injects itself — so the bag we pass (the
+            // remaining, non-reserved props) needs this cast. The contents
+            // are typed: nodes is TreeNode[], the renderers take the typed
+            // node variants.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            rowProps={{
+              nodes: visibleNodes,
+              renderFolder: (n: TreeFolderNode) => renderNode(n.name, n.path, n.depth),
+              renderFile: (n: TreeFileNode) => renderFileNode(n.entry, n.depth),
+            } as any}
             style={{ height: '100%' }}
           />
         ) : null}

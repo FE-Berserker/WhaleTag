@@ -49,6 +49,7 @@ import {
   toEChartsSunburst,
   toEChartsTree,
   toEChartsTreemap,
+  type EChartsFolderVizNode,
   type FilterMode,
   type FolderVizNode,
   type FolderVizType,
@@ -61,6 +62,24 @@ import { ipcApi } from '-/services/ipc-api';
 import { formatSize, truncate } from '-/services/format';
 import { useSelector } from 'react-redux';
 import type { RootState } from '-/reducers';
+
+/** Minimal slice of ECharts' callback params used by FolderViz's tooltip /
+ *  label formatters and click / context-menu handlers. We type only the
+ *  fields actually read here; echarts' full CallbackDataParams lives at an
+ *  unstable deep import path and these handlers don't need the rest. */
+interface FolderVizChartParam {
+  name?: string;
+  value?: number;
+  data?: EChartsFolderVizNode;
+  event?: {
+    event?: {
+      clientX?: number;
+      clientY?: number;
+      preventDefault?: () => void;
+      stopPropagation?: () => void;
+    };
+  };
+}
 
 interface FolderVizViewProps {
   /** The shared per-cell handler bag from FileList. */
@@ -256,7 +275,7 @@ export default function FolderVizView({ data }: FolderVizViewProps) {
   const echartsData = useMemo(() => {
     if (!tree) return null;
     const options = { getColor: defaultNodeColor };
-    let data: any;
+    let data: EChartsFolderVizNode;
     switch (vizType) {
       case 'tree':
       case 'radial':
@@ -293,7 +312,7 @@ export default function FolderVizView({ data }: FolderVizViewProps) {
     if (searchHits.visible.size > 0) {
       const { matches, visible } = searchHits;
       const primary = theme.palette.primary.main;
-      const dim = (node: any) => {
+      const dim = (node: EChartsFolderVizNode) => {
         if (node.path) {
           if (matches.has(node.path)) {
             node.itemStyle = {
@@ -313,12 +332,12 @@ export default function FolderVizView({ data }: FolderVizViewProps) {
         }
         if (node.children) for (const c of node.children) dim(c);
       };
-      const expandAncestors = (node: any) => {
+      const expandAncestors = (node: EChartsFolderVizNode) => {
         if (!node.children) return;
         for (const c of node.children) expandAncestors(c);
         // If any direct child is visible, this node should be expanded so
         // the chain from root → match renders without manual clicks.
-        if (node.children.some((c: any) => visible.has(c.path))) {
+        if (node.children.some((c: EChartsFolderVizNode) => visible.has(c.path))) {
           node.collapsed = false;
         }
       };
@@ -331,9 +350,9 @@ export default function FolderVizView({ data }: FolderVizViewProps) {
     // so a sub-folder in the set is filtered too, but only at its own
     // level — the toggle is per-folder, not recursive.
     if (hiddenFilesInFolders.size > 0) {
-      const filter = (node: any) => {
+      const filter = (node: EChartsFolderVizNode) => {
         if (hiddenFilesInFolders.has(node.path) && node.children) {
-          node.children = node.children.filter((c: any) => c.isDirectory);
+          node.children = node.children.filter((c: EChartsFolderVizNode) => c.isDirectory);
         }
         if (node.children) for (const c of node.children) filter(c);
       };
@@ -345,7 +364,7 @@ export default function FolderVizView({ data }: FolderVizViewProps) {
   const option = useMemo(() => {
     if (!echartsData) return {};
 
-    const tooltipFormatter = (params: any) => {
+    const tooltipFormatter = (params: FolderVizChartParam) => {
       const size = params.value ?? 0;
       const count = params.data?.fileCount ?? 0;
       const lines = [
@@ -434,7 +453,7 @@ export default function FolderVizView({ data }: FolderVizViewProps) {
               // Truncate long names so they don't overflow the tile
               // (plan §H.20 G). ECharts calls formatter with the data
               // item; we use `name`.
-              formatter: (p: any) => truncate(p.name ?? '', 16),
+              formatter: (p: FolderVizChartParam) => truncate(p.name ?? '', 16),
             },
             itemStyle: { borderColor: '#fff', borderWidth: 1 },
             emphasis: { focus: 'ancestor' },
@@ -448,7 +467,7 @@ export default function FolderVizView({ data }: FolderVizViewProps) {
     // donut hole — root name (truncated), total size, total file count
     // (plan §H.20 G). Data is read from the source `tree` (which is
     // the post-`buildTree` root, so values reflect any active filter).
-    const rootSize = echartsData.size;
+    const rootSize = echartsData.value;
     const rootFileCount = echartsData.fileCount;
     const rootName = echartsData.name;
     return {
@@ -462,7 +481,7 @@ export default function FolderVizView({ data }: FolderVizViewProps) {
           label: {
             rotate: 'radial',
             fontSize: 11,
-            formatter: (p: any) => truncate(p.name ?? '', 16),
+            formatter: (p: FolderVizChartParam) => truncate(p.name ?? '', 16),
           },
           // Hide labels in very thin slices — `minAngle` skips slices
           // narrower than N degrees so the label doesn't get crammed
@@ -511,7 +530,7 @@ export default function FolderVizView({ data }: FolderVizViewProps) {
   }, [echartsData, vizType, maxDepth, t, theme]);
 
   const handleChartClick = useCallback(
-    (params: any) => {
+    (params: FolderVizChartParam) => {
       const path: string | undefined = params.data?.path;
       const isDirectory: boolean | undefined = params.data?.isDirectory;
       if (!path) return;
@@ -546,17 +565,18 @@ export default function FolderVizView({ data }: FolderVizViewProps) {
   // Right-click on a node → open the per-node context menu (plan §H.20 A).
   // Right-click on the empty canvas → swallow the event and show no menu
   // (plan §H.2 line 1069-1070: "新建文件/夹" only belongs to list/grid).
-  const handleNodeContextMenu = useCallback((params: any) => {
-    const evt = params?.event?.event;
+  const handleNodeContextMenu = useCallback((params: FolderVizChartParam) => {
+    const evt = params.event?.event;
     if (evt?.preventDefault) evt.preventDefault();
     if (evt?.stopPropagation) evt.stopPropagation();
-    if (!params?.data?.path) return;
+    const data = params.data;
+    if (!data || !data.path) return;
     setNodeCtx({
-      x: evt.clientX,
-      y: evt.clientY,
-      path: params.data.path,
-      isDirectory: !!params.data.isDirectory,
-      name: params.data.name ?? '',
+      x: evt?.clientX ?? 0,
+      y: evt?.clientY ?? 0,
+      path: data.path,
+      isDirectory: !!data.isDirectory,
+      name: data.name ?? '',
     });
   }, []);
 

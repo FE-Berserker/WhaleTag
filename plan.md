@@ -30,6 +30,8 @@
 | [docs/16-cross-platform.md](docs/16-cross-platform.md) | **macOS / Linux 跨平台打包可行性**(2026-07-12);已就绪代码清单 + 硬阻塞(mac 签名)+ 需改项(Linux 大小写守卫/DE fallback/图标);§F 例外评估文档 |
 | [docs/17-office-worker.md](docs/17-office-worker.md) | **Office→PDF 常驻 UNO worker**(P3-3,2026-07-18);Python 桥接 + 常驻 soffice listener + cooldown 回退 execFile;UNO gotcha / stale-child race / 打包 extraResources |
 | [docs/18-auto-update.md](docs/18-auto-update.md) | **应用自动更新**(Phase 6,2026-07-18);electron-updater + GitHub Releases;5s 启动延迟检查 + 手动按钮;dev-mode 短路由 `unsupported`;macOS 公证与 Linux AppImage 见 `docs/16` 硬阻塞 |
+| [docs/19-code-audit.md](docs/19-code-audit.md) | **代码质量审计与改进清单**(2026-07-28);§F 例外追踪文档(同 15/16);P0 正确性 bug(persist 跳过 datasync / 孤儿图大小写误删 / maxTurns clamp 错位)+ P1 安全·数据模块零测试(fs-write/extensions/migrate/dir-lock/secretStore)+ P2 ECharts `any` 集群 + P3 重复模板·超大组件;不重复 09/13/15/16 已跟踪项 |
+| [docs/20-relative-links.md](docs/20-relative-links.md) | **drawio/excalidraw 文件链接相对路径**(2026-07-29 实现,✅ 单测覆盖);§F 例外方案追踪;现状拖入文件链接是绝对 `file://`/路径、目录迁移后断;方案:磁盘存相对 + 加载重写绝对 + 保存还原(host 点击机制不变);drawio decode→重写→存 raw(不 re-compress)+ excalidraw JSON `element.link` 重写 + 共享 `extensions/shared/relpath.ts`;POC 结论 / 状态追踪见文;只做链接不做图片;剩真机 e2e 手测 |
 | [docs/UI.md](docs/UI.md) | 设计语言(从 Pencil `.pen` 导出,主题 token;源文件描述比代码实际少 2 个策划主题) |
 
 > 找不到某模块的现状?直接从对应 `docs/0X-*.md` 入口找,不必翻 git 历史。

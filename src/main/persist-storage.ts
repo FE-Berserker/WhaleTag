@@ -21,11 +21,13 @@
  *    a file the running app never reads back). Lazy resolution makes the
  *    path depend on the app's actual runtime state, not on when Node
  *    evaluated the import.
- *  - Writes are **atomic**: write to `<key>.json.tmp`, then `rename` over the
- *    final file. A crash mid-write leaves the previous file intact instead
- *    of a half-written blob that redux-persist's `JSON.parse` will reject on
- *    next launch (which is the exact failure mode that surfaced as
- *    "settings revert to defaults").
+ *  - Writes are **atomic + durable**: delegated to the shared
+ *    `atomicWriteText` helper (the same one used by sidecar / index /
+ *    thumbnail), which writes a pid+counter-unique temp, `datasync`s the
+ *    bytes to stable storage, and only then `rename`s over the final file.
+ *    The `datasync` before rename is what prevents a post-rename crash from
+ *    exposing a partially-flushed temp as the target — the exact failure
+ *    mode that surfaced as "settings revert to defaults".
  *  - Errors are logged, not swallowed. The renderer-side adapter does the
  *    same, so a corrupt file surfaces in DevTools instead of silently
  *    downgrading the user to defaults.
@@ -34,6 +36,7 @@
 import { app } from 'electron';
 import path from 'path';
 import { promises as fsp } from 'fs';
+import { atomicWriteText } from './atomic-write';
 
 let _persistDir: string | null = null;
 
@@ -54,10 +57,6 @@ function filePathForKey(key: string): string {
   return path.join(persistDir(), `${safeKey}.json`);
 }
 
-function tmpPathForKey(key: string): string {
-  return `${filePathForKey(key)}.tmp`;
-}
-
 export async function persistRead(key: string): Promise<string | null> {
   try {
     return await fsp.readFile(filePathForKey(key), 'utf8');
@@ -72,25 +71,24 @@ export async function persistRead(key: string): Promise<string | null> {
 
 export async function persistWrite(key: string, value: string): Promise<void> {
   const filePath = filePathForKey(key);
-  const tmpPath = tmpPathForKey(key);
   try {
     await fsp.mkdir(persistDir(), { recursive: true });
-    // Atomic write: write to .tmp, then rename over the final path. A crash
-    // before the rename leaves the previous (intact) file in place.
-    await fsp.writeFile(tmpPath, value, 'utf8');
-    await fsp.rename(tmpPath, filePath);
+    // Atomic + durable write via the shared helper (same one used by sidecar
+    // / index / thumbnail): write a pid+counter-unique temp, `datasync` the
+    // bytes to stable storage, then rename over the final file. The
+    // `datasync` before rename is what prevents a post-rename crash from
+    // exposing a partially-flushed temp as the target — the exact failure
+    // mode that surfaces as "settings revert to defaults". The unique temp
+    // name also means concurrent `setItem` calls on the same key can't
+    // collide on `<key>.json.tmp`.
+    await atomicWriteText(filePath, value);
   } catch (e) {
     console.error('[persist-storage] write failed for', key, e);
-    // Best-effort cleanup of the leftover .tmp so it doesn't accumulate.
-    try {
-      await fsp.unlink(tmpPath);
-    } catch {
-      // ignore
-    }
     // Re-throw so the renderer's adapter sees the failure and can surface it
     // (instead of silently keeping stale state on disk): the `setItem`
     // promise rejects, redux-persist logs the error, and the previous
-    // on-disk file is still intact.
+    // on-disk file is still intact (atomic-write cleans up its own temp on
+    // failure and leaves the prior target untouched).
     throw e;
   }
 }
