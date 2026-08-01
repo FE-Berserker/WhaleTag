@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useWhaleBridge } from './useWhaleBridge';
 import { getDrawioUrl, useDrawioBridge, type DrawioTheme } from './drawio-bridge';
-import { nextDropPosition, uniqueCellId } from './drop-xml';
+import {
+  decodeDrawioDiagram,
+  nextDropPosition,
+  rewriteDrawioLinksToAbsolute,
+  rewriteDrawioLinksToRelative,
+  uniqueCellId,
+} from './drop-xml';
 import { getMessages } from './locales';
 
 export default function App() {
@@ -95,7 +101,14 @@ export default function App() {
     if (!file || !bridge.loaded) return;
     if (lastLoadedPathRef.current === file.path) return;
     lastLoadedPathRef.current = file.path;
-    const xml = file.content || '<mxfile></mxfile>';
+    const raw = file.content || '<mxfile></mxfile>';
+    // docs/20: stored cell links are relative to the .drawio file's directory
+    // (so a folder move keeps links intact). Decode the payload — old files
+    // are compressed, new saves are raw — then rewrite relative links back to
+    // absolute `file://` URLs. Runtime drawio behaviour is identical to the
+    // pre-relative world, so click forwarding is unchanged.
+    const decoded = decodeDrawioDiagram(raw) ?? raw;
+    const xml = rewriteDrawioLinksToAbsolute(decoded, file.path);
     bridge.loadXml(xml);
     lastSavedRef.current = xml;
     setDirty(false);
@@ -114,7 +127,15 @@ export default function App() {
       if (!file || pendingSaveRef.current) return;
       pendingSaveRef.current = true;
       try {
-        const xml = await bridge.getXml();
+        // getXml() returns drawio's COMPRESSED wire format. Decode it to raw,
+        // rewrite absolute `file://` links that live inside the diagram's
+        // directory to relative `./…` paths (docs/20), and store the RAW
+        // decoded document — no re-compression (see the note in drop-xml.ts:
+        // the on-disk format is consumed only by our own decodeDrawioDiagram,
+        // and raw is readable by the external drawio app too).
+        const compressed = await bridge.getXml();
+        const decoded = decodeDrawioDiagram(compressed) ?? compressed;
+        const xml = rewriteDrawioLinksToRelative(decoded, file.path);
         lastSavedRef.current = xml;
         save(xml);
       } catch (err) {

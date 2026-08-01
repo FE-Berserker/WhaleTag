@@ -10,27 +10,40 @@
  *   1. `getXml()` to fetch the current diagram (compressed format — see below)
  *   2. `decodeDrawioDiagram()` → expand the compressed payload to raw XML
  *   3. `appendSnippetToDiagram()` → append the new cell
- *   4. `encodeDrawioDiagram()` → re-compress to drawio's wire format
- *   5. `loadXml()` to load the modified document
+ *   4. `loadXml()` to load the modified document (load expects RAW, not the
+ *      compressed wire format — a previous step 4 that re-encoded before load
+ *      made drawio choke on the base64 stream and freeze; see the note at the
+ *      bottom of this file).
+ *
+ * Relative file links (docs/20): the diagram's on-disk `<UserObject link="…">`
+ * stores a path RELATIVE to the .drawio file's directory, so a folder can be
+ * moved without breaking links. `rewriteDrawioLinksToAbsolute` (load) and
+ * `rewriteDrawioLinksToRelative` (save) are the two sides of that rewrite.
+ * Runtime drawio always sees absolute `file://` URLs — identical to before —
+ * so the host's click forwarding (`openLinkExternally` → `openPath`) is
+ * unchanged.
  *
  * Why `<UserObject>` and not a bare `<mxCell link="…">`: drawio serializes
  * hyperlink cells inside a `<UserObject>` wrapper (see
  * `Graph.setAttributeForCell` in `Graph.js` — putting the link directly on
  * `<mxCell>` would clobber the cell label). This is exactly what drawio
- * does internally when a user clicks "Add link" on a cell.
+ * does internally when a user clicks "Add link" on a cell. The relative-link
+ * rewriters match by attribute (`[link]`) so they cover the `<UserObject>`
+ * form our snippets produce AND any direct `<mxCell link=…>` drawio may emit.
  *
  * Why the image goes in `style="image=data:…"` and not a separate attribute:
  * drawio's image shape reads the image from the `image=` style key. The
  * drop handler at `EditorUi.importFile` line ~8027 produces this exact
  * shape on native file drops.
- *
- * Why we need decode/encode: drawio's `Editor.compressXml` defaults to
- * `true`, so the `autosave` / `save` / `export` events emit the diagram as
- * `<mxfile><diagram>base64(pako.deflateRaw(encodeURIComponent(<mxGraphModel>…)))</diagram></mxfile>`.
- * The `<diagram>`'s *text* child is the compressed blob — there is no
- * `<mxGraphModel>` element child until you decode. The same format is what
- * the `load` action expects back, so we must re-encode after editing.
  */
+
+import {
+  dirname,
+  fileUrlToPath,
+  isExternalUrl,
+  resolveRelative,
+  toRelative,
+} from '../shared/relpath';
 
 /** Escape `&`, `<`, `>`, `"` in attribute values. The thumbnail data URL can
  *  contain `+`, `/`, `=` — none of those are special in XML attribute
@@ -404,9 +417,90 @@ export function decodeDrawioDiagram(payload: string): string | null {
   }
 }
 
-// Note: there's NO symmetric `encodeDrawioDiagram` helper — drawio's
-// `load` action always expects raw uncompressed XML (it parses the string
-// directly with `mxUtils.parseXml`). A previous version of the bridge
-// re-encoded the diagram before calling `loadXml`, which made drawio
-// choke on the base64 stream and freeze the editor. The round-trip is now
-// decode → edit → loadXml(raw).
+// Note: there's NO symmetric `encodeDrawioDiagram` helper. drawio's `load`
+// action always expects raw uncompressed XML (it parses the string directly
+// with `mxUtils.parseXml`), and `getXml()`/autosave/`export` emit the
+// COMPRESSED wire format. The round-trip is decode → edit → loadXml(raw);
+// re-encoding before load is what froze drawio (the H.17 bug).
+//
+// Relative links (docs/20) lean on the same asymmetry: on SAVE we decode
+// getXml()'s compressed output, rewrite the links, and store the RAW decoded
+// document — no re-compression needed, because the on-disk format is consumed
+// only by our own `decodeDrawioDiagram` on the next load (drawio never reads
+// the file directly; it receives whatever we pass to loadXml). Storing raw is
+// also more compatible with the external drawio app, which reads uncompressed
+// `.drawio` natively.
+
+/**
+ * Walk every element carrying a `link` attribute in a DECODED drawio document
+ * and rewrite each link via `fn`. drawio stores the hyperlink on `<UserObject>`
+ * (our drop snippets) but may also serialize it directly on `<mxCell>`, so we
+ * match by attribute, not tag name. Returns the serialized document, or `null`
+ * if the input is unparseable (the caller falls back to the original string).
+ *
+ * Uses the same DOMParser / XMLSerializer pair as `appendSnippetToDiagram`, so
+ * it inherits the same no-namespace-pollution guarantee (no `ns0:` prefixes on
+ * round-trip). Run in the renderer — DOMParser/XMLSerializer are available.
+ */
+function mapDrawioLinks(
+  decodedXml: string,
+  fn: (link: string) => string
+): string | null {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(decodedXml, 'text/xml');
+  if (doc.getElementsByTagName('parsererror').length > 0) return null;
+  const nodes = doc.querySelectorAll('[link]');
+  nodes.forEach((node) => {
+    const current = node.getAttribute('link');
+    if (current == null) return;
+    const next = fn(current);
+    if (next !== current) node.setAttribute('link', next);
+  });
+  return new XMLSerializer().serializeToString(doc);
+}
+
+/**
+ * LOAD side of the relative-link rewrite (docs/20 §4/§5). Stored links are
+ * relative to the .drawio file's directory; rewrite them back to absolute
+ * `file://` URLs so drawio's runtime sees exactly what it saw before relative
+ * storage existed (the host's click handler is unchanged). External URLs
+ * (http/mailto/…) and already-absolute `file://` links (old diagrams that were
+ * never re-saved) are left untouched. `diagramPath` is the .drawio file path.
+ *
+ * Feed this the DECODED diagram (run `decodeDrawioDiagram` first — old files
+ * are compressed; only new saves are raw).
+ */
+export function rewriteDrawioLinksToAbsolute(
+  decodedXml: string,
+  diagramPath: string
+): string {
+  const base = dirname(diagramPath);
+  const out = mapDrawioLinks(decodedXml, (link) => {
+    if (isExternalUrl(link)) return link;
+    if (/^file:/i.test(link)) return link; // already absolute (old diagram)
+    return toFileUrl(resolveRelative(link, base));
+  });
+  return out ?? decodedXml;
+}
+
+/**
+ * SAVE side of the relative-link rewrite (docs/20 §4/§5). Rewrite absolute
+ * `file://` links whose target lives INSIDE the .drawio file's directory to
+ * relative `./…` paths, so the diagram survives a folder move/copy/share.
+ * Targets outside the directory, external URLs, and already-relative links are
+ * left as-is. `diagramPath` is the .drawio file path. Returns the (still raw)
+ * document; the caller stores it without re-compression — see the note above.
+ */
+export function rewriteDrawioLinksToRelative(
+  decodedXml: string,
+  diagramPath: string
+): string {
+  const base = dirname(diagramPath);
+  const out = mapDrawioLinks(decodedXml, (link) => {
+    if (isExternalUrl(link)) return link;
+    if (!/^file:/i.test(link)) return link; // not our file URL → leave
+    const rel = toRelative(fileUrlToPath(link), base);
+    return rel ?? link; // null → outside dir → keep absolute
+  });
+  return out ?? decodedXml;
+}

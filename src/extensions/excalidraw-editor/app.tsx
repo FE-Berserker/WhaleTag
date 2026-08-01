@@ -7,6 +7,10 @@ import {
   viewportCoordsToSceneCoords,
 } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
+import {
+  rewriteExcalidrawElementsToAbsolute,
+  rewriteExcalidrawJsonToRelative,
+} from './excalidraw-links';
 
 // Excalidraw's imperative API is typed in a deep subpath that doesn't resolve
 // cleanly under this project's `moduleResolution: node`; this is glue code in a
@@ -78,6 +82,11 @@ export default function App() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       data = restore({} as any, null, null);
     }
+    // docs/20: stored element links are relative to the .excalidraw file's
+    // directory (so a folder move keeps links intact). Resolve them back to
+    // absolute bare paths before rendering — runtime behaviour matches the old
+    // absolute-link world, and `onLinkOpen` / the host are unchanged.
+    rewriteExcalidrawElementsToAbsolute(data.elements, path);
     baselinePendingRef.current = true;
     api.updateScene({ elements: data.elements, appState: data.appState });
     if (data.files) api.addFiles(Object.values(data.files));
@@ -86,12 +95,17 @@ export default function App() {
   const doSave = useCallback(() => {
     const api = apiRef.current;
     if (!api || !pathRef.current) return;
-    const json = computeJson();
-    pendingSaveRef.current = json;
+    // docs/20: rewrite absolute element links that live inside the diagram's
+    // directory to relative `./…` paths in the SAVED content. Keep the dirty
+    // baseline (pendingSaveRef) as the absolute JSON — handleChange compares
+    // against computeJson(), which is always absolute at runtime.
+    const absJson = computeJson();
+    pendingSaveRef.current = absJson;
+    const content = rewriteExcalidrawJsonToRelative(absJson, pathRef.current);
     window.whaleExt.postMessage({
       type: 'parentSaveDocument',
       path: pathRef.current,
-      content: json,
+      content,
     });
   }, [computeJson]);
 

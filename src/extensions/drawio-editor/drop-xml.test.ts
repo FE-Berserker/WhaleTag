@@ -10,6 +10,8 @@ import {
   decodeDrawioDiagram,
   escapeXmlAttr,
   nextDropPosition,
+  rewriteDrawioLinksToAbsolute,
+  rewriteDrawioLinksToRelative,
   toFileUrl,
   uniqueCellId,
 } from './drop-xml';
@@ -490,5 +492,123 @@ describe('drawio drop-xml.decodeDrawioDiagram', () => {
       '<diagram><mxGraphModel><root><mxCell id="0"/></root></mxGraphModel></diagram>' +
       '</mxfile>';
     assert.equal(decodeDrawioDiagram(uncompressed), uncompressed);
+  });
+});
+
+// Relative-link rewrites (docs/20). These walk a DECODED drawio document with
+// DOMParser, so they need the jsdom globals the `before` hook above installs.
+describe('drawio drop-xml.rewriteDrawioLinksToRelative', () => {
+  // A decoded diagram with three linked cells: one inside the diagram's dir
+  // (abs file://), one outside it (abs file://), one external (https), plus a
+  // direct <mxCell link=…> (not wrapped in <UserObject>) to cover the §11 note.
+  const DECODED_WITH_LINKS =
+    '<mxfile><diagram name="Page-1" id="p1"><mxGraphModel><root>' +
+    '<mxCell id="0"/><mxCell id="1" parent="0"/>' +
+    '<UserObject label="foo.png" link="file:///docs/sub/foo.png" linkTarget="_blank">' +
+    '<mxCell id="c1" vertex="1" parent="1"><mxGeometry x="0" y="0" width="10" height="10" as="geometry"/></mxCell>' +
+    '</UserObject>' +
+    '<UserObject label="ext.png" link="file:///other/ext.png" linkTarget="_blank">' +
+    '<mxCell id="c2" vertex="1" parent="1"><mxGeometry x="0" y="0" width="10" height="10" as="geometry"/></mxCell>' +
+    '</UserObject>' +
+    '<UserObject label="web" link="https://example.com" linkTarget="_blank">' +
+    '<mxCell id="c3" vertex="1" parent="1"><mxGeometry x="0" y="0" width="10" height="10" as="geometry"/></mxCell>' +
+    '</UserObject>' +
+    '<mxCell id="c4" link="file:///docs/top.png" vertex="1" parent="1"><mxGeometry x="0" y="0" width="10" height="10" as="geometry"/></mxCell>' +
+    '</root></mxGraphModel></diagram></mxfile>';
+
+  it('relativizes an inside-dir file:// link to ./…', () => {
+    const out = rewriteDrawioLinksToRelative(DECODED_WITH_LINKS, '/docs/d.drawio');
+    assert.ok(
+      out.includes('link="./sub/foo.png"'),
+      `expected inside-dir link relativized, got: ${out}`
+    );
+  });
+
+  it('leaves an outside-dir file:// link absolute', () => {
+    const out = rewriteDrawioLinksToRelative(DECODED_WITH_LINKS, '/docs/d.drawio');
+    assert.ok(
+      out.includes('link="file:///other/ext.png"'),
+      `expected outside-dir link unchanged, got: ${out}`
+    );
+  });
+
+  it('leaves an external (https) link untouched', () => {
+    const out = rewriteDrawioLinksToRelative(DECODED_WITH_LINKS, '/docs/d.drawio');
+    assert.ok(
+      out.includes('link="https://example.com"'),
+      `expected https link unchanged, got: ${out}`
+    );
+  });
+
+  it('relativizes a direct <mxCell link=…> (not just <UserObject>)', () => {
+    const out = rewriteDrawioLinksToRelative(DECODED_WITH_LINKS, '/docs/d.drawio');
+    assert.ok(
+      out.includes('link="./top.png"'),
+      `expected direct mxCell link relativized, got: ${out}`
+    );
+  });
+
+  it('handles Windows backslash diagram paths', () => {
+    const out = rewriteDrawioLinksToRelative(
+      DECODED_WITH_LINKS,
+      'C:\\Users\\me\\docs\\d.drawio'
+    );
+    // file:///docs/... is a POSIX path, not under the Windows base → stays abs.
+    assert.ok(out.includes('link="file:///docs/sub/foo.png"'), `got: ${out}`);
+  });
+});
+
+describe('drawio drop-xml.rewriteDrawioLinksToAbsolute', () => {
+  it('resolves a ./ relative link to an absolute file:// URL', () => {
+    const decoded =
+      '<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>' +
+      '<UserObject label="foo" link="./sub/foo.png" linkTarget="_blank">' +
+      '<mxCell id="c1" vertex="1" parent="1"><mxGeometry x="0" y="0" width="10" height="10" as="geometry"/></mxCell>' +
+      '</UserObject></root></mxGraphModel></diagram></mxfile>';
+    const out = rewriteDrawioLinksToAbsolute(decoded, '/docs/d.drawio');
+    assert.ok(
+      out.includes('link="file:///docs/sub/foo.png"'),
+      `expected relative link resolved to file://, got: ${out}`
+    );
+  });
+
+  it('leaves an already-absolute file:// link (old diagram) untouched', () => {
+    const decoded =
+      '<mxfile><diagram><mxGraphModel><root><mxCell id="0"/>' +
+      '<UserObject label="foo" link="file:///docs/old.png">' +
+      '<mxCell id="c1" vertex="1" parent="1"><mxGeometry x="0" y="0" width="10" height="10" as="geometry"/></mxCell>' +
+      '</UserObject></root></mxGraphModel></diagram></mxfile>';
+    const out = rewriteDrawioLinksToAbsolute(decoded, '/docs/d.drawio');
+    assert.ok(
+      out.includes('link="file:///docs/old.png"'),
+      `expected absolute file:// link unchanged, got: ${out}`
+    );
+  });
+
+  it('leaves an external URL untouched', () => {
+    const decoded =
+      '<mxfile><diagram><mxGraphModel><root><mxCell id="0"/>' +
+      '<UserObject label="web" link="https://example.com">' +
+      '<mxCell id="c1" vertex="1" parent="1"><mxGeometry x="0" y="0" width="10" height="10" as="geometry"/></mxCell>' +
+      '</UserObject></root></mxGraphModel></diagram></mxfile>';
+    const out = rewriteDrawioLinksToAbsolute(decoded, '/docs/d.drawio');
+    assert.ok(
+      out.includes('link="https://example.com"'),
+      `expected https link unchanged, got: ${out}`
+    );
+  });
+
+  it('round-trips relative → absolute → relative (stable)', () => {
+    const original =
+      '<mxfile><diagram><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>' +
+      '<UserObject label="foo" link="./sub/deep/foo.png">' +
+      '<mxCell id="c1" vertex="1" parent="1"><mxGeometry x="0" y="0" width="10" height="10" as="geometry"/></mxCell>' +
+      '</UserObject></root></mxGraphModel></diagram></mxfile>';
+    const abs = rewriteDrawioLinksToAbsolute(original, '/docs/d.drawio');
+    const back = rewriteDrawioLinksToRelative(abs, '/docs/d.drawio');
+    assert.ok(
+      back.includes('link="./sub/deep/foo.png"'),
+      `expected stable round-trip, got: ${back}`
+    );
   });
 });
