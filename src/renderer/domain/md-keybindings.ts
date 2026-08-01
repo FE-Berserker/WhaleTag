@@ -124,14 +124,27 @@ export function normalizeCombo(e: KeyboardEvent): string | null {
 }
 
 /** combo → 人类可读:`Mod-Shift-s` → `Ctrl+Shift+s`(Win/Linux)或 `⌘+Shift+s`(Mac)。
- *  `Mod--`(key 是减号)→ `Ctrl+-`。空 combo → 占位符。 */
+ *  `Mod--`(key 是减号)→ `Ctrl+-`;`Mod-=` → `Ctrl+=`。空 combo → 占位符。
+ *
+ *  Parses the combo structurally (`Mod-` prefix + optional `Shift-` + the
+ *  literal key) rather than blanket-replacing '-' with '+': the old replace
+ *  mangled the literal '-' key — `Mod--` (Ctrl+minus) rendered as `Ctrl++`,
+ *  so the "Decrease heading" binding looked like Ctrl+plus in the settings
+ *  panel. */
 export function formatCombo(combo: string, isMac: boolean): string {
   if (combo === '') return '';
-  let s = combo.replace(/^Mod-/, isMac ? '⌘+' : 'Ctrl+');
-  s = s.replace(/Shift-/g, 'Shift+');
-  // Any remaining '-' is the key segment separator (or the literal '-' key).
-  s = s.replace(/-/g, '+');
-  return s;
+  if (!combo.startsWith('Mod-')) return combo; // defensive — isValidCombo gates entry
+  const mod = isMac ? '⌘' : 'Ctrl';
+  let rest = combo.slice('Mod-'.length);
+  let shift = false;
+  if (rest.startsWith('Shift-')) {
+    shift = true;
+    rest = rest.slice('Shift-'.length);
+  }
+  const parts = [mod];
+  if (shift) parts.push('Shift');
+  parts.push(rest);
+  return parts.join('+');
 }
 
 /**

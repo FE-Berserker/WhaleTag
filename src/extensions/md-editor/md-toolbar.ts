@@ -20,6 +20,12 @@ import {
   MD_DEFAULT_FONT_SIZE,
   MD_FONT_SIZE_STEP,
 } from './md-context';
+import type { RenderPdfOptions } from '../../shared/extension-types';
+import {
+  extractReferencedImagePaths,
+  computeOrphanImages,
+} from './md-render';
+import type { DirEntry } from '../../shared/ipc-types';
 import {
   getStatusInfo,
   parseLineInput,
@@ -613,12 +619,14 @@ export async function exportPreviewAsPdf(): Promise<void> {
     const { stem, title } = pdfNameParts();
     const html = buildPrintableHtml(title, bodyHtml, themeVars);
     const requestId = `pdf-${++pdfReqId}`;
+    const options = pdfExportOptions(ctx.mdPdfHeader, ctx.mdPdfFooter);
     const bytes = await new Promise<Uint8Array | null>((resolve) => {
       pendingPdfExport.set(requestId, (data) => resolve(data));
       window.whaleExt.postMessage({
         type: 'requestRenderPdf',
         requestId,
         html,
+        options,
       });
     });
     if (!bytes) {
@@ -634,6 +642,46 @@ export async function exportPreviewAsPdf(): Promise<void> {
   } finally {
     dom.exportPdfBtn.disabled = false;
   }
+}
+
+/**
+ * Convert a Typora-style PDF header/footer template (`${page}` etc.) to a
+ * Chromium `printToPDF` template (`<span class="pageNumber">` etc.). Pure —
+ * exported for unit tests. Unknown `${x}` placeholders are left as-is.
+ */
+export function toChromiumPdfTemplate(user: string): string {
+  return user
+    .replace(/\$\{page\}/g, '<span class="pageNumber"></span>')
+    .replace(/\$\{pages\}/g, '<span class="totalPages"></span>')
+    .replace(/\$\{title\}/g, '<span class="title"></span>')
+    .replace(/\$\{date\}/g, '<span class="date"></span>');
+}
+
+/** Wrap a Chromium header/footer template in a small, gray, centered div.
+ *  Chromium renders these templates in isolation (not subject to the iframe
+ *  CSP), so inline styles are fine. */
+function wrapPdfTemplate(inner: string): string {
+  return `<div style="font-size:9px;color:#666;text-align:center;width:100%;">${inner}</div>`;
+}
+
+/** Build `RenderPdfOptions` for the host's printToPDF from the user's
+ *  header/footer templates. Returns undefined when both are empty (default =
+ *  no header/footer, unchanged behavior). When either is set, both templates
+ *  are supplied (Chromium requires it for displayHeaderFooter); the empty
+ *  side gets a bare `<div>` so it doesn't fall back to the default
+ *  url/title/date template. */
+export function pdfExportOptions(
+  header: string,
+  footer: string
+): RenderPdfOptions | undefined {
+  const h = header.trim();
+  const f = footer.trim();
+  if (!h && !f) return undefined;
+  return {
+    displayHeaderFooter: true,
+    headerTemplate: h ? wrapPdfTemplate(toChromiumPdfTemplate(h)) : '<div></div>',
+    footerTemplate: f ? wrapPdfTemplate(toChromiumPdfTemplate(f)) : '<div></div>',
+  };
 }
 
 /**
@@ -690,9 +738,207 @@ export function setupToolbar(): void {
     void exportPreviewAsPdf();
   });
 
+  // §image-cleanup — clean orphan images from the paste subfolder (only
+  // visible in subfolder mode; setImageSaveConfig toggles its `hidden`).
+  dom.cleanupImagesBtn.addEventListener('click', () => {
+    void cleanupImages();
+  });
+
   // Initial toolbar state indicator.
   dom.wrapStateEl.textContent = ctx.mdWrapMode === 'wrap' ? T.wrapOn : T.wrapOff;
   dom.toggleWrapBtn.classList.toggle('active', ctx.mdWrapMode === 'wrap');
+}
+
+// ─── §image-cleanup — clean orphan images from the paste subfolder ───────
+
+/** Resolve the paste subfolder's absolute path from the host-pushed config.
+ *  Mirrors the paste handler (index.ts) so cleanup targets exactly the folder
+ *  paste writes into. Null when not in subfolder mode or no document open. */
+function resolveImageSubfolderPath(): string | null {
+  if (ctx.mdImageSaveMode !== 'subfolder') return null;
+  if (!ctx.currentDir || !ctx.currentPath) return null;
+  const mdName = ctx.currentPath.split(/[\\/]/).pop()!.replace(/\.[^.]+$/, '');
+  const folder = ctx.mdImageSubfolder.replaceAll(
+    '${filename}',
+    mdName || 'untitled'
+  );
+  return `${ctx.currentDir}/${folder}`;
+}
+
+// Pending RPC round-trips (keyed by requestId), resolved by
+// `handleDirectoryListed` / `handleFilesDeleted` (called from index.ts).
+const pendingListDir = new Map<
+  string,
+  (entries: DirEntry[], error?: string) => void
+>();
+const pendingDeleteFiles = new Map<
+  string,
+  (deleted: string[], errors: string[]) => void
+>();
+let cleanupReqId = 0;
+
+/** Resolve the pending listDirectory promise (index.ts handleMessage routes
+ *  the host's `directoryListed` here). */
+export function handleDirectoryListed(msg: {
+  requestId: string;
+  entries: DirEntry[];
+  error?: string;
+}): void {
+  const resolve = pendingListDir.get(msg.requestId);
+  if (!resolve) return;
+  pendingListDir.delete(msg.requestId);
+  resolve(msg.entries, msg.error);
+}
+
+/** Resolve the pending deleteFiles promise (index.ts handleMessage routes the
+ *  host's `filesDeleted` here). */
+export function handleFilesDeleted(msg: {
+  requestId: string;
+  deleted: string[];
+  errors: string[];
+}): void {
+  const resolve = pendingDeleteFiles.get(msg.requestId);
+  if (!resolve) return;
+  pendingDeleteFiles.delete(msg.requestId);
+  resolve(msg.deleted, msg.errors);
+}
+
+function requestListImages(
+  dirPath: string
+): Promise<{ entries: DirEntry[]; error?: string }> {
+  const requestId = `cleanup-list-${++cleanupReqId}`;
+  return new Promise((resolve) => {
+    pendingListDir.set(requestId, (entries, error) =>
+      resolve({ entries, error })
+    );
+    window.whaleExt.postMessage({ type: 'requestListDirectory', requestId, dirPath });
+  });
+}
+
+function requestDeleteFiles(
+  paths: string[]
+): Promise<{ deleted: string[]; errors: string[] }> {
+  const requestId = `cleanup-del-${++cleanupReqId}`;
+  return new Promise((resolve) => {
+    pendingDeleteFiles.set(requestId, (deleted, errors) =>
+      resolve({ deleted, errors })
+    );
+    window.whaleExt.postMessage({ type: 'requestDeleteFiles', requestId, paths });
+  });
+}
+
+// Confirm/notice dialog — plain <div> overlay (NOT <dialog>/showModal, which
+// is unreliable in the nested extension iframe; same reason as the table
+// dialog). Reuses the table dialog's CSS classes for consistent styling.
+interface CleanupDialog {
+  overlay: HTMLDivElement;
+  body: HTMLDivElement;
+  confirmBtn: HTMLButtonElement;
+  cancelBtn: HTMLButtonElement;
+}
+let cleanupDialog: CleanupDialog | null = null;
+
+function ensureCleanupDialog(): CleanupDialog {
+  if (cleanupDialog) return cleanupDialog;
+  const overlay = document.createElement('div');
+  overlay.className = 'md-table-overlay';
+  overlay.setAttribute('role', 'alertdialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.hidden = true;
+
+  const panel = document.createElement('div');
+  panel.className = 'md-table-dialog-panel';
+
+  const body = document.createElement('div');
+  body.className = 'md-table-dialog-fields';
+
+  const actions = document.createElement('div');
+  actions.className = 'md-table-dialog-actions';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  const confirmBtn = document.createElement('button');
+  confirmBtn.type = 'button';
+  confirmBtn.className = 'primary';
+  actions.append(cancelBtn, confirmBtn);
+
+  panel.append(body, actions);
+  overlay.append(panel);
+  document.body.append(overlay);
+
+  overlay.addEventListener('mousedown', (e) => {
+    if (e.target === overlay) overlay.hidden = true;
+  });
+  overlay.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      overlay.hidden = true;
+    }
+  });
+
+  cleanupDialog = { overlay, body, confirmBtn, cancelBtn };
+  return cleanupDialog;
+}
+
+/** Confirm prompt: resolves true on confirm, false on cancel/escape/backdrop.
+ *  Wires fresh listeners each call; tears them down on resolve. */
+function confirmCleanup(count: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const d = ensureCleanupDialog();
+    d.cancelBtn.hidden = false;
+    d.body.textContent = T.cleanupConfirm.replace('{n}', String(count));
+    d.confirmBtn.textContent = T.cleanupConfirmBtn;
+    d.cancelBtn.textContent = T.tableCancel;
+    d.overlay.hidden = false;
+    const done = (ok: boolean) => {
+      d.overlay.hidden = true;
+      d.confirmBtn.removeEventListener('click', onConfirm);
+      d.cancelBtn.removeEventListener('click', onCancel);
+      resolve(ok);
+    };
+    const onConfirm = () => done(true);
+    const onCancel = () => done(false);
+    d.confirmBtn.addEventListener('click', onConfirm);
+    d.cancelBtn.addEventListener('click', onCancel);
+  });
+}
+
+/** One-button notice (result / none / error). */
+function showCleanupNotice(text: string): void {
+  const d = ensureCleanupDialog();
+  d.cancelBtn.hidden = true;
+  d.body.textContent = text;
+  d.confirmBtn.textContent = T.cleanupConfirmBtn;
+  d.overlay.hidden = false;
+  const onOk = () => {
+    d.overlay.hidden = true;
+    d.confirmBtn.removeEventListener('click', onOk);
+  };
+  d.confirmBtn.addEventListener('click', onOk);
+}
+
+/** §image-cleanup toolbar handler: resolve subfolder → extract the doc's
+ *  referenced images → list the subfolder → diff orphans → confirm → delete. */
+async function cleanupImages(): Promise<void> {
+  const subfolderPath = resolveImageSubfolderPath();
+  if (!subfolderPath || !ctx.view) return;
+  const referenced = extractReferencedImagePaths(
+    ctx.view.state.doc.toString(),
+    ctx.currentDir
+  );
+  const { entries, error } = await requestListImages(subfolderPath);
+  if (error) {
+    showCleanupNotice(`${T.cleanupResult.replace('{deleted}', '0')} (${error})`);
+    return;
+  }
+  const orphans = computeOrphanImages(entries, referenced);
+  if (orphans.length === 0) {
+    showCleanupNotice(T.cleanupNone);
+    return;
+  }
+  const ok = await confirmCleanup(orphans.length);
+  if (!ok) return;
+  const { deleted } = await requestDeleteFiles(orphans.map((e) => e.path));
+  showCleanupNotice(T.cleanupResult.replace('{deleted}', String(deleted.length)));
 }
 
 /** §heading — toggle the current line's ATX heading to `level` (1-6). If the
@@ -713,30 +959,28 @@ export function toggleHeading(view: EditorView, level: number): void {
   view.dispatch({ changes: { from: line.from, to: line.to, insert: next } });
 }
 
-/** §heading — bump the current line's heading level up one (max 6). No-op on a
- *  non-heading line. */
+/** §heading — promote the current heading (H2→H1): drop one '#', raising its
+ *  importance. No-op at level 1 (already top) or on a non-heading line.
+ *  Bound to the "Increase / 提升标题级别" action (Ctrl+=) + menu item. */
 export function increaseHeading(view: EditorView): void {
   const line = view.state.doc.lineAt(view.state.selection.main.head);
   const m = /^(#{1,6})\s+/.exec(line.text);
   if (!m) return;
   const level = m[1].length;
-  if (level >= 6) return;
-  const next = '#'.repeat(level + 1) + ' ' + line.text.slice(m[0].length);
+  if (level <= 1) return; // H1 is already the top level
+  const next = '#'.repeat(level - 1) + ' ' + line.text.slice(m[0].length);
   view.dispatch({ changes: { from: line.from, to: line.to, insert: next } });
 }
 
-/** §heading — drop the current line's heading level by one; at level 1 the
- *  heading is removed entirely. No-op on a non-heading line. */
+/** §heading — demote the current heading (H1→H2): add one '#', lowering its
+ *  importance. No-op at level 6 (max depth) or on a non-heading line.
+ *  Bound to the "Decrease / 降低标题级别" action (Ctrl+-) + menu item. */
 export function decreaseHeading(view: EditorView): void {
   const line = view.state.doc.lineAt(view.state.selection.main.head);
   const m = /^(#{1,6})\s+/.exec(line.text);
   if (!m) return;
   const level = m[1].length;
-  if (level <= 1) {
-    const next = line.text.slice(m[0].length);
-    view.dispatch({ changes: { from: line.from, to: line.to, insert: next } });
-    return;
-  }
-  const next = '#'.repeat(level - 1) + ' ' + line.text.slice(m[0].length);
+  if (level >= 6) return; // H6 is already the deepest level
+  const next = '#'.repeat(level + 1) + ' ' + line.text.slice(m[0].length);
   view.dispatch({ changes: { from: line.from, to: line.to, insert: next } });
 }

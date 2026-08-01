@@ -84,6 +84,11 @@ export interface Strings {
   exportPdfTitle: string;
   exportPdfLabel: string;
   exportAsPdf: string;
+  cleanupImagesTitle: string;
+  cleanupConfirm: string;
+  cleanupConfirmBtn: string;
+  cleanupResult: string;
+  cleanupNone: string;
 }
 
 const I18N: Record<string, Strings> = {
@@ -151,6 +156,11 @@ const I18N: Record<string, Strings> = {
     exportPdfTitle: 'Export Preview as PDF',
     exportPdfLabel: 'PDF',
     exportAsPdf: 'Export as PDF',
+    cleanupImagesTitle: 'Clean unreferenced images',
+    cleanupConfirm: 'Delete {n} unreferenced image(s)?',
+    cleanupConfirmBtn: 'Delete',
+    cleanupResult: 'Deleted {deleted} image(s).',
+    cleanupNone: 'No unreferenced images.',
   },
   zh: {
     findTitle: '查找 / 替换 (Ctrl+F)',
@@ -216,6 +226,11 @@ const I18N: Record<string, Strings> = {
     exportPdfTitle: '导出预览为 PDF',
     exportPdfLabel: 'PDF',
     exportAsPdf: '导出为 PDF',
+    cleanupImagesTitle: '清理未引用的图片',
+    cleanupConfirm: '将删除 {n} 张未引用的图片,是否继续?',
+    cleanupConfirmBtn: '删除',
+    cleanupResult: '已删除 {deleted} 张图片。',
+    cleanupNone: '没有未引用的图片。',
   },
   'zh-TW': {
     findTitle: '尋找 / 取代 (Ctrl+F)',
@@ -281,6 +296,11 @@ const I18N: Record<string, Strings> = {
     exportPdfTitle: '匯出預覽為 PDF',
     exportPdfLabel: 'PDF',
     exportAsPdf: '匯出為 PDF',
+    cleanupImagesTitle: '清理未引用的圖片',
+    cleanupConfirm: '將刪除 {n} 張未引用的圖片,是否繼續?',
+    cleanupConfirmBtn: '刪除',
+    cleanupResult: '已刪除 {deleted} 張圖片。',
+    cleanupNone: '沒有未引用的圖片。',
   },
   ja: {
     findTitle: '検索 / 置換 (Ctrl+F)',
@@ -346,6 +366,11 @@ const I18N: Record<string, Strings> = {
     exportPdfTitle: 'プレビューを PDF にエクスポート',
     exportPdfLabel: 'PDF',
     exportAsPdf: 'PDF にエクスポート',
+    cleanupImagesTitle: '未参照画像をクリーンアップ',
+    cleanupConfirm: '{n} 枚の未参照画像を削除しますか?',
+    cleanupConfirmBtn: '削除',
+    cleanupResult: '{deleted} 枚の画像を削除しました。',
+    cleanupNone: '未参照画像はありません。',
   },
   ko: {
     findTitle: '찾기 / 바꾸기 (Ctrl+F)',
@@ -411,6 +436,11 @@ const I18N: Record<string, Strings> = {
     exportPdfTitle: '미리보기를 PDF로 내보내기',
     exportPdfLabel: 'PDF',
     exportAsPdf: 'PDF로 내보내기',
+    cleanupImagesTitle: '미참조 이미지 정리',
+    cleanupConfirm: '{n}개의 미참조 이미지를 삭제하시겠습니까?',
+    cleanupConfirmBtn: '삭제',
+    cleanupResult: '{deleted}개 이미지가 삭제되었습니다.',
+    cleanupNone: '미참조 이미지가 없습니다.',
   },
 };
 
@@ -438,6 +468,7 @@ export function applyLocale(): void {
     [dom.gotoLineBtn, T.gotoLineTitle, `↦ ${T.gotoLineLabel}`],
     [dom.exportHtmlBtn, T.exportHtmlTitle, `⇩ ${T.exportHtmlLabel}`],
     [dom.exportPdfBtn, T.exportPdfTitle, `⇩ ${T.exportPdfLabel}`],
+    [dom.cleanupImagesBtn, T.cleanupImagesTitle, `🧹 ${T.cleanupImagesTitle}`],
   ];
   for (const [btn, title, text] of labelled) {
     btn.title = title;

@@ -53,6 +53,8 @@ import {
   setupToolbar,
   replaceTableCellInEditor,
   handleRenderedPdf,
+  handleDirectoryListed,
+  handleFilesDeleted,
 } from './md-toolbar';
 import { buildEditorKeymaps } from './md-keymaps';
 import { applyLocale } from './md-i18n';
@@ -438,6 +440,13 @@ function handleMessage(msg: HostMessage) {
       ctx.mdTemplates = msg.templates;
       break;
     }
+    case 'setMdPdfHeaderFooter': {
+      // §md-pdf-header-footer — host pushed the PDF export header/footer
+      // templates. Store on ctx; exportPreviewAsPdf reads them on next export.
+      ctx.mdPdfHeader = msg.header;
+      ctx.mdPdfFooter = msg.footer;
+      break;
+    }
     case 'setKeybindings': {
       // §md-keybindings — host pushed action→combo overrides. Reconfigure the
       // keymapCompartment so the change applies to the already-open editor.
@@ -456,6 +465,9 @@ function handleMessage(msg: HostMessage) {
       //  on ctx; the paste handler reads them on the next image paste.
       ctx.mdImageSaveMode = msg.mode;
       ctx.mdImageSubfolder = msg.subfolder;
+      // §image-cleanup — the cleanup button only makes sense in subfolder
+      //  mode (that's where orphans accumulate); hide it otherwise.
+      dom.cleanupImagesBtn.hidden = msg.mode !== 'subfolder';
       break;
     }
     case 'setReadOnly':
@@ -512,6 +524,14 @@ function handleMessage(msg: HostMessage) {
     case 'renderedPdf':
       // §18.3.2 (PDF) — host returned the rendered PDF bytes (or null+error).
       handleRenderedPdf(msg);
+      break;
+    case 'directoryListed':
+      // §image-cleanup — host returned the paste subfolder's entries.
+      handleDirectoryListed(msg);
+      break;
+    case 'filesDeleted':
+      // §image-cleanup — host finished deleting the orphan images.
+      handleFilesDeleted(msg);
       break;
     case 'imageSaved': {
       // §paste-image — host saved the pasted image; insert ![](./rel) where

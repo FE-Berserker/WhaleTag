@@ -33,6 +33,7 @@ import { encodeWhaleFileUrl } from '../../shared/whale-file-url';
 import type { Token } from 'marked';
 import markedFootnote from 'marked-footnote';
 import { ctx } from './md-context';
+import type { DirEntry } from '../../shared/ipc-types';
 
 // --- Markdown parsing -----------------------------------------------------
 
@@ -377,7 +378,13 @@ function transformCallouts(root: Element): void {
     // Strip the `[!TYPE]...` marker line off firstP so it isn't duplicated
     // in the rendered content.
     stripLeadingText(firstP, m[0]);
-    if (!firstP.textContent?.trim()) firstP.remove();
+    // Only drop the first paragraph when it's truly empty. A callout whose
+    // first line is just the marker followed by an image (`> [!note]\n>
+    // ![](img.png)`) leaves the <img> behind after stripLeadingText — the
+    // image has no textContent, so a text-only check deleted it and the image
+    // went missing. Require no element children either.
+    if (!firstP.textContent?.trim() && firstP.children.length === 0)
+      firstP.remove();
 
     const isFold = fold === '-' || fold === '+';
     const container = document.createElement(isFold ? 'details' : 'div');
@@ -409,6 +416,71 @@ function transformCallouts(root: Element): void {
     container.appendChild(content);
 
     bq.replaceWith(container);
+  }
+}
+
+/**
+ * Convert `$...$` / `$$...$$` in a plain string to the SAME katex placeholder
+ * the katexInline marked renderer emits (so the shared `renderKatex` picks
+ * them up). Pure.
+ *
+ * marked's katex tokenizer only runs inside markdown it parses — raw HTML
+ * blocks (a hand-written `<table>`, `<div>`, …) are kept verbatim, so math
+ * inside them stays as literal `$…$` text. `processRawHtmlMath` walks the DOM
+ * after parseMarkdown and routes that text through here. Mirrors the
+ * katexInline tokenizer's boundary rules: no newline inside, `(?!\d)` to skip
+ * `$5`-style currency, `(?<!\\)` to honor an escaped `\$`.
+ */
+export function inlineMathToKatexHtml(text: string): string {
+  let changed = false;
+  const out = text.replace(
+    /(?<!\\)(\$\$([^$\n]+?)\$\$|\$([^$\n]+?)\$)(?!\d)/g,
+    (_whole, _all, displayMath: string | undefined, inlineMath: string | undefined) => {
+      const isDisplay = displayMath !== undefined;
+      const math = isDisplay ? displayMath! : inlineMath!;
+      const safe = escapeKatexSource(math);
+      changed = true;
+      return isDisplay
+        ? `<div class="katex katex-block" data-katex-display="block" data-katex-source="${safe}"><div class="katex-fallback">${safe}</div></div>`
+        : `<span class="katex katex-inline" data-katex-source="${safe}"><span class="katex-fallback">${safe}</span></span>`;
+    }
+  );
+  return changed ? out : text;
+}
+
+/**
+ * Walk text nodes in `root` and convert any `$...$` / `$$...$$` that marked
+ * didn't see (raw HTML blocks like `<table>`) into katex placeholders, so the
+ * shared renderKatex pass renders them. Skips `<code>`/`<pre>` (code, not
+ * math) and existing `.katex` / `.katex-fallback` (already handled — avoids
+ * double-processing markdown the katex tokenizer DID convert, e.g. GFM table
+ * cells whose `$…$` is already a placeholder element, not text).
+ */
+function processRawHtmlMath(root: Element): void {
+  if (typeof document === 'undefined') return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const v = node.nodeValue;
+      if (!v || !v.includes('$')) return NodeFilter.FILTER_REJECT;
+      const el = node.parentElement;
+      if (!el) return NodeFilter.FILTER_REJECT;
+      if (el.closest('.katex, code, pre, .katex-fallback')) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const targets: Text[] = [];
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    targets.push(n as Text);
+  }
+  for (const text of targets) {
+    const original = text.nodeValue || '';
+    const html = inlineMathToKatexHtml(original);
+    if (html === original) continue;
+    const span = document.createElement('span');
+    span.innerHTML = html;
+    text.replaceWith(span);
   }
 }
 
@@ -461,6 +533,7 @@ export function parseMarkdown(content: string): string {
     }
   }
   transformCallouts(root);
+  processRawHtmlMath(root);
   return root.innerHTML;
 }
 
@@ -890,6 +963,68 @@ export function resolveRelativeImagePath(
   const base = currentDir.replace(/[\\/]+$/, '').replace(/\\/g, '/');
   const relClean = rel.replace(/^(?:\.\/)+/, '');
   return base + '/' + relClean;
+}
+
+/**
+ * Image extensions treated as "images" by the orphan-image cleanup. Anything
+ * outside this set is left alone even when unreferenced — cleanup is
+ * image-only, it never touches non-image files in the subfolder.
+ */
+export const IMAGE_EXTS = new Set([
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico', 'tiff', 'tif', 'avif',
+]);
+
+/**
+ * Collect the absolute filesystem paths of every image the rendered `docText`
+ * references (markdown `![](...)` AND raw-HTML `<img src>`). Pure — feeds the
+ * orphan-cleanup diff. Read-only mirror of `resolveLocalImages`: instead of
+ * rewriting `src`, it routes each through `resolveRelativeImagePath` (scheme /
+ * absolute paths skipped) and collects the result into a Set of forward-slash
+ * absolute paths.
+ */
+export function extractReferencedImagePaths(
+  docText: string,
+  currentDir: string | null | undefined
+): Set<string> {
+  const referenced = new Set<string>();
+  const root = document.createElement('div');
+  root.innerHTML = sanitizeMarkdownHtml(parseMarkdown(docText));
+  root.querySelectorAll('img[src]').forEach((el) => {
+    const raw = el.getAttribute('src');
+    if (!raw) return;
+    let src = raw;
+    try {
+      src = decodeURI(raw); // marked percent-encodes non-ASCII filenames
+    } catch {
+      /* malformed percent-escape — leave as-is */
+    }
+    const abs = resolveRelativeImagePath(currentDir, src);
+    if (abs) referenced.add(abs);
+  });
+  return referenced;
+}
+
+/**
+ * Given a subfolder's `entries` + the set of referenced image absolute paths,
+ * return the entries that are orphan images (image extension, a file, and not
+ * referenced). Non-image files and subdirectories are never returned.
+ *
+ * `resolveRelativeImagePath` emits forward slashes while `listDirectory`
+ * entries may use backslashes on Windows, and the markdown source's casing
+ * may differ from the disk's on case-insensitive filesystems (the Win/macOS
+ * default). Both sides are normalized to '/' and lower-cased so the lookup
+ * matches — without the case-fold a referenced `./Assets/x.png` would be
+ * misclassified as an orphan when the disk entry is `assets/x.png`.
+ */
+export function computeOrphanImages(
+  entries: DirEntry[],
+  referenced: Set<string>
+): DirEntry[] {
+  const norm = (p: string) => p.replace(/\\/g, '/').toLowerCase();
+  const ref = new Set([...referenced].map(norm));
+  return entries.filter(
+    (e) => e.isFile && IMAGE_EXTS.has(e.extension) && !ref.has(norm(e.path))
+  );
 }
 
 /**

@@ -85,6 +85,14 @@ export interface IntegrationsFields {
   /** Subfolder name for 'subfolder' mode; may contain `${filename}` (= the
    *  .md basename without extension). Sanitized against path traversal. */
   mdImageSubfolder: string;
+  /** md-editor PDF export page-header template (Typora-style). Empty = no
+   *  header. Supports `${page}` / `${pages}` / `${title}` / `${date}` — the
+   *  editor converts these to Chromium `printToPDF` span classes. Pushed to
+   *  the iframe via setMdPdfHeaderFooter. */
+  mdPdfHeader: string;
+  /** md-editor PDF export page-footer template. Same variable support + push
+   *  channel as {@link mdPdfHeader}. Empty = no footer. */
+  mdPdfFooter: string;
 }
 
 /** Default subfolder name for md-editor's 'subfolder' image-save mode.
@@ -106,6 +114,8 @@ export const integrationsInitial: IntegrationsFields = {
   mdKeybindings: { ...DEFAULT_MD_KEYBINDINGS },
   mdImageSaveMode: 'subfolder',
   mdImageSubfolder: DEFAULT_MD_IMAGE_SUBFOLDER,
+  mdPdfHeader: '',
+  mdPdfFooter: '',
 };
 
 // --- Action types ------------------------------------------------------------
@@ -125,6 +135,8 @@ export const SET_MD_KEYBINDING = 'settings/SET_MD_KEYBINDING';
 export const RESET_MD_KEYBINDINGS = 'settings/RESET_MD_KEYBINDINGS';
 export const SET_MD_IMAGE_SAVE_MODE = 'settings/SET_MD_IMAGE_SAVE_MODE';
 export const SET_MD_IMAGE_SUBFOLDER = 'settings/SET_MD_IMAGE_SUBFOLDER';
+export const SET_MD_PDF_HEADER = 'settings/SET_MD_PDF_HEADER';
+export const SET_MD_PDF_FOOTER = 'settings/SET_MD_PDF_FOOTER';
 
 export interface SetOfficeThumbnailEnabledAction extends AnyAction {
   type: typeof SET_OFFICE_THUMBNAIL_ENABLED;
@@ -183,6 +195,14 @@ export interface SetMdImageSaveModeAction extends AnyAction {
 }
 export interface SetMdImageSubfolderAction extends AnyAction {
   type: typeof SET_MD_IMAGE_SUBFOLDER;
+  payload: string;
+}
+export interface SetMdPdfHeaderAction extends AnyAction {
+  type: typeof SET_MD_PDF_HEADER;
+  payload: string;
+}
+export interface SetMdPdfFooterAction extends AnyAction {
+  type: typeof SET_MD_PDF_FOOTER;
   payload: string;
 }
 
@@ -279,6 +299,16 @@ export function setMdImageSubfolder(
   return { type: SET_MD_IMAGE_SUBFOLDER, payload: subfolder };
 }
 
+/** Set the md-editor PDF export page-header template (empty = no header). */
+export function setMdPdfHeader(template: string): SetMdPdfHeaderAction {
+  return { type: SET_MD_PDF_HEADER, payload: template };
+}
+
+/** Set the md-editor PDF export page-footer template (empty = no footer). */
+export function setMdPdfFooter(template: string): SetMdPdfFooterAction {
+  return { type: SET_MD_PDF_FOOTER, payload: template };
+}
+
 /** Coerce a persisted mdImageSaveMode into a valid literal (default 'subfolder'). */
 function sanitizeMdImageSaveMode(raw: unknown): MdImageSaveMode {
   return raw === 'current' || raw === 'subfolder' ? raw : 'subfolder';
@@ -339,6 +369,8 @@ export function migrateIntegrations<T extends IntegrationsFields>(base: T): T {
     const s = sanitizeMdImageSubfolder(next.mdImageSubfolder);
     if (s !== next.mdImageSubfolder) next = { ...next, mdImageSubfolder: s };
   }
+  if (next.mdPdfHeader === undefined) next = { ...next, mdPdfHeader: '' };
+  if (next.mdPdfFooter === undefined) next = { ...next, mdPdfFooter: '' };
   return next;
 }
 
@@ -384,6 +416,10 @@ export function reduceIntegrations<T extends IntegrationsFields>(
       return { ...state, mdImageSaveMode: action.payload };
     case SET_MD_IMAGE_SUBFOLDER:
       return { ...state, mdImageSubfolder: sanitizeMdImageSubfolder(action.payload) };
+    case SET_MD_PDF_HEADER:
+      return { ...state, mdPdfHeader: action.payload };
+    case SET_MD_PDF_FOOTER:
+      return { ...state, mdPdfFooter: action.payload };
     default:
       return state;
   }

@@ -25,9 +25,13 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import globalJsdom from 'global-jsdom';
+import type { DirEntry } from '../../shared/ipc-types';
 
 import {
   parseMarkdown,
+  inlineMathToKatexHtml,
+  extractReferencedImagePaths,
+  computeOrphanImages,
   sanitizeMarkdownHtml,
   DOMPURIFY_CONFIG,
   setupLinkDelegation,
@@ -322,6 +326,128 @@ describe('callout (Obsidian / GitHub Alerts)', () => {
     const folded = sanitizeMarkdownHtml(parseMarkdown('> [!info]-\n> x'));
     assert.match(folded, /<details class="callout callout-info"/);
     assert.match(folded, /<summary class="callout-title"/);
+  });
+
+  it('keeps an image whose paragraph also held the marker (callout images)', () => {
+    // `> [!note]\n> ![](img.png)` — marked puts the marker + image in the same
+    // <p>; stripLeadingText removes the marker text, leaving <img>. The image
+    // has no textContent, so a text-only emptiness check used to delete the
+    // whole <p> and the image went missing inside the callout.
+    const html = parseMarkdown('> [!note]\n> ![](img.png)');
+    assert.match(html, /callout-content/);
+    assert.match(html, /<img[^>]*src="img\.png"/);
+  });
+});
+
+describe('raw-HTML math (inlineMathToKatexHtml / processRawHtmlMath)', () => {
+  it('converts inline $...$ inside a hand-written HTML table', () => {
+    // marked keeps raw <table> verbatim; its katex tokenizer never runs inside
+    // it, so $E=mc^2$ stays literal text. processRawHtmlMath rescues it.
+    const out = parseMarkdown('<table><tr><td>$E=mc^2$</td></tr></table>');
+    assert.match(out, /katex-inline/);
+    assert.match(out, /data-katex-source="E=mc\^2"/);
+  });
+
+  it('converts display $$...$$ inside raw HTML', () => {
+    const out = parseMarkdown('<div>$$x^2$$</div>');
+    assert.match(out, /katex-block/);
+    assert.match(out, /data-katex-display="block"/);
+  });
+
+  it('does NOT double-process math inside <code> or <pre>', () => {
+    // processRawHtmlMath skips <code>/<pre> via the closest guard. marked
+    // itself may already treat inline $E$ inside <code> as math — that's its
+    // inline behavior, not ours; we only assert we don't ADD a second pass.
+    for (const raw of ['<code>$E$</code>', '<pre>$E$</pre>']) {
+      const matches = parseMarkdown(raw).match(/katex-inline/g) ?? [];
+      assert.ok(matches.length <= 1, `${raw}: should not double-process`);
+    }
+  });
+
+  it('does NOT double-process markdown table cells (already placeholders)', () => {
+    // marked converts both cells to .katex spans; processRawHtmlMath's closest
+    // guard must skip them — exactly 2 placeholders, not 4.
+    const out = parseMarkdown('| $a$ |\n| --- |\n| $b$ |');
+    const matches = out.match(/katex-inline/g) ?? [];
+    assert.equal(matches.length, 2);
+  });
+
+  it('inlineMathToKatexHtml passes $5 currency and empty through unchanged', () => {
+    assert.equal(inlineMathToKatexHtml('$5'), '$5');
+    assert.equal(inlineMathToKatexHtml(''), '');
+  });
+});
+
+describe('image cleanup (extractReferencedImagePaths / computeOrphanImages)', () => {
+  it('collects markdown + HTML <img> references as absolute paths', () => {
+    const ref = extractReferencedImagePaths(
+      '![](./a.png)\n\n<img src="b.jpg">',
+      '/notes'
+    );
+    assert.ok(ref.has('/notes/a.png'));
+    assert.ok(ref.has('/notes/b.jpg'));
+  });
+
+  it('decodes percent-encoded CJK filenames', () => {
+    const ref = extractReferencedImagePaths(
+      '![](./%E6%88%AA%E5%9B%BE/x.png)',
+      '/n'
+    );
+    assert.ok(ref.has('/n/截图/x.png'));
+  });
+
+  it('skips http/data scheme URLs', () => {
+    const ref = extractReferencedImagePaths(
+      '![](https://e.x/a.png)\n\n![](data:image/png;base64,xx)',
+      '/n'
+    );
+    assert.equal(ref.size, 0);
+  });
+
+  it('computeOrphanImages: only unreferenced image files (skip non-images + dirs)', () => {
+    const mk = (name: string, ext: string, isFile: boolean): DirEntry => ({
+      name,
+      path: `/d/${name}`,
+      isFile,
+      isDirectory: !isFile,
+      size: 0,
+      modified: '',
+      extension: ext,
+    });
+    const entries = [
+      mk('a.png', 'png', true), // referenced → keep
+      mk('b.jpg', 'jpg', true), // orphan image → delete
+      mk('c.txt', 'txt', true), // orphan but non-image → keep
+      mk('sub', '', false), // directory → keep
+    ];
+    const referenced = new Set(['/d/a.png']);
+    const orphans = computeOrphanImages(entries, referenced);
+    assert.equal(orphans.length, 1);
+    assert.equal(orphans[0].name, 'b.jpg');
+  });
+
+  it('computeOrphanImages: case-insensitive match (Win/macOS default FS)', () => {
+    // Regression guard: on a case-insensitive filesystem a markdown reference
+    // written as `./Assets/x.png` and a disk entry `assets/x.png` are the same
+    // file. Without case-folding the referenced image would be misclassified
+    // as an orphan and (with deleteToTrash=false) permanently deleted.
+    const mk = (name: string, ext: string): DirEntry => ({
+      name,
+      path: `/d/${name}`,
+      isFile: true,
+      isDirectory: false,
+      size: 0,
+      modified: '',
+      extension: ext,
+    });
+    const entries = [
+      mk('Assets/x.png', 'png'), // referenced, casing differs from source
+      mk('y.jpg', 'jpg'), // genuine orphan
+    ];
+    const referenced = new Set(['/d/assets/x.png']); // lowercase source casing
+    const orphans = computeOrphanImages(entries, referenced);
+    assert.equal(orphans.length, 1);
+    assert.equal(orphans[0].name, 'y.jpg');
   });
 });
 

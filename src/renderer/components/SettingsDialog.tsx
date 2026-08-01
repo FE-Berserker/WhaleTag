@@ -103,6 +103,8 @@ import {
   setMdRenderTheme,
   setMdImageSaveMode,
   setMdImageSubfolder,
+  setMdPdfHeader,
+  setMdPdfFooter,
   DEFAULT_ENTRY_SIZE,
   normalizeFsPath,
   type ThemeMode,
@@ -1466,6 +1468,12 @@ function PerExtensionSettingsSection() {
   const mdImageSubfolder = useSelector(
     (s: RootState) => s.settings.mdImageSubfolder ?? '${filename}.assets'
   );
+  const mdPdfHeader = useSelector(
+    (s: RootState) => s.settings.mdPdfHeader ?? ''
+  );
+  const mdPdfFooter = useSelector(
+    (s: RootState) => s.settings.mdPdfFooter ?? ''
+  );
   return (
     <Stack sx={{ gap: 2 }}>
       <Typography variant="subtitle2">{t('extMdEditorTitle')}</Typography>
@@ -1518,6 +1526,28 @@ function PerExtensionSettingsSection() {
       <CustomCalloutsSection />
       <Divider />
       <MdTemplatesSection />
+      <Divider />
+      <Typography variant="caption" color="text.secondary">
+        {t('mdPdfSectionTitle')}
+      </Typography>
+      <Field label={t('mdPdfHeader')}>
+        <TextField
+          size="small"
+          value={mdPdfHeader}
+          onChange={(e) => dispatch(setMdPdfHeader(e.target.value))}
+          helperText={t('mdPdfHeaderHint')}
+          sx={{ minWidth: 260 }}
+        />
+      </Field>
+      <Field label={t('mdPdfFooter')}>
+        <TextField
+          size="small"
+          value={mdPdfFooter}
+          onChange={(e) => dispatch(setMdPdfFooter(e.target.value))}
+          helperText={t('mdPdfFooterHint')}
+          sx={{ minWidth: 260 }}
+        />
+      </Field>
     </Stack>
   );
 }
@@ -1849,6 +1879,23 @@ function AiSection() {
           <MenuItem value="medium">{t('aiEffortMedium')}</MenuItem>
           <MenuItem value="high">{t('aiEffortHigh')}</MenuItem>
         </Select>
+      </Field>
+
+      <Field label={t('aiMaxTurns')} hint={t('aiMaxTurnsHint')}>
+        <TextField
+          type="number"
+          size="small"
+          fullWidth
+          value={s.aiMaxTurns}
+          slotProps={{ htmlInput: { min: 1, max: 1000, step: 1 } }}
+          onChange={(e) =>
+            dispatch(
+              setAiSettings({
+                aiMaxTurns: Math.max(1, Number(e.target.value) || 200),
+              })
+            )
+          }
+        />
       </Field>
 
       <Field label={t('aiCliPath')} hint={t('aiCliPathHint')}>

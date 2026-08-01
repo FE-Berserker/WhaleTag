@@ -205,11 +205,20 @@ export default function ExtensionHost({
   const mdTemplates = useSelector(
     (s: RootState) => s.settings?.mdTemplates ?? []
   );
+  const mdPdfHeader = useSelector(
+    (s: RootState) => s.settings?.mdPdfHeader ?? ''
+  );
+  const mdPdfFooter = useSelector(
+    (s: RootState) => s.settings?.mdPdfFooter ?? ''
+  );
   const mdKeybindings = useSelector(
     (s: RootState) => s.settings?.mdKeybindings
   );
   const mdImageSaveMode = useSelector(
     (s: RootState) => s.settings?.mdImageSaveMode ?? 'subfolder'
+  );
+  const deleteToTrash = useSelector(
+    (s: RootState) => s.settings?.deleteToTrash ?? true
   );
   const mdImageSubfolder = useSelector(
     (s: RootState) => s.settings?.mdImageSubfolder ?? '${filename}.assets'
@@ -256,8 +265,9 @@ export default function ExtensionHost({
         odaPath,
         calibrePath,
         sofficePath,
+        deleteToTrash,
       }),
-    [postToExtension, dwg2dxfPath, odaPath, calibrePath, sofficePath]
+    [postToExtension, dwg2dxfPath, odaPath, calibrePath, sofficePath, deleteToTrash]
   );
 
   /** Inline-edit: ask the editor for its current selection (3s timeout). */
@@ -348,6 +358,17 @@ export default function ExtensionHost({
       postToExtension({ type: 'setMdTemplates', templates: mdTemplates });
     }
   }, [mdTemplates, ready, postToExtension]);
+
+  // md-editor PDF export header/footer templates (Typora-style).
+  useEffect(() => {
+    if (ready) {
+      postToExtension({
+        type: 'setMdPdfHeaderFooter',
+        header: mdPdfHeader,
+        footer: mdPdfFooter,
+      });
+    }
+  }, [mdPdfHeader, mdPdfFooter, ready, postToExtension]);
 
   // md-editor keymap overrides (action → CodeMirror combo). The editor
   // reconfigures its keymapCompartment on receipt, so rebinding applies live.

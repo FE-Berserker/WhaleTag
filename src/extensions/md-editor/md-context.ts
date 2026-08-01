@@ -140,6 +140,10 @@ export const ctx = {
   // §md-templates — host-pushed HTML snippet templates for the right-click
   //  "Templates" submenu; empty until the host pushes setMdTemplates.
   mdTemplates: [] as MdTemplate[],
+  // §md-pdf-header-footer — host-pushed PDF export header/footer templates
+  //  (Typora-style, empty = none); read by exportPreviewAsPdf.
+  mdPdfHeader: '',
+  mdPdfFooter: '',
   previewLineMap: new Map<number, HTMLElement>(),
   scrollSyncRaf: 0,
   wordCountTimer: null as ReturnType<typeof setTimeout> | null,
@@ -190,6 +194,7 @@ export const dom = typeof document === 'undefined'
       gotoLineBtn: null,
       exportHtmlBtn: null,
       exportPdfBtn: null,
+      cleanupImagesBtn: null,
       themeSelectEl: null,
       tocSidebarEl: null,
       tocListEl: null,
@@ -222,6 +227,7 @@ export const dom = typeof document === 'undefined'
       gotoLineBtn: HTMLButtonElement;
       exportHtmlBtn: HTMLButtonElement;
       exportPdfBtn: HTMLButtonElement;
+      cleanupImagesBtn: HTMLButtonElement;
       themeSelectEl: HTMLSelectElement;
       tocSidebarEl: HTMLElement;
       tocListEl: HTMLElement;
@@ -255,6 +261,7 @@ export const dom = typeof document === 'undefined'
       gotoLineBtn: document.getElementById('btn-goto-line') as HTMLButtonElement,
       exportHtmlBtn: document.getElementById('btn-export-html') as HTMLButtonElement,
       exportPdfBtn: document.getElementById('btn-export-pdf') as HTMLButtonElement,
+      cleanupImagesBtn: document.getElementById('btn-cleanup-images') as HTMLButtonElement,
       themeSelectEl: document.getElementById('select-theme') as HTMLSelectElement,
       tocSidebarEl: document.getElementById('toc-sidebar') as HTMLElement,
       tocListEl: document.getElementById('toc-list') as HTMLElement,
