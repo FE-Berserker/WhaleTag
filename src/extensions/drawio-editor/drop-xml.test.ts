@@ -8,8 +8,10 @@ import {
   buildLabeledDropSnippet,
   dataUrlToDrawioSafe,
   decodeDrawioDiagram,
+  drawioLinkForInsert,
   escapeXmlAttr,
   nextDropPosition,
+  resolveDrawioLink,
   rewriteDrawioLinksToAbsolute,
   rewriteDrawioLinksToRelative,
   toFileUrl,
@@ -609,6 +611,121 @@ describe('drawio drop-xml.rewriteDrawioLinksToAbsolute', () => {
     assert.ok(
       back.includes('link="./sub/deep/foo.png"'),
       `expected stable round-trip, got: ${back}`
+    );
+  });
+});
+
+// docs/20 v2: drawio stores the link relative at insert time (like excalidraw),
+// shows it relative, and resolves to an absolute file:// URL only at click time.
+describe('drawio drop-xml.drawioLinkForInsert', () => {
+  it('returns a relative path when the target is inside the diagram dir', () => {
+    assert.equal(
+      drawioLinkForInsert('/docs/sub/foo.png', '/docs/d.drawio'),
+      './sub/foo.png'
+    );
+  });
+
+  it('falls back to a file:// URL when the target is outside the diagram dir', () => {
+    assert.equal(
+      drawioLinkForInsert('/other/x.png', '/docs/d.drawio'),
+      'file:///other/x.png'
+    );
+  });
+
+  it('falls back to a file:// URL when diagramPath is omitted', () => {
+    assert.equal(drawioLinkForInsert('/docs/foo.png'), 'file:///docs/foo.png');
+  });
+
+  it('handles a Windows diagram path + dragged file', () => {
+    assert.equal(
+      drawioLinkForInsert(
+        'I:/Work/sub/foo.pdf',
+        'I:\\Work\\notes.drawio'
+      ),
+      './sub/foo.pdf'
+    );
+  });
+});
+
+describe('drawio drop-xml.resolveDrawioLink', () => {
+  it('resolves a stored relative link to an absolute file:// URL', () => {
+    assert.equal(
+      resolveDrawioLink('./sub/foo.png', '/docs/d.drawio'),
+      'file:///docs/sub/foo.png'
+    );
+  });
+
+  it('leaves an already-absolute file:// link (old diagram) unchanged', () => {
+    assert.equal(
+      resolveDrawioLink('file:///docs/old.png', '/docs/d.drawio'),
+      'file:///docs/old.png'
+    );
+  });
+
+  it('leaves an external URL unchanged', () => {
+    assert.equal(
+      resolveDrawioLink('https://example.com', '/docs/d.drawio'),
+      'https://example.com'
+    );
+  });
+});
+
+describe('drawio drop-xml snippet stores relative when diagramPath is set', () => {
+  const thumb = 'data:image/jpeg;base64,AAAA';
+
+  it('buildFileDropSnippet: relative link inside the diagram dir', () => {
+    const snippet = buildFileDropSnippet({
+      filePath: '/docs/sub/foo.png',
+      name: 'foo.png',
+      thumbnailDataUrl: thumb,
+      cellId: 'img-rel',
+      x: 0,
+      y: 0,
+      diagramPath: '/docs/d.drawio',
+    });
+    assert.ok(
+      snippet.includes('link="./sub/foo.png"'),
+      `expected relative link, got: ${snippet}`
+    );
+  });
+
+  it('buildFileDropSnippet: absolute file:// link when diagramPath is omitted', () => {
+    const snippet = buildFileDropSnippet({
+      filePath: '/docs/foo.png',
+      name: 'foo.png',
+      thumbnailDataUrl: thumb,
+      cellId: 'img-abs',
+      x: 0,
+      y: 0,
+    });
+    assert.ok(
+      snippet.includes('link="file:///docs/foo.png"'),
+      `expected file:// link, got: ${snippet}`
+    );
+  });
+
+  it('buildLabeledDropSnippet: relative link inside the diagram dir', () => {
+    const snippet = buildLabeledDropSnippet({
+      filePath: '/docs/sub/bar.pdf',
+      name: 'bar.pdf',
+      thumbnailDataUrl: thumb,
+      cellId: 'lbl-rel',
+      x: 0,
+      y: 0,
+      diagramPath: '/docs/d.drawio',
+    });
+    assert.ok(
+      snippet.includes('link="./sub/bar.pdf"'),
+      `expected relative link, got: ${snippet}`
+    );
+  });
+
+  it('end-to-end: insert(relative) -> resolve(click) opens the right file', () => {
+    const link = drawioLinkForInsert('/docs/sub/deep/foo.png', '/docs/d.drawio');
+    assert.equal(link, './sub/deep/foo.png');
+    assert.equal(
+      resolveDrawioLink(link, '/docs/d.drawio'),
+      'file:///docs/sub/deep/foo.png'
     );
   });
 });

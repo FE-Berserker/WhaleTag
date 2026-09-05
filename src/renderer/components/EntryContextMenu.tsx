@@ -29,8 +29,6 @@ import WallpaperIcon from '@mui/icons-material/Wallpaper';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import PhotoLibraryIcon from '@mui/icons-material/PhotoLibrary';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
-import HeadphonesIcon from '@mui/icons-material/Headphones';
-import QueueMusicIcon from '@mui/icons-material/QueueMusic';
 import TerminalIcon from '@mui/icons-material/Terminal';
 import ArrowRightIcon from '@mui/icons-material/ArrowRight';
 
@@ -40,13 +38,12 @@ import type { TagGroup } from '../domain/tag-library';
 import type { UserCommand } from '../../shared/shell-types';
 import type { RootState } from '-/reducers';
 import { tagDisplayLabel } from '-/services/tag-display';
-import { isAudioFile, isImageFile, isVideoFile } from '../../shared/whale-meta';
+import { isImageFile, isVideoFile } from '../../shared/whale-meta';
 import { isPeriodTag } from '../../shared/smart-tags';
 import { dateTagRangeKey } from '../domain/calendar';
 import { usePeriodTagDialog } from './PeriodTagDialog';
 import { useTagMetaContext } from '-/hooks/TagMetaContextProvider';
 import { useDirectoryContent } from '-/hooks/DirectoryContentContextProvider';
-import { useBackgroundPlayer } from '-/hooks/BackgroundPlayerContextProvider';
 import InlineTagInput from '-/components/InlineTagInput';
 import {
   noTransitionMenuSlotProps,
@@ -184,7 +181,6 @@ export interface EntryContextMenuProps {
  */
 export default function EntryContextMenu(props: EntryContextMenuProps) {
   const { t } = useTranslation();
-  const backgroundPlayer = useBackgroundPlayer();
   const {
     ctx,
     isInBulkContext,
@@ -461,22 +457,6 @@ export default function EntryContextMenu(props: EntryContextMenuProps) {
                 </ListItemIcon>
                 <ListItemText>{t('open')}</ListItemText>
               </MenuItem>
-              {/* Background-music dock: append this track to the queue
-                  without opening a viewer. The dock at the bottom of the
-                  window keeps playing across folder/view changes. */}
-              {!entry.isDirectory && isAudioFile(entry.name) ? (
-                <MenuItem
-                  onClick={() => {
-                    backgroundPlayer.playEntry(entry);
-                    onClose();
-                  }}
-                >
-                  <ListItemIcon>
-                    <HeadphonesIcon fontSize="small" />
-                  </ListItemIcon>
-                  <ListItemText>{t('playInBackground')}</ListItemText>
-                </MenuItem>
-              ) : null}
               {entry.isFile ? (
                 (() => {
                   const compatibleExts = getCompatibleExtensions(entry, {

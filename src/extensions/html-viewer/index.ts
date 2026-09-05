@@ -58,7 +58,7 @@ const encodingLbl = document.getElementById('encoding-lbl') as HTMLSpanElement;
 const NO_VALUE = '—';
 
 // --- i18n -----------------------------------------------------------------
-// Mirrors json-viewer / pdf-viewer: small catalog
+// Mirrors json-viewer: small catalog
 // resolved via `window.whaleExt.t(I18N)`, re-applied on host `setLocale`.
 interface Strings {
  // Status bar
@@ -556,7 +556,7 @@ window.whaleExt.onLocale(() => {
 });
 
 // --- Keyboard shortcuts ---------------------------------------------------
-// Mirrors pdf-viewer's keydown handler (pdf-viewer/index.ts:742-800) minus
+// Mirrors the shared per-extension keydown pattern minus
 // the input-element guard (html-viewer has no input).
 window.addEventListener('keydown', (e) => {
  if (e.altKey) return;

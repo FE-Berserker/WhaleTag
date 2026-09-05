@@ -32,7 +32,6 @@ import { createStore } from 'redux';
 import i18next from 'i18next';
 
 import EntryContextMenu from './EntryContextMenu';
-import { BackgroundPlayerContextProvider } from '../hooks/BackgroundPlayerContextProvider';
 import type { ContextMenuPosition } from './EntryContextMenu';
 import type { DirEntry } from '../../shared/ipc-types';
 import type { ExtensionRegistry } from '../../shared/extension-types';
@@ -124,30 +123,28 @@ function renderMenu(
   return render(
     <I18nextProvider i18n={i18next} defaultNS="common">
       <Provider store={STUB_STORE}>
-        <BackgroundPlayerContextProvider>
-          <EntryContextMenu
-            {...baseProps()}
-            ctx={ctx}
-            isInBulkContext={opts.isInBulkContext ?? (() => false)}
-            tagsByName={opts.tagsByName ?? new Map()}
-            userCommands={opts.userCommands ?? []}
-            onAddTag={(e, tag) => {
-              spies.addTag = spies.addTag ?? { called: 0, last: null };
-              spies.addTag.called += 1;
-              spies.addTag.last = { entry: e, tag };
-            }}
-            onRemoveTag={(e, tag) => {
-              spies.removeTag = spies.removeTag ?? { called: 0, last: null };
-              spies.removeTag.called += 1;
-              spies.removeTag.last = { entry: e, tag };
-            }}
-            onRunCommand={(e, command) => {
-              spies.runCommand = spies.runCommand ?? { called: 0, last: null };
-              spies.runCommand.called += 1;
-              spies.runCommand.last = { entry: e, command };
-            }}
-          />
-        </BackgroundPlayerContextProvider>
+        <EntryContextMenu
+          {...baseProps()}
+          ctx={ctx}
+          isInBulkContext={opts.isInBulkContext ?? (() => false)}
+          tagsByName={opts.tagsByName ?? new Map()}
+          userCommands={opts.userCommands ?? []}
+          onAddTag={(e, tag) => {
+            spies.addTag = spies.addTag ?? { called: 0, last: null };
+            spies.addTag.called += 1;
+            spies.addTag.last = { entry: e, tag };
+          }}
+          onRemoveTag={(e, tag) => {
+            spies.removeTag = spies.removeTag ?? { called: 0, last: null };
+            spies.removeTag.called += 1;
+            spies.removeTag.last = { entry: e, tag };
+          }}
+          onRunCommand={(e, command) => {
+            spies.runCommand = spies.runCommand ?? { called: 0, last: null };
+            spies.runCommand.called += 1;
+            spies.runCommand.last = { entry: e, command };
+          }}
+        />
       </Provider>
     </I18nextProvider>
   );

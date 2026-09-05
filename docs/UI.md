@@ -312,7 +312,7 @@ Common icons used:
 - `chevron-right`, `chevron-down`
 - `arrow-up`, `arrow-left`, `arrow-right`, `history`, `refresh-cw`
 - `plus`, `file-plus`, `search`, `tag`
-- `list`, `layout-grid`, `image`, `columns-3`, `calendar`, `map`, `network`
+- `list`, `layout-grid`, `columns-3`, `calendar`, `map`, `network`
 - `trash-2`, `settings`
 
 ---

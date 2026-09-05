@@ -1,9 +1,6 @@
 import type { SupportedLanguage } from '-/i18n';
 import type { ViewMode } from '../../../shared/whale-meta';
 import type { TagShape } from '../../domain/tag-colors';
-import type { CustomCallout } from '../../../shared/callout-types';
-import type { MdTemplate } from '../../../shared/md-template-types';
-import type { MdRenderThemePref, MdImageSaveMode } from '../../../shared/extension-types';
 import type { KeyAction } from '../../domain/keybindings';
 
 /**
@@ -82,9 +79,5 @@ export type {
   SupportedLanguage,
   ViewMode,
   TagShape,
-  CustomCallout,
-  MdTemplate,
-  MdRenderThemePref,
-  MdImageSaveMode,
   KeyAction,
 };

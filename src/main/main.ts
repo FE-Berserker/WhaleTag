@@ -11,14 +11,10 @@ import { registerAiCoreHandlers, maybeRegisterAiRuntimeHandlers } from './ai/ipc
 // (WAL checkpoint), then best-effort kill.
 import { killIndexWorker, shutdownIndexWorker, subscribe as subscribeIndexWorker } from './index-worker-host';
 import { setDirChangedBroadcast, closeAllWatchers } from './dir-watcher';
-// Thumbnail-render utilityProcess (pdf/ebook/font pure-JS CPU, docs/06 §8).
-// Lazy-spawned on the first pdf/ebook/font thumbnail; torn down here on app
+// Thumbnail-render utilityProcess (pdf/font pure-JS CPU, docs/06 §8).
+// Lazy-spawned on the first pdf/font thumbnail; torn down here on app
 // quit (best-effort kill).
 import { killThumbWorker } from './thumb-worker-host';
-// P3-3: office→PDF persistent UNO worker. Lazy-spawned on the first office
-// conversion; torn down here on app quit (kills the python worker AND its
-// soffice listener grandchild via tree-kill).
-import { killOfficeWorker } from './office-worker/office-worker-host';
 // Phase 6: application auto-update via electron-updater + GitHub Releases.
 // The IPC handlers + startup-delayed check + dev-mode short-circuit all
 // live in this module. See docs/18-auto-update.md for the full flow.
@@ -35,7 +31,6 @@ import { assertWithinAllowedRoot } from './allowed-roots';
 import { getWhaleAppVersion } from './app-version';
 import { decodeWhaleFileUrl } from '../shared/whale-file-url';
 import { createFileRangeResponse } from './protocol-range';
-import { registerWhaleAudioProtocol, killAllAudioTranscodes } from './whale-audio-protocol';
 import {
   resolveExtensionRequest,
   mimeForPath,
@@ -198,7 +193,7 @@ function configureCsp(): void {
     // Map tiles (Mapique) are loaded as <img> from OSM or a user-configured
     // tile server, so allow remote http(s) image sources here.
     "img-src 'self' data: blob: https: http: whale-extension://* whale-file://*",
-    "media-src 'self' blob: whale-extension://* whale-file://* whale-audio://*",
+    "media-src 'self' blob: whale-extension://* whale-file://*",
     "font-src 'self' data: blob: whale-extension://*",
     "frame-src 'self' data: blob: whale-extension://*",
     isDev
@@ -333,7 +328,6 @@ function bootstrap(): void {
   configureCsp();
   registerExtensionProtocol();
   registerWhaleFileProtocol();
-  registerWhaleAudioProtocol();
   createWindow();
 
   // P0-2: tear down the index utilityProcess on quit. Graceful first:
@@ -343,9 +337,7 @@ function bootstrap(): void {
   // run (pending requests are rejected via the host's `exit` handler; if the
   // OS reaps the process first, those promises are also rejected). The
   // two-pass guard: preventDefault on the first `before-quit`, then
-  // `app.quit()` again once teardown finished. Also kill any live audio
-  // transcode so ffmpeg doesn't outlive the app (on Windows it would keep
-  // the cache `.tmp` handle locked).
+  // `app.quit()` again once teardown finished.
   let quitTeardownDone = false;
   app.on('before-quit', (event) => {
     if (quitTeardownDone) return; // second pass — our own app.quit() below
@@ -354,11 +346,8 @@ function bootstrap(): void {
     void shutdownIndexWorker().finally(() => {
       try {
         killIndexWorker();
-        // Thumbnail-render utilityProcess (pdf/ebook/font); best-effort kill.
+        // Thumbnail-render utilityProcess (pdf/font); best-effort kill.
         killThumbWorker();
-        killAllAudioTranscodes();
-        // P3-3: persistent office→PDF UNO worker + its soffice listener grandchild.
-        killOfficeWorker();
         // docs/04 §10: location fs.watch handles.
         closeAllWatchers();
       } finally {
@@ -420,7 +409,7 @@ function finishMainWindowClose(): void {
  * Tell Chromium to treat `whale-extension://` as a real origin (standard +
  * secure). Without this, documents served by `registerFileProtocol` get an
  * opaque origin, which blocks `document.cookie` reads and several other APIs
- * that extension webapps (drawio, excalidraw, ebook-viewer, etc.) depend on.
+ * that extension webapps (drawio, excalidraw, etc.) depend on.
  *
  * MUST be called before `app.whenReady()` resolves — Electron only inspects
  * the privilege list once at startup.
@@ -430,7 +419,7 @@ function finishMainWindowClose(): void {
  * scheme is fetchable in theory but the response is rejected in practice), so
  * it buys nothing and adds cross-cutting behavioral risk. Extensions that need
  * bytes from their bundled assets fetch them through the host instead — see
- * the `ext:getPdfAsset` / `ext:getCadWasm` IPC bridges (the extension requests
+ * the `ext:getHeicWasm` IPC bridge (the extension requests
  * the bytes over postMessage, the main process reads them via `fsp` and
  * returns an ArrayBuffer). Excalidraw's handwritten-font / locale fetches
  * therefore still degrade to system fonts (known limitation, §七).
@@ -448,20 +437,6 @@ protocol.registerSchemesAsPrivileged([
     // Same privilege shape as `whale-extension://` so the renderer sees a
     // real origin and the CSP entries below can reference it.
     scheme: 'whale-file',
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-      stream: true,
-    },
-  },
-  {
-    // Live Opus transcode of audio Chromium can't decode (APE/WMA/AIFF/…).
-    // ffmpeg stdout is piped straight to `<audio>` so playback starts on the
-    // first Ogg page instead of after the whole file is transcoded. Byte-
-    // identical privileges to `whale-file` — `stream: true` is REQUIRED or
-    // Chromium buffers the entire Response body before delivering any byte.
-    scheme: 'whale-audio',
     privileges: {
       standard: true,
       secure: true,
@@ -594,8 +569,7 @@ function registerExtensionProtocol(): void {
  * Security: the resolved path must sit under one of the configured location
  * roots (same guard as write-side operations in allowed-roots.ts, including
  * symlink resolution). The Range math + Node→Web stream adaptation live in
- * `protocol-range.ts` (`createFileRangeResponse`) so the same path is shared
- * by `whale-audio://`'s cache-hit branch.
+ * `protocol-range.ts` (`createFileRangeResponse`).
  */
 function registerWhaleFileProtocol(): void {
   protocol.handle('whale-file', async (request) => {

@@ -4,8 +4,8 @@
  * utility process child (`thumb-worker.ts`).
  *
  * Mirrors `index-protocol.ts` (docs/15 §P0-2), narrowed to a single
- * three-way op: the pure-JS CPU-heavy renders (pdf / ebook / font) that
- * used to run on the main event loop. See `docs/06-thumbnails.md` §8.
+ * two-way op: the pure-JS CPU-heavy renders (pdf / font) that used to run
+ * on the main event loop. See `docs/06-thumbnails.md` §8.
  */
 
 /**
@@ -13,7 +13,7 @@
  * tag so lines are grep-friendly and the host/worker share a single source
  * of truth.
  */
-export type ThumbWorkerOp = 'thumb:pdf' | 'thumb:font' | 'thumb:ebook';
+export type ThumbWorkerOp = 'thumb:pdf' | 'thumb:font';
 
 /**
  * Per-op argument shape. A discriminated union keyed by `op` — the host
@@ -21,8 +21,7 @@ export type ThumbWorkerOp = 'thumb:pdf' | 'thumb:font' | 'thumb:ebook';
  */
 export type ThumbWorkerArg =
   | { op: 'thumb:pdf'; arg: { srcPath: string } }
-  | { op: 'thumb:font'; arg: { srcPath: string } }
-  | { op: 'thumb:ebook'; arg: { srcPath: string } };
+  | { op: 'thumb:font'; arg: { srcPath: string } };
 
 /**
  * Per-op return type. Same discriminated-union shape as `ThumbWorkerArg`.
@@ -32,8 +31,7 @@ export type ThumbWorkerArg =
  */
 export type ThumbWorkerResult =
   | { op: 'thumb:pdf'; result: { buf: Uint8Array } }
-  | { op: 'thumb:font'; result: { buf: Uint8Array } }
-  | { op: 'thumb:ebook'; result: { buf: Uint8Array } };
+  | { op: 'thumb:font'; result: { buf: Uint8Array } };
 
 /** A request envelope sent from host → worker. */
 export interface ThumbWorkerRequest {

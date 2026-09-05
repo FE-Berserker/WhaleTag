@@ -197,7 +197,7 @@ export function formatSelectedFilesBlock(selectedPaths: string[]): string {
 /**
  * The turn prompt in the shape `query()` / `WarmQuery.query()` accepts: a
  * plain string for text-only turns, or a single-message async iterable when
- * the turn carries images (pdf-viewer marquee screenshots). The image blocks
+ * the turn carries images (user-attached screenshots). The image blocks
  * use the Anthropic API's base64 source shape, so the model sees the region
  * even when it has no extractable text (scanned pages). Pure except the lazy
  * iteration; exported for tests.

@@ -61,9 +61,9 @@ drawio / excalidraw 扩展支持把目录树里的文件/文件夹**拖进画布
 2. DOMParser 扫描 `link="file://..."`,若指向 `dirname(file.path)` 内 → `toRelative(abs, baseDir)` 还原相对;目录外保留绝对。
 3. 存盘(格式见 §8 POC)。
 
-**难点 / 待 POC**:
-- **存盘格式(POC 已决:存 raw)**:原保存的是 compressed(`save(getXml())`)。改 link 后**直接存 decode 出的 raw**,不补 `encodeDrawioDiagram`。理由:磁盘格式只被我们自己的 `decodeDrawioDiagram` 消费(drawio 从不直接读磁盘文件,只收 `loadXml`;`decompressSync` 格式无关,自往返无虞),而存 raw 更兼容外部 drawio(原生读未压缩 `.drawio`),且与 [useNewDrawio](../src/renderer/hooks/useNewDrawio.ts) 的 `EMPTY_DRAWIO`(本就是 raw)格式一致。**硬约束**([useNewDrawio 注释](../src/renderer/hooks/useNewDrawio.ts#L13-L24)):drawio 的 loader 仅在 `<diagram>` **有文本内容**时才 decompress;raw 形式要求 `<diagram>` 紧跟 `<mxGraphModel>` 且**中间无空白**。`decodeDrawioDiagram` 先 `removeChild` 清空再 `appendChild` mxGraphModel、`XMLSerializer` 不插空白 → 不变量保持(与线上 `insertLinkedThumbnail` 的 decode→loadXml 同路径,已验证)。
-- DOMParser 改 `link` 属性后 drawio 正常 load —— 已知 image 那套就是这么 round-trip(`appendSnippetToDiagram`),单元测试覆盖(`drop-xml.test.ts` 的 `rewriteDrawioLinks*` + 稳定 round-trip 用例)。
+**难点**:
+- **存盘格式:存 raw,不补 `encodeDrawioDiagram`**(原保存的是 compressed `save(getXml())`)。理由:磁盘格式只被我们自己的 `decodeDrawioDiagram` 消费(drawio 从不直接读磁盘文件,只收 `loadXml`;`decompressSync` 格式无关,自往返无虞);存 raw 更兼容外部 drawio(原生读未压缩 `.drawio`),且与 [useNewDrawio](../src/renderer/hooks/useNewDrawio.ts) 的 `EMPTY_DRAWIO`(本就是 raw)格式一致。**硬约束**([useNewDrawio 注释](../src/renderer/hooks/useNewDrawio.ts#L13-L24)):drawio 的 loader 仅在 `<diagram>` **有文本内容**时才 decompress;raw 形式要求 `<diagram>` 紧跟 `<mxGraphModel>` 且**中间无空白**。`decodeDrawioDiagram` 先 `removeChild` 清空再 `appendChild` mxGraphModel、`XMLSerializer` 不插空白 → 不变量保持(与线上 `insertLinkedThumbnail` 的 decode→loadXml 同路径,已验证)。
+- DOMParser 改 `link` 属性后 drawio 正常 load —— 与 image 的 round-trip 同路径(`appendSnippetToDiagram`),单元测试覆盖(`drop-xml.test.ts` 的 `rewriteDrawioLinks*` + 稳定 round-trip 用例)。
 - link 可能出现在 `<mxCell>` 而非 `<UserObject>`(drawio 序列化变量,见 [drop-xml.ts:16-20](../src/extensions/drawio-editor/drop-xml.ts#L16-L20))→ 扫描按属性 `[link]` 覆盖两种(测试含直接 `<mxCell link=>` 用例)。
 
 ## 6. excalidraw 实现(JSON link 重写)
@@ -71,7 +71,7 @@ drawio / excalidraw 扩展支持把目录树里的文件/文件夹**拖进画布
 明文 JSON,无压缩,**比 drawio 简单**。
 
 - **加载**(在 [app.tsx:66-84 applyScene](../src/extensions/excalidraw-editor/app.tsx#L66-L84) 里):`restore` 后遍历 image 元素,`link` 若为相对 → `resolveAbsolute(rel, dirname(path))`。
-- **保存**(在 [app.tsx:86-96 doSave](../src/extensions/excalidraw-editor/app.tsx#L86-L96) 里):`computeJson()` 序列化后扫描 `"link": "<绝对>"` 目录内 → `toRelative`;或序列化前改 scene 元素 `.link`。
+- **保存**(在 [app.tsx:86-96 doSave](../src/extensions/excalidraw-editor/app.tsx#L86-L96) 里):`computeJson()` 序列化(`serializeAsJSON` 产出 `{elements:[…]}`)后扫描 `elements[].link` 中目录内绝对路径 → `toRelative`;或序列化前改 scene 元素 `.link`。insert 写 `link`([app.tsx:155](../src/extensions/excalidraw-editor/app.tsx#L155))、`onLinkOpen` 读([:259](../src/extensions/excalidraw-editor/app.tsx#L259)),实现见 [excalidraw-links.ts](../src/extensions/excalidraw-editor/excalidraw-links.ts) + 单测。
 
 ## 7. 共享路径工具(纯函数,新建 `extensions/shared/relpath.ts`)
 
@@ -89,22 +89,11 @@ export function resolveAbsolute(relOrAbs: string, baseDir: string): string;
 
 ## 8. POC(结论)
 
-POC 四项全部用**代码分析 + 既有测试**闭环回答,无需 GUI 手测:
-
-- [x] **drawio `getXml()` 输出格式 = compressed**。bridge 变量命名 `compressed` + 直接喂 `decodeDrawioDiagram`(atob→inflate);既有 [drop-xml.test.ts](../src/extensions/drawio-editor/drop-xml.test.ts) `decodeDrawioDiagram` 用例用真实 fflate 压缩 payload 验过解码。
-- [x] **存 raw,drawio 下次加载正常**。`loadXml` 接受 raw 已被线上 `insertLinkedThumbnail`(`decode→appendSnippet→loadXml(raw)`)证明;`decodeDrawioDiagram` 对 raw 是 no-op(测试 `returns the payload unchanged if already uncompressed`)。**决定存 raw,不实现 `encodeDrawioDiagram`**(理由见 §5)。
-- [x] **DOMParser 改 `<UserObject link>` 后 drawio 加载 + 点击转发**。运行时 link 恒为绝对 `file://`(加载时 rel→abs 重写),drawio 看到的与改动前逐字节一致 → 点击转发 `openLink`→host 零变化。DOMParser 改写→loadXml 同 `appendSnippetToDiagram` 路径(已验证),并由 `rewriteDrawioLinks*` 单测 + 稳定 round-trip 用例锁定。
-- [x] **excalidraw JSON `link` 字段 = `element.link`**。insert 写([app.tsx:155](../src/extensions/excalidraw-editor/app.tsx#L155))、onLinkOpen 读([:259](../src/extensions/excalidraw-editor/app.tsx#L259));`serializeAsJSON` 产出 `{elements:[…]}`,扫描 `elements[].link` 即可(见 [excalidraw-links.ts](../src/extensions/excalidraw-editor/excalidraw-links.ts) + 单测)。
+POC 四项全部用**代码分析 + 既有测试**闭环回答,无需 GUI 手测,全部通过:① `getXml()` 输出 = compressed(bridge 变量命名 + 直接喂 `decodeDrawioDiagram`,[drop-xml.test.ts](../src/extensions/drawio-editor/drop-xml.test.ts) 用真实 fflate 压缩 payload 验过解码);② 存 raw 可正常加载(`loadXml` 接受 raw 已被线上 `insertLinkedThumbnail` 证明,`decodeDrawioDiagram` 对 raw 是 no-op)→ 决定存 raw,不实现 `encodeDrawioDiagram`(理由见 §5);③ DOMParser 改 `<UserObject link>` 后加载 + 点击转发零变化(运行时 link 恒为绝对,drawio 看到的与改动前逐字节一致,`rewriteDrawioLinks*` 单测锁定);④ excalidraw `link` 字段 = `element.link`(见 §6)。
 
 ## 9. 工作量
 
-| 项 | 估算 |
-|---|---|
-| 共享 `relpath.ts` + 单测 | ~0.5 天 |
-| drawio compressed round-trip(含 POC + 可能的 encode helper) | ~1 天 |
-| excalidraw JSON link 重写 | ~0.5 天 |
-| 端到端 + 存量回归 | ~0.5 天 |
-| **合计** | **~1.5–2 天** |
+原估算 ~1.5–2 天(relpath ~0.5 + drawio ~1 + excalidraw ~0.5 + 端到端 ~0.5),已按期实现。
 
 ## 10. 存量迁移(渐进)
 
@@ -116,8 +105,7 @@ POC 四项全部用**代码分析 + 既有测试**闭环回答,无需 GUI 手测
 
 - **目录外文件策略**(默认:保留绝对 `file://`)。是否允许 `../` 相对?风险:多级 `../` 不可读、迁出后断。→ 默认保留绝对,除非明确要 `../`。
 - **图片相对路径**:本方案不做(§3 约束)。若未来要,需加载时把相对路径图片读成 data URL 嵌入 + 保存还原未变者(双向,比 link 复杂得多)。
-- **link 出现在 drawio 非 `<UserObject>` 位置**(直接 `<mxCell link=>`):扫描覆盖测试。
-- **excalidraw `element.link` 的 host 处理**(✅ 已确认,无需改 host):[ExtensionHost.tsx:684-693](../src/renderer/components/ExtensionHost.tsx#L684-L693) 的 `openLinkExternally` 对非 `http(s):` 一律走 `ipcApi.openNative` → `shell.openPath`,**裸路径与 `file://` 都已支持**。本方案运行时 link 形式不变(drawio 绝对 `file://`、excalidraw 绝对裸路径),host 零改动。
+- **excalidraw `element.link` 的 host 处理**(✅ 已确认,无需改 host):[ExtensionHost.tsx:684-693](../src/renderer/components/ExtensionHost.tsx#L684-L693) 的 `openLinkExternally` 对非 `http(s):` 一律走 `ipcApi.openNative` → `shell.openPath`,**裸路径与 `file://` 都已支持**。
 
 ## 12. 状态追踪
 

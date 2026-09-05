@@ -64,7 +64,7 @@
 
 每条分支都有 `getTagColor.test.ts` 单测覆盖。
 
-**自动上色(M9)**:[TagMetaContextProvider](../src/renderer/hooks/TagMetaContextProvider.tsx) 发现未上色的新 tag 时,`pickTagColor` 选"最少用"的调色板色,并**攒成一个 `setTagColors` 批量 action 一次 dispatch**(累加着算 → 每个 tag 拿到不同色),而不是逐个 `setTagColor`(每个一次同步 persist 写)。打开一个有很多新 tag 的目录从 N 次 fsync → 1 次。
+**自动上色(M9)**:[TagMetaContextProvider](../src/renderer/hooks/TagMetaContextProvider.tsx) 发现未上色的新 tag 时,`pickTagColor` 选"最少用"的调色板色,并**攒成一个 `setTagColors` 批量 action 一次 dispatch**(累加着算 → 每个 tag 拿到不同色),而非逐个 `setTagColor` 各触发一次 persist 写 —— 打开多新 tag 的目录从 N 次 fsync → 1 次。
 
 ## 6. Smart Date 与 `日期` 折叠
 
@@ -80,7 +80,7 @@
 | `currentMonth` | `202607` | `now` 的本地年月 ≡ 存储值 | 折叠到 `日期` chip |
 | `currentYear` | `2026` | `now` 的本地年 ≡ 存储值 | 折叠到 `日期` chip |
 
-**鲜度谓词**内联在 `smartFunctionalityOfTag` 内(`smart-tags.ts:688` 用 `resolveSmartTag(fn, now)` 直接比较),过期的 `now` 视角返回 null。
+**鲜度谓词**内联在 `smartFunctionalityOfTag` 内(`smart-tags.ts:688` 用 `resolveSmartTag(fn, now)` 直接比较)。
 
 `useNow()` hook([src/renderer/hooks/useNow.ts](../src/renderer/hooks/useNow.ts))每分钟 tick 提供 `now`(共享单定时器 + `useSyncExternalStore`;`subscribeNow` / `getNowSnapshot` 导出给条件订阅者)。直挂 `useNow()` 的调用点:`FileList.tsx` ×1(且经 `FROZEN_NOW` 门控,仅 `date:`/`smart:*` 过滤才消费 tick)、`PropertiesTray.tsx` ×2、`TagMetaContextProvider.tsx` ×1。
 
@@ -193,7 +193,6 @@ runMigration(allowedRoots): Promise<MigrationResult>
 - `tagDisplayLabel` 不在 `now` 状态下显示 i18n 模板名(因为精度到分钟,显示原 `2026-07-04 14:30` 比"此刻"更有信息量)
 - 期间家族"过期"无专门折叠(与 `date:` 共用 `isDateLikeShape` 边界,但通过 `isPeriodTag` 排除)
 - 文件夹元数据(`.whale/wsm.json` 的 `tags`)也对日期家族做互斥收敛,批量子目录打标时每个子目录各自互斥
-- ~~`InlineTagInput` 调用 `tagDisplayLabel(tag, t)` 不传 `useNow()`~~ ✅ 已统一(2026-07-18,`useTagDisplayLabels`,见 §3 上文的鲜度段)
 - `nextWeek` 在它指向的那个**周一**就会 stale(过了当日 0:00 立刻降级)
-- ~~`now` smart tag 的 60 秒鲜度窗口写死在 `smart-tags.ts` 的内联比较~~ ✅ 已抽常量(2026-07-18):`NOW_TAG_FRESH_WINDOW_MS` + `isNowTagFresh()` —— 与分钟截断比较**严格等价**(零行为漂移,82 测试不改全过);顺带修正头注「5 min」的失实表述
+- ~~`now` smart tag 的 60 秒鲜度窗口写死在 `smart-tags.ts` 的内联比较~~ ✅ 已抽常量(2026-07-18):`NOW_TAG_FRESH_WINDOW_MS` + `isNowTagFresh()` —— 与分钟截断比较**严格等价**
 - ~~`TagLibrary.tsx` 标签列表未虚拟化~~ ✅ 已虚拟化(2026-07-18):cluster(`smart:`/`period:`/`date:` 日期簇)作为 react-window `List` 的第 0 行,普通标签经 [tag-library-pack.ts](../src/renderer/components/tag-library-pack.ts) 按容器宽度贪心打包成行(变宽 chip 无法固定每行个数;宽度模型 latin 6.4px/CJK×2 + 数字 + 34px 基值,宁偏宽不偏移),行级 `useDynamicRowHeight` 实测高;大库只挂载可视窗 + overscan。`geo:` 留在普通标签流(独立坐标家族)。DnD 不受影响(仅可见行内的 chip 挂载拖拽)。测试:[tag-library-pack.test.ts](../src/renderer/components/tag-library-pack.test.ts) 8 例(宽度模型/贪心打包/超宽独行/极窄防死循环/高度估算)

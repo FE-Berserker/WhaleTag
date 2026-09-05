@@ -15,7 +15,6 @@ import { LocationIndexContextProvider } from '-/hooks/LocationIndexContextProvid
 import { TagMetaContextProvider } from '-/hooks/TagMetaContextProvider';
 import { LocationTagLibraryContextProvider } from '-/hooks/LocationTagLibraryContextProvider';
 import { ExtensionContextProvider } from '-/hooks/ExtensionContextProvider';
-import { BackgroundPlayerContextProvider } from '-/hooks/BackgroundPlayerContextProvider';
 import { AiComponentProvider } from '-/hooks/useAiComponent';
 import { setActiveLocation } from '-/reducers/locations';
 import { createWhaleTheme } from '-/theme';
@@ -135,10 +134,8 @@ export default function Root() {
                   <TagMetaContextProvider>
                     <LocationTagLibraryContextProvider>
                       <ExtensionContextProvider>
-                        <BackgroundPlayerContextProvider>
-                          <MainLayout />
-                          <TaskReminder />
-                        </BackgroundPlayerContextProvider>
+                        <MainLayout />
+                        <TaskReminder />
                       </ExtensionContextProvider>
                     </LocationTagLibraryContextProvider>
                   </TagMetaContextProvider>

@@ -32,7 +32,7 @@ Whale：本地优先、离线、隐私安全的 Electron 文件管理与打标�
 - `src/main/`：Electron 主进程——FS IO、SQLite FTS5 索引（utilityProcess worker）、缩略图 worker、自定义协议（`whale-file/audio/extension`）、IPC handlers、AI CLI 子进程、原子写盘。
 - `src/renderer/`：React 渲染层——components、redux、domain（**纯前端域逻辑放这里**）、hooks、services、theme、locales（i18n 5 语言）。
 - `src/shared/`：main + renderer 双方引用的契约层（ipc-types、tags、extension-types 等类型与纯函数）。
-- `src/extensions/`：15 个内置扩展查看器/编辑器（双层 iframe 拓扑），由 `scripts/build-extensions.js` 独立构建。
+- `src/extensions/`：8 个内置扩展查看器/编辑器（双层 iframe 拓扑），由 `scripts/build-extensions.js` 独立构建。
 
 ## 红线（security-auditor / 所有改代码的智能体）
 

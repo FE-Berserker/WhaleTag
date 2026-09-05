@@ -1,5 +1,4 @@
 import path from 'path';
-import os from 'os';
 import { existsSync, promises as fsp } from 'fs';
 import { execFile } from 'child_process';
 import ffmpegStatic from 'ffmpeg-static';
@@ -11,10 +10,8 @@ import {
   thumbKindOf,
   isThumbnailable,
 } from '../shared/whale-meta';
-import type { GenerateThumbnailOptions } from '../shared/ipc-types';
 import { atomicWriteBytes } from './atomic-write';
 import { thumbnailSemaphore } from './concurrency';
-import { convertOfficeToPdfVia } from './office-convert';
 import { getSharp } from './lazy-native';
 import { encodeImageThumb, THUMB_SIZE, THUMB_QUALITY } from './thumb-encode';
 import { thumbRequest } from './thumb-worker-host';
@@ -30,15 +27,6 @@ import { thumbRequest } from './thumb-worker-host';
  *  - **pdf** → pdfjs-dist renders page 1 to a `@napi-rs/canvas`, then sharp
  *    resizes/encodes it — pure-JS CPU, so it runs in the `whale-thumb`
  *    utilityProcess (`thumb-worker.ts`, see docs/06 §8).
- *  - **office** → LibreOffice (`soffice`) headless-converts the document to a
- *    temporary PDF (UNO worker in the main process), then the worker's pdf
- *    path above renders it. LibreOffice is NOT bundled; if it is missing or
- *    conversion fails, generation aborts silently and the renderer falls back
- *    to a file-type icon.
- *  - **ebook** → `ebook-cover.ts` extracts the embedded cover image bytes
- *    (epub/cbz via fflate; fb2 via XML; mobi/azw3 via PalmDB+EXTH), then sharp
- *    resizes/encodes it — inside the utilityProcess (`unzipSync` is pure-JS
- *    CPU). A book with no embedded cover aborts silently (icon).
  *  - **font** → `font-thumb.ts` registers the font with `@napi-rs/canvas`,
  *    draws a sample preview, and encodes it as PNG — inside the
  *    utilityProcess; sharp then produces the JPEG thumbnail there.
@@ -68,40 +56,6 @@ export function thumbPathFor(filePath: string): string {
 export function ffmpegPath(): string | null {
   if (!ffmpegStatic) return null;
   return ffmpegStatic.replace('app.asar', 'app.asar.unpacked');
-}
-
-/**
- * Converts an Office document to a temporary PDF, then renders that PDF via
- * the thumb worker (`thumb:pdf`). Cleans up the temporary PDF and its
- * directory afterwards.
- *
- * Delegates the doc→PDF step to `convertOfficeToPdfVia` (shared with
- * office-viewer's `convertOfficeToPdf`) — which tries the persistent UNO
- * worker first and falls back to a one-shot `soffice --convert-to pdf`. This
- * deletes the ~30 lines of duplicated soffice spawn body that used to live
- * here, and lets the worker benefit office thumbnails too (P3-3).
- */
-async function encodeOfficeThumb(
-  srcPath: string,
-  sofficePath?: string | null
-): Promise<Buffer> {
-  const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-office-'));
-  const baseName = path.basename(srcPath, path.extname(srcPath));
-  const outPdfPath = path.join(tmpDir, `${baseName}.pdf`);
-  try {
-    // The semaphore + worker-vs-fallback decision live inside
-    // convertOfficeToPdfVia; the subsequent pdfjs/sharp render stays outside
-    // any permit (as before) — and now off the main process entirely.
-    await convertOfficeToPdfVia(srcPath, outPdfPath, { sofficePath });
-    if (!existsSync(outPdfPath)) {
-      throw new Error('LibreOffice did not produce a PDF');
-    }
-    return await thumbRequest('thumb:pdf', { srcPath: outPdfPath });
-  } finally {
-    await fsp.rm(tmpDir, { recursive: true, force: true }).catch(
-      () => undefined
-    );
-  }
 }
 
 /**
@@ -203,23 +157,17 @@ async function encodeVideoThumb(srcPath: string): Promise<Buffer> {
  */
 const inflight = new Map<string, Promise<void>>();
 
-export function generateThumbnail(
-  filePath: string,
-  options?: GenerateThumbnailOptions
-): Promise<void> {
+export function generateThumbnail(filePath: string): Promise<void> {
   const existing = inflight.get(filePath);
   if (existing) return existing;
-  const run = doGenerateThumbnail(filePath, options).finally(() => {
+  const run = doGenerateThumbnail(filePath).finally(() => {
     inflight.delete(filePath);
   });
   inflight.set(filePath, run);
   return run;
 }
 
-async function doGenerateThumbnail(
-  filePath: string,
-  options?: GenerateThumbnailOptions
-): Promise<void> {
+async function doGenerateThumbnail(filePath: string): Promise<void> {
   const kind = thumbKindOf(path.basename(filePath));
   if (!kind) return; // nothing Whale can thumbnail
 
@@ -241,7 +189,7 @@ async function doGenerateThumbnail(
   }
 
   // P1-6 (perf audit): bound concurrent thumbnail encodes (sharp / ffmpeg /
-  // pdfjs / soffice) across ALL callers — file-thumb IPC AND folder thumbs.
+  // pdfjs) across ALL callers — file-thumb IPC AND folder thumbs.
   // The cheap kind/stat/reuse short-circuits above run OUTSIDE the permit so a
   // cache hit never consumes a slot; only the real encoding + write holds one.
   await thumbnailSemaphore.run(async () => {
@@ -252,28 +200,18 @@ async function doGenerateThumbnail(
           ? await encodeVideoThumb(filePath)
           : kind === 'pdf'
             ? await thumbRequest('thumb:pdf', { srcPath: filePath })
-            : kind === 'office'
-              ? await encodeOfficeThumb(filePath, options?.sofficePath)
-              : kind === 'ebook'
-                ? await thumbRequest('thumb:ebook', { srcPath: filePath })
-                : kind === 'font'
-                  ? await thumbRequest('thumb:font', { srcPath: filePath })
-                  : kind === 'svg'
-                    ? await encodeSvgThumb(filePath)
-                    : await encodeImageThumb(filePath);
+            : kind === 'font'
+              ? await thumbRequest('thumb:font', { srcPath: filePath })
+              : kind === 'svg'
+                ? await encodeSvgThumb(filePath)
+                : await encodeImageThumb(filePath);
     } catch (e) {
-      // Office conversion depends on an external binary that may be missing or
-      // misconfigured; ebooks may simply carry no embedded cover; an SVG may have
-      // no viewBox / invalid XML / unsupported features librsvg can't parse.
-      // Fonts may be corrupt or use an unsupported table/layout. In those cases
-      // fail silently so the renderer shows a type icon. Returning from this
-      // lambda leaves no thumbnail on disk (run() resolves to undefined).
-      if (
-        kind === 'office' ||
-        kind === 'ebook' ||
-        kind === 'svg' ||
-        kind === 'font'
-      ) {
+      // An SVG may have no viewBox / invalid XML / unsupported features
+      // librsvg can't parse. Fonts may be corrupt or use an unsupported
+      // table/layout. In those cases fail silently so the renderer shows a
+      // type icon. Returning from this lambda leaves no thumbnail on disk
+      // (run() resolves to undefined).
+      if (kind === 'svg' || kind === 'font') {
         return;
       }
       throw e;

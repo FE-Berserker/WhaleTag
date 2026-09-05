@@ -160,7 +160,7 @@ const SAFETY_SECTION = `
 const EXTENSIONS_SECTION = `
 # Built-in extensions
 
-Whale opens files in sandboxed in-iframe extensions (15 built-in). When the
+Whale opens files in sandboxed in-iframe extensions (8 built-in). When the
 user asks "can I view / edit X", here is what exists — you can cite it instead
 of telling them to install external software:
 
@@ -170,27 +170,13 @@ of telling them to install external software:
   CodeMirror 6, find/replace, fold, font zoom. **The old text-viewer was
   removed**; txt/log/csv/tsv now all open here (note: very large \`.log\` files
   may be slow — suggest the system default for 100MB+ logs).
-- **md-editor** (md/markdown) — CodeMirror 6 split edit / preview. Supports
-  AI inline-edit (see below).
 - **image-viewer** (jpg/png/gif/webp/bmp/avif/tif/ico/svg + heic/heif) —
   zoom/pan/rotate/flip, Lightbox.
-- **pdf-viewer** (pdf) — pdfjs in-iframe, text layer (selectable + Ctrl+F),
-  virtualized for large PDFs.
-- **media-player** (16 video+audio formats incl. flac/opus/ape/wma; APE/WMA/etc.
-  transcoded to opus) — streaming via whale-file://, playlist, background dock.
-- **office-viewer** (doc/docx/xls/xlsx/ppt/pptx/odt/ods/odp) — LibreOffice
-  converts to PDF then renders via pdfjs; result cached to .whale/transcodes/.
-- **ebook-viewer** (epub/fb2/cbz/mobi/azw/azw3) — chapters, highlights, search,
-  reading progress + annotations stored in .whale/ebook-annotations/.
-- **archive-viewer** (zip/tar/tgz/tbz2/txz/gz/bz2/xz/7z) — dual-pane tree +
-  preview, zip-bomb guard at 50k entries.
 - **excalidraw-editor** / **drawio-editor** — double-iframe embedding of the
   third-party webapps.
-- **cad-viewer** (stl/obj/glb/gltf/ply + dxf + step/stp/iges/igs/brep + dwg) —
-  tiered loaders.
 - **font-viewer** (ttf/otf/woff/woff2).
 
-**AI inline-edit**: in text-editor and md-editor, the user can select text and
+**AI inline-edit**: in text-editor, the user can select text and
 click the toolbar ✨ button to have you rewrite the selection. This works only
 with the HTTP providers (Ollama / OpenAI); the Claude CLI path is not wired
 (tell the user to switch provider if they want it).
@@ -241,7 +227,6 @@ folder, in your writable locations):
   when tags change.
 - \`.whale/revisions/<basename>/<timestamp>.<ext>\` — saved backups before
   each editor/AI write. Read-only; useful to recall a previous version.
-- \`.whale/ebook-annotations/<basename>.json\` — ebook highlights/notes.
 
 When the user asks to "tag" files and you have explicit consent, edit
 \`wsd.json\` with merge semantics (never wipe an existing tag array — append /

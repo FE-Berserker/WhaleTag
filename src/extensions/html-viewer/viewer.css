@@ -8,7 +8,7 @@
  *
  * Theme-flash fix: `html, body[data-theme='light']` shares the light
  * background rule so the very first CSS paint is already correct — no
- * white flash on dark hosts. Same scheme as text-editor / pdf-viewer.
+ * white flash on dark hosts. Same scheme as text-editor.
  *
  * The `#content a` color rules retain the `:where()` zero-specificity trick
  * used by the previous version so user-authored `a { color: ... }` CSS
@@ -109,8 +109,7 @@ body[data-theme='dark'] #toolbar .toolbar-btn:focus-visible {
 }
 
 /* When the zoom-level button is in "Fit" mode, give it a subtle active
- * state (matches the .active pattern used by json-viewer for tree/raw and
- * pdf-viewer for fit-width/fit-page buttons). */
+ * state (matches the .active pattern used by json-viewer for tree/raw). */
 #toolbar .zoom-level.active {
   background: rgba(76, 175, 80, 0.15);
   border-color: rgba(76, 175, 80, 0.6);

@@ -19,13 +19,10 @@ import { assertWithinAllowedRoot } from '../allowed-roots';
 
 export function registerThumbnailHandlers(): void {
   // ---- Image thumbnails (`.whale/thumbs/<file>.jpg`) ----
-  ipcMain.handle(
-    'thumbnail:generate',
-    (_event, filePath: string, options?: { sofficePath?: string | null }) => {
-      assertWithinAllowedRoot(filePath); // writes under .whale/thumbs/
-      return generateThumbnail(filePath, options);
-    }
-  );
+  ipcMain.handle('thumbnail:generate', (_event, filePath: string) => {
+    assertWithinAllowedRoot(filePath); // writes under .whale/thumbs/
+    return generateThumbnail(filePath);
+  });
 
   ipcMain.handle('thumbnail:load', (_event, filePath: string) =>
     loadThumbnail(filePath)

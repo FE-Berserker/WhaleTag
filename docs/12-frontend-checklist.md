@@ -168,40 +168,18 @@
 
 各查看器底部状态栏、搜索、源码切换、theme 闪烁修复、大文件保护等共性项。
 
-### text-editor / md-editor
+### text-editor
 
 CodeMirror 6,查找/替换、字体缩放、Wrap、代码折叠、状态栏、`requestSelection`/`applyReplacement` AI 编辑桥。
-
-- [ ] md-editor 编辑区右键:Undo/Cut/Copy/Paste/Select All、Bold/Italic/Link/Heading 子菜单、Insert Callout/Table、Find/Go to Line、Wrap/Zoom、Export as HTML 齐全且生效,动作后菜单关闭
-- [ ] md-editor 只读文件右键:编辑类项(Cut/Paste/Bold/Italic/Link/Heading/Insert)全禁用,Copy/Select All/Find/Export 可用;空选区时 Cut/Copy 禁用
-- [ ] md-editor 预览区右键:Copy 复制选中文本 + Export as HTML;Esc / 点击外侧关闭菜单
 
 ### image-viewer / heic-viewer
 
 image-viewer 11 种格式,jpg/jpeg/png/gif/webp/bmp/avif/tiff/tif/ico/svg;Lightbox + zoom/pan/rotate/flipH/flipV;`F` 全屏。heic-viewer libheif-js wasm 解码。
 
-### pdf-viewer / media-player / office-viewer / ebook-viewer
-
-- pdf-viewer:**iframe 内 pdfjs 浏览器版**(CJK 字体自动回退)+ fake worker + `HostBinaryDataFactory` + wasm 经 host IPC
-- media-player:10 视频 + 16 音频;视频/原生音频用 `whale-file://` 流式 URL(206 Range);APE/WMA/AIFF/AMR/AC3/DTS/MPC/WV/DSF 走 `whale-audio://` 实时 ffmpeg→Opus 流式(首播 ~1s 出声,边转边播,tee 写 `.whale/transcodes/` 缓存,再开秒开 + 可拖动);`.opus` MIME `audio/opus`
-- office-viewer:`requestOfficeConvert` → 主进程 soffice 转 PDF → `officePdfContent` 推回 → iframe 内 pdfjs 浏览器版渲染到 `<canvas>`(与 pdf-viewer 共用 `src/extensions/shared/pdfjs-in-iframe.ts` 抽象);支持 `doc/docx/xls/xlsx/ppt/pptx/odt/ods/odp` 9 种;**PDF 已缓存到 `.whale/transcodes/<basename>.pdf`**(仿 audio-convert cache);soffice 加 `--norestore --nologo --nofirststartwizard` + stderr 捕获;启动用 `detectInitialTheme()`;仅手动 +/- 缩放,无 fit / 旋转 / 跳页 / 键盘导航;未装 LibreOffice 报 `'LibreOffice (soffice) not found'`,无引导
-- ebook-viewer:EPUB/CBZ/FB2 直读,MOBI/AZW/AZW3 经 Calibre 转 EPUB;阅读进度持久化 + 选区高亮 + Ctrl-F
-
-### archive-viewer
-
-支持 9 种:`zip / tar / tgz / tbz2 / txz / gz / bz2 / xz / 7z`,后 8 种经主进程 `7zip-bin` 解码。
-
 ### excalidraw-editor / drawio-editor
 
 - excalidraw-editor:scene restore + dirty + 拖入嵌入
 - drawio-editor:双层 iframe + `?proto=json` 结构化协议;`EMPTY_DRAWIO` 单行零空白;`export` action(不是 `autosave`/`save`)bridge 三事件统一映射;Editor `modified` 默认 false,Save 按钮不依赖 dirty
-
-### cad-viewer
-
-- Tier 0:stl/obj/glb/gltf/ply(WebGL)
-- Tier 1:dxf(2D/3D 切换 + ACI 颜色)
-- Tier 1.5:step/stp/iges/igs/brep(occt-import-js wasm)
-- Tier 2:dwg(dwg2dxf / ODA File Converter)
 
 ### font-viewer
 
@@ -492,7 +470,7 @@ image-viewer 11 种格式,jpg/jpeg/png/gif/webp/bmp/avif/tiff/tif/ico/svg;Lightb
 
 - [ ] 超过 `MAX_RECURSIVE_ENTRIES = 10000` 时截断 + Alert(`recursiveTruncated` 在 FileList 顶部)
 - [ ] 深目录扫描期间 FileList 半透明遮罩
-- [ ] **Alert 仅在 FileList 出现**;Gallery/Kanban/Matrix/Gantt/Calendar/Mapique/TagCloud/KG/FolderViz 各自根组件不含该 Alert
+- [ ] **Alert 仅在 FileList 顶部出现**;Gallery/Kanban/Matrix/Gantt/Calendar/Mapique/TagCloud/KG/FolderViz 各自根组件不含该 Alert(`recursiveTruncated` context 已暴露,各视角需自行判断)
 
 ### 排序行为
 
@@ -506,9 +484,4 @@ image-viewer 11 种格式,jpg/jpeg/png/gif/webp/bmp/avif/tiff/tif/ico/svg;Lightb
 
 ### 各视图自带深度滑块已移除
 
-- [ ] TagCloud / KG / Mapique / FolderViz 工具栏不再有深度滑块
-- [ ] FolderViz `whale.folderViz.<id>` 不再含 `maxDepth`
-
-### FileList Truncated Alert
-
-- [ ] 截断提示只在 FileList 顶部 `<Alert>`;其他 8 个视角需自行判断(recursiveTruncated context 已暴露)
+- [ ] TagCloud / KG / Mapique 工具栏不再有深度滑块(FolderViz 滑块已删、`whale.folderViz.<id>` 不再含 `maxDepth`,见「一、FolderViz」)

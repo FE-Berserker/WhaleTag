@@ -2,9 +2,8 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 
 /**
- * Render a chunk of assistant markdown to sanitized HTML. Mirrors the
- * md-editor extension pattern (`marked` → `DOMPurify`). Output is safe to
- * inject via `dangerouslySetInnerHTML`.
+ * Render a chunk of assistant markdown to sanitized HTML (`marked` →
+ * `DOMPurify`). Output is safe to inject via `dangerouslySetInnerHTML`.
  */
 export function renderMarkdown(md: string): string {
   if (!md) return '';

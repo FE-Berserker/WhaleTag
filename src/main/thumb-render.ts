@@ -2,17 +2,16 @@ import path from 'path';
 import { promises as fsp } from 'fs';
 import { pathToFileURL } from 'url';
 import { createRequire } from 'module';
-import { extractEbookCover } from './ebook-cover';
 import { renderFontToPng } from './font-thumb';
 import { getCanvas } from './lazy-native';
 import { encodeImageThumb, THUMB_SIZE } from './thumb-encode';
 
 /**
- * The three pure-JS CPU-heavy thumbnail renders (pdf / ebook / font),
- * moved out of `thumbnail.ts` so they can run inside the `whale-thumb`
- * utilityProcess (`thumb-worker.ts`) instead of on the main event loop.
- * Each returns the final JPEG thumbnail buffer; sizing/quality policy lives
- * in `thumb-encode.ts`.
+ * The pure-JS CPU-heavy thumbnail renders (pdf / font), moved out of
+ * `thumbnail.ts` so they can run inside the `whale-thumb` utilityProcess
+ * (`thumb-worker.ts`) instead of on the main event loop. Each returns the
+ * final JPEG thumbnail buffer; sizing/quality policy lives in
+ * `thumb-encode.ts`.
  *
  * This module must stay free of `process.parentPort` / electron imports so
  * it can be loaded directly by tests and by the host's in-process fallback
@@ -85,15 +84,6 @@ export async function renderPdfThumb(srcPath: string): Promise<Buffer> {
   } finally {
     loadingTask.destroy?.().catch(() => undefined);
   }
-}
-
-/**
- * Extracts an ebook's embedded cover (see `ebook-cover.ts`) and hands the raw
- * image bytes to `encodeImageThumb` for uniform sizing/quality. Throws when the
- * book has no embedded cover or it can't be decoded.
- */
-export async function renderEbookThumb(srcPath: string): Promise<Buffer> {
-  return encodeImageThumb(await extractEbookCover(srcPath));
 }
 
 /**

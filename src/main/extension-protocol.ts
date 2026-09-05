@@ -7,7 +7,7 @@
  *
  * Why this exists:
  * The `whale-extension://<extId>/<relPath>` URL is what the renderer
- * uses to load extension iframes (md-editor, text-editor, drawio, …)
+ * uses to load extension iframes (text-editor, json-viewer, drawio, …)
  * and their sub-resources. The previous implementation used the
  * deprecated `protocol.registerFileProtocol` callback API. That API
  * silently fails in Electron 32+ when the scheme is registered as a

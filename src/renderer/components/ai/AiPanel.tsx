@@ -21,7 +21,6 @@ import AttachFileIcon from '@mui/icons-material/AttachFile';
 import { setAiSettings } from '-/reducers/settings';
 import { newConversation, rewindConversation } from '-/reducers/ai';
 import type { RootState } from '-/reducers';
-import type { ImageAttachment } from '../../../shared/ai-types';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { useFileSelectionContext } from '-/hooks/FileSelectionContextProvider';
 import { useDirectoryUI } from '-/hooks/DirectoryContentContextProvider';
@@ -30,11 +29,6 @@ import { ipcApi } from '-/services/ipc-api';
 import { useAiStream } from './useAiStream';
 import MessageRenderer from './MessageRenderer';
 import ApprovalModal from './ApprovalModal';
-import {
-  AI_DRAFT_EVENT,
-  consumeAiDraft,
-  type AiDraftPayload,
-} from './aiDraftBus';
 import { useConfirm } from '-/components/ConfirmDialogProvider';
 import AiToolbar from './AiToolbar';
 import AiTabs from './AiTabs';
@@ -82,48 +76,7 @@ export default function AiPanel() {
   );
   const scrollRef = useRef<HTMLDivElement>(null);
   const confirm = useConfirm();
-  // Draft attachment handed over from a pdf-viewer marquee ("ask AI about
-  // this region") via the `whale:ai-draft` CustomEvent. One-shot: consumed
-  // by the next send. Not redux — must not survive a restart.
-  const [pdfDraft, setPdfDraft] = useState<{
-    path: string;
-    page?: number;
-    text: string;
-    imageDataUrl?: string;
-  } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  // Mirror of `streaming` for the mount-once draft effect below (its closure
-  // otherwise sees only the mount-time value). `useAiStream.send` also
-  // self-guards a busy turn, so a missed check is never a double-send.
-  const streamingRef = useRef(streaming);
-  useEffect(() => {
-    streamingRef.current = streaming;
-  }, [streaming]);
-  useEffect(() => {
-    const apply = (d: AiDraftPayload | null) => {
-      // Accept text and/or a screenshot — a scanned page has no text but
-      // still carries the screenshot.
-      if (!d || (!d.text && !d.imageDataUrl)) return;
-      setPdfDraft(d);
-      inputRef.current?.focus();
-      // A question from the AskQuestionDialog sends immediately (busy turn →
-      // the draft stays as a chip for the user to send manually).
-      if (d.question && !streamingRef.current) {
-        void doSend(d.question, d);
-      }
-    };
-    // The host opens the panel and fires the draft synchronously — on first
-    // use this lazy chunk is still loading, so the event is already gone.
-    // Drain the pending slot it left behind, then listen live.
-    apply(consumeAiDraft());
-    const onDraft = (e: Event) => {
-      apply((e as CustomEvent<AiDraftPayload>).detail);
-      consumeAiDraft(); // drop the pending copy so remounts don't re-apply
-    };
-    window.addEventListener(AI_DRAFT_EVENT, onDraft);
-    return () => window.removeEventListener(AI_DRAFT_EVENT, onDraft);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
   // Follow streaming output only while the user is already near the bottom —
   // scrolling up to read history must not yank the view back on every chunk.
   const nearBottomRef = useRef(true);
@@ -161,32 +114,12 @@ export default function AiPanel() {
     if (el && nearBottomRef.current) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
-  /** Send one turn. `draftOverride` lets the marquee draft path pass its
-   *  draft explicitly instead of reading `pdfDraft` state (which wouldn't
-   *  have flushed yet when auto-sending on arrival). */
-  const doSend = async (
-    text: string,
-    draft: { path: string; page?: number; text: string; imageDataUrl?: string } | null
-  ) => {
+  const doSend = async (text: string) => {
     if (!text || streaming) return;
     setInput('');
     nearBottomRef.current = true;
     let attachment: { path: string; content?: string } | null = null;
-    if (draft) {
-      // Marquee selection takes priority over the single-file attachment —
-      // the user explicitly boxed the region they want to ask about. The
-      // send() path wraps this in <current_note>; the inner tag preserves
-      // the page provenance. Text may be empty (scanned page) — the
-      // screenshot below carries the content then.
-      attachment = {
-        path: draft.path,
-        ...(draft.text
-          ? {
-              content: `<pdf_selection page="${draft.page ?? '?'}">\n${draft.text}\n</pdf_selection>`,
-            }
-          : {}),
-      };
-    } else if (attachedFile) {
+    if (attachedFile) {
       attachment = { path: attachedFile.path };
       const ext = attachedFile.extension.toLowerCase();
       if (
@@ -201,23 +134,6 @@ export default function AiPanel() {
         }
       }
     }
-    // Build the image attachment from the marquee screenshot (if any) — a
-    // scanned page has no text but the model can still see the region.
-    const draftImages: ImageAttachment[] = [];
-    if (draft?.imageDataUrl) {
-      const m = draft.imageDataUrl.match(/^data:(image\/[a-z]+);base64,(.+)$/i);
-      if (m) {
-        draftImages.push({
-          id: `pdf-sel-${Date.now()}`,
-          name: `pdf-p${draft.page ?? '?'}-selection.png`,
-          mediaType: m[1].toLowerCase() as ImageAttachment['mediaType'],
-          data: m[2],
-          size: Math.floor(m[2].length * 0.75),
-          source: 'paste',
-        });
-      }
-    }
-    setPdfDraft(null);
     // Capture the current perspective so the main process can inject a
     // Perspectives section into the system prompt (undefined when unrecognized
     // → the section is omitted gracefully).
@@ -231,12 +147,11 @@ export default function AiPanel() {
       text,
       attachment,
       perspective,
-      multiSelectPaths.length > 0 ? multiSelectPaths : undefined,
-      draftImages.length > 0 ? draftImages : undefined
+      multiSelectPaths.length > 0 ? multiSelectPaths : undefined
     );
   };
 
-  const handleSend = () => doSend(input.trim(), pdfDraft);
+  const handleSend = () => doSend(input.trim());
 
   return (
     <Box
@@ -344,7 +259,7 @@ export default function AiPanel() {
           sx={{
             alignItems: 'center',
             gap: 0.5,
-            mb: attachedFile || multiSelectPaths.length > 0 || pdfDraft ? 0.5 : 0,
+            mb: attachedFile || multiSelectPaths.length > 0 ? 0.5 : 0,
           }}
         >
           <Tooltip title={t('aiAttachToggle')}>
@@ -371,20 +286,6 @@ export default function AiPanel() {
               label={t('aiMultiSelect', { count: multiSelectPaths.length })}
               variant="outlined"
               color="primary"
-            />
-          ) : null}
-          {pdfDraft ? (
-            <Chip
-              size="small"
-              icon={<AttachFileIcon />}
-              label={
-                pdfDraft.text
-                  ? t('aiPdfSelection', { page: pdfDraft.page ?? '?' })
-                  : t('aiPdfScreenshot', { page: pdfDraft.page ?? '?' })
-              }
-              variant="outlined"
-              color="primary"
-              onDelete={() => setPdfDraft(null)}
             />
           ) : null}
         </Stack>

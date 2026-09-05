@@ -131,6 +131,37 @@ export interface FileDropSnippetOptions {
    *  for `'labeled'` cells the icon is decorative only and the rectangle's
    *  text label is the primary visual. */
   cellKind?: 'image' | 'labeled';
+  /** Path of the .drawio file being edited. When set, the cell link is stored
+   *  RELATIVE to this file's directory (if the target is inside it) so the
+   *  diagram survives a folder move; otherwise an absolute `file://` URL is
+   *  stored (docs/20). */
+  diagramPath?: string;
+}
+
+/** INSERT: pick the link value to store on a dropped cell — a bare relative
+ *  path (`./sub/foo.png`) when the target lives inside the diagram's dir, else
+ *  an absolute `file://` URL. drawio posts the raw link value back on click
+ *  (it does not resolve it — see `resolveDrawioLink`), so a relative value is
+ *  safe to store. */
+export function drawioLinkForInsert(
+  filePath: string,
+  diagramPath?: string
+): string {
+  if (diagramPath) {
+    const rel = toRelative(filePath, dirname(diagramPath));
+    if (rel) return rel;
+  }
+  return toFileUrl(filePath);
+}
+
+/** CLICK: resolve a stored link back to an absolute `file://` URL for the host
+ *  to open. External URLs and already-absolute `file://` links are returned
+ *  unchanged; a stored relative link is resolved against the .drawio file's
+ *  directory. */
+export function resolveDrawioLink(href: string, diagramPath: string): string {
+  if (isExternalUrl(href)) return href;
+  if (/^file:/i.test(href)) return href; // already absolute (old diagram)
+  return toFileUrl(resolveRelative(href, dirname(diagramPath)));
 }
 
 /** Build the `<UserObject>…</UserObject>` snippet that wraps an image cell
@@ -157,7 +188,7 @@ export function buildFileDropSnippet(options: FileDropSnippetOptions): string {
     width = 240,
     height = 240,
   } = options;
-  const link = escapeXmlAttr(toFileUrl(filePath));
+  const link = escapeXmlAttr(drawioLinkForInsert(filePath, options.diagramPath));
   const label = escapeXmlAttr(name);
   // Convert `data:image/jpeg;base64,XXX` → `data:image/jpeg,%FF...` so
   // drawio's `;`-based style parser doesn't break the image URL apart.
@@ -198,7 +229,7 @@ export function buildLabeledDropSnippet(options: FileDropSnippetOptions): string
     width = 200,
     height = 60,
   } = options;
-  const link = escapeXmlAttr(toFileUrl(filePath));
+  const link = escapeXmlAttr(drawioLinkForInsert(filePath, options.diagramPath));
   const label = escapeXmlAttr(name);
   const style = escapeXmlAttr(
     'rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;' +

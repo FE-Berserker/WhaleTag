@@ -49,8 +49,9 @@ export interface FileContentMessage {
   /**
    * Absolute directory of the file, supplied by the host when available.
    * Optional so older hosts stay compatible. Extensions that render images
-   * (e.g. md-editor) use this to resolve `<img src="./relative.png">` into
-   * a streamable `whale-file://` URL. The host should compute it once
+   * (e.g. image-viewer, html-viewer) use this to resolve
+   * `<img src="./relative.png">` into a streamable `whale-file://` URL. The
+   * host should compute it once
    * (e.g. via `path.dirname(filePath)`) and pass it as-is — the extension
    * does no further normalization. If absent, the extension treats any
    * relative `src` as a remote URL and lets it 404.
@@ -104,44 +105,14 @@ export interface ApplyReplacementMessage {
   text: string;
 }
 
-/** Host -> Extension: binary asset bytes requested by the PDF viewer's data
- *  factory (cmap / standard font / wasm). `data` is null when not found. */
-export interface PdfAssetMessage {
-  type: 'pdfAsset';
-  requestId: string;
-  data: ArrayBuffer | null;
-  error?: string;
-}
-
-/** Host -> Extension: the occt-import-js wasm bytes requested by cad-viewer.
- *  Fetching `whale-extension://` is unreliable in this Electron build, so the
- *  extension asks the host for the wasm and passes it as emscripten
- *  `wasmBinary`. `data` is null on read failure. */
-export interface CadWasmMessage {
-  type: 'cadWasm';
-  requestId: string;
-  data: ArrayBuffer | null;
-  error?: string;
-}
-
 /** Host -> Extension: the libheif-js wasm bytes requested by heic-viewer.
- *  Same bridge pattern as CadWasmMessage — fetch on `whale-extension://` is
- *  unreliable, so the extension requests the wasm and feeds it to emscripten
- *  as `wasmBinary`. `data` is null on read failure. */
+ *  Fetching `whale-extension://` is unreliable in this Electron build, so the
+ *  extension asks the host for the wasm and feeds it to emscripten as
+ *  `wasmBinary`. `data` is null on read failure. */
 export interface HeicWasmMessage {
   type: 'heicWasm';
   requestId: string;
   data: ArrayBuffer | null;
-  error?: string;
-}
-
-/** Host -> Extension: DXF bytes produced from a DWG file by an external
- *  converter (LibreDWG dwg2dxf / ODA File Converter). `data` is null when no
- *  converter is installed or the conversion failed. */
-export interface DwgConvertedContentMessage {
-  type: 'dwgConvertedContent';
-  requestId: string;
-  data: Uint8Array | null;
   error?: string;
 }
 
@@ -186,227 +157,12 @@ export interface SiblingsMessage {
   paths: string[];
 }
 
-/** Host -> Extension: PDF bytes produced by converting an Office document.
- *  `data` is null when conversion failed; `error` carries a human-readable reason. */
-export interface OfficePdfContentMessage {
-  type: 'officePdfContent';
-  requestId: string;
-  data: Uint8Array | null;
-  error?: string;
-}
-
-/** Host -> Extension: a file's thumbnail as a `data:image/jpeg;base64,...` URL
- *  (or `null` when no thumbnail has been generated yet). Used by office-viewer
- *  as an instant first-page placeholder while LibreOffice cold-converts the
- *  document to PDF (docs/15 P3-1). Same bytes the file-browser thumbnail
- *  pipeline already cached at `<dir>/.whale/thumbs/<basename>.jpg`. */
-export interface ThumbnailContentMessage {
-  type: 'thumbnailContent';
-  requestId: string;
-  dataUrl: string | null;
-}
-
-/** Host -> Extension: EPUB bytes produced by converting a MOBI/AZW/AZW3 ebook
- *  with Calibre. `data` is null when conversion failed; `error` carries the reason. */
-export interface EbookConvertedContentMessage {
-  type: 'ebookConvertedContent';
-  requestId: string;
-  data: Uint8Array | null;
-  error?: string;
-}
-
-/** Host -> Extension: the list of entries inside an archive, produced by the
- *  main-process decoder. Paths are POSIX-style. */
-export interface ArchiveListMessage {
-  type: 'archiveList';
-  requestId: string;
-  entries: Array<{ path: string; size: number; compressedSize: number; mtime: number; isDir: boolean }>;
-  truncated: boolean;
-  error?: string;
-}
-
-/** Host -> Extension: base64-encoded bytes for a single archive entry. */
-export interface ArchiveEntryContentMessage {
-  type: 'archiveEntryContent';
-  requestId: string;
-  base64: string;
-  size: number;
-  error?: string;
-}
-
-/** Host -> Extension: result of extracting an archive to a directory. */
-export interface ArchiveExtractedMessage {
-  type: 'archiveExtracted';
-  requestId: string;
-  written: number;
-  skipped: string[];
-  errors: string[];
-  error?: string;
-}
-
 /** Host -> Extension: result of a directory-picker dialog requested by an
- *  extension (e.g. archive-viewer's "Extract to folder"). */
+ *  extension. */
 export interface DirectoryDialogResultMessage {
   type: 'directoryDialogResult';
   requestId: string;
   path: string | null;
-}
-
-/** Host -> Extension: a streaming URL (`whale-file://...`) for large media files
- *  that the browser can fetch with Range requests. Replaces buffering the entire
- *  file into the renderer for video and native-playable audio. */
-export interface StreamingUrlMessage {
-  type: 'streamingUrl';
-  path: string;
-  url: string;
-}
-
-/** Host -> Extension: raw file bytes requested by pdf-viewer via
- *  `requestFileBytes`. pdf-viewer can't `fetch(whale-file://)` — Chromium's
- *  CORS policy blocks cross-origin fetch to custom schemes (only http/https/
- *  data/chrome are allowed), which rules out pdfjs's `getDocument({url})`
- *  Range path. Instead the host reads the file and ships the bytes through
- *  postMessage, which structured-clones the `Uint8Array` (one memcpy, no
- *  base64, no O(n²) decode). `data` is null on read failure (see `error`). */
-export interface FileBytesMessage {
-  type: 'fileBytes';
-  requestId: string;
-  data: Uint8Array | null;
-  error?: string;
-}
-
-/** Host -> Extension: answer to `requestSofficeCheck` — whether LibreOffice
- *  (`soffice`) is installed. The office-viewer uses this to show install
- *  guidance up front instead of a bare "soffice not found" dead-end
- *  (docs/09 §16.16). */
-export interface SofficeCheckResultMessage {
-  type: 'sofficeCheckResult';
-  requestId: string;
-  available: boolean;
-}
-
-/** Host -> Extension: response to `requestSaveImage`. `path` is the saved
- *  absolute path on success, null on failure (with `error`). */
-export interface ImageSavedMessage {
-  type: 'imageSaved';
-  requestId: string;
-  path: string | null;
-  error?: string;
-}
-/** Host -> Extension: response to `requestListDirectory` (md-editor image
- *  cleanup). The subfolder's entries; the editor diffs them against the .md's
- *  referenced-image set to find orphans. */
-export interface DirectoryListedMessage {
-  type: 'directoryListed';
-  requestId: string;
-  entries: import('./ipc-types').DirEntry[];
-  /** Set when `listDirectory` failed (entries is then empty). */
-  error?: string;
-}
-/** Host -> Extension: response to `requestDeleteFiles` (md-editor image
- *  cleanup). `deleted` holds paths actually removed; `errors` per-file
- *  failures (empty on full success). */
-export interface FilesDeletedMessage {
-  type: 'filesDeleted';
-  requestId: string;
-  deleted: string[];
-  errors: string[];
-}
-
-/** Host -> Extension: response to `requestClipboardText` (md-editor context
- *  menu Paste). `text` is the clipboard's current text ('' when empty or
- *  non-text). */
-export interface ClipboardTextMessage {
-  type: 'clipboardText';
-  requestId: string;
-  text: string;
-}
-
-/** Host -> Extension: whether the AI assistant is enabled, so extensions with
- *  AI-driven actions (pdf-viewer's marquee "ask AI") can hide them when the
- *  feature is off. Pushed right after `ready` and on every change. */
-export interface SetAiAvailableMessage {
-  type: 'setAiAvailable';
-  available: boolean;
-}
-
-// md-editor render-theme preset + custom callouts (host → ext). The host
-// pushes these redux settings into the md-editor iframe (separate origin) so
-// its preview renders with the user's chosen preset + custom callout types.
-// `MdRenderPreset` is defined here (shared) so settings.ts + md-editor both
-// import the same union.
-export type MdRenderPreset =
-  | 'github-light'
-  | 'github-dark'
-  | 'solarized-light'
-  | 'solarized-dark'
-  | 'dracula'
-  | 'nord'
-  | 'gruvbox'
-  | 'one-dark'
-  | 'latex';
-export type MdRenderThemePref = 'auto' | MdRenderPreset;
-
-/** md-editor pasted-image save location: alongside the .md, or inside a
- *  subfolder of it (Typora-style). The subfolder name (see
- *  SetImageSaveConfigMessage) may contain a `${filename}` placeholder that
- *  expands to the .md's basename without extension (notes.md → notes). */
-export type MdImageSaveMode = 'current' | 'subfolder';
-
-/** Host → Extension (md-editor): apply this render-theme preset ('auto' =
- *  follow the host's light/dark). Replaces the iframe's localStorage-only
- *  theme so the Settings panel is the source of truth. */
-export interface SetMdRenderThemeMessage {
-  type: 'setMdRenderTheme';
-  theme: MdRenderThemePref;
-}
-/** Host → Extension (md-editor): replace the custom callout list. md-editor's
- *  `transformCallouts` merges these over the 15 built-ins. */
-export interface SetCustomCalloutsMessage {
-  type: 'setCustomCallouts';
-  callouts: import('./callout-types').CustomCallout[];
-}
-/** Host → Extension (md-editor): replace the HTML-template list shown in the
- *  editor's right-click "Templates" submenu. Each entry's `template` is
- *  inserted at the cursor on select (sanitized on preview by md-render). */
-export interface SetMdTemplatesMessage {
-  type: 'setMdTemplates';
-  templates: import('./md-template-types').MdTemplate[];
-}
-/** Host → Extension (md-editor): replace the PDF export page header/footer
- *  templates (Typora-style; empty string = none). The editor converts the
- *  `${page}` / `${pages}` / `${title}` / `${date}` placeholders to Chromium
- *  printToPDF span classes on export. */
-export interface SetMdPdfHeaderFooterMessage {
-  type: 'setMdPdfHeaderFooter';
-  header: string;
-  footer: string;
-}
-/** Host → Extension (md-editor): replace the keymap bindings. Payload is an
- *  action→CodeMirror-combo map (e.g. `{ save: 'Mod-s', bold: 'Mod-b' }`). The
- *  editor reconfigures its keymapCompartment so the change applies live to an
- *  already-open editor. `''` = no binding for that action. Typed loosely here
- *  (Record<string,string>) so shared/ doesn't import renderer domain. */
-export interface SetKeybindingsMessage {
-  type: 'setKeybindings';
-  keybindings: Record<string, string>;
-}
-/** Host → Extension (md-editor): configure where pasted/dropped images are
- *  saved. `mode='current'` → the .md's own directory; `mode='subfolder'` → a
- *  subfolder of it, whose name may contain `${filename}` (= the .md basename
- *  without extension). The main process mkdir's the subfolder (recursive) on
- *  save, and the editor inserts a `![](./<subfolder>/file)` link accordingly. */
-export interface SetImageSaveConfigMessage {
-  type: 'setImageSaveConfig';
-  mode: MdImageSaveMode;
-  subfolder: string;
-}
-/** Extension → Host (md-editor): the user changed the preset from the
- *  toolbar `<select>` inside the editor. Host dispatches it back into redux
- *  so Settings stays in sync (bidirectional). */
-export interface MdRenderThemeChangedMessage {
-  type: 'mdRenderThemeChanged';
-  theme: MdRenderThemePref;
 }
 
 export type HostMessage =
@@ -416,38 +172,12 @@ export type HostMessage =
   | SetReadOnlyMessage
   | SetLocaleMessage
   | RequestSaveMessage
-  | PdfAssetMessage
-  | CadWasmMessage
   | HeicWasmMessage
-  | DwgConvertedContentMessage
-  | OfficePdfContentMessage
-  | SofficeCheckResultMessage
-  | ThumbnailContentMessage
-  | EbookConvertedContentMessage
-  | ArchiveListMessage
-  | ArchiveEntryContentMessage
-  | ArchiveExtractedMessage
-  | DirectoryDialogResultMessage
   | ExternalDragMessage
   | FileEmbedMessage
   | SiblingsMessage
-  | FileBytesMessage
-  | RenderedPdfMessage
-  | SetMdRenderThemeMessage
-  | SetCustomCalloutsMessage
-  | SetMdTemplatesMessage
-  | SetMdPdfHeaderFooterMessage
-  | SetKeybindingsMessage
-  | SetImageSaveConfigMessage
-  | EbookAnnotationsMessage
   | RequestSelectionMessage
-  | ApplyReplacementMessage
-  | StreamingUrlMessage
-  | ImageSavedMessage
-  | DirectoryListedMessage
-  | FilesDeletedMessage
-  | ClipboardTextMessage
-  | SetAiAvailableMessage;
+  | ApplyReplacementMessage;
 
 // Extension -> Host messages
 
@@ -477,10 +207,6 @@ export interface EditDocumentMessage {
   path: string;
 }
 
-export interface PlaybackEndedMessage {
-  type: 'playbackEnded';
-}
-
 export interface ThumbnailGeneratedMessage {
   type: 'thumbnailGenerated';
   path: string;
@@ -498,32 +224,10 @@ export interface ErrorMessage {
   message: string;
 }
 
-/** Extension -> Host: PDF viewer requesting cmap / font / wasm asset bytes. */
-export interface RequestPdfAssetMessage {
-  type: 'requestPdfAsset';
-  requestId: string;
-  kind: 'cMapUrl' | 'standardFontDataUrl' | 'wasmUrl';
-  filename: string;
-}
-
-/** Extension -> Host: cad-viewer requesting the occt-import-js wasm bytes. */
-export interface RequestCadWasmMessage {
-  type: 'requestCadWasm';
-  requestId: string;
-}
-
 /** Extension -> Host: heic-viewer requesting the libheif-js wasm bytes. */
 export interface RequestHeicWasmMessage {
   type: 'requestHeicWasm';
   requestId: string;
-}
-
-/** Extension -> Host: cad-viewer requesting DWG→DXF conversion (path-based:
- *  the main process reads the DWG from disk and shells out to a converter). */
-export interface RequestDwgConvertMessage {
-  type: 'requestDwgConvert';
-  requestId: string;
-  path: string;
 }
 
 /** Extension -> Host: request a thumbnail + metadata for a dropped non-image
@@ -534,121 +238,6 @@ export interface RequestFileEmbedMessage {
   type: 'requestFileEmbed';
   path: string;
   isDirectory?: boolean;
-}
-
-/** Extension -> Host: office viewer requests the host convert the Office document
- *  to PDF bytes. The host answers with `officePdfContent`. */
-export interface RequestOfficeConvertMessage {
-  type: 'requestOfficeConvert';
-  requestId: string;
-  path: string;
-}
-
-/** Extension -> Host: office viewer requests the file's cached thumbnail (a
- *  `data:` URL) to show as an instant placeholder during the LibreOffice→PDF
- *  cold convert. The host answers with `thumbnailContent` (dataUrl null when
- *  no thumbnail exists yet). docs/15 P3-1. */
-export interface RequestThumbnailMessage {
-  type: 'requestThumbnail';
-  requestId: string;
-  path: string;
-}
-
-/** Extension -> Host: office-viewer asks whether LibreOffice (`soffice`) is
- *  installed, so it can show install guidance before attempting the doomed
- *  convert (docs/09 §16.16). The host answers with `sofficeCheckResult`. */
-export interface RequestSofficeCheckMessage {
-  type: 'requestSofficeCheck';
-  requestId: string;
-}
-
-/** Extension -> Host: open `path` with the OS default application. Used as the
- *  fallback when LibreOffice is missing or conversion fails, so the user is
- *  never stuck on a dead-end error page (docs/09 §16.21). Fire-and-forget. */
-export interface OpenWithSystemMessage {
-  type: 'openWithSystem';
-  path: string;
-}
-
-/** Extension -> Host: ebook viewer requests the host convert a MOBI/AZW/AZW3
- *  file to EPUB bytes using Calibre. The host answers with `ebookConvertedContent`. */
-export interface RequestEbookConvertMessage {
-  type: 'requestEbookConvert';
-  requestId: string;
-  path: string;
-}
-
-/** Extension -> Host: media-player requests a streaming URL for a media file
- *  so the browser can request ranges instead of buffering the whole file in
- *  the renderer. The host picks the scheme by extension: `whale-file://` for
- *  video / native-playable audio, `whale-audio://` for transcode-only formats
- *  (APE/WMA/etc) which the host live-transcodes to Opus and streams. */
-export interface RequestStreamingUrlMessage {
-  type: 'requestStreamingUrl';
-  path: string;
-}
-
-/** Extension -> Host: pdf-viewer requests the raw bytes of `path`. With
- *  `offset` + `length` set it's a byte-slice read (pdfjs custom range
- *  transport — Chromium's XHR scheme allow-list makes `whale-file://`
- *  unfetchable from extension iframes, so range streaming goes over this
- *  bridge); without them it's the legacy whole-file read. See
- *  `FileBytesMessage` for the reply shape. */
-export interface RequestFileBytesMessage {
-  type: 'requestFileBytes';
-  requestId: string;
-  path: string;
-  /** Byte offset of the slice start (clamped to the file bounds). */
-  offset?: number;
-  /** Slice length in bytes (truncated at EOF). */
-  length?: number;
-}
-
-/** Options for `requestRenderPdf` / `renderHtmlToPdf`. All optional — the
- *  main-process printer falls back to A4 + 0.4" margins + printBackground. */
-export interface RenderPdfOptions {
-  pageSize?: 'A4' | 'Letter';
-  landscape?: boolean;
-  scale?: number;
-  marginInches?: { top: number; bottom: number; left: number; right: number };
-  /** Chromium printToPDF header template (HTML; `<span class="pageNumber">`
-   *  etc. for variables). Only used when displayHeaderFooter is true. */
-  headerTemplate?: string;
-  /** Chromium printToPDF footer template. See {@link headerTemplate}. */
-  footerTemplate?: string;
-  /** Show header/footer on the PDF. False (default) = no header/footer. */
-  displayHeaderFooter?: boolean;
-}
-
-/** Extension -> Host: render an HTML document to a PDF via the main process's
- *  hidden Chromium window (`webContents.printToPDF`). The HTML is the fully-
- *  rendered, sanitized preview output (`buildPrintableHtml` in md-render.ts)
- *  — KaTeX/Mermaid already rendered to static HTML/SVG, images already
- *  resolved to `whale-file://` URLs. The host writes it to a temp file, loads
- *  it in an offscreen BrowserWindow, waits for images, prints, returns bytes. */
-export interface RequestRenderPdfMessage {
-  type: 'requestRenderPdf';
-  requestId: string;
-  html: string;
-  options?: RenderPdfOptions;
-}
-
-/** Host -> Extension: the PDF bytes (or null + error on failure). Mirrors
- *  `FileBytesMessage`'s null-on-error shape. */
-export interface RenderedPdfMessage {
-  type: 'renderedPdf';
-  requestId: string;
-  data: Uint8Array | null;
-  error?: string;
-}
-
-/** Extension -> Host: request the main-process archive decoder list entries. */
-export interface RequestArchiveListMessage {
-  type: 'requestArchiveList';
-  requestId: string;
-  path: string;
-  maxEntries?: number;
-  password?: string;
 }
 
 /** Extension -> Host: ask the host to load and deliver the file at `path` as
@@ -675,175 +264,19 @@ export interface EditorSelectionMessage {
   to: number;
 }
 
-/** Extension -> Host: the background-music dock's "maximize" button. The host
- *  promotes the current track to a fullscreen media-player view (overlaying
- *  the dock); dock state is preserved so playback resumes from the bar when
- *  the user closes the viewer. */
-export interface RequestOpenInViewMessage {
-  type: 'requestOpenInView';
-  path: string;
-}
-
-/** Extension -> Host: the background-music dock's "collapse" button. The host
- *  hides the dock until the next time the user enqueues a track or explicitly
- *  restores it. `dismissed` survives across mounts (persisted via localStorage). */
-export interface RequestHideMessage {
-  type: 'requestHide';
-}
-
-/** Extension -> Host: ebook-viewer asks for the persisted annotations file
- *  (`.whale/ebook-annotations/<basename>.json`). The host answers with
- *  `ebookAnnotations` carrying the same `requestId`. The file may not exist
- *  yet — `payload` is then `null`. */
-export interface RequestReadEbookAnnotationsMessage {
-  type: 'requestReadEbookAnnotations';
-  requestId: string;
-  path: string;
-}
-
-/** Extension -> Host: ebook-viewer pushes its full annotations snapshot for
- *  persistence. The extension owns the authoritative state — the host just
- *  stores it atomically under the per-directory lock. The host replies with
- *  `ebookAnnotations` carrying the same `requestId` and `ok: true`. */
-export interface RequestWriteEbookAnnotationsMessage {
-  type: 'requestWriteEbookAnnotations';
-  requestId: string;
-  path: string;
-  payload: unknown;
-}
-
-/** Host -> Extension: response to a `requestReadEbookAnnotations` /
- *  `requestWriteEbookAnnotations`. `payload` is the parsed JSON content (or
- *  `null` for a fresh book / a successful write). `error` is set when the
- *  operation failed. */
-export interface EbookAnnotationsMessage {
-  type: 'ebookAnnotations';
-  requestId: string;
-  ok: boolean;
-  payload?: unknown;
-  error?: string;
-}
-
-/** Extension -> Host: request a single archive entry's bytes (base64). */
-export interface RequestArchiveEntryMessage {
-  type: 'requestArchiveEntry';
-  requestId: string;
-  path: string;
-  entryPath: string;
-  password?: string;
-  force?: boolean;
-}
-
-/** Extension -> Host: request extraction of the whole archive to destDir. */
-export interface RequestArchiveExtractMessage {
-  type: 'requestArchiveExtract';
-  requestId: string;
-  path: string;
-  destDir: string;
-  password?: string;
-  flatten?: boolean;
-}
-
-/** Extension -> Host: request a directory picker dialog. The host answers with
- *  directoryDialogResult. */
-export interface RequestDirectoryDialogMessage {
-  type: 'requestDirectoryDialog';
-  requestId: string;
-}
-
-/** Extension -> Host: paste an image from the clipboard. The host saves it to
- *  `dirPath` (the .md's directory) as `image-<timestamp>.<ext>` and answers
- *  with `imageSaved` carrying the saved path (or null + error). */
-export interface RequestSaveImageMessage {
-  type: 'requestSaveImage';
-  requestId: string;
-  /** `data:image/<ext>;base64,...` — the clipboard image, encoded client-side. */
-  dataURL: string;
-  /** File extension without dot, e.g. "png" / "jpeg" (derived from the MIME). */
-  ext: string;
-  /** Absolute directory to save into (the .md's directory). */
-  dirPath: string;
-}
-/** Extension -> Host: list a directory's entries (md-editor image cleanup —
- *  find orphan images in the paste subfolder). Routed to `ipcApi.listDirectory`. */
-export interface RequestListDirectoryMessage {
-  type: 'requestListDirectory';
-  requestId: string;
-  dirPath: string;
-}
-/** Extension -> Host: delete files (md-editor image cleanup — remove the
- *  orphan images). Routed to `ipcApi.deletePath` per file; the host decides
- *  `useTrash` from `settings.deleteToTrash`. */
-export interface RequestDeleteFilesMessage {
-  type: 'requestDeleteFiles';
-  requestId: string;
-  paths: string[];
-}
-
-/** Extension -> Host: read the clipboard's text (md-editor context menu
- *  Paste). Routed through the host because an iframe's Clipboard API is
- *  Permissions-Policy-gated; the host's main process reads it directly. */
-export interface RequestClipboardTextMessage {
-  type: 'requestClipboardText';
-  requestId: string;
-}
-
-/** Extension -> Host: the user boxed a region and wants to ask the AI about
- *  the extracted text (pdf-viewer marquee). The host opens the AI panel and
- *  forwards the payload as a draft attachment (`whale:ai-draft` event). */
-export interface AskAiMessage {
-  type: 'askAi';
-  /** PDF file path the selection came from (used as the attachment path). */
-  path: string;
-  /** 1-based page number of the selection. */
-  page?: number;
-  /** Extracted text inside the marquee (reading order). '' for scans. */
-  text: string;
-  /** Cropped region screenshot as a PNG data URL — the vision fallback for
-   *  scanned pages (and layout context when text exists). Capped in size by
-   *  the extension before posting. */
-  imageDataUrl?: string;
-}
-
 export type ExtensionMessage =
   | ReadyMessage
   | LoadDefaultTextContentMessage
   | ParentSaveDocumentMessage
   | ContentChangedMessage
   | EditDocumentMessage
-  | PlaybackEndedMessage
   | ThumbnailGeneratedMessage
   | OpenLinkExternallyMessage
   | ErrorMessage
-  | RequestPdfAssetMessage
-  | RequestCadWasmMessage
   | RequestHeicWasmMessage
-  | RequestDwgConvertMessage
-  | RequestOfficeConvertMessage
-  | RequestSofficeCheckMessage
-  | OpenWithSystemMessage
-  | RequestThumbnailMessage
-  | RequestEbookConvertMessage
-  | RequestStreamingUrlMessage
-  | RequestFileBytesMessage
-  | RequestRenderPdfMessage
-  | MdRenderThemeChangedMessage
-  | RequestArchiveListMessage
-  | RequestArchiveEntryMessage
-  | RequestArchiveExtractMessage
-  | RequestDirectoryDialogMessage
   | RequestFileEmbedMessage
   | RequestFileMessage
-  | RequestReadEbookAnnotationsMessage
-  | RequestWriteEbookAnnotationsMessage
-  | EditorSelectionMessage
-  | RequestOpenInViewMessage
-  | RequestHideMessage
-  | RequestSaveImageMessage
-  | RequestListDirectoryMessage
-  | RequestDeleteFilesMessage
-  | RequestClipboardTextMessage
-  | AskAiMessage;
+  | EditorSelectionMessage;
 
 /** Runtime API injected into each extension iframe as `window.whaleExt`. */
 export interface WhaleExtApi {

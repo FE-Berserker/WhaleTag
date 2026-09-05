@@ -26,11 +26,7 @@ import {
   type Pending,
 } from './worker-protocol';
 import { resolveThumbWorkerEntryPath } from './thumb-worker-spawn';
-import {
-  renderPdfThumb,
-  renderFontThumb,
-  renderEbookThumb,
-} from './thumb-render';
+import { renderPdfThumb, renderFontThumb } from './thumb-render';
 import type {
   ThumbWorkerOp,
   ThumbWorkerMessage,
@@ -152,10 +148,10 @@ async function ensureSpawn(): Promise<void> {
  * Under `ELECTRON_RUN_AS_NODE` the request is served IN-PROCESS instead:
  * the test runner (`scripts/run-tests.cjs` → `electron --test`) sets that
  * env var, and in plain-Node mode `utilityProcess.fork` does not exist.
- * `thumbnail.test.ts` / `ebook-cover.test.ts` call `generateThumbnail`
- * directly, so without this fallback they would crash on the fork. The
- * fallback runs the very same `thumb-render.ts` functions the worker
- * would, keeping the tests' coverage meaningful.
+ * `thumbnail.test.ts` calls `generateThumbnail` directly, so without this
+ * fallback it would crash on the fork. The fallback runs the very same
+ * `thumb-render.ts` functions the worker would, keeping the tests' coverage
+ * meaningful.
  */
 export async function thumbRequest(
   op: ThumbWorkerOp,
@@ -167,8 +163,6 @@ export async function thumbRequest(
         return renderPdfThumb(arg.srcPath);
       case 'thumb:font':
         return renderFontThumb(arg.srcPath);
-      case 'thumb:ebook':
-        return renderEbookThumb(arg.srcPath);
       default:
         throw new Error(`unknown op: ${op as string}`);
     }

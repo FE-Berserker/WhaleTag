@@ -1,5 +1,5 @@
 /**
- * md-editor / text-editor / etc. iframe loading is gated on the
+ * Extension iframe loading (text-editor / json-viewer / etc.) is gated on the
  * `whale-extension://` protocol resolving correctly. The previous
  * implementation used the deprecated `protocol.registerFileProtocol`
  * callback API, which silently fails in Electron 32+ when the scheme
@@ -31,34 +31,30 @@ before(async () => {
   // runs against the same tree shape, just rooted somewhere disposable.
   PARENT_DIR = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-ext-proto-'));
   EXT_ROOT = path.join(PARENT_DIR, 'extensions');
-  await fsp.mkdir(path.join(EXT_ROOT, 'md-editor', 'a-dir'), { recursive: true });
-  await fsp.mkdir(path.join(EXT_ROOT, 'md-editor', 'sub', 'dir'), {
+  await fsp.mkdir(path.join(EXT_ROOT, 'text-editor', 'a-dir'), { recursive: true });
+  await fsp.mkdir(path.join(EXT_ROOT, 'text-editor', 'sub', 'dir'), {
     recursive: true,
   });
   await fsp.mkdir(path.join(EXT_ROOT, 'text-editor'), { recursive: true });
   await fsp.writeFile(
-    path.join(EXT_ROOT, 'md-editor', 'index.html'),
-    '<!doctype html><title>md</title>'
+    path.join(EXT_ROOT, 'text-editor', 'index.html'),
+    '<!doctype html><title>text</title>'
   );
   await fsp.writeFile(
-    path.join(EXT_ROOT, 'md-editor', 'bundle.js'),
+    path.join(EXT_ROOT, 'text-editor', 'bundle.js'),
     'window.whaleExt.postMessage({type:"ready"});'
   );
   await fsp.writeFile(
-    path.join(EXT_ROOT, 'md-editor', 'styles.css'),
+    path.join(EXT_ROOT, 'text-editor', 'styles.css'),
     'body { color: red; }'
   );
   await fsp.writeFile(
-    path.join(EXT_ROOT, 'md-editor', 'data.json'),
+    path.join(EXT_ROOT, 'text-editor', 'data.json'),
     '{"ok":true}'
   );
   await fsp.writeFile(
-    path.join(EXT_ROOT, 'md-editor', 'sub', 'dir', 'nested.txt'),
+    path.join(EXT_ROOT, 'text-editor', 'sub', 'dir', 'nested.txt'),
     'nested-ok'
-  );
-  await fsp.writeFile(
-    path.join(EXT_ROOT, 'text-editor', 'index.html'),
-    '<!doctype html><title>text</title>'
   );
 });
 
@@ -67,20 +63,20 @@ after(async () => {
 });
 
 describe('resolveExtensionRequest — happy path', () => {
-  it('resolves md-editor/index.html with text/html and the file body', async () => {
+  it('resolves text-editor/index.html with text/html and the file body', async () => {
     const r = await resolveExtensionRequest(
-      'whale-extension://md-editor/index.html',
+      'whale-extension://text-editor/index.html',
       EXT_ROOT
     );
     assert.equal(r.ok, true);
     if (!r.ok) return;
     assert.match(r.mime, /^text\/html/);
-    assert.match(r.buf.toString('utf-8'), /<title>md<\/title>/);
+    assert.match(r.buf.toString('utf-8'), /<title>text<\/title>/);
   });
 
   it('resolves bundle.js as text/javascript', async () => {
     const r = await resolveExtensionRequest(
-      'whale-extension://md-editor/bundle.js',
+      'whale-extension://text-editor/bundle.js',
       EXT_ROOT
     );
     assert.equal(r.ok, true);
@@ -92,7 +88,7 @@ describe('resolveExtensionRequest — happy path', () => {
 
   it('resolves styles.css as text/css', async () => {
     const r = await resolveExtensionRequest(
-      'whale-extension://md-editor/styles.css',
+      'whale-extension://text-editor/styles.css',
       EXT_ROOT
     );
     assert.equal(r.ok, true);
@@ -102,7 +98,7 @@ describe('resolveExtensionRequest — happy path', () => {
 
   it('resolves data.json as application/json', async () => {
     const r = await resolveExtensionRequest(
-      'whale-extension://md-editor/data.json',
+      'whale-extension://text-editor/data.json',
       EXT_ROOT
     );
     assert.equal(r.ok, true);
@@ -113,7 +109,7 @@ describe('resolveExtensionRequest — happy path', () => {
 
   it('resolves nested paths (extensions/<id>/sub/dir/file)', async () => {
     const r = await resolveExtensionRequest(
-      'whale-extension://md-editor/sub/dir/nested.txt',
+      'whale-extension://text-editor/sub/dir/nested.txt',
       EXT_ROOT
     );
     assert.equal(r.ok, true);
@@ -125,14 +121,14 @@ describe('resolveExtensionRequest — happy path', () => {
 describe('resolveExtensionRequest — path-traversal guard', () => {
   it('the path-traversal guard fires when the resolved path leaves extRoot (via symlink/junction)', async () => {
     // The URL parser normalizes `..` in the pathname, so a URL like
-    // `whale-extension://md-editor/../../sibling/secret.html` arrives
+    // `whale-extension://text-editor/../../sibling/secret.html` arrives
     // with `pathname: /sibling/secret.html` — which is INSIDE extRoot
     // and the guard never fires. The realistic attack surface is a
     // symlink that lives inside the extension root but resolves to a
     // file outside it. Create such a symlink, then request a path
     // THROUGH it. The resolved path leaves extRoot → guard fires →
     // 403.
-    const linkDir = path.join(EXT_ROOT, 'md-editor', 'escape-link');
+    const linkDir = path.join(EXT_ROOT, 'text-editor', 'escape-link');
     // Place a file outside extRoot, then link to its parent dir.
     const outsideDir = path.join(path.dirname(EXT_ROOT), 'sibling-out');
     const outsideFile = path.join(outsideDir, 'secret.html');
@@ -155,7 +151,7 @@ describe('resolveExtensionRequest — path-traversal guard', () => {
           // Junction not creatable (e.g. test environment restriction) —
           // verify the happy path inside extRoot still works and exit.
           const happy = await resolveExtensionRequest(
-            'whale-extension://md-editor/index.html',
+            'whale-extension://text-editor/index.html',
             EXT_ROOT
           );
           assert.equal(happy.ok, true);
@@ -165,7 +161,7 @@ describe('resolveExtensionRequest — path-traversal guard', () => {
         await fsp.symlink(outsideDir, linkDir, 'dir');
       }
       const r = await resolveExtensionRequest(
-        'whale-extension://md-editor/escape-link/secret.html',
+        'whale-extension://text-editor/escape-link/secret.html',
         EXT_ROOT
       );
       assert.equal(r.ok, false);
@@ -229,7 +225,7 @@ describe('resolveExtensionRequest — path-traversal guard', () => {
 describe('resolveExtensionRequest — error branches', () => {
   it('returns 404 when the file does not exist', async () => {
     const r = await resolveExtensionRequest(
-      'whale-extension://md-editor/does-not-exist.html',
+      'whale-extension://text-editor/does-not-exist.html',
       EXT_ROOT
     );
     assert.equal(r.ok, false);
@@ -251,7 +247,7 @@ describe('resolveExtensionRequest — error branches', () => {
 
   it('returns 404 when the path resolves to a directory (EISDIR)', async () => {
     const r = await resolveExtensionRequest(
-      'whale-extension://md-editor/a-dir',
+      'whale-extension://text-editor/a-dir',
       EXT_ROOT
     );
     assert.equal(r.ok, false);
@@ -268,13 +264,13 @@ describe('resolveExtensionRequest — error branches', () => {
 });
 
 describe('resolveExtensionRequest — cross-extension isolation', () => {
-  it('text-editor can NOT read md-editor files via URL-normalized `../md-editor`', async () => {
+  it('json-viewer can NOT read text-editor files via URL-normalized `../text-editor`', async () => {
     // URL parser normalizes `..`, so the resolved path is
-    //   <EXT_ROOT>/extensions/text-editor/md-editor/index.html
-    // which is INSIDE extRoot (text-editor's own subtree). The file
-    // doesn't exist there → 404, not the md-editor body.
+    //   <EXT_ROOT>/extensions/json-viewer/text-editor/index.html
+    // which is INSIDE extRoot (json-viewer's own subtree). The file
+    // doesn't exist there → 404, not the text-editor body.
     const r = await resolveExtensionRequest(
-      'whale-extension://text-editor/../md-editor/index.html',
+      'whale-extension://json-viewer/../text-editor/index.html',
       EXT_ROOT
     );
     assert.equal(r.ok, false);

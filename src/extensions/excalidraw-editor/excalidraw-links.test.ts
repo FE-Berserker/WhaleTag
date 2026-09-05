@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  linkToAbsolute,
   rewriteExcalidrawElementsToAbsolute,
   rewriteExcalidrawJsonToRelative,
 } from './excalidraw-links';
@@ -125,5 +126,46 @@ describe('excalidraw-links.rewriteExcalidrawJsonToRelative', () => {
     const els = scene('./sub/deep/foo.png').elements;
     rewriteExcalidrawElementsToAbsolute(els, '/docs/d.excalidraw');
     assert.equal((els[1] as { link: string }).link, '/docs/sub/deep/foo.png');
+  });
+});
+
+// Regression: linkToAbsolute takes the .excalidraw FILE path (not its dir) and
+// resolves against the file's DIRECTORY. The click bug was passing the file
+// path as the base directly, producing ".../d.excalidraw/sub/foo.png".
+describe('excalidraw-links.linkToAbsolute (click-time resolve)', () => {
+  it('resolves a relative link against the FILE path (dirname internally)', () => {
+    assert.equal(
+      linkToAbsolute('./sub/foo.png', '/docs/d.excalidraw'),
+      '/docs/sub/foo.png'
+    );
+  });
+
+  it('does NOT fold the diagram filename into the resolved path', () => {
+    const out = linkToAbsolute(
+      './000_圆柱齿轮/000_规范/ISO_21771_2_2025.pdf',
+      'I:\\Work\\000_机械\\000_齿轮\\齿轮分类.excalidraw'
+    );
+    assert.equal(
+      out,
+      'I:/Work/000_机械/000_齿轮/000_圆柱齿轮/000_规范/ISO_21771_2_2025.pdf'
+    );
+    assert.ok(
+      !out.includes('齿轮分类.excalidraw'),
+      `resolved path must not contain the diagram filename, got: ${out}`
+    );
+  });
+
+  it('leaves an already-absolute link unchanged', () => {
+    assert.equal(
+      linkToAbsolute('/docs/abs.png', '/docs/d.excalidraw'),
+      '/docs/abs.png'
+    );
+  });
+
+  it('leaves an external URL unchanged', () => {
+    assert.equal(
+      linkToAbsolute('https://example.com', '/docs/d.excalidraw'),
+      'https://example.com'
+    );
   });
 });

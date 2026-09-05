@@ -36,7 +36,7 @@ interface DirectoryUIValue {
 type DirectoryContentContextValue = DirectoryContentMetaValue & DirectoryUIValue;
 ```
 
-单片消费者用 `useDirectoryContent()`(数据)或 `useDirectoryUI()`(UI);同时要两片的用 `useDirectoryContentContext()`。三个 Map 由**单趟遍历** `entries` 产出(M8,曾三趟独立 useMemo)。
+三个 Map 由**单趟遍历** `entries` 产出(M8,曾三趟独立 useMemo)。
 
 **Map 全部以 `entry.path` 作 key**(取代 basename),同名跨目录文件互不污染。`FileList`、`PropertiesTray`、`EntryCard`、`GridCell`、`MapiqueView`、`TagCloudView`、`KnowledgeGraphView`、`kanban.ts` 的 `bucketEntries` 等所有消费方都用 `e.path` 查。
 
@@ -96,7 +96,7 @@ context 暴露:
 - `entries`:深度内**所有可见条目**(文件 + 目录)—— List/Grid/Gallery/Kanban/Calendar/Matrix/Mapique/TagCloud/KnowledgeGraph 用
 - `dirs`:仅目录 —— FolderViz 重建嵌套树用
 
-8 个非 FolderViz 视角不看 `dirs`;FolderViz 拿 `dirs + entries` 重建嵌套树(context 的 flat 列表直接给 FolderViz 重建树性能差且语义不清,所以 FolderViz 例外)。
+FolderViz 例外拿 `dirs + entries` 重建嵌套树(context 的 flat 列表直接给 FolderViz 重建树性能差且语义不清)。
 
 ## 7. loading / error / 截断 UI
 
@@ -110,10 +110,9 @@ context 暴露:
 [src/renderer/components/FileToolbar.tsx](../src/renderer/components/FileToolbar.tsx) 顶部全局深度 Slider:
 
 - 70px (`sx={{ width: 70 }}`),无 marks,`valueLabelDisplay="auto"`,`min=1, max=5, step=1`
-- 拖动直接 `dispatch(setViewDepth)` —— **不在 toolbar 做防抖**
-- 200ms 防抖在 `DirectoryContentContextProvider` 内(`useEffect` + `setTimeout` 守卫 `debouncedDepth`),拖动 1→5 只触发 1 次递归 IPC
+- 拖动直接 `dispatch(setViewDepth)` —— **不在 toolbar 做防抖**(200ms 防抖在 Provider 内,见 §2 性能护栏)
 
-各视图自带深度滑块已删除(原 TagCloud / KG / Mapique 各自维护的 `whale.<view>.<id>.maxDepth` 已清理)。
+各视图自带深度滑块已删除(原 TagCloud / KG / Mapique 各自维护,localStorage 清理见 §10)。
 
 ## 9. 空 / 边界
 
@@ -127,9 +126,6 @@ context 暴露:
 
 ## 11. 已知取舍
 
-- **结果缓存** ✅ 已做(2026-07-14,P1-3)—— `listDirectoryRecursive` 的 `DirEntry[]` 现缓存到 `<dir>/.whale/index-recursive/d<depth>.json`([recursive-cache.ts](../src/main/recursive-cache.ts),镜像 transcode/office-cache)。**只缓存 scan**(sidecar 读留后续)。失效:读时 `dirPath`+`folderMtime` 双守卫 + 6 个 fs-op 钩子(delete/rename/move/copy/importExternal/mkdir)清祖先。对 renderer 透明(IPC 仍返 `DirEntry[]`)。详见 [docs/15 P1-3](./15-perf-audit.md)。
+- **结果缓存** ✅ 已做(2026-07-14,P1-3)—— `listDirectoryRecursive` 的 `DirEntry[]` 现缓存到 `<dir>/.whale/index-recursive/d<depth>.json`([recursive-cache.ts](../src/main/recursive-cache.ts))。**只缓存 scan**(sidecar 读留后续)。失效:读时 `dirPath`+`folderMtime` 双守卫 + 6 个 fs-op 钩子(delete/rename/move/copy/importExternal/mkdir)清祖先。对 renderer 透明(IPC 仍返 `DirEntry[]`)。详见 [docs/15 P1-3](./15-perf-audit.md)。
 - 每文件夹深度覆盖(像视角 / 尺寸存 `wsm.json`)—— 不做,真需要再补 per-folder override
 - `useRecursiveEntries` hook(老)已删除,4 个原使用方(TagCloud / KG / Mapique / FolderViz)grep 不到 import(R4,2026-07-01)
-- `maxDepth` 从 `whale.folderViz.<id>` / `whale.tagCloud.<id>` / `whale.kg.<id>` 三处 localStorage 全清空
-- Truncated Alert **已全视角共享**:在 FileList 内容区顶部(header 之上),切任何视角都显,无需 provider 内 portal。
-- 路径排序按 depth > 1 切换未实现(`compareEntries` 是 depth-blind)

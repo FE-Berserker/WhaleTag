@@ -31,7 +31,7 @@ npm run build:ai-component
 
 - **nsis-resources 离线**(国内必做):下载 `nsis-resources-3.4.1.7z`(`github.com/electron-userland/electron-builder-binaries`),用 `node_modules/7zip-bin/win/x64/7za.exe` 解压到 `tools/nsis-resources-3.4.1/`,打包时设 `ELECTRON_BUILDER_NSIS_RESOURCES_DIR` 指向它,绕过 GitHub 下载(electron-builder 源码 `nsisUtil.js` 优先读这个 env)。SHA-512:`Dqd6g+2buwwvoG1Vyf6BHR1b+25QMmPcwZx40atOT57gH27rkjOei1L0JTldxZu4NFoEmW4kJgZ3DlSWVON3+Q==`。
 - `node_modules` 完整(`npm install`)。
-- `nsis-3.0.4.1` 编译器、`winCodeSign` 通常已在 `%LOCALAPPDATA%/electron-builder/Cache` 缓存(nsis 打包用),不用重下。
+- `nsis-3.0.4.1` 编译器、`winCodeSign` 通常已在 `%LOCALAPPDATA%/electron-builder/Cache` 缓存,不用重下(winCodeSign 缺失时的后果见坑 9/10)。
 
 ## 3. 验证打包成功
 
@@ -42,8 +42,7 @@ npm run build:ai-component
 ## 4. 排坑(按踩坑顺序)
 
 ### 坑 1:打包卡在 "downloading nsis-resources-3.4.1"
-- **症状**:electron-builder 卡在从 GitHub 下载 nsis-resources,最终超时失败。
-- **根因**:国内访问 GitHub 慢/失败。
+- **症状**:electron-builder 卡在从 GitHub 下载 nsis-resources,最终超时失败。**根因**:国内访问 GitHub 慢/失败。
 - **修法**:见前置 §2,用 `ELECTRON_BUILDER_NSIS_RESOURCES_DIR` 离线方案。
 
 ### 坑 2:EBUSY "resource busy or locked" unlink app.asar
@@ -78,7 +77,7 @@ npm run build:ai-component
   ```
   通用教训:Electron 主进程把 asar 内文件路径传给**外部子进程**时,必须转成 `app.asar.unpacked` 真实路径。
 
-> ⚠️ **0.2.0 起此坑对 AI CLI 已失效**:`@anthropic-ai/claude-code` 不再内置打包(改可选 AI 组件,见 [docs/11 §12](./11-ai.md))。packaged build 的 `bundledCliPath()` 直接返 null(两包是 devDep、不在 packaged node_modules),这段 `app.asar → app.asar.unpacked` 重映射对 claude-code 已是死代码;dev 下 node_modules 命中也不走 asar。CLI 现从 `<userData>/components/ai/` 解析。**通用教训本身(app.asar → app.asar.unpacked 给外部子进程)对其他 asarUnpack 二进制仍然成立**,只是 claude-code 不再是其用例。
+> ⚠️ **0.2.0 起此坑对 AI CLI 已失效**:`@anthropic-ai/claude-code` 不再内置打包(改可选 AI 组件,见 [docs/11 §12](./11-ai.md)),packaged build 的 `bundledCliPath()` 直接返 null(两包是 devDep、不在 packaged node_modules),这段 `app.asar → app.asar.unpacked` 重映射对 claude-code 已是死代码(dev 下命中 node_modules 也不走 asar);CLI 现从 `<userData>/components/ai/` 解析。**通用教训本身对其他 asarUnpack 二进制仍然成立**,只是 claude-code 不再是其用例。
 
 ### 坑 6:AI "Claude Code process exited with code 1"(黑盒)
 - **症状**:AI 报裸 exit code,看不出真正原因。
@@ -104,15 +103,9 @@ npm run build:ai-component
 - **根因**:中转/代理用 `ANTHROPIC_AUTH_TOKEN`(Bearer 头),而 WhaleTag 默认设 `ANTHROPIC_API_KEY`(x-api-key 头);新版 Claude Code(2.1+)只读环境变量,不读 `~/.claude/settings.json`。
 - **修法**:设置 → AI(claude-cli)加「认证字段」下拉(`ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN`,cc-switch 默认后者)+「Anthropic 基础地址」字段(`ANTHROPIC_BASE_URL`,中转端点);`buildQueryOptions` 按选择写对应 env。参考 cc-switch(`github.com/farion1231/cc-switch`)的 Claude Code 供应商配置。
 
-### 坑 9:任务栏显示 Electron 默认图标(不是 logo)(✅ 已解决)
-- **症状**:任务栏图标是 Electron 的电子/原子图标,不是蓝色 W。
-- **根因**:`builder.json` 的 `win.signAndEditExecutable: false` → electron-builder 不用 rcedit 把 `resources/icon.ico`(蓝色 W)嵌入 exe,exe 保留 Electron 默认图标。
-- **修法**:改 `signAndEditExecutable: true`。前提是坑 10 已解决(winCodeSign 离线缓存就位)—— 0.2.0 起两者都满足,`builder.json` 已不带该字段(默认 `true`),exe 正确嵌入蓝色 W。
-
-### 坑 10:signAndEditExecutable → rcedit 下载 winCodeSign 卡 GitHub(✅ 已解决)
-- **历史症状**:把 `signAndEditExecutable` 设 `true` 后,打包在 `editResources`(rcedit)步骤失败:`Get https://github.com/.../winCodeSign-2.6.0.7z: ... wsarecv: ... timeout`,最终 `ERR_ELECTRON_BUILDER_CANNOT_EXECUTE`。当初为此把 `builder.json` 的 `signAndEditExecutable` 设 `false` 绕开 rcedit —— 代价是 exe 保留 Electron 默认图标(任务栏/Alt+Tab 不显示蓝色 W)。
-- **根因**:rcedit(app-builder 的 `pkg/rcedit`)需要 `winCodeSign` 包,从 GitHub 下载,国内卡。
-- **已解决**:`winCodeSign-2.6.0` 现已离线缓存在 `%LOCALAPPDATA%/electron-builder/Cache/winCodeSign/winCodeSign-2.6.0/`,且 `resources/builder.json` **不再**带 `signAndEditExecutable: false`(回退默认 `true`)→ rcedit 跑通、把 `resources/icon.ico`(蓝色 W,多分辨率)嵌进 exe。**0.3.0 起验证**:从打包后的 `win-unpacked/WhaleTag.exe` 抽出的图标 MD5 与 Electron 默认图标不同 → 自定义 W 已嵌入。
+### 坑 9/10:任务栏显示 Electron 默认图标 / rcedit 下载 winCodeSign 卡 GitHub(✅ 已解决)
+- **历史**:`builder.json` 曾把 `win.signAndEditExecutable` 设 `false` 绕开 rcedit —— rcedit(app-builder 的 `pkg/rcedit`)需要 `winCodeSign` 包,从 GitHub 下载,国内卡(`Get https://github.com/.../winCodeSign-2.6.0.7z: ... wsarecv: ... timeout` → `ERR_ELECTRON_BUILDER_CANNOT_EXECUTE`);代价是 exe 保留 Electron 默认图标(任务栏/Alt+Tab 不显示蓝色 W)。
+- **现状**:`winCodeSign-2.6.0` 已离线缓存在 `%LOCALAPPDATA%/electron-builder/Cache/winCodeSign/winCodeSign-2.6.0/`,`resources/builder.json` **不再**带 `signAndEditExecutable: false`(回退默认 `true`)→ rcedit 跑通,把 `resources/icon.ico`(蓝色 W,多分辨率)嵌进 exe。**0.3.0 起验证**:从打包后的 `win-unpacked/WhaleTag.exe` 抽出的图标 MD5 与 Electron 默认图标不同 → 自定义 W 已嵌入。
 - **迁移注意**:换机器/清缓存后需重新落 `winCodeSign-2.6.0`(下载 `winCodeSign-2.6.0.7z` 解压到上述 Cache 目录);否则 `signAndEditExecutable:true` 又会在 editResources 卡 GitHub,或临时回退 `false`(图标退回默认)。
 
 ## 5. 关键文件

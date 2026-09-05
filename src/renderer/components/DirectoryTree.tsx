@@ -35,18 +35,16 @@ import FolderZipOutlinedIcon from '@mui/icons-material/FolderZipOutlined';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlined';
 import EditIcon from '@mui/icons-material/Edit';
 import InsertDriveFileOutlinedIcon from '@mui/icons-material/InsertDriveFileOutlined';
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 
 import type { DirEntry } from '../../shared/ipc-types';
-import { isAudioFile, isHiddenName } from '../../shared/whale-meta';
+import { isHiddenName } from '../../shared/whale-meta';
 import { RootState } from '-/reducers';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { useDirectoryUI } from '-/hooks/DirectoryContentContextProvider';
 import { useIOActionsContext } from '-/hooks/IOActionsContextProvider';
 import { useExtensionContext } from '-/hooks/ExtensionContextProvider';
 import { useConfirm } from '-/components/ConfirmDialogProvider';
-import { useBackgroundPlayer } from '-/hooks/BackgroundPlayerContextProvider';
 import { useDirectoryTreeRefresh } from '-/hooks/DirectoryTreeRefreshContextProvider';
 import { ipcApi } from '-/services/ipc-api';
 import { COLUMN_HEADER_HEIGHT } from '-/theme';
@@ -133,7 +131,6 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
     useCurrentLocationContext();
   const { createFolder, createFile, deleteEntry } = useIOActionsContext();
   const { refresh } = useDirectoryUI();
-  const backgroundPlayer = useBackgroundPlayer();
   // Always list files in the tree so they can be double-clicked to open (and
   // dragged into an editor). The tree is virtualized, so a directory full of
   // files stays cheap to render.
@@ -712,36 +709,6 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
                 <FolderOpenIcon fontSize="small" />
               </ListItemIcon>
               <ListItemText>{t('open')}</ListItemText>
-            </MenuItem>
-            <MenuItem
-              onClick={() => {
-                // Read the directory off the main thread and feed any audio
-                // entries to the background-music dock. We use listDirectory
-                // (not the in-memory `entries`) because the user may have
-                // right-clicked a folder they haven't navigated into yet.
-                const dirPath = ctxMenu.path;
-                setCtxMenu(null);
-                ipcApi
-                  .listDirectory(dirPath)
-                  .then((children) => {
-                    const audio = children.filter(
-                      (c) => !c.isDirectory && isAudioFile(c.name)
-                    );
-                    if (audio.length === 0) {
-                      // Was a silent no-op — the user couldn't tell whether
-                      // the click registered at all.
-                      setNotice({ kind: 'error', msg: t('folderHasNoAudio') });
-                      return;
-                    }
-                    backgroundPlayer.playEntries(audio);
-                  })
-                  .catch(() => undefined);
-              }}
-            >
-              <ListItemIcon>
-                <PlayArrowIcon fontSize="small" />
-              </ListItemIcon>
-              <ListItemText>{t('playFolder')}</ListItemText>
             </MenuItem>
             <MenuItem
               onClick={() => {

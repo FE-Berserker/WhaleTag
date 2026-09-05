@@ -1,9 +1,9 @@
 /**
  * Thumbnail-render utilityProcess entry point. Spawned via
  * `utilityProcess.fork()` from `src/main/thumb-worker-host.ts`. The pure-JS
- * CPU-heavy renders — pdfjs `page.render` (pdf), `unzipSync` cover
- * extraction (ebook), `@napi-rs/canvas` rasterization (font) — run here,
- * off the Electron main event loop; see `docs/06-thumbnails.md` §8.
+ * CPU-heavy renders — pdfjs `page.render` (pdf), `@napi-rs/canvas`
+ * rasterization (font) — run here, off the Electron main event loop; see
+ * `docs/06-thumbnails.md` §8.
  *
  * The render functions themselves live in `thumb-render.ts` so tests and
  * the host's in-process fallback (ELECTRON_RUN_AS_NODE) can import them
@@ -15,11 +15,7 @@ import type {
   ThumbWorkerRequest,
   ThumbWorkerEvent,
 } from './thumb-protocol';
-import {
-  renderPdfThumb,
-  renderFontThumb,
-  renderEbookThumb,
-} from './thumb-render';
+import { renderPdfThumb, renderFontThumb } from './thumb-render';
 
 // In a utilityProcess child the parent port lives on `process` —
 // `require('electron').parentPort` is undefined at runtime in Electron 42
@@ -74,12 +70,6 @@ async function dispatch(req: ThumbWorkerRequest): Promise<void> {
     case 'thumb:font': {
       const { srcPath } = req.arg as { srcPath: string };
       const buf = await renderFontThumb(srcPath);
-      post({ reqId: req.reqId, ok: true, result: { buf } });
-      return;
-    }
-    case 'thumb:ebook': {
-      const { srcPath } = req.arg as { srcPath: string };
-      const buf = await renderEbookThumb(srcPath);
       post({ reqId: req.reqId, ok: true, result: { buf } });
       return;
     }

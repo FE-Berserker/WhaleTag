@@ -1,6 +1,6 @@
 # Application auto-update (electron-updater + GitHub Releases)
 
-Phase 6 of the plan adds an end-to-end auto-update flow backed by
+End-to-end auto-update flow backed by
 [`electron-updater`](https://www.electron.build/auto-update) and the
 public [FE-Berserker/WhaleTag](https://github.com/FE-Berserker/WhaleTag)
 GitHub release channel. This document is the single source of truth for
@@ -27,16 +27,12 @@ are kept terse and defer to here for the "why".
 
 ## Build / publish chain (already in place)
 
-The build side was set up before this PR landed:
-
 - `resources/builder.json` has a `publish` segment
   (`provider: 'github'`, `owner: 'FE-Berserker'`, `repo: 'WhaleTag'`,
-  `releaseType: 'release'`) — added in this PR.
+  `releaseType: 'release'`).
 - `electron-builder` produces `release/build/latest.yml` (a semver +
   `sha512` + `path` manifest) and `release/build/win-unpacked/resources/
   app-update.yml` (the `provider: github` channel config) per build.
-  These were already present in the repo as build artifacts; this PR
-  was the first to wire the *client* to read them.
 
 To publish a new version:
 
@@ -50,8 +46,7 @@ To publish a new version:
 
 `electron-builder`'s `publish` config *generates* the manifest, but
 **does not create the GitHub release itself.** Current practice: tag
-+ push first, then run `package:win` to attach artifacts. The PR
-author runs:
++ push first, then run `package:win` to attach artifacts:
 
 ```bash
 git tag v0.3.2 && git push --tags
@@ -61,9 +56,6 @@ npm run package:win
 `electron-builder` then uploads `WhaleTag-Setup-0.3.2.exe` +
 `latest.yml` to the existing `v0.3.2` release. End-users running an
 older build see the manifest change on the next startup check.
-
-> Automating this (e.g. via `gh release create --generate-notes`) is
-> a follow-up; not in scope here.
 
 ## Wire shape
 
@@ -148,8 +140,7 @@ stack trace.
   NSIS dialog during install.
 - **macOS (DMG):** blocked on Apple notarization (see `docs/16` §hard
   block). The renderer is fully wired; the *publish* step needs the
-  notarized DMG to exist on the GitHub release. We document this
-  explicitly so the missing piece is visible to whoever sets up CI.
+  notarized DMG to exist on the GitHub release.
 - **Linux (AppImage):** `electron-updater` supports AppImage but the
   cross-platform doc (`docs/16`) lists it as "needs a Linux
   maintainer". Same as macOS — code is in place, the build pipeline
@@ -168,15 +159,12 @@ stack trace.
   subsequent updates.
 - **No silent install:** `autoDownload` and `autoInstallOnAppQuit`
   are both explicitly set to `false`. The user must click "Restart
-  to install" to upgrade. This trades a small delay (the user
-  restarts the app later) for the explicit gate every security
-  review asks for.
+  to install" to upgrade — a deliberate explicit gate.
 
-## Open follow-ups (not in this PR)
+## Open follow-ups
 
 - **Release automation:** tag-driven `gh release create` script that
-  runs `package:*` after the release exists, so the upload step
-  doesn't require a human to be at the keyboard.
+  runs `package:*` after the release exists.
 - **macOS notarization:** unblock the full macOS update path
   (currently a hard block in `docs/16`).
 - **Linux AppImage:** needs a Linux build host + smoke test before

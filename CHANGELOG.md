@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),并遵循[语义化版本](https://semver.org/spec/v2.0.0.html)。
 
+## [0.4.9] - 2026-09-05
+
+### Removed
+
+- **移除 md-editor 扩展**(项目瘦身):删除 `src/extensions/md-editor/` 与其主进程支撑(PDF 导出 `renderHtmlToPdf`、粘贴图片落盘 `saveImageToFile`、剪贴板桥 `readClipboardText`、目录列表 / 文件删除 RPC)、设置页 md 专属面板(渲染主题 / 提示框 / HTML 模板 / PDF 页眉页脚 / 粘贴图片位置 / Markdown 快捷键)及 `extensions` 设置标签页;卸载 `mermaid` / `marked-footnote` / `highlight.js` 三个仅为其存在的依赖。`.md` / `.markdown` 双击现回退系统默认应用打开;全文索引与文件图标不受影响。
+  **Removed the md-editor extension** (project slimming): deleted `src/extensions/md-editor/` and its main-process support (PDF export `renderHtmlToPdf`, paste-image `saveImageToFile`, clipboard bridge `readClipboardText`, list-directory / delete-files RPC), the md-only settings panes (render theme / callouts / HTML templates / PDF header & footer / paste-image location / Markdown keybindings) and the `extensions` settings tab; uninstalled the `mermaid` / `marked-footnote` / `highlight.js` dependencies that existed solely for it. Double-clicking `.md` / `.markdown` now falls back to the OS default app; full-text indexing and file icons are unaffected.
+
+- **移除 pdf-viewer 扩展**(项目瘦身续):删除 `src/extensions/pdf-viewer/` 与其专属支撑——`shared/pdfjs-in-iframe.ts` 会话工厂(office-viewer 移除后仅剩它一个消费者)、AI 框选提问管线(`askAi` 消息 / marquee / `aiDraftBus` / `AskQuestionDialog` / 5 语言 `aiPdf*` 文案)、大文件 `requestFileBytes`/`fs:readFileRange` 字节桥、pdfjs 资产服务 `requestPdfAsset`/`ext:getPdfAsset`。`.pdf` 双击现回退系统默认应用打开;**PDF 缩略图与全文索引不受影响**(主进程 `thumb-render.ts` / `fulltext.ts` 自持 pdfjs-dist,依赖保留),文件类型图标不变。
+  **Removed the pdf-viewer extension** (slimming round 2): deleted `src/extensions/pdf-viewer/` and its dedicated support — the `shared/pdfjs-in-iframe.ts` session factory (sole consumer since office-viewer's removal), the AI marquee ask pipeline (`askAi` message / marquee / `aiDraftBus` / `AskQuestionDialog` / the 5-locale `aiPdf*` strings), the large-file `requestFileBytes`/`fs:readFileRange` byte bridge, and the pdfjs asset service (`requestPdfAsset`/`ext:getPdfAsset`). Double-clicking `.pdf` now falls back to the OS default app; **PDF thumbnails and full-text indexing are unaffected** (main-process `thumb-render.ts` / `fulltext.ts` own their pdfjs-dist dependency, which is kept), and file-type icons are unchanged.
+
 ## [0.4.4] - 2026-07-25
 
 ### Added

@@ -16,10 +16,13 @@ import {
   IMAGE_EXT,
   VIDEO_EXT,
   PDF_EXT,
-  EBOOK_EXT,
   DRAWIO_EXT,
   HEIC_EXT,
 } from '../../shared/whale-meta';
+
+// Ebook formats for icon classification only (pure presentation — the ebook
+// viewer itself has been removed). Mirrors the old shared EBOOK_EXT set.
+const EBOOK_EXT = new Set(['epub', 'mobi', 'azw', 'azw3', 'fb2', 'cbz']);
 
 export type FileIconCategory =
   | 'image'

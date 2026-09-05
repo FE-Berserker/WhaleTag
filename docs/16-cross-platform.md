@@ -12,7 +12,7 @@
 
 ## 总体结论:🟢 可行性高
 
-源码本身基本就是跨平台的——几乎所有平台敏感路径都已有正确的 `win32` / `darwin` / `linux` 分支。最大的担心(secretStore 用 Windows DPAPI)经核实是**误报**:实际用 Electron `safeStorage`(Windows=DPAPI / mac=Keychain / linux=libsecret)。
+源码本身基本就是跨平台的——几乎所有平台敏感路径都已有正确的 `win32` / `darwin` / `linux` 分支;secretStore 也并非直调 Windows DPAPI,而是 Electron `safeStorage` 全平台(详见下表)。
 
 真正的工作量在**构建配置 + 签名 + CI 矩阵**,不在应用代码。**无架构改动。**
 
@@ -23,11 +23,8 @@
 | 项 | 位置 | 状态 |
 |---|---|---|
 | AI 密钥存储 | [secretStore.ts](../src/main/ai/security/secretStore.ts) | `safeStorage` 全平台;非 DPAPI 直调,无 `powershell.exe` |
-| soffice (LibreOffice) | [office-binary.ts](../src/main/office-binary.ts) `sofficeBinary`(从 thumbnail.ts 抽出,async,P1-1) | 三平台候选路径全有(Win Program Files / mac `/Applications/LibreOffice.app/...` / linux `/usr/bin/soffice`、`/usr/lib/libreoffice/...`);`soffice.exe` vs `soffice` 已处理;PATH 探针走异步 `execFile` 不冻主进程 |
-| ffmpeg | [thumbnail.ts](../src/main/thumbnail.ts) ~L96 | `ffmpeg-static` 包自带各平台二进制,asarUnpack 已含 |
-| 7zip | [archive.ts](../src/main/archive.ts) ~L34 | `7zip-bin` 自带 win/mac/linux 全部二进制,按 `process.platform` + `arch` 选 |
-| ebook-convert (calibre) | [ebook-convert.ts](../src/main/ebook-convert.ts) ~L24-55 | 三平台候选路径全有 |
-| dwg2dxf / ODA | [cad-convert.ts](../src/main/cad-convert.ts) ~L25-78 | `dwg2dxf` 走 PATH(brew / 包管理器都对);ODA 无 linux 版是事实,linux 走 LibreDWG |
+| ffmpeg | [thumbnail.ts](../src/main/thumbnail.ts) | `ffmpeg-static` 包自带各平台二进制,asarUnpack 已含(视频首帧缩略图) |
+| 7za | [sevenzip.ts](../src/main/sevenzip.ts) | `7zip-bin` 自带 win/mac/linux 全部二进制 + PATH 探测(AI 组件安装解压用);PATH 探针走异步 `execFile` 不冻主进程(P1-1 同款) |
 | claude CLI | [findClaudeCliPath.ts](../src/main/ai/providers/claude/cli/findClaudeCliPath.ts) | 范本级跨平台:Win 查 AppData / Program Files,非 Win 查 `/usr/local/bin`、`/opt/homebrew/bin`、`~/.volta`、`~/.asdf`、`~/.npm-global`、`~/.local/bin` |
 | spawn / shell-quote | [customSpawn.ts](../src/main/ai/providers/claude/customSpawn.ts) / [shell-quote.ts](../src/main/shell-quote.ts) | `.cmd/.bat/.ps1` 仅 win32 走 `shell:true`;POSIX 单引号转义正确 |
 | env / path 工具 | [ai/utils/env.ts](../src/main/ai/utils/env.ts) / [ai/utils/path.ts](../src/main/ai/utils/path.ts) | PATH 分隔符、大小写归一、`node` vs `node.exe` 全按平台分 |
@@ -104,12 +101,12 @@
 |---|---|---|
 | **CI 矩阵**:macos-latest(arm64 + x64)+ ubuntu-latest(x64)各跑 `package:{mac,linux}` + `build-ai-component` | 配置活,半天 | **必须**(原生模块不能从 Windows 交叉编译,须在目标 OS 上 `npm install` + 打包) |
 | 生成 `.icns` + 补 `mac.icon`(C-3) | 1-2 小时 | 想要正经图标就得做;否则 fallback Electron 图标 |
-| Linux 路径守卫大小写修复(C-1) | trivial,半小时 | **推荐**(安全) |
+| Linux 路径守卫大小写修复(C-1) | — | ✅ 已完成(2026-07-16) |
 | Linux 终端 / reveal / zip fallback(C-2) | moderate,半天 | 想要 linux 体验完整就得做 |
 | mac 签名 + 公证(B-1) | 1 天(证书到手后)+ $99/年 | 仅公开分发需要 |
-| 运行时前置文档(LibreOffice / calibre / LibreDWG `dwg2dxf`) | 文档 | 同 Windows 现状([docs/14](./14-packaging.md)),照搬一节 |
+| 运行时前置文档(可选外部工具) | 文档 | 同 Windows 现状([docs/14](./14-packaging.md)),照搬一节 |
 
-**最短可跑路径**(dev / 自用即达标,不用签名):加 `.icns`(C-3)+ 在 mac 和 linux 各跑一次 `package:mac` / `package:linux` 冒烟,验证无崩。Linux 大小写守卫(C-1)已修(2026-07-16)。
+**最短可跑路径**(dev / 自用即达标,不用签名):加 `.icns`(C-3)+ 在 mac 和 linux 各跑一次 `package:mac` / `package:linux` 冒烟,验证无崩。
 
 **注意**:打包前同样要 `unset ELECTRON_RUN_AS_NODE`([docs/14 坑3](./14-packaging.md)),Claude Code host 注入该 env 是 OS 无关的。
 
@@ -119,7 +116,5 @@
 
 | 项 | 理由 |
 |---|---|
-| ODA File Converter 无 linux 版 | 官方无 linux build;linux CAD 转换走 LibreDWG `dwg2dxf`(代码已优先此路径) |
 | headless linux 上 `safeStorage` 不可用 | 无 gnome-keyring / kwallet 时 `isEncryptionAvailable()` 返 false,用户得干净报错;桌面 Electron 应用可接受 |
 | mac 不签名自用 | Gatekeeper 手动绕过可忍;公开分发再补(B-1) |
-| `png2icns` devDep 闲置 | 待 C-3 落地时一并清理或启用 |

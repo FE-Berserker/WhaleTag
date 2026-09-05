@@ -46,7 +46,7 @@ GanttView→GanttTimeline 6 个内联闭包稳定(纯转发直传 `data.*`,其�
 [concurrency.ts](../src/main/concurrency.ts) 加 `thumbnailSemaphore = Semaphore(4)`;`doGenerateThumbnail` 把 encode+write 包进 `run`(便宜 kind/stat/reuse 短路留 permit 外)。所有调用方(file IPC / folder thumb / setFolder)自动覆盖。
 
 ### P1-7. pdf-viewer 大文件字节桥(去 base64 整文件)✅
-打开大 PDF 卡顿根因:host 把整份文件 base64 后跨 IPC→postMessage 进 iframe([ExtensionContextProvider.tsx](../src/renderer/hooks/ExtensionContextProvider.tsx) 逐字节 O(n²) 拼接 + 33% 膨胀 + iframe 再解码,峰值 ~3× 内存、主线程长阻塞)。**原计划复刻 media-player 走 `whale-file://` 流式 URL + pdfjs Range,实测被挡**:pdfjs `getDocument({url})` 内部 fetch 触发 CORS,Chromium 协议级硬限制「跨源 fetch 仅限 http/https/data/chrome」,自定义协议 `whale-file://` 从 `whale-extension://` origin 被拒(`net::ERR_FAILED`);`<video>` 能用 whale-file 是因 media 管线不经 fetch CORS。**改走字节桥**(学 office-viewer `officePdfContent`):host 经 `requestFileBytes`/`fileBytes`([extension-types](../src/shared/extension-types.ts))读文件回传 `Uint8Array`,postMessage 结构化克隆(一次 memcpy,无 base64、无 O(n²) 解码)→ `session.renderPdfBytes`。[shared/pdfjs-in-iframe.ts](../src/extensions/shared/pdfjs-in-iframe.ts) 抽 `runRender` 共享循环,`renderPdfBytes` 入参不变(office-viewer 回归零改);`renderPdfUrl` 接口保留并标注 CORS 未用。meta CSP 加 `worker-src whale-extension://*`;`build-extensions.js` 复制 `pdf.worker.mjs`。**真 worker 默认关**(`USE_PDFJS_WORKER=false`):字节桥已消除主因;真 worker 依赖 `new Worker()` 接受 `whale-extension://` 特权协议(repo 内无 Electron 先例),实测确认 spawn 后改一行开启。
+已随 0.4.9 瘦身与 pdf-viewer 扩展一并移除(2026-09);`requestFileBytes`/`fileBytes` 桥与 `shared/pdfjs-in-iframe.ts` 随之删除。通用教训仍有效:Chromium 自定义协议被 CORS 硬限「跨源 fetch 仅限 http/https/data/chrome」,pdfjs `getDocument({url})` 走不通 `whale-file://`,只有 media 管线(`<video>`)例外。
 
 ---
 
@@ -89,7 +89,7 @@ office-viewer `openOfficeFile` 并行 fire `requestThumbnail` + `requestOfficeCo
 保活一个 LibreOffice UNO listener,后续 office→PDF 转换复用已初始化进程(~200–500ms),冷启动只一次。Node 无原生 UNO 客户端,故 bundle 一个 Python worker(借用 LO 自带 `python`+`pythonuno`)做桥接,worker 起不来时带 cooldown 自动回退现有 `execFile`(**零 regression**)。详见 [docs/17](./17-office-worker.md)。顺带把 `convertOfficeToPdf` 与 `encodeOfficeThumb` 两处重复的 spawn body 合并成共享 `convertOfficeToPdfVia`(worker 优先 + execFile 兜底,`sofficeSemaphore` 包两路)。
 
 ### P3-4. AI 流式 boolean 兜底 ✅
-实跑 CLI 抓 stream-json 确诊(2026-07-18):**uuid 每行随机**(partial 之间也互不相同),不止 partial/complete 不匹配;且 complete 在**块 delta 流完即发(早于 `content_block_stop`)**、一条 API 消息可拆多个非累积 complete。[transformSdkMessage.ts](../src/main/ai/providers/claude/stream/transformSdkMessage.ts) 重写:per-scope(`parent_tool_use_id`)flow 状态机;text/thinking 按**内容精确匹配**去重(delta 拼接与 complete 逐字节相等,已实证);tool_use 按稳定块 id 双向去重(complete 先到则杀 pending,stop 先到则查 `emittedToolIds`);删 `startedMsgs`/`streamedMsgs`/boolean 兜底。附带修好:complete 误开第二**空气泡**、subagent 文本重复(原兜底未覆盖)。6 个真实 wire-shape 回归测试 + 两份真实抓包回放校验。详见 [docs/09 §23](./09-known-issues.md)。
+确诊(2026-07-18,实跑 CLI 抓 stream-json):**uuid 每行随机**(partial 之间也互不相同),不止 partial/complete 不匹配;且 complete 在**块 delta 流完即发(早于 `content_block_stop`)**、一条 API 消息可拆多个非累积 complete。[transformSdkMessage.ts](../src/main/ai/providers/claude/stream/transformSdkMessage.ts) 重写:per-scope(`parent_tool_use_id`)flow 状态机;text/thinking 按**内容精确匹配**去重(delta 拼接与 complete 逐字节相等,已实证);tool_use 按稳定块 id 双向去重(complete 先到则杀 pending,stop 先到则查 `emittedToolIds`);删 `startedMsgs`/`streamedMsgs`/boolean 兜底。附带修好:complete 误开第二**空气泡**、subagent 文本重复(原兜底未覆盖)。6 个真实 wire-shape 回归测试 + 两份真实抓包回放校验。详见 [docs/09 §23](./09-known-issues.md)。
 
 ### P3-5. 零碎项
 - ~~`firstThumbnailableFile`~~ — **评估不做**:find-first + 早返回,首候选即中(1 stat),并发反而过度取数。
@@ -131,4 +131,4 @@ office-viewer `openOfficeFile` 并行 fire `requestThumbnail` + `requestOfficeCo
 
 ## 剩余
 
-无。Tier 0–3 全部完成(2026-07-12 ~ 07-18);最后的 P3-4 于 2026-07-18 实跑 CLI 抓包确诊并修复(见 [docs/09 §23](./09-known-issues.md))。
+无。Tier 0–3 全部完成(2026-07-12 ~ 07-18);最后收尾的是 P3-4(见上)。

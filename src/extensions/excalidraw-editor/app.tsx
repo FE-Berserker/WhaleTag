@@ -8,7 +8,8 @@ import {
 } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
 import {
-  rewriteExcalidrawElementsToAbsolute,
+  linkToAbsolute,
+  linkToRelative,
   rewriteExcalidrawJsonToRelative,
 } from './excalidraw-links';
 
@@ -83,10 +84,10 @@ export default function App() {
       data = restore({} as any, null, null);
     }
     // docs/20: stored element links are relative to the .excalidraw file's
-    // directory (so a folder move keeps links intact). Resolve them back to
-    // absolute bare paths before rendering — runtime behaviour matches the old
-    // absolute-link world, and `onLinkOpen` / the host are unchanged.
-    rewriteExcalidrawElementsToAbsolute(data.elements, path);
+    // directory (so a folder move keeps links intact). We keep them RELATIVE
+    // in the scene too — the editor shows relative, the on-disk form is what
+    // you see, and `onLinkOpen` resolves a relative link back to absolute at
+    // click time before forwarding to the host. (No load-time rewrite.)
     baselinePendingRef.current = true;
     api.updateScene({ elements: data.elements, appState: data.appState });
     if (data.files) api.addFiles(Object.values(data.files));
@@ -95,10 +96,10 @@ export default function App() {
   const doSave = useCallback(() => {
     const api = apiRef.current;
     if (!api || !pathRef.current) return;
-    // docs/20: rewrite absolute element links that live inside the diagram's
-    // directory to relative `./…` paths in the SAVED content. Keep the dirty
-    // baseline (pendingSaveRef) as the absolute JSON — handleChange compares
-    // against computeJson(), which is always absolute at runtime.
+    // docs/20: links are stored relative. New inserts are already relative
+    // (see insertFileEmbed); this pass also migrates any still-absolute links
+    // from older files to relative. pendingSaveRef is the runtime JSON
+    // (relative), which is what handleChange compares against.
     const absJson = computeJson();
     pendingSaveRef.current = absJson;
     const content = rewriteExcalidrawJsonToRelative(absJson, pathRef.current);
@@ -166,7 +167,10 @@ export default function App() {
             width,
             height,
             fileId,
-            link: filePath,
+            // docs/20: store the link relative to this .excalidraw's directory
+            // when the file lives inside it (survives a folder move); otherwise
+            // keep it absolute. The editor shows this value verbatim.
+            link: linkToRelative(filePath, pathRef.current ?? ''),
           } as any,
         ]);
         api.updateScene({ elements: [...api.getSceneElements(), ...els] });
@@ -275,9 +279,12 @@ export default function App() {
             event.preventDefault();
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (event as any).detail?.nativeEvent?.preventDefault?.();
+            // docs/20: links are stored relative; resolve to an absolute path
+            // against this .excalidraw's directory just before opening. (If the
+            // path ref isn't set yet, forward as-is.)
             window.whaleExt.postMessage({
               type: 'openLinkExternally',
-              url: link,
+              url: pathRef.current ? linkToAbsolute(link, pathRef.current) : link,
             });
           }
         }}

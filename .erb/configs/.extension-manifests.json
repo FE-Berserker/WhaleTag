@@ -1,47 +1,4 @@
 {
-  "archive-viewer": {
-    "id": "archive-viewer",
-    "name": "Archive Viewer",
-    "type": "viewer",
-    "color": "#1565C0",
-    "fileTypes": [
-      "zip",
-      "tar",
-      "tgz",
-      "tbz2",
-      "txz",
-      "gz",
-      "bz2",
-      "xz",
-      "7z"
-    ],
-    "entryPoint": "index.html",
-    "enabled": true,
-    "isDefault": true
-  },
-  "cad-viewer": {
-    "id": "cad-viewer",
-    "name": "CAD Viewer",
-    "type": "viewer",
-    "color": "#009688",
-    "fileTypes": [
-      "stl",
-      "obj",
-      "glb",
-      "gltf",
-      "ply",
-      "dxf",
-      "step",
-      "stp",
-      "iges",
-      "igs",
-      "brep",
-      "dwg"
-    ],
-    "entryPoint": "index.html",
-    "enabled": true,
-    "isDefault": true
-  },
   "drawio-editor": {
     "id": "drawio-editor",
     "name": "Draw.io",
@@ -50,29 +7,6 @@
     "fileTypes": [
       "drawio",
       "dio"
-    ],
-    "entryPoint": "index.html",
-    "enabled": true,
-    "isDefault": true
-  },
-  "ebook-viewer": {
-    "id": "ebook-viewer",
-    "name": "Ebook Viewer",
-    "type": "viewer",
-    "color": "#8D6E63",
-    "fileTypes": [
-      "epub",
-      "fb2",
-      "cbz",
-      "mobi",
-      "azw",
-      "azw3",
-      "lit",
-      "pdb",
-      "rb",
-      "snb",
-      "tcr",
-      "htmlz"
     ],
     "entryPoint": "index.html",
     "enabled": true,
@@ -160,88 +94,6 @@
     "color": "#FF9800",
     "fileTypes": [
       "json"
-    ],
-    "entryPoint": "index.html",
-    "enabled": true,
-    "isDefault": true
-  },
-  "md-editor": {
-    "id": "md-editor",
-    "name": "Markdown Editor",
-    "type": "editor",
-    "color": "#00BCD4",
-    "fileTypes": [
-      "md",
-      "markdown"
-    ],
-    "entryPoint": "index.html",
-    "enabled": true,
-    "isDefault": true
-  },
-  "media-player": {
-    "id": "media-player",
-    "name": "Media Player",
-    "type": "viewer",
-    "color": "#FF9800",
-    "fileTypes": [
-      "mp4",
-      "mov",
-      "mkv",
-      "webm",
-      "m4v",
-      "avi",
-      "3gp",
-      "ogv",
-      "wmv",
-      "flv",
-      "mp3",
-      "ogg",
-      "wav",
-      "flac",
-      "aac",
-      "m4a",
-      "opus",
-      "ape",
-      "wma",
-      "aiff",
-      "amr",
-      "ac3",
-      "dts",
-      "mpc",
-      "wv",
-      "dsf"
-    ],
-    "entryPoint": "index.html",
-    "enabled": true,
-    "isDefault": true
-  },
-  "office-viewer": {
-    "id": "office-viewer",
-    "name": "Office Viewer",
-    "type": "viewer",
-    "color": "#2B579A",
-    "fileTypes": [
-      "doc",
-      "docx",
-      "xls",
-      "xlsx",
-      "ppt",
-      "pptx",
-      "odt",
-      "ods",
-      "odp"
-    ],
-    "entryPoint": "index.html",
-    "enabled": true,
-    "isDefault": true
-  },
-  "pdf-viewer": {
-    "id": "pdf-viewer",
-    "name": "PDF Viewer",
-    "type": "viewer",
-    "color": "#F44336",
-    "fileTypes": [
-      "pdf"
     ],
     "entryPoint": "index.html",
     "enabled": true,

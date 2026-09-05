@@ -16,12 +16,10 @@ import FileList from '-/components/FileList';
 import ExtensionViewPanel from '-/components/ExtensionViewPanel';
 import WelcomePanel from '-/components/WelcomePanel';
 import AddLocationDialog from '-/components/AddLocationDialog';
-import BackgroundPlayerDock from '-/components/BackgroundPlayerDock';
 import { PeriodTagDialogProvider } from '-/components/PeriodTagDialog';
 import { SettingsDialogProvider } from '-/components/SettingsDialogProvider';
 import { useResolvedThemeMode } from '-/theme/useResolvedThemeMode';
 import { useExtensionContext } from '-/hooks/ExtensionContextProvider';
-import { useBackgroundPlayer } from '-/hooks/BackgroundPlayerContextProvider';
 import { useSelector } from 'react-redux';
 import { RootState } from '-/reducers';
 
@@ -40,7 +38,6 @@ export default function MainLayout() {
   const dispatch = useDispatch();
   const { currentLocation } = useCurrentLocationContext();
   const { activeView } = useExtensionContext();
-  const backgroundPlayer = useBackgroundPlayer();
   const themeMode = useSelector((s: RootState) => s.settings.themeMode);
   // ExtensionViewPanel (and the extension iframe it hosts) only understand a
   // concrete 'light' | 'dark' — resolve 'system' before handing it down.
@@ -88,11 +85,6 @@ export default function MainLayout() {
             `useSettingsDialog().openDialog({ section })`. Sidebar's gear
             icon now goes through this hook too. */}
         <SettingsDialogProvider>
-          {/* Background-music dock lives at the bottom of the workspace column
-              only, so it never spans under Sidebar/DirectoryTree. The workspace
-              content area above it uses flex:1 to absorb the remaining height.
-              The dock is hidden when the queue is empty AND the user hasn't
-              collapsed it (BackgroundPlayerContext). */}
           <Box
             sx={{
               display: 'flex',
@@ -261,7 +253,6 @@ export default function MainLayout() {
                     <WelcomePanel onAddLocation={() => setAddOpen(true)} />
                   )}
                 </Box>
-                {backgroundPlayer.visible ? <BackgroundPlayerDock /> : null}
               </Box>
               {aiOpen ? (
                 <Suspense fallback={null}>

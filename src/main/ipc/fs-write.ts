@@ -5,8 +5,6 @@ import { execFile } from 'child_process';
 import { nextAvailableName } from '../../shared/dedupe-name';
 import { removeSidecar, moveSidecar, copySidecar } from '../sidecar';
 import { removeThumbnail, moveThumbnail, copyThumbnail } from '../thumbnail';
-import { removeTranscode, moveTranscode, copyTranscode } from '../transcode-cache';
-import { removeOfficePdf, moveOfficePdf, copyOfficePdf } from '../office-cache';
 import { invalidateRecursiveScan } from '../recursive-cache';
 import { atomicWriteBytes } from '../atomic-write';
 import { mapWithConcurrency } from '../concurrency';
@@ -72,8 +70,6 @@ async function deletePath(targetPath: string, useTrash = true): Promise<void> {
     Promise.all([
       removeSidecar(targetPath).catch(() => undefined),
       removeThumbnail(targetPath).catch(() => undefined),
-      removeTranscode(targetPath).catch(() => undefined),
-      removeOfficePdf(targetPath).catch(() => undefined),
       invalidateRecursiveScan(targetPath).catch(() => undefined),
     ]);
 
@@ -202,8 +198,6 @@ export function registerFsWriteHandlers(): void {
       await Promise.all([
         moveSidecar(oldPath, newPath),
         moveThumbnail(oldPath, newPath),
-        moveTranscode(oldPath, newPath),
-        moveOfficePdf(oldPath, newPath),
         invalidateRecursiveScan(oldPath),
         invalidateRecursiveScan(newPath),
       ]);
@@ -238,8 +232,6 @@ export function registerFsWriteHandlers(): void {
       await Promise.all([
         moveSidecar(oldPath, newPath),
         moveThumbnail(oldPath, newPath),
-        moveTranscode(oldPath, newPath),
-        moveOfficePdf(oldPath, newPath),
         invalidateRecursiveScan(oldPath),
         invalidateRecursiveScan(newPath),
       ]);
@@ -262,8 +254,6 @@ export function registerFsWriteHandlers(): void {
       await Promise.all([
         copySidecar(sourcePath, destPath),
         copyThumbnail(sourcePath, destPath),
-        copyTranscode(sourcePath, destPath),
-        copyOfficePdf(sourcePath, destPath),
         invalidateRecursiveScan(destPath),
       ]);
     } catch {
@@ -308,8 +298,6 @@ export function registerFsWriteHandlers(): void {
           await Promise.all([
             copySidecar(source, destPath),
             copyThumbnail(source, destPath),
-            copyTranscode(source, destPath),
-            copyOfficePdf(source, destPath),
             invalidateRecursiveScan(destPath),
           ]);
         } catch {

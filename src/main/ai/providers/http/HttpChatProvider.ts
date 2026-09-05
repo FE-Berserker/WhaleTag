@@ -83,7 +83,7 @@ export function buildMessages(
 }
 
 /** Inline the attached file content into the user message. When the turn
- *  carries images (e.g. a pdf-viewer marquee screenshot), the message becomes
+ *  carries images (user-attached screenshots), the message becomes
  *  an OpenAI vision content array (`image_url` parts + the text part);
  *  Ollama's OpenAI-compatible endpoint accepts the same shape for
  *  multimodal models. Exported for tests. */

@@ -8,7 +8,7 @@
 
 - **本地文件夹位置**(本地路径,CRUD:`createLocation` / `updateLocation` / `deleteLocation`)
 - **切换最近**:LRU(`reducers/recent.ts`),前进 / 后退栈
-- **只读位置**:写拦截在 **renderer 层**(`IOActionsContextProvider.runAndRefresh` 早 throw + FileList/useListCommands 守卫 + 写按钮 disabled);AI 侧另有 `readOnlyGuard`。**注意**:`setAllowedRoots` 收到的 roots **包含**只读位置(Root.tsx 全量推送)——allowedRoots 只表达"配置的 location",主进程写 IPC 对只读位置**不会**早 throw(与早期文档表述不同,以代码为准;Whale 自身元数据如 `.whale/index.db` 仍会写入只读位置)。
+- **只读位置**:写拦截在 **renderer 层**(`IOActionsContextProvider.runAndRefresh` 早 throw + FileList/useListCommands 守卫 + 写按钮 disabled);AI 侧另有 `readOnlyGuard`。**注意**:`setAllowedRoots` 收到的 roots **包含**只读位置(Root.tsx 全量推送)——allowedRoots 只表达"配置的 location",主进程写 IPC 对只读位置**不会**早 throw;Whale 自身元数据如 `.whale/index.db` 仍会写入只读位置。
 
 云存储(S3 / WebDAV)、导入导出、`.ts → .whale` 迁移工具均**不在范围**。详见 [docs/09-known-issues.md](./09-known-issues.md)。
 
@@ -39,7 +39,6 @@
 **主进程 IO 性能**(防 UI 冻结):
 
 - `readTextFile`:chardet 只采样前 256KB(不扫整个 buffer);替换字符计数用 `indexOf` 循环(不建百万级 `match` 数组)。多 MB 老编码文件不再冻 UI 数百 ms
-- archive(7za)列表 / 读 entry 走**异步 `execFile`**([src/main/archive.ts](../src/main/archive.ts);以前 `execFileSync` 的 60s timeout 会冻整个主进程);`maxBuffer` 提到 64MB 防大压缩包列表截断
 
 ## 4. 右键菜单
 
@@ -134,6 +133,6 @@ main
 
 ## 10. 架构审阅遗留(2026-07-18)
 
-- ~~persist 全链路同步阻塞~~ **已修(2026-07-18)**:适配器改 async `invoke`、主进程改 async fs(tmp + rename),durability 不变(invoke resolve 时已落盘),`persist:*Sync` 通道删除;退出 flush 握手保留并升级为 load-bearing。**未加 debounce/throttle**:写量与改前相同(每变更整包重写),只是不再阻塞双线程 —— "每写必落盘"优先于写放大优化。见 §8。
+- ~~persist 全链路同步阻塞~~ **已修(2026-07-18)**,细节见 §8。**未加 debounce/throttle**:写量与改前相同(每变更整包重写),只是不再阻塞双线程 —— "每写必落盘"优先于写放大优化。
 - **`fs:readTextFile` 主线程解码**:整文件 jschardet + iconv + 两遍 U+FFFD 计数都在主事件循环,大 legacy 编码文件长占。
 - `dir-lock.ts` `chains` Map 只增不清,长会话按目录数无界增长(值为已解决 Promise,低危)。

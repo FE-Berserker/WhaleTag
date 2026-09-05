@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import {
   BINARY_EXT,
   DRAWIO_EXT,
-  isAudioFile,
   isBinaryExtension,
   isDrawioFile,
 } from './whale-meta';
@@ -81,11 +80,8 @@ describe('BINARY_EXT excludes text formats consumed as raw strings', () => {
       'jpg', 'png', 'svg',           // IMAGE_EXT
       'mp4', 'mov',                  // VIDEO_EXT
       'pdf',                         // PDF_EXT
-      'docx', 'xlsx', 'pptx',        // OFFICE_EXT
-      'epub', 'mobi',                // EBOOK_EXT
-      'zip', 'tar', 'tgz', 'gz', '7z', // ARCHIVE_EXT
-      'stl', 'obj', 'glb', 'dxf', 'step', 'dwg', // CAD_EXT
-      'mp3', 'wav', 'flac',          // audio literals
+      'heic', 'heif',                // HEIC_EXT
+      'ttf', 'woff2',                // FONT_EXT
     ];
     for (const ext of mustStayBinary) {
       assert.equal(
@@ -94,56 +90,5 @@ describe('BINARY_EXT excludes text formats consumed as raw strings', () => {
         `${ext} must remain in BINARY_EXT — binary content, base64 transport`
       );
     }
-  });
-});
-
-describe('isAudioFile', () => {
-  // Used by EntryContextMenu / DirectoryTree to decide whether to surface the
-  // "Play in background" / "Play this folder" right-click items. Anything
-  // media-player can decode (native OR after ffmpeg transcode) counts.
-
-  it('returns true for native-playable audio', () => {
-    assert.equal(isAudioFile('track.mp3'), true);
-    assert.equal(isAudioFile('track.ogg'), true);
-    assert.equal(isAudioFile('track.wav'), true);
-    assert.equal(isAudioFile('track.flac'), true);
-    assert.equal(isAudioFile('track.aac'), true);
-    assert.equal(isAudioFile('track.m4a'), true);
-    assert.equal(isAudioFile('track.opus'), true);
-  });
-
-  it('returns true for transcode-only audio', () => {
-    // APE / WMA / AIFF / etc. — needs ffmpeg. The dock ffmpeg-transcodes
-    // these on demand (transcode-cache.ts), so they're still audio as far
-    // as the dock / right-click menu is concerned.
-    assert.equal(isAudioFile('lossless.ape'), true);
-    assert.equal(isAudioFile('legacy.wma'), true);
-    assert.equal(isAudioFile('cd.aiff'), true);
-    assert.equal(isAudioFile('voicemail.amr'), true);
-    assert.equal(isAudioFile('surround.ac3'), true);
-    assert.equal(isAudioFile('surround.dts'), true);
-    assert.equal(isAudioFile('tracker.mpc'), true);
-    assert.equal(isAudioFile('archive.wv'), true);
-    assert.equal(isAudioFile('dsd.dsf'), true);
-  });
-
-  it('is case-insensitive on the extension', () => {
-    assert.equal(isAudioFile('track.MP3'), true);
-    assert.equal(isAudioFile('track.FlAc'), true);
-    assert.equal(isAudioFile('lossless.APE'), true);
-  });
-
-  it('returns false for video / image / document / text', () => {
-    assert.equal(isAudioFile('movie.mp4'), false);
-    assert.equal(isAudioFile('movie.mkv'), false);
-    assert.equal(isAudioFile('photo.jpg'), false);
-    assert.equal(isAudioFile('doc.pdf'), false);
-    assert.equal(isAudioFile('notes.txt'), false);
-    assert.equal(isAudioFile('archive.zip'), false);
-  });
-
-  it('returns false for files without an extension', () => {
-    assert.equal(isAudioFile('README'), false);
-    assert.equal(isAudioFile(''), false);
   });
 });

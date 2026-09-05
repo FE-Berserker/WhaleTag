@@ -51,9 +51,7 @@ folder/
     ├── thumbs/                 # 单文件缩略图(256px JPEG)
     ├── wst.jpg                 # 文件夹缩略图
     ├── wsb.jpg                 # 文件夹背景(1024px)
-    ├── transcodes/             # 媒体转码缓存(APE/WMA → Opus 等)
     ├── revisions/              # 修订历史备份(<basename>/<ts>.<ext>)
-    ├── ebook-annotations/      # 电子书阅读高亮注释(<basename>.json)
     └── _migration-state.json   # 一次性数据迁移标志
 ```
 
@@ -63,17 +61,14 @@ folder/
 |---|---|
 | `whale-extension://<ext-id>/...` | 沙箱扩展 iframe 资源;`registerSchemesAsPrivileged({standard, secure})` 在 `app.ready` **之前** 调用,否则 origin 是 opaque,`document.cookie` 抛 `SecurityError`。各扩展自己 meta CSP 治理,主进程 CSP **跳过** 该协议 |
 | `whale-file://<encoded-path>` | 支持 Range 的流式文件服务,渲染层 `<video>` / `<audio>` / `<img>` 直接用;`createReadStream` + Range 响应,不进渲染层内存 |
-| `whale-audio://<encoded-source-path>` | Chromium 不能原生解码的音频(APE/WMA/AIFF/…)实时 Opus 转码:主进程 spawn ffmpeg → Ogg/Opus stdout 直接流给 `<audio>`(首播 ~1s 出声,不先把整份转码完),输出同步 tee 写 `.whale/transcodes/<basename>.opus`;缓存命中时走 `whale-file://` 同款 Range/206 路径(可拖动)。与 `whale-file://` 同 privilege(`standard, secure, supportFetchAPI, stream`);Range 逻辑共享 `protocol-range.ts` |
 
 ## 4. 主进程入口
 
 [src/main/main.ts](../src/main/main.ts) 的关键钩子:
 
 - **`pinUserDataToProductName()`**:`app.whenReady()` **之前** 调 `app.setPath('userData', ...)` + `app.setName(...)`,强制 `userData` 落到 `%APPDATA%/WhaleTag/`。直接 `electron .` 不经 npm 时不调这条会让 `app.getPath('userData')` 退化为 `AppData/Roaming/Electron/`,跟打包应用分两套 userData,"无法保存"的错觉根因
-- **CSP**:`onHeadersReceived` 设 renderer CSP(`default-src 'self'; img-src 'self' https: http: data: blob: ...`),**跳过 `whale-extension://` 响应**,由各扩展 meta CSP 自己治理
-- **`registerSchemesAsPrivileged([{ scheme: 'whale-extension', privileges: { standard: true, secure: true } }])`** 在 app.ready 之前
-- **whale-file 网关**:`protocol.handle('whale-file')` 注册 `whale-file://`,经 `assertWithinAllowedRoot` 后从磁盘 Range 读(Range 逻辑抽到 `protocol-range.ts`,`createFileRangeResponse` 共享)
-- **whale-audio 网关**:`protocol.handle('whale-audio')` 注册 `whale-audio://`,为 APE/WMA/AIFF/… 实时 ffmpeg→Opus 流式转码(缓存命中则 Range 读 `.whale/transcodes/<basename>.opus`);经 `assertWithinAllowedRoot`;`mediaConvertSemaphore` 限并发,`before-quit` 杀残留 ffmpeg
+- **CSP**:`onHeadersReceived` 设 renderer CSP(`default-src 'self'; img-src 'self' https: http: data: blob: ...`;`whale-extension://` 响应跳过,见 §3)
+- **whale-file 网关**:`protocol.handle('whale-file')` 经 `assertWithinAllowedRoot` 后从磁盘 Range 读;Range 逻辑抽到 `protocol-range.ts`(`createFileRangeResponse`)
 - **冷启动惰性加载**:pdfjs-dist(~1MB+)与 ffmpeg-static **不在** main.ts 顶层 import——pdfjs 经 `nodeRequire`(`createRequire(__filename)`)在首次 PDF 缩略图 / 全文抽取时才 load([src/main/fulltext.ts](../src/main/fulltext.ts) 与 [src/main/thumbnail.ts](../src/main/thumbnail.ts) 的 `getPdfjs()`),ffmpeg-static 只为诊断日志惰性 `import()`([src/main/main.ts](../src/main/main.ts))。sharp / better-sqlite3 / @napi-rs/canvas 仍随 `./ipc` eager 加载(IPC handler 启动即要用)。
 
 ## 5. 渲染层桥
@@ -138,7 +133,7 @@ npm run dev
 
 **症状速查**:见到 `Cannot read properties of undefined (reading 'registerSchemesAsPrivileged')`、或 `process.type === undefined`、或 `require('electron')` 拿到字符串 —— 90% 是 `ELECTRON_RUN_AS_NODE=1` 残留,**先 unset 再查版本兼容**。
 
-**扩展 dist 同步警告**(经常踩,2026-07-06):Electron 在运行时加载的是 `release/app/dist/extensions/<id>/`(见 [`src/main/ipc/extensions.ts`](../src/main/ipc/extensions.ts) `loadExtensionRegistry` 路径),**不是 `src/extensions/<id>/`**。改任何 `src/extensions/*/` 下的 **HTML / CSS / 静态资源**,必须重跑:
+**扩展 dist 同步警告**:Electron 在运行时加载的是 `release/app/dist/extensions/<id>/`(见 [`src/main/ipc/extensions.ts`](../src/main/ipc/extensions.ts) `loadExtensionRegistry` 路径),**不是 `src/extensions/<id>/`**。改任何 `src/extensions/*/` 下的 **HTML / CSS / 静态资源**,必须重跑:
 
 ```bash
 npm run build:extensions       # 重新生成 release/app/dist/extensions/<id>/
@@ -150,7 +145,7 @@ npm run build:extensions       # 重新生成 release/app/dist/extensions/<id>/
 
 ## 9. 扩展加载失败的可见化
 
-每个扩展的 `index.ts` 顶层应该包一层 try/catch,捕获 `applyLocale()` / DOM 引用 / first-paint 任意时点抛出的异常,统一经 `window.whaleExt.postMessage({ type: 'error', path, message })` 通知 host([`ExtensionHost.tsx:750`](../../src/renderer/components/ExtensionHost.tsx) 接收并 console.error + toast)。**`extension-api.js` 已经把 `onMessage` / `onLocale` handler 包了 try/catch**(`src/extensions/shared/extension-api.js:44-51, 79-83`),但**模块顶层 + init 阶段抛出的同步异常不在它的保护范围内** —— 那种异常会一路冒到 `window.onerror`,主窗口看到一个死 iframe 不知道原因。
+每个扩展的 `index.ts` 顶层应该包一层 try/catch,捕获 `applyLocale()` / DOM 引用 / first-paint 任意时点抛出的异常,统一经 `window.whaleExt.postMessage({ type: 'error', path, message })` 通知 host([`ExtensionHost.tsx:750`](../src/renderer/components/ExtensionHost.tsx) 接收并 console.error + toast,避免"白屏无解释")。**`extension-api.js` 已经把 `onMessage` / `onLocale` handler 包了 try/catch**(`src/extensions/shared/extension-api.js:44-51, 79-83`),但**模块顶层 + init 阶段抛出的同步异常不在它的保护范围内** —— 那种异常会一路冒到 `window.onerror`,主窗口看到一个死 iframe 不知道原因。
 
 最小写法:
 
@@ -172,16 +167,14 @@ try {
 }
 ```
 
-host 收到 `error` 后应当:console.error + toast(避免"白屏无解释"那种最差用户体验)。
-
 ## 10. 测试命令
 
 `electron --test`(Node test runner,经 ts-node)跑 `src` + `scripts` 下所有 `*.test.ts(x)`(~1700 用例 / 98 文件)。
 
-- **自动发现**:[scripts/run-tests.cjs](../scripts/run-tests.cjs) 用 glob 枚举全部测试文件交给 `electron --test`——**新增测试无需改 package.json**(旧脚本是硬编码 91 个文件的手维护列表,曾漏跑 8 个文件 + 1 个幽灵条目)。
+- **自动发现**:[scripts/run-tests.cjs](../scripts/run-tests.cjs) 用 glob 枚举全部测试文件交给 `electron --test`——**新增测试无需改 package.json**。
 - **`pretest` 闸门**:`npm test` 先跑 `tsc --noEmit`;类型回归当场红。`build:*` 都带 `transpileOnly`,pretest 是唯一的类型校验点。
 
-## 10. 设置面板(8 个分类)
+## 11. 设置面板(8 个分类)
 
 [src/renderer/components/SettingsDialog.tsx](../src/renderer/components/SettingsDialog.tsx) = 左侧分类导航 + 右侧分类面板双栏布局(类 VS Code Preferences)。**8 个分类**(代码 `SECTIONS` 数组顺序):
 
@@ -198,7 +191,7 @@ host 收到 `error` 后应当:console.error + toast(避免"白屏无解释"那�
 
 侧栏(`Sidebar.tsx`)底栏只剩 4 个图标:回收站 / 新建 Excalidraw / 新建 Drawio / 设置。`WorkflowManagerDialog` 由 SettingsDialog 在 `tags` 分类 stateful 渲染。
 
-## 11. 渲染层重渲染优化 + 响应式布局
+## 12. 渲染层重渲染优化 + 响应式布局
 
 **重渲染优化(Track C)**:
 
@@ -209,42 +202,40 @@ host 收到 `error` 后应当:console.error + toast(避免"白屏无解释"那�
 
 **响应式布局(窄窗口)**:
 
-- **视角切换器折叠**:[FileListHeader](../src/renderer/components/FileListHeader.tsx) `ResizeObserver` 测宽——workspace ≥ 720 时 9 个视角全 inline;< 720 时 list/grid/gallery inline + 其余 6 个进 `⋯` 溢出菜单(当前专门视角的图标显示在触发按钮上,活动视角不丢)。宽屏 `module: 'esnext'` 让 `React.lazy` 拆出 echarts/leaflet/xyflow 异步 chunk(首屏 ~0.94 MiB,见 §8)。
+- **视角切换器折叠**:[FileListHeader](../src/renderer/components/FileListHeader.tsx) `ResizeObserver` 测宽——workspace ≥ 720 时 9 个视角全 inline;< 720 时 list/grid/gallery inline + 其余 6 个进 `⋯` 溢出菜单(当前专门视角的图标显示在触发按钮上,活动视角不丢)。
 - **左栏标签页**:[MainLayout](../src/renderer/containers/MainLayout.tsx) viewport ≤ 1400px **或 AI 面板打开时**(`aiEnabled && aiPanelOpen`,2026-07-22 起——AI 面板占 380px 右栏,左双列会让工作区过窄),Sidebar(位置)+ DirectoryTree(目录树)合成**单个标签页面板**(位置 / 目录树 切换 + `+` 加位置),省 ~260px 给工作区;AI 面板关闭且 > 1400px 恢复并排。两组件各加 `embedded` 模式(去标题栏、宽度 100%)。
 - **AI 面板宽度**:默认 420 → **380**(`aiPanelWidth`,迁移把旧 420 也降到 380;自定义值保留)。
 
-## 12. 架构审阅遗留(2026-07-18)
+## 13. 架构审阅遗留(2026-07-18)
 
-> 2026-07-18 全仓架构审阅发现的结构项(与 docs/15 性能审计不重复,其性能项已全部 ✅)。模块级遗留记在各模块文档:索引生命周期 → [docs/04 §10](./04-search-index.md);扩展宿主 → [docs/07 §10](./07-extensions.md);读侧边界 → [docs/13 §13](./13-security.md)。(审阅发现的迁移时序 bug 与 persist 同步链路已修,分别见 [docs/09 §26](./09-known-issues.md) / [docs/02 §10](./02-file-io.md)。)
+> 2026-07-18 全仓架构审阅发现的结构项(性能项见 docs/15,不重复)已全部修复,以下记录修复后的当前结构与防复发 gotcha。模块级遗留记在各模块文档:索引生命周期 → [docs/04 §10](./04-search-index.md);扩展宿主 → [docs/07 §10](./07-extensions.md);读侧边界 → [docs/13 §13](./13-security.md)。审阅发现的迁移时序 bug 与 persist 同步链路已修,分别见 [docs/09 §26](./09-known-issues.md) / [docs/02 §10](./02-file-io.md)。
 
 **主进程结构**
 
-- ~~`ipc.ts` god-registrar:1376 行、87 个 `ipcMain.handle` 全部内联在一个 `registerIpcHandlers()`,另混 ~600 行业务逻辑(递归扫描 / 编码探测 / zip / reveal / wasm 资源缓存)~~ ✅ 已拆(2026-07-18):11 个域模块进 [src/main/ipc/](../src/main/ipc/) —— `fs-read` / `fs-write` / `fs-roots` / `dialogs` / `shell` / `search-index` / `meta` / `thumbnails` / `extensions` / `window` / `persist`,各域持有自己的业务逻辑与闭包;[index.ts](../src/main/ipc/index.ts) 是 ~40 行薄注册器,`import './ipc'` 经目录解析到 index(调用方零改)。**测试坑**:`ipc.test.ts` 的 require.cache 失效必须枚举全部 12 个模块(只清 `./ipc` 会让域模块钉在旧 stub 上)。**路径坑**:`readCadWasm` / `readHeicWasm` / registry 的 `__dirname/../extensions` 随目录加深改为 `../../extensions`。
-- ~~`main.ts` 尾部 ~220 行 whale-audio 转码协议逻辑~~ ✅ 已独立成 [whale-audio-protocol.ts](../src/main/whale-audio-protocol.ts)(同日):`registerWhaleAudioProtocol` + `killAllAudioTranscodes` 连带 inflight/children 状态整体迁出,`main.ts` 884 → 630 行,import 换成两行。
-- ~~死代码:`drawio-thumb.ts` / `excalidraw-thumb.ts`~~ ✅ 已删(2026-07-18)。
-- ~~`index-worker-host.ts` 与 `office-worker-host.ts` 的 reqId 关联 / spawn 生命周期同构~~ ✅ 已抽公共层 [worker-protocol.ts](../src/main/worker-protocol.ts)(newRequest / completeRequest / failRequest / rejectAllPending),index / office / thumb 三个 host 全部改用(2026-07-18);spawn / 传输层各写一遍是有意的(utilityProcess vs 外部 python 子进程)。
-- 另:循环依赖 `thumbnail.ts` ↔ `office-convert.ts` ✅ 已拆 —— soffice 二进制探测抽成 [office-binary.ts](../src/main/office-binary.ts) 共享叶子,依赖链变单向(2026-07-18)。
+- `src/main/ipc/` 按域拆分(11 个域模块,清单见 §7),各域持有自己的业务逻辑与闭包;[index.ts](../src/main/ipc/index.ts) 是 ~40 行薄注册器,`import './ipc'` 经目录解析到 index(调用方零改)。**测试坑**:`ipc.test.ts` 的 require.cache 失效必须枚举全部 12 个模块(只清 `./ipc` 会让域模块钉在旧 stub 上)。**路径坑**:`readCadWasm` / `readHeicWasm` / registry 的 `__dirname/../extensions` 随目录加深为 `../../extensions`。
+- `drawio-thumb.ts` / `excalidraw-thumb.ts` 为未接入主流程的死代码(thumbnail.ts 无 drawio/excalidraw kind 分支,缩略图走品牌图标),已删。
+- index / thumb 两个 worker host 的 reqId 关联 / spawn 生命周期同构,公共层在 [worker-protocol.ts](../src/main/worker-protocol.ts)(newRequest / completeRequest / failRequest / rejectAllPending);spawn / 传输层各写一遍是有意的(utilityProcess vs 外部子进程)。
 
 **状态管理(§6)**
 
-- ~~redux-thunk 是死代码~~ ✅ 已删注册(`configureStore.ts` 不再 `applyMiddleware`;全库本就零 thunk action)(2026-07-18)。异步 IPC 经 ipcApi 直调留在组件 / Provider —— 删 thunk 后这成为既定模式,真需要编排时再往 services 收敛。
-- ~~`reducers/settings.ts` god-slice:1203 行、53 字段混主题 / 列宽 / 外部二进制 / AI / keybinding / 地图~~ ✅ 已拆(2026-07-18,**同形状拆分**):5 个域模块进 [reducers/settings/](../src/renderer/reducers/settings/) —— `appearance`(主题/标签色/字体/列/tray)、`browser`(默认视图/回收站/隐藏文件/lunar/viewDepth/fulltext)、`integrations`(office/dwg/oda/calibre 转换器 + 地图 + md-editor 偏好 + 用户命令)、`ai`(ai* 18 字段单 action)、`system`(默认位置/自动更新/keybindings/任务提醒 + REMOVE_LOCATION/REMOVE_STAGE 跨 slice 反应);各域自持字段接口 / 初始值 / 迁移 / reduce;主文件是 ~90 行组合层(接口 extends 组合 + initialState 展开 + migrate/reduce 链 + `export *` 全量再导出)。**state 形状零变化**:selector / redux-persist / settings.test.ts(65 例)零改全过;keybindings sanitize 的 `autoMergeLevel1` 敏感段原注释随迁。
+- redux-thunk 已删注册(`configureStore.ts` 不再 `applyMiddleware`;全库零 thunk action)。异步 IPC 经 ipcApi 直调留在组件 / Provider —— 这是既定模式,真需要编排时再往 services 收敛。
+- `reducers/settings.ts` god-slice 已按**同形状拆分**成 [reducers/settings/](../src/renderer/reducers/settings/) 5 个域模块 —— `appearance`(主题/标签色/字体/列/tray)、`browser`(默认视图/回收站/隐藏文件/lunar/viewDepth/fulltext)、`integrations`(地图 + 用户命令)、`ai`(ai* 18 字段单 action)、`system`(默认位置/自动更新/keybindings/任务提醒 + REMOVE_LOCATION/REMOVE_STAGE 跨 slice 反应);各域自持字段接口 / 初始值 / 迁移 / reduce;主文件是 ~90 行组合层(接口 extends 组合 + initialState 展开 + migrate/reduce 链 + `export *` 全量再导出)。**state 形状零变化**:selector / redux-persist 不受影响;keybindings sanitize 的 `autoMergeLevel1` 敏感段原注释随迁。
 
 **渲染层桥(§5)**
 
-- ~~`src/renderer/services/ipc-api.ts` 手工逐方法转发~~ ✅ 已重写为 42 行类型化代理(`export const ipcApi: WhaleApi = window.whale ?? makeThrowingProxy()`,无 preload 环境首次调用才抛错),`WhaleApi` 单一事实源在 `src/shared/ipc-types.ts`(2026-07-18)。
+- `src/renderer/services/ipc-api.ts` = 42 行类型化代理(`export const ipcApi: WhaleApi = window.whale ?? makeThrowingProxy()`,无 preload 环境首次调用才抛错);`WhaleApi` 单一事实源在 `src/shared/ipc-types.ts`。
 
 **构建(§8)**
 
-- ~~echarts 全量 import~~ ✅ 已改 `echarts/core` 按需注册(共享 [services/echarts-setup.ts](../src/renderer/services/echarts-setup.ts);vendor chunk ~727 KiB,19 个全量 chart 类型已确认不在产物内)(2026-07-18)。复核补抓两个漏注册并已修:`GraphicComponent`(FolderViz 中心标签 `graphic:` 元素)、`TreeChart`(FolderViz tree / radial 模式)。`echarts-wordcloud` 经 `echarts/lib/echarts` 深路径与 `echarts/core` 共享注册表,实例同一性无问题。
+- echarts 按需注册(`echarts/core`,共享 [services/echarts-setup.ts](../src/renderer/services/echarts-setup.ts))。`GraphicComponent`(FolderViz 中心标签 `graphic:` 元素)与 `TreeChart`(FolderViz tree / radial 模式)容易漏注册,已踩过;`echarts-wordcloud` 经 `echarts/lib/echarts` 深路径与 `echarts/core` 共享注册表,实例同一性无问题。
 
-**重渲染(§11)**
+**重渲染(§12)**
 
-- ~~`ExtensionContextProvider.tsx` / `FileSelectionContextProvider.tsx` context value 未 memo~~ ✅ 两处 `value` 已包 `useMemo`(成员本已稳定 —— useSelector 引用 / useState 值 / useCallback),MainLayout 无关渲染不再级联到 FileList 等 6+ 消费者(2026-07-18)。
-- ~~`FileList.tsx` 的 `useNow()` 每分钟 tick 在 `visible` memo deps 里~~ ✅ 已门控(2026-07-18):仅 `date:` / `smart:*` 鲜度过滤把 live `now` 传进 memo(`nowTick`),其余过滤吃冻结哨兵 `FROZEN_NOW` —— 普通标签 / `geo:` / `period:` 过滤下,每分钟 tick 不再重算过滤、不再全可见行重渲;`smartFunctionalityOfTag` 顺带改为显式传 `now`。
-- ~~`FileToolbar.tsx` 用 combined hook 订阅全量 context 只用 `refresh` / `loading`~~ ✅ 已改 `useDirectoryUI()` 单片(2026-07-18)—— combined hook 连数据片一起订,每次 rescan 都白重渲工具栏。
+- `ExtensionContextProvider.tsx` / `FileSelectionContextProvider.tsx` 的 context `value` 已包 `useMemo`(成员本已稳定 —— useSelector 引用 / useState 值 / useCallback),MainLayout 无关渲染不再级联到 FileList 等 6+ 消费者。
+- `FileList.tsx` 的 `useNow()` 每分钟 tick 已门控:仅 `date:` / `smart:*` 鲜度过滤把 live `now` 传进 memo(`nowTick`),其余过滤吃冻结哨兵 `FROZEN_NOW` —— 普通标签 / `geo:` / `period:` 过滤下,每分钟 tick 不再重算过滤、不再全可见行重渲;`smartFunctionalityOfTag` 显式传 `now`。
+- `FileToolbar.tsx` 用 `useDirectoryUI()` 单片订阅(combined hook 会连数据片一起订,每次 rescan 白重渲工具栏)。
 
 **Shared 层(§1)**
 
-- ~~杂物抽屉倾向~~ ✅ 已完成 shared → `src/renderer/domain/` 搬迁(19 个视角 / 领域模块迁入;contracts —— ipc-types / whale-meta / extension-types / ai-types 等留 shared;smart-tags 因 main 仍引用故留下)(2026-07-18)。
-- ~~新遗留:[smart-tags.ts:36](../src/shared/smart-tags.ts) 反向 import `../renderer/domain/calendar`~~ ✅ 已解开(2026-07-18):period 解析(`isPeriodTag` / `dateTagRangeKey` / `DateTagRange` / `parseYyyymmdd`)整体挪进 [smart-tags.ts](../src/shared/smart-tags.ts)(main 的 HTTP `apply_tag` 与日期迁移本来就要用),[calendar.ts](../src/renderer/domain/calendar.ts) 改为 import + re-export,渲染层调用点零改动。全库不再有 shared → renderer/domain 反向依赖。
+- 19 个视角 / 领域模块已迁入 `src/renderer/domain/`;contracts(ipc-types / whale-meta / extension-types / ai-types 等)留 shared;smart-tags 因 main 仍引用故留下。
+- period 解析(`isPeriodTag` / `dateTagRangeKey` / `DateTagRange` / `parseYyyymmdd`)在 [smart-tags.ts](../src/shared/smart-tags.ts)(main 的 HTTP `apply_tag` 与日期迁移要用),[calendar.ts](../src/renderer/domain/calendar.ts) import + re-export,渲染层调用点零改动;全库不再有 shared → renderer/domain 反向依赖。

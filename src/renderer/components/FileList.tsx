@@ -790,13 +790,9 @@ export default function FileList() {
   );
   const commands = useListCommands(commandsDeps);
 
-  // H.25 (video dispatch fix): video files route to the media-player extension
-  // (rich player with playlist / prev-next / loop / shuffle / speed / progress
-  // memory) instead of MediaLightbox. Images still go through MediaLightbox for
-  // the zoom / pan / filmstrip single-image preview. Matches the checklist
-  // §media-player rule "双击视频/音频播放" and sidesteps a class of MediaLightbox
-  // codec issues (e.g. formats Chromium can't decode end up showing
-  // "无法打开 X").
+  // Images open in MediaLightbox for the zoom / pan / filmstrip single-image
+  // preview; everything else dispatches through the extension registry and
+  // falls back to the OS default app when no extension claims the type.
   const handleOpen = useCallback((entry: DirEntry) => {
     if (entry.isDirectory) {
       navigateTo(entry.path);

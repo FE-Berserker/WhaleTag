@@ -27,10 +27,7 @@
  * Encode a platform-native absolute path into a `<scheme>://` URL.
  *
  * Scheme-parameterized core: `whale-file` (stream any file to `<video>` /
- * `<img>` / `<audio>`) and `whale-audio` (live Opus transcode of formats
- * Chromium can't decode). Both share the exact same byte format; only the
- * scheme prefix differs, and the main process dispatches to the right
- * handler by scheme.
+ * `<img>` / `<audio>`).
  *
  * Returns `null` for relative paths or empty input — the caller should
  * surface that as a precondition error rather than producing a malformed
@@ -163,21 +160,6 @@ export function encodeWhaleFileUrl(filePath: string): string | null {
 /** Decode a `whale-file://` URL back into a platform-native path. */
 export function decodeWhaleFileUrl(rawUrl: string): string | null {
   return decodeForScheme(rawUrl, 'whale-file');
-}
-
-/**
- * Encode an absolute path into a `whale-audio://` URL (live Opus transcode
- * of formats Chromium can't decode: APE / WMA / AIFF / …). Same byte format
- * as `whale-file://` — only the scheme prefix differs, and the main process
- * dispatches to the transcode-streaming handler by scheme.
- */
-export function encodeWhaleAudioUrl(filePath: string): string | null {
-  return encodeForScheme(filePath, 'whale-audio');
-}
-
-/** Decode a `whale-audio://` URL back into a platform-native path. */
-export function decodeWhaleAudioUrl(rawUrl: string): string | null {
-  return decodeForScheme(rawUrl, 'whale-audio');
 }
 
 /** `decodeURIComponent` wrapper that returns the raw string on bad escape. */

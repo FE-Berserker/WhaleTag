@@ -125,9 +125,9 @@ export default function extensionsReducer(
     case LOAD_EXTENSION_REGISTRY: {
       const payload = (action as LoadExtensionRegistryAction).payload;
       // Stale persisted state from previous sessions can reference extensions
-      // that no longer exist (e.g. md-viewer after deletion). Drop those
-      // entries on registry load so redux-persist rehydrates clean state on
-      // the next write — no orphan keys lingering in localStorage.
+      // that no longer exist (e.g. an extension removed by an app update).
+      // Drop those entries on registry load so redux-persist rehydrates clean
+      // state on the next write — no orphan keys lingering in localStorage.
       if (!payload) {
         return { ...state, registry: null };
       }

@@ -74,26 +74,6 @@ export class Semaphore {
 }
 
 /**
- * Serialize LibreOffice (`soffice`) conversions. `sofficeConvertArgs` does NOT
- * pass `-env:UserInstallation`, so concurrent soffice processes share the
- * default user profile and contend on LibreOffice's profile lock — concurrent
- * runs can fail or corrupt the profile. Covers BOTH soffice spawn sites:
- * office-viewer's `convertOfficeToPdf` (office-convert.ts) AND the office
- * thumbnail path (`encodeOfficeThumb` in thumbnail.ts).
- */
-export const sofficeSemaphore = new Semaphore(1);
-
-/**
- * Shared budget for the other heavyweight external-binary conversions: ffmpeg
- * audio transcode, Calibre `ebook-convert`, and `dwg2dxf` / ODA File Converter.
- * Each saturates a core and does real disk IO; without a cap, opening several
- * heavy files at once spawned many child processes and pressured the main
- * process. Capped at 2 (not os.cpus()) because these are user-initiated,
- * one-at-a-time conversions rather than bulk pipelines.
- */
-export const mediaConvertSemaphore = new Semaphore(2);
-
-/**
  * Bounds how many thumbnail *encodes* run at once in the main process.
  *
  * Two paths request thumbnails: the renderer's file-thumb IPC queue
@@ -101,7 +81,7 @@ export const mediaConvertSemaphore = new Semaphore(2);
  * thumbnail path (`generateFolderThumbnail` / `setFolderThumbnail`), which each
  * delegate to `generateThumbnail`. The folder path has NO renderer-side cap, so
  * expanding a wide tree fanned out many concurrent `generateFolderThumbnail`
- * calls — each kicking off a sharp / ffmpeg / pdfjs / soffice encode — with only
+ * calls — each kicking off a sharp / ffmpeg / pdfjs encode — with only
  * per-source `inflight` dedup and no global limit (P1-6).
  *
  * Wrapping the encode inside `doGenerateThumbnail` in this semaphore caps the

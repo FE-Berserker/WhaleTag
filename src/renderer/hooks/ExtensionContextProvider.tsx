@@ -18,7 +18,7 @@ import { ipcApi } from '-/services/ipc-api';
 import ConfirmDiscardDialog, {
   ConfirmDiscardChoice,
 } from '-/components/ConfirmDiscardDialog';
-import { basename } from '-/services/path-util';
+import { basename, isSameOrDescendant, joinPath } from '-/services/path-util';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { selectExtension } from '-/services/extension-dispatch';
 import { useDispatch, useSelector } from 'react-redux';
@@ -28,11 +28,7 @@ import {
   clearFileEditState,
 } from '-/reducers/extensions';
 
-import {
-  isBinaryExtension,
-  isAudioTranscodeFile,
-  isImageFile,
-} from '../../shared/whale-meta';
+import { isBinaryExtension, isImageFile } from '../../shared/whale-meta';
 import { MAX_TABS, makeTabId, pickLruEvict } from './extension-tabs';
 
 export interface ActiveExtensionView {
@@ -129,6 +125,13 @@ function extOf(filePath: string): string {
   return dot > 0 ? filePath.slice(dot + 1).toLowerCase() : '';
 }
 
+/** Path equality under separator + case normalization (both directions of the
+ *  descendant check collapsing to equality). Used to match an fs.watch changed
+ *  path against an open tab's filePath. */
+function sameFile(a: string, b: string): boolean {
+  return isSameOrDescendant(a, b) && isSameOrDescendant(b, a);
+}
+
 export function ExtensionContextProvider({
   children,
 }: ExtensionContextProviderProps) {
@@ -174,13 +177,6 @@ export function ExtensionContextProvider({
       filePath: string
     ): Promise<{ content: string; encoding: ExtensionEncoding; size: number }> => {
       const ext = extOf(filePath);
-      // media-player transcodes these from the PATH alone (the host re-reads the
-      // file during transcode). Reading the source here would base64 tens of MB
-      // — bytes media-player throws away — and freeze the renderer (a 50 MB APE
-      // → ~67 MB base64 string over IPC + postMessage). Skip the read entirely.
-      if (isAudioTranscodeFile(filePath)) {
-        return { content: '', encoding: 'base64', size: 0 };
-      }
       if (isBinaryExtension(ext)) {
         const buffer = await ipcApi.readFile(filePath);
         return {
@@ -198,25 +194,6 @@ export function ExtensionContextProvider({
       };
     },
     []
-  );
-
-  // Read a file's content for a given extension, applying the streamed-viewer
-  // short-circuit (pdf-viewer / non-transcode media-player pull bytes via
-  // `whale-file://` themselves, so we hand them empty content + the file size).
-  const readTabContent = useCallback(
-    async (
-      entry: Pick<DirEntry, 'path' | 'name' | 'size'>,
-      manifest: ExtensionManifest
-    ): Promise<{ content: string; encoding: ExtensionEncoding; size: number }> => {
-      const isStreamed =
-        manifest.id === 'pdf-viewer' ||
-        (manifest.id === 'media-player' && !isAudioTranscodeFile(entry.name));
-      if (isStreamed) {
-        return { content: '', encoding: 'base64', size: entry.size };
-      }
-      return readFileContent(entry.path);
-    },
-    [readFileContent]
   );
 
   // §unsaved-close — read dirty flags so we can prompt before closing a tab.
@@ -356,7 +333,7 @@ export function ExtensionContextProvider({
       setLoading(true);
       setError(null);
       try {
-        const { content, encoding, size } = await readTabContent(entry, manifest);
+        const { content, encoding, size } = await readFileContent(entry.path);
         const newTab: ExtensionTab = {
           id: tabId,
           filePath: entry.path,
@@ -389,7 +366,7 @@ export function ExtensionContextProvider({
         setLoading(false);
       }
     },
-    [currentLocation, readTabContent, activateTab]
+    [currentLocation, readFileContent, activateTab]
   );
 
   const openFile = useCallback(
@@ -452,20 +429,60 @@ export function ExtensionContextProvider({
   const reloadContent = useCallback(async () => {
     const t = activeTab;
     if (!t) return;
-    // Streamed viewers (pdf-viewer / non-transcode media-player) don't carry
-    // file bytes in `fileContent` — they re-request a `whale-file://` URL on
-    // every content push. Keep them on the empty-content path so a reload
-    // doesn't base64 a 50 MB PDF back into the renderer.
-    const { content, encoding, size } = await readTabContent(
-      { path: t.filePath, name: t.title, size: t.fileSize ?? 0 },
-      t.manifest
-    );
+    const { content, encoding, size } = await readFileContent(t.filePath);
     setTabs((prev) =>
       prev.map((x) =>
         x.id === t.id ? { ...x, fileContent: content, encoding, fileSize: size } : x
       )
     );
-  }, [activeTab, readTabContent]);
+  }, [activeTab, readFileContent]);
+
+  /** Re-read a specific open tab's file from disk and push the fresh content to
+   *  its editor (the `fileContent` prop change makes `ExtensionHost` re-post
+   *  `fileContent` to the iframe, which reloads the editor). Used by the
+   *  fs.watch external-change sync below. Skips tabs with unsaved edits so the
+   *  user's work is never clobbered. No-op if no open tab matches `filePath`. */
+  const reloadTabByPath = useCallback(
+    async (filePath: string) => {
+      const t = tabsRef.current.find((x) => x.filePath === filePath);
+      if (!t) return;
+      // Don't clobber unsaved editor edits — the user's in-progress work wins
+      // over a stale-on-disk reload.
+      if (editStateMapRef.current[filePath]?.dirty) return;
+      const { content, encoding, size } = await readFileContent(t.filePath);
+      setTabs((prev) =>
+        prev.map((x) =>
+          x.id === t.id ? { ...x, fileContent: content, encoding, fileSize: size } : x
+        )
+      );
+    },
+    [readFileContent]
+  );
+
+  // External edit sync (docs/04 §10): when a location fs.watcher reports a
+  // change to a file that's OPEN in an editor tab, reload that tab so the
+  // editor reflects the on-disk content — e.g. the AI assistant editing the
+  // .md you currently have open. Tabs with unsaved edits are skipped (above).
+  // A Whale-initiated save of the same file also trips the watcher, but the
+  // re-read content then equals the editor's current text, so the reload is
+  // benign (cursor preserved via CodeMirror's change mapping, no undo entry).
+  useEffect(() => {
+    const off = ipcApi.onDirChanged((ev) => {
+      const open = tabsRef.current;
+      if (open.length === 0) return;
+      const blanket = ev.paths.length === 0; // watch overflow — anything may have changed
+      const changedAbs = blanket
+        ? null
+        : ev.paths.map((rel) => joinPath(ev.rootPath, rel));
+      for (const tab of open) {
+        if (!isSameOrDescendant(ev.rootPath, tab.filePath)) continue;
+        const touched =
+          blanket || (changedAbs?.some((p) => sameFile(p, tab.filePath)) ?? false);
+        if (touched) void reloadTabByPath(tab.filePath);
+      }
+    });
+    return off;
+  }, [reloadTabByPath]);
 
   // Memoize the context value: every member is already a stable useSelector
   // reference / useState value / useCallback, so without this wrapper ANY

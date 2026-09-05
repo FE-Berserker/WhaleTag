@@ -20,7 +20,6 @@ import type { SidecarMeta, FolderMeta } from '../shared/whale-meta';
 import type { SearchQuery } from '../shared/search-query';
 import type {
   ExtensionRegistry,
-  RenderPdfOptions,
   RevisionInfo,
 } from '../shared/extension-types';
 import type {
@@ -51,8 +50,6 @@ const whaleApi: WhaleApi = {
   readTextFile: (filePath: string) =>
     ipcRenderer.invoke('fs:readTextFile', filePath),
   readFile: (filePath: string) => ipcRenderer.invoke('fs:readFile', filePath),
-  readFileRange: (filePath: string, offset: number, length: number) =>
-    ipcRenderer.invoke('fs:readFileRange', filePath, offset, length),
   pathExists: (targetPath: string) => ipcRenderer.invoke('fs:pathExists', targetPath),
   openDirectoryDialog: () => ipcRenderer.invoke('dialog:openDirectory'),
   openImageFileDialog: () => ipcRenderer.invoke('dialog:openImageFile'),
@@ -174,15 +171,9 @@ const whaleApi: WhaleApi = {
   clearTagLibraryDescription: (locationRoot: string, tag: string) =>
     ipcRenderer.invoke('tagLibrary:clearDescription', locationRoot, tag),
 
-  // Ebook-viewer annotation persistence (`.whale/ebook-annotations/<basename>.json`)
-  readEbookAnnotations: (filePath: string) =>
-    ipcRenderer.invoke('ebookAnnotations:read', filePath),
-  writeEbookAnnotations: (filePath: string, payload: unknown) =>
-    ipcRenderer.invoke('ebookAnnotations:write', filePath, payload),
-
   // Image thumbnails
-  generateThumbnail: (filePath: string, options?: { sofficePath?: string | null }) =>
-    ipcRenderer.invoke('thumbnail:generate', filePath, options),
+  generateThumbnail: (filePath: string) =>
+    ipcRenderer.invoke('thumbnail:generate', filePath),
   loadThumbnail: (filePath: string) =>
     ipcRenderer.invoke('thumbnail:load', filePath),
 
@@ -209,53 +200,13 @@ const whaleApi: WhaleApi = {
     ipcRenderer.invoke('ext:deleteRevision', revisionPath),
   writeFileWithRevision: (filePath: string, content: string) =>
     ipcRenderer.invoke('ext:writeFile', filePath, content),
-  saveImageToFile: (dataURL: string, dirPath: string, ext: string) =>
-    ipcRenderer.invoke('ext:saveImageToFile', dataURL, dirPath, ext),
   listRevisions: (filePath: string) =>
     ipcRenderer.invoke('ext:listRevisions', filePath) as Promise<RevisionInfo[]>,
   restoreRevision: (filePath: string, revisionPath: string) =>
     ipcRenderer.invoke('ext:restoreRevision', filePath, revisionPath),
   cleanupRevisions: (maxAgeDays: number) =>
     ipcRenderer.invoke('ext:cleanupRevisions', maxAgeDays),
-  getPdfAsset: (kind: string, filename: string) =>
-    ipcRenderer.invoke('ext:getPdfAsset', kind, filename),
-  getCadWasm: () => ipcRenderer.invoke('ext:getCadWasm'),
   getHeicWasm: () => ipcRenderer.invoke('ext:getHeicWasm'),
-  convertOfficeToPdf: (
-    filePath: string,
-    options?: { sofficePath?: string | null }
-  ) => ipcRenderer.invoke('ext:convertOfficeToPdf', filePath, options),
-  convertDwgToDxf: (
-    filePath: string,
-    options?: { dwg2dxfPath?: string | null; odaPath?: string | null }
-  ) => ipcRenderer.invoke('ext:convertDwgToDxf', filePath, options),
-  detectDwgConverters: () =>
-    ipcRenderer.invoke('ext:detectDwgConverters') as Promise<{
-      dwg2dxf: string | null;
-      oda: string | null;
-    }>,
-  convertEbookToEpub: (
-    filePath: string,
-    options?: { calibrePath?: string | null }
-  ) => ipcRenderer.invoke('ext:convertEbookToEpub', filePath, options),
-  detectEbookConverter: () =>
-    ipcRenderer.invoke('ext:detectEbookConverter') as Promise<{
-      calibre: string | null;
-    }>,
-  isSofficeAvailable: (options?: { sofficePath?: string | null }) =>
-    ipcRenderer.invoke('ext:isSofficeAvailable', options) as Promise<boolean>,
-  readClipboardText: () =>
-    ipcRenderer.invoke('ext:readClipboardText') as Promise<string>,
-  renderHtmlToPdf: (html: string, options?: RenderPdfOptions) =>
-    ipcRenderer.invoke('ext:renderHtmlToPdf', html, options) as Promise<Uint8Array>,
-
-  // Phase 4b — Archive viewer main-process decoder
-  listArchive: (filePath: string, options?) =>
-    ipcRenderer.invoke('archive:listArchive', filePath, options),
-  readArchiveEntry: (filePath: string, entryPath: string, options?) =>
-    ipcRenderer.invoke('archive:readEntry', filePath, entryPath, options),
-  extractArchive: (filePath: string, destDir: string, options?) =>
-    ipcRenderer.invoke('archive:extract', filePath, destDir, options),
 
   saveImageDialog: (defaultPath: string) =>
     ipcRenderer.invoke('dialog:saveImage', defaultPath),

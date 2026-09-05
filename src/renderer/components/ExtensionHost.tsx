@@ -27,25 +27,18 @@ import {
 } from '../../shared/extension-types';
 import { ipcApi } from '-/services/ipc-api';
 import { basename, parentDir } from '-/services/path-util';
-import { AUDIO_TRANSCODE_EXT, isImageFile } from '../../shared/whale-meta';
-import {
-  encodeWhaleAudioUrl,
-  encodeWhaleFileUrl,
-} from '../../shared/whale-file-url';
+import { isImageFile } from '../../shared/whale-meta';
 import { useExtensionContext } from '-/hooks/ExtensionContextProvider';
 import { useDirectoryUI } from '-/hooks/DirectoryContentContextProvider';
 import { useDirectoryTreeRefresh } from '-/hooks/DirectoryTreeRefreshContextProvider';
 import { createRpcHandler } from './extension-host/rpc-cases';
 import PromptDialog from '-/components/PromptDialog';
 import InlineEditModal from '-/components/ai/InlineEditModal';
-import { postAiDraft, type AiDraftPayload } from '-/components/ai/aiDraftBus';
-import AskQuestionDialog from '-/components/ai/AskQuestionDialog';
 import { RootState } from '-/reducers';
 import {
   setFileEditState,
   clearFileEditState,
 } from '-/reducers/extensions';
-import { setAiSettings, setMdRenderTheme } from '-/reducers/settings';
 
 /** How long the extension iframe may take to post `ready` before the host
  *  shows a retry-able failure instead of an indefinite spinner. */
@@ -163,65 +156,21 @@ export default function ExtensionHost({
     from: number;
     to: number;
   } | null>(null);
-  // pdf-viewer marquee → question editor (user edits before sending).
-  const [questionDraft, setQuestionDraft] = useState<AiDraftPayload | null>(
-    null
-  );
   const aiProvider = useSelector(
     (s: RootState) => s.settings.aiProvider ?? 'claude-cli'
   );
-  const aiEnabled = useSelector((s: RootState) => s.settings.aiEnabled);
-  // Inline-edit is offered on the text/md editors across all providers. The
+  // Inline-edit is offered on the text editor across all providers. The
   // Claude CLI path uses a cold-start `query()` with a dedicated strict system
   // prompt (see src/main/ai/inlineEdit.ts); HTTP providers use a single
   // non-streaming chat completion. Both finalize as the rewritten selection.
   const canInlineEdit =
     !readOnly &&
-    (manifest.id === 'text-editor' || manifest.id === 'md-editor') &&
+    manifest.id === 'text-editor' &&
     (aiProvider === 'claude-cli' ||
       aiProvider === 'ollama' ||
       aiProvider === 'openai');
   const editState = useSelector(
     (s: RootState) => s.extensions.editState[filePath]
-  );
-  const dwg2dxfPath = useSelector(
-    (s: RootState) => s.settings?.dwg2dxfPath ?? null
-  );
-  const odaPath = useSelector((s: RootState) => s.settings?.odaPath ?? null);
-  const calibrePath = useSelector(
-    (s: RootState) => s.settings?.calibrePath ?? null
-  );
-  // docs/09 §16.14: the user's explicit LibreOffice override from settings —
-  // forwarded to office-PDF conversion and the availability probe below.
-  const sofficePath = useSelector(
-    (s: RootState) => s.settings?.sofficePath ?? null
-  );
-  const mdRenderTheme = useSelector(
-    (s: RootState) => s.settings?.mdEditorRenderTheme ?? 'auto'
-  );
-  const customCallouts = useSelector(
-    (s: RootState) => s.settings?.customCallouts ?? []
-  );
-  const mdTemplates = useSelector(
-    (s: RootState) => s.settings?.mdTemplates ?? []
-  );
-  const mdPdfHeader = useSelector(
-    (s: RootState) => s.settings?.mdPdfHeader ?? ''
-  );
-  const mdPdfFooter = useSelector(
-    (s: RootState) => s.settings?.mdPdfFooter ?? ''
-  );
-  const mdKeybindings = useSelector(
-    (s: RootState) => s.settings?.mdKeybindings
-  );
-  const mdImageSaveMode = useSelector(
-    (s: RootState) => s.settings?.mdImageSaveMode ?? 'subfolder'
-  );
-  const deleteToTrash = useSelector(
-    (s: RootState) => s.settings?.deleteToTrash ?? true
-  );
-  const mdImageSubfolder = useSelector(
-    (s: RootState) => s.settings?.mdImageSubfolder ?? '${filename}.assets'
   );
   const dirty = editState?.dirty ?? false;
 
@@ -255,20 +204,12 @@ export default function ExtensionHost({
     []
   );
 
-  // docs/07 §10: the 16 `request* → reply` RPC cases live in
+  // docs/07 §9: the `request* → reply` RPC cases live in
   // `extension-host/rpc-cases.ts` (one forwardRpc helper + reply
   // constructors); the switch below keeps only the component-state cases.
-  const handleRpc = useMemo(
-    () =>
-      createRpcHandler(postToExtension, {
-        dwg2dxfPath,
-        odaPath,
-        calibrePath,
-        sofficePath,
-        deleteToTrash,
-      }),
-    [postToExtension, dwg2dxfPath, odaPath, calibrePath, sofficePath, deleteToTrash]
-  );
+  const handleRpc = useMemo(() => createRpcHandler(postToExtension), [
+    postToExtension,
+  ]);
 
   /** Inline-edit: ask the editor for its current selection (3s timeout). */
   const requestSelection = useCallback(async (): Promise<{
@@ -338,72 +279,11 @@ export default function ExtensionHost({
     }
   }, [theme, ready, postToExtension]);
 
-  // md-editor render-theme preset + custom callouts (host → ext). Only
-  // md-editor acts on these; other extensions ignore them (onMessage default).
-  useEffect(() => {
-    if (ready) {
-      postToExtension({ type: 'setMdRenderTheme', theme: mdRenderTheme });
-    }
-  }, [mdRenderTheme, ready, postToExtension]);
-
-  useEffect(() => {
-    if (ready) {
-      postToExtension({ type: 'setCustomCallouts', callouts: customCallouts });
-    }
-  }, [customCallouts, ready, postToExtension]);
-
-  // md-editor HTML templates (right-click → Templates submenu).
-  useEffect(() => {
-    if (ready) {
-      postToExtension({ type: 'setMdTemplates', templates: mdTemplates });
-    }
-  }, [mdTemplates, ready, postToExtension]);
-
-  // md-editor PDF export header/footer templates (Typora-style).
-  useEffect(() => {
-    if (ready) {
-      postToExtension({
-        type: 'setMdPdfHeaderFooter',
-        header: mdPdfHeader,
-        footer: mdPdfFooter,
-      });
-    }
-  }, [mdPdfHeader, mdPdfFooter, ready, postToExtension]);
-
-  // md-editor keymap overrides (action → CodeMirror combo). The editor
-  // reconfigures its keymapCompartment on receipt, so rebinding applies live.
-  useEffect(() => {
-    if (ready && mdKeybindings) {
-      postToExtension({ type: 'setKeybindings', keybindings: mdKeybindings });
-    }
-  }, [mdKeybindings, ready, postToExtension]);
-
-  // md-editor pasted-image save location (host → ext). The editor computes the
-  // save dir + insert link from these on every paste; `subfolder` may contain
-  // `${filename}`. Defaults are guarded so the first push (pre-migrate) is sane.
-  useEffect(() => {
-    if (ready) {
-      postToExtension({
-        type: 'setImageSaveConfig',
-        mode: mdImageSaveMode,
-        subfolder: mdImageSubfolder,
-      });
-    }
-  }, [mdImageSaveMode, mdImageSubfolder, ready, postToExtension]);
-
   useEffect(() => {
     if (ready) {
       postToExtension({ type: 'setLocale', locale });
     }
   }, [locale, ready, postToExtension]);
-
-  // AI availability (host → ext): extensions with AI-driven actions
-  // (pdf-viewer's marquee "ask AI") hide them when the assistant is off.
-  useEffect(() => {
-    if (ready) {
-      postToExtension({ type: 'setAiAvailable', available: aiEnabled });
-    }
-  }, [aiEnabled, ready, postToExtension]);
 
   useEffect(() => {
     return () => {
@@ -631,7 +511,7 @@ export default function ExtensionHost({
       if (!isValidEnvelope<ExtensionMessage>(event.data, 'extension')) return;
 
       const msg = event.data.message;
-      // docs/07 §10: the 16 `request*` RPC cases are delegated to
+      // docs/07 §9: the `request*` RPC cases are delegated to
       // `handleRpc` (extension-host/rpc-cases.ts); only component-state
       // cases stay in this switch.
       if (handleRpc(msg)) return;
@@ -691,53 +571,6 @@ export default function ExtensionHost({
             ipcApi.openNative(msg.url).catch(() => undefined);
           }
           break;
-        case 'openWithSystem': {
-          // docs/09 §16.21: fallback — open the file with the OS default app
-          // when LibreOffice is missing or conversion fails. Fire-and-forget.
-          ipcApi.openNative(msg.path).catch(() => undefined);
-          break;
-        }
-        case 'requestStreamingUrl': {
-          // Pick the scheme by extension: transcode-only audio (APE/WMA/…)
-          // gets whale-audio:// (host live-transcodes ffmpeg → Opus → <audio>
-          // so large files start playing within ~1s); everything else gets
-          // whale-file:// (streamed with Range support).
-          const dot = msg.path.lastIndexOf('.');
-          const ext = dot >= 0 ? msg.path.slice(dot + 1).toLowerCase() : '';
-          const url = AUDIO_TRANSCODE_EXT.has(ext)
-            ? encodeWhaleAudioUrl(msg.path)
-            : encodeWhaleFileUrl(msg.path);
-          postToExtension({
-            type: 'streamingUrl',
-            path: msg.path,
-            url: url ?? '',
-          });
-          break;
-        }
-        case 'mdRenderThemeChanged': {
-          // md-editor toolbar <select> changed the preset → sync back into
-          // redux so Settings stays in sync (bidirectional). This dispatch
-          // triggers the setMdRenderTheme useEffect above, which re-posts
-          // the same value the iframe just told us — no loop (the iframe's
-          // onMessage for setMdRenderTheme is a no-op when the value matches
-          // its current mdThemePref).
-          dispatch(setMdRenderTheme(msg.theme));
-          break;
-        }
-        case 'askAi': {
-          // pdf-viewer marquee: the user boxed a region. Open the question
-          // editor (InlineEditModal-style) so they can EDIT the question
-          // before anything is sent — on confirm we open the panel and post
-          // the draft with their question attached.
-          if (!aiEnabled) break;
-          setQuestionDraft({
-            path: msg.path,
-            page: msg.page,
-            text: msg.text,
-            imageDataUrl: msg.imageDataUrl,
-          });
-          break;
-        }
         case 'error':
           console.error('[ExtensionHost] extension error:', msg.message);
           break;
@@ -751,7 +584,6 @@ export default function ExtensionHost({
   }, [
     dispatch,
     filePath,
-    aiEnabled,
     handleSave,
     handleRequestFileEmbed,
     postToExtension,
@@ -899,8 +731,7 @@ export default function ExtensionHost({
           // Permissions-Policy `allow="fullscreen"` authoritative and prints
           // a dev warning when both are present (`Allow attribute will take
           // precedence over 'allowfullscreen'`). The `allow` token alone is
-          // what unlocks media-player's native fullscreen button and
-          // image-viewer's F-key programmatic call.
+          // what unlocks image-viewer's F-key programmatic fullscreen call.
           // Note: `allow-fullscreen` is NOT a valid sandbox token (the HTML
           // sandbox grammar only lists the
           // allow-{downloads,forms,modals,orientation-lock,pointer-lock,
@@ -971,17 +802,6 @@ export default function ExtensionHost({
             applyReplacement(inlineEditSel.from, inlineEditSel.to, replacement);
           }
           setInlineEditSel(null);
-        }}
-      />
-      <AskQuestionDialog
-        draft={questionDraft}
-        onClose={() => setQuestionDraft(null)}
-        onSend={(question) => {
-          if (questionDraft) {
-            dispatch(setAiSettings({ aiPanelOpen: true }));
-            postAiDraft({ ...questionDraft, question });
-          }
-          setQuestionDraft(null);
         }}
       />
     </Box>

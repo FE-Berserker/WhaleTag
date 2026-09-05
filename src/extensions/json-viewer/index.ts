@@ -48,7 +48,7 @@ const AUTO_COLLAPSE_NODES = 3000;
 const AUTO_COLLAPSE_DEPTH = 2;
 
 // --- i18n -----------------------------------------------------------------
-// Mirrors the pattern in pdf-viewer: small per-extension catalog
+// Small per-extension catalog
 // resolved via `window.whaleExt.t({ en, zh })`, re-applied on `onLocale`.
 interface Strings {
  expandAll: string;

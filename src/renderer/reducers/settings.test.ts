@@ -8,12 +8,9 @@ import settingsReducer, {
   setThemeMode,
   setThemePreset,
   setListRowDensity,
-  setDwg2dxfPath,
-  setOdaPath,
   setKeybinding,
   resetKeybindings,
   setGalleryShowTags,
-  setMdTemplates,
   MAX_VIEW_DEPTH,
   MIN_VIEW_DEPTH,
 } from './settings';
@@ -453,69 +450,6 @@ describe('settings.keybindings', () => {
   });
 });
 
-describe('settings.dwgConverterPaths', () => {
-  it('initialState has null DWG converter paths', () => {
-    assert.equal(initialState.dwg2dxfPath, null);
-    assert.equal(initialState.odaPath, null);
-  });
-
-  it('applies SET_DWG_2DXF_PATH', () => {
-    const next = settingsReducer(
-      initialState,
-      setDwg2dxfPath('C:\\libredwg\\dwg2dxf.exe')
-    );
-    assert.equal(next.dwg2dxfPath, 'C:\\libredwg\\dwg2dxf.exe');
-  });
-
-  it('applies SET_ODA_PATH', () => {
-    const next = settingsReducer(
-      initialState,
-      setOdaPath('C:\\ODA\\ODAFileConverter.exe')
-    );
-    assert.equal(next.odaPath, 'C:\\ODA\\ODAFileConverter.exe');
-  });
-
-  it('clears path when empty string is passed', () => {
-    const withPath = settingsReducer(
-      initialState,
-      setDwg2dxfPath('C:\\libredwg\\dwg2dxf.exe')
-    );
-    const cleared = settingsReducer(withPath, setDwg2dxfPath(''));
-    assert.equal(cleared.dwg2dxfPath, null);
-  });
-
-  it('migrates a state without DWG path fields to null', () => {
-    const legacy = {
-      ...initialState,
-      dwg2dxfPath: undefined,
-      odaPath: undefined,
-    } as unknown as SettingsState;
-    const next = settingsReducer(legacy, { type: 'no-op' });
-    assert.equal(next.dwg2dxfPath, null);
-    assert.equal(next.odaPath, null);
-  });
-
-  it('returns a fresh state object on SET_DWG_2DXF_PATH (immutability)', () => {
-    const next = settingsReducer(
-      initialState,
-      setDwg2dxfPath('C:\\libredwg\\dwg2dxf.exe')
-    );
-    assert.notEqual(next, initialState);
-    assert.equal(initialState.dwg2dxfPath, null);
-    assert.equal(next.dwg2dxfPath, 'C:\\libredwg\\dwg2dxf.exe');
-  });
-
-  it('does not touch other settings fields when DWG path actions fire', () => {
-    const next = settingsReducer(
-      initialState,
-      setOdaPath('C:\\ODA\\ODAFileConverter.exe')
-    );
-    assert.equal(next.themeMode, initialState.themeMode);
-    assert.equal(next.sofficePath, initialState.sofficePath);
-    assert.equal(next.viewDepth, initialState.viewDepth);
-  });
-});
-
 describe('settings.galleryShowTags', () => {
   it('defaults to true in initialState', () => {
     assert.equal(initialState.galleryShowTags, true);
@@ -532,29 +466,5 @@ describe('settings.galleryShowTags', () => {
     const legacy = { ...initialState, galleryShowTags: undefined } as unknown as SettingsState;
     const next = settingsReducer(legacy, { type: 'no-op' });
     assert.equal(next.galleryShowTags, true);
-  });
-});
-
-describe('settings.mdTemplates', () => {
-  it('defaults to [] in initialState', () => {
-    assert.deepEqual(initialState.mdTemplates, []);
-  });
-
-  it('replaces the whole list via setMdTemplates (not merge)', () => {
-    const templates = [
-      { id: 'a', label: 'Card', template: '<div class="card">…</div>', enabled: true },
-      { id: 'b', label: 'Fold', template: '<details><summary>…</summary></details>', enabled: false },
-    ];
-    const next = settingsReducer(initialState, setMdTemplates(templates));
-    assert.deepEqual(next.mdTemplates, templates);
-    // A second set overwrites the first (whole-array replace, like setCustomCallouts).
-    const next2 = settingsReducer(next, setMdTemplates([]));
-    assert.deepEqual(next2.mdTemplates, []);
-  });
-
-  it('migrates a legacy state without mdTemplates to []', () => {
-    const legacy = { ...initialState, mdTemplates: undefined } as unknown as SettingsState;
-    const migrated = settingsReducer(legacy, { type: 'no-op' });
-    assert.deepEqual(migrated.mdTemplates, []);
   });
 });

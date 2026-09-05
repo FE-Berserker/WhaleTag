@@ -26,36 +26,42 @@ import {
 
 type ElementRecord = Record<string, unknown>;
 
-/** LOAD: resolve a stored relative link to an absolute bare path. External
- *  URLs and already-absolute links (old diagrams) are returned unchanged. */
-function linkToAbsolute(link: string, base: string): string {
+/** Resolve a stored relative link to an absolute bare path (used at click-open
+ *  time — see app.tsx `onLinkOpen`). `diagramPath` is the .excalidraw FILE
+ *  path; the link is resolved against its directory. External URLs and
+ *  already-absolute links (old diagrams) are returned unchanged. */
+export function linkToAbsolute(link: string, diagramPath: string): string {
   if (isExternalUrl(link)) return link;
   if (isAbsoluteishPath(link)) return link;
-  return resolveRelative(link, base);
+  if (!diagramPath) return link;
+  return resolveRelative(link, dirname(diagramPath));
 }
 
-/** SAVE: rewrite an absolute bare-path link to a relative `./…` path when it
- *  lives inside the diagram's directory; otherwise (external URL, already
- *  relative, or target outside the dir) return it unchanged. */
-function linkToRelative(link: string, base: string): string {
+/** Rewrite an absolute bare-path link to a relative `./…` path when it lives
+ *  inside the diagram's directory; otherwise (external URL, already relative,
+ *  or target outside the dir) return it unchanged. `diagramPath` is the
+ *  .excalidraw FILE path; relativization is against its directory. Used at
+ *  insert time and by the save-side migration pass. */
+export function linkToRelative(link: string, diagramPath: string): string {
   if (isExternalUrl(link)) return link;
   if (!isAbsoluteishPath(link)) return link;
-  return toRelative(link, base) ?? link;
+  if (!diagramPath) return link;
+  return toRelative(link, dirname(diagramPath)) ?? link;
 }
 
-/** Rewrite every `element.link` in a restored scene IN PLACE (the elements
- *  come straight from `restore()`, which returns fresh unfrozen objects).
- *  Call before `updateScene`. Used on load. */
+/** Rewrite every `element.link` in a scene IN PLACE to absolute (resolves
+ *  relative links against the diagram's dir). Kept as a utility + test surface
+ *  for `linkToAbsolute`; the app no longer rewrites on load — links stay
+ *  relative in the scene and are resolved at click time in `onLinkOpen`. */
 export function rewriteExcalidrawElementsToAbsolute(
   elements: unknown,
   diagramPath: string
 ): void {
   if (!Array.isArray(elements)) return;
-  const base = dirname(diagramPath);
   for (const el of elements) {
     if (!el || typeof el !== 'object') continue;
     const e = el as ElementRecord;
-    if (typeof e.link === 'string') e.link = linkToAbsolute(e.link, base);
+    if (typeof e.link === 'string') e.link = linkToAbsolute(e.link, diagramPath);
   }
 }
 
@@ -75,11 +81,10 @@ export function rewriteExcalidrawJsonToRelative(
   }
   const elements = (data as { elements?: unknown })?.elements;
   if (Array.isArray(elements)) {
-    const base = dirname(diagramPath);
     for (const el of elements) {
       if (!el || typeof el !== 'object') continue;
       const e = el as ElementRecord;
-      if (typeof e.link === 'string') e.link = linkToRelative(e.link, base);
+      if (typeof e.link === 'string') e.link = linkToRelative(e.link, diagramPath);
     }
   }
   return JSON.stringify(data);

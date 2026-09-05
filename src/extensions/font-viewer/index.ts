@@ -5,7 +5,7 @@
  * loads them via the FontFace API, and renders 6 fixed + 1 user-defined
  * sample rows in the actual glyphs.
  *
- * Six Batch-1 optimizations (see docs/07-extensions.md §九):
+ * Six Batch-1 optimizations (see docs/07-extensions.md §八):
  * 1. Tracking / leading sliders (letter-spacing, line-height)
  * 2. Custom input row (textarea, persists in localStorage)
  * 3. Variable-axis sliders (weight / width + Bold/Italic toggles)

@@ -16,27 +16,27 @@ import { MAX_TABS, makeTabId, pickLruEvict } from './extension-tabs';
 describe('extension-tabs', () => {
   describe('makeTabId', () => {
     it('composes filePath + manifestId with a separator', () => {
-      assert.equal(makeTabId('/a/b.md', 'md-editor'), '/a/b.md::md-editor');
+      assert.equal(makeTabId('/a/b.md', 'text-editor'), '/a/b.md::text-editor');
     });
 
     it('is stable for the same inputs (dedup key)', () => {
       assert.equal(
-        makeTabId('/a/b.md', 'md-editor'),
-        makeTabId('/a/b.md', 'md-editor')
+        makeTabId('/a/b.md', 'text-editor'),
+        makeTabId('/a/b.md', 'text-editor')
       );
     });
 
     it('distinguishes the same file opened with different extensions', () => {
       assert.notEqual(
-        makeTabId('/a/b.md', 'md-editor'),
-        makeTabId('/a/b.md', 'md-viewer')
+        makeTabId('/a/b.md', 'text-editor'),
+        makeTabId('/a/b.md', 'html-viewer')
       );
     });
 
     it('distinguishes different files in the same extension', () => {
       assert.notEqual(
-        makeTabId('/a/b.md', 'md-editor'),
-        makeTabId('/a/c.md', 'md-editor')
+        makeTabId('/a/b.md', 'text-editor'),
+        makeTabId('/a/c.md', 'text-editor')
       );
     });
   });

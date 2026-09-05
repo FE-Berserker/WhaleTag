@@ -73,6 +73,10 @@ export default function App() {
   // routes `http(s)://` URLs to `window.open` and everything else (notably
   // `file://`) to `ipcApi.openNative` → `shell.openPath`, so the user can
   // click a thumbnail to open its source file/folder in Whale/OS.
+  // docs/20: drawio keeps links ABSOLUTE (file://) at runtime — its embed
+  // click path window.open's the link value, which breaks on relative URLs
+  // (resolves against the iframe origin). So links are relative only on disk
+  // (load rewrites rel→abs, save rewrites abs→rel); the editor shows absolute.
   const handleOpenLink = useCallback((href: string) => {
     window.whaleExt.postMessage({ type: 'openLinkExternally', url: href });
   }, []);
@@ -103,10 +107,11 @@ export default function App() {
     lastLoadedPathRef.current = file.path;
     const raw = file.content || '<mxfile></mxfile>';
     // docs/20: stored cell links are relative to the .drawio file's directory
-    // (so a folder move keeps links intact). Decode the payload — old files
-    // are compressed, new saves are raw — then rewrite relative links back to
-    // absolute `file://` URLs. Runtime drawio behaviour is identical to the
-    // pre-relative world, so click forwarding is unchanged.
+    // (so a folder move keeps links intact). Rewrite them back to absolute
+    // `file://` URLs at runtime — drawio's embed click path window.open's the
+    // link value, which breaks on relative URLs, so the runtime form must be
+    // absolute (the editor shows absolute; only the disk copy is relative).
+    // Decode first (old files are compressed, new saves are raw).
     const decoded = decodeDrawioDiagram(raw) ?? raw;
     const xml = rewriteDrawioLinksToAbsolute(decoded, file.path);
     bridge.loadXml(xml);

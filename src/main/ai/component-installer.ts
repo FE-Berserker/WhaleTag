@@ -7,8 +7,8 @@
  * validate the manifest, then rename over the live dir so a failed/partial
  * install never corrupts a working one.
  *
- * Reuses `sevenZipBinary()` from archive.ts (same bundled 7zip-bin the
- * archive viewer uses) — no second 7za probe.
+ * Reuses `sevenZipBinary()` from sevenzip.ts (the bundled 7zip-bin) — no
+ * second 7za probe.
  */
 import fs from 'fs';
 import * as fsp from 'fs/promises';
@@ -16,7 +16,7 @@ import path from 'path';
 import { execFile } from 'child_process';
 import { randomBytes } from 'crypto';
 
-import { sevenZipBinary } from '../archive';
+import { sevenZipBinary } from '../sevenzip';
 import type { AiComponentState } from '../../shared/ai-types';
 import {
   AI_COMPONENT_ID,

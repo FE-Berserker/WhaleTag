@@ -102,7 +102,7 @@ const matchesLbl = document.getElementById('matches-lbl') as HTMLSpanElement;
 const encodingLbl = document.getElementById('encoding-lbl') as HTMLSpanElement;
 
 // --- i18n ----------------------------------------------------------------
-// Mirrors pdf-viewer / json-viewer: small catalog
+// Mirrors json-viewer: small catalog
 // resolved via `window.whaleExt.t(I18N)`, re-applied on host `setLocale`.
 
 interface Strings {

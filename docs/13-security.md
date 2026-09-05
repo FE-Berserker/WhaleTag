@@ -2,7 +2,7 @@
 
 # 13. 安全模型
 
-> 当前代码的安全边界、隔离策略、已知保护措施。位置级加密(AES-256-GCM)未实现,只在调研阶段。
+> 当前代码的安全边界、隔离策略、已知保护措施。位置级加密(AES-256-GCM)未实现,见 §12。
 
 ## 1. 进程与渲染层隔离
 
@@ -108,8 +108,8 @@
 
 ## 13. 读侧边界(2026-07-18 审阅 + 修复)
 
-写操作 33 处过 `assertWithinAllowedRoot`(§2)。审阅发现读路径完全不受限、与威胁模型不一致;**通道闸已修(同日)**:
+写操作 33 处过 `assertWithinAllowedRoot`(§2);读路径此前完全不受限、与威胁模型不一致,通道闸已修:
 
-- ✅ `fs:readFile` / `fs:readTextFile` handler 入口加 `assertWithinAllowedRoot`([fs-read.ts](../src/main/ipc/fs-read.ts));扩展 `requestFileBytes` 汇到 `fs:readFile`,同步被闸。渲染层调用方全部为用户动作驱动(打开文件 / AI 附件 / 灯箱 / 搜索命中,均在位置内),fail-closed 不伤启动路径;AiPanel 附件读取带 try/catch 降级(读不到就只发路径)。
+- ✅ `fs:readFile` / `fs:readTextFile` handler 入口加 `assertWithinAllowedRoot`([fs-read.ts](../src/main/ipc/fs-read.ts))。渲染层调用方全部为用户动作驱动(打开文件 / AI 附件 / 灯箱 / 搜索命中,均在位置内),fail-closed 不伤启动路径;AiPanel 附件读取带 try/catch 降级(读不到就只发路径)。
 - ✅ `fs:openNative` 同闸;扩展 `openLinkExternally`(http(s) 分流 `window.open` 后)与 `openNative` 消息汇到它,"任意路径启动 OS 程序"的面被封。
-- ⏳ **遗留**:能力授予"全有或全无"——manifest 无 permissions / capabilities 字段,pdf-viewer 与 text-editor 拥有完全相同的宿主能力面。目前 15 个扩展全是内置自研,威胁面可控;引入第三方 / 用户扩展机制前须补"按 manifest 声明能力白名单放行 `request*` 消息类型"。
+- ⏳ **遗留**:能力授予"全有或全无"——manifest 无 permissions / capabilities 字段,text-editor 与 image-viewer 拥有完全相同的宿主能力面。目前 8 个扩展全是内置自研,威胁面可控;引入第三方 / 用户扩展机制前须补"按 manifest 声明能力白名单放行 `request*` 消息类型"。

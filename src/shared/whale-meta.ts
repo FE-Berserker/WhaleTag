@@ -29,11 +29,6 @@ export const FOLDER_BACKGROUND_FILE = 'wsb.jpg';
 /** Subdirectory of `.whale/` holding per-file image thumbnails (`.jpg`). */
 export const THUMBS_DIR = 'thumbs';
 
-/** Subdirectory of `.whale/` holding transcoded audio caches (`.opus`).
- * Media-player can't play APE/WMA/etc natively, so the main process transcodes
- * them to Opus once and caches the result here (mirror of THUMBS_DIR). */
-export const TRANSCODES_DIR = 'transcodes';
-
 /** Subdirectory of `.whale/` holding recursive-listing caches (`d<depth>.json`),
  * one per (folder, depth). The recursive stat-walk (viewDepth > 1) is expensive
  * on big trees; this caches the flat `DirEntry[]` so repeat visits / depth
@@ -76,26 +71,6 @@ export const VIDEO_EXT = new Set([
 /** Extensions Whale generates PDF (first-page) thumbnails for. */
 export const PDF_EXT = new Set(['pdf']);
 
-/** Extensions Whale generates Office (first-page) thumbnails for. */
-export const OFFICE_EXT = new Set([
-  'doc',
-  'docx',
-  'xls',
-  'xlsx',
-  'ppt',
-  'pptx',
-  'odt',
-  'ods',
-  'odp',
-]);
-
-/**
- * Extensions Whale generates ebook (embedded cover) thumbnails for. CBR is
- * excluded — it is RAR-compressed and would need a RAR decoder (CBZ is a plain
- * ZIP and is supported).
- */
-export const EBOOK_EXT = new Set(['epub', 'mobi', 'azw', 'azw3', 'fb2', 'cbz']);
-
 /**
  * drawio (diagrams.net) diagram files. `.drawio` and `.dio` are identical XML
  * (drawio shortens the extension to save bytes); the editor extension
@@ -103,51 +78,6 @@ export const EBOOK_EXT = new Set(['epub', 'mobi', 'azw', 'azw3', 'fb2', 'cbz']);
  * treats them the same way (render the first `<diagram>` in the mxfile).
  */
 export const DRAWIO_EXT = new Set(['drawio', 'dio']);
-
-/**
- * Archive (compressed-container) extensions the archive-viewer extension can
- * open. Phase 2+ supports `.zip`/`.tar`/`.tgz`/`.gz` via `fflate` and
- * `.tbz2`/`.txz`/`.bz2`/`.xz`/`.7z` via a main-process `7za` decoder. All
- * members must also live in `BINARY_EXT` so the host treats the archive as
- * binary for dispatch.
- */
-export const ARCHIVE_EXT = new Set([
-  'zip',
-  'tar',
-  'tgz',
-  'tbz2',
-  'txz',
-  'gz',
-  'bz2',
-  'xz',
-  '7z',
-]);
-
-/**
- * CAD / 3D exchange extensions the `cad-viewer` extension can open.
- *  - Tier 0 (Three.js native loaders, in-iframe): STL / OBJ / GLB / GLTF / PLY.
- *  - Tier 1 (dxf-parser, in-iframe): DXF.
- *  - Tier 1.5 (occt-import-js wasm, in-iframe): STEP / STP / IGES / IGS / BREP.
- *  - Tier 2 (external CLI converter → DXF): DWG (path-based; the host reads
- *    the DWG and shells out to LibreDWG `dwg2dxf` / ODA File Converter).
- * All members must also live in `BINARY_EXT` so the host pushes the bytes as
- * base64 to the extension (DXF is ASCII text but goes through base64 for a
- * uniform single code path, same as OBJ).
- */
-export const CAD_EXT = new Set([
-  'stl',
-  'obj',
-  'glb',
-  'gltf',
-  'ply',
-  'dxf',
-  'step',
-  'stp',
-  'iges',
-  'igs',
-  'brep',
-  'dwg',
-]);
 
 /**
  * HEIC / HEIF extensions (Apple's default photo format, HEVC/H.265-coded) the
@@ -160,28 +90,6 @@ export const CAD_EXT = new Set([
  * the host pushes the bytes as base64.
  */
 export const HEIC_EXT = new Set(['heic', 'heif']);
-
-/**
- * Audio extensions media-player CANNOT play natively (Chromium `<audio>` lacks
- * the decoders) but ffmpeg can transcode to Opus. The main process transcodes
- * these on open (cached under `.whale/transcodes/`) and feeds the Opus bytes
- * back to media-player. `.dff` (DSDIFF) is excluded — ffmpeg-static has no
- * demuxer for it; `.mid`/`.midi` need a soundfont synth, not a transcode.
- * Members must also live in `BINARY_EXT` (the host base64-injects the source
- * bytes — though media-player ignores them and sends the path back for the
- * host to read; kept binary so dispatch matches media-player).
- */
-export const AUDIO_TRANSCODE_EXT = new Set([
-  'ape',
-  'wma',
-  'aiff',
-  'amr',
-  'ac3',
-  'dts',
-  'mpc',
-  'wv',
-  'dsf',
-]);
 
 /**
  * Font extensions the `font-viewer` extension can render. Chromium's FontFace
@@ -213,39 +121,14 @@ export function isPdfFile(name: string): boolean {
   return PDF_EXT.has(extOf(name));
 }
 
-/** True if `name`'s extension is a thumbnailable Office format. */
-export function isOfficeFile(name: string): boolean {
-  return OFFICE_EXT.has(extOf(name));
-}
-
-/** True if `name`'s extension is a thumbnailable ebook format. */
-export function isEbookFile(name: string): boolean {
-  return EBOOK_EXT.has(extOf(name));
-}
-
 /** True if `name`'s extension is a drawio (diagrams.net) file. */
 export function isDrawioFile(name: string): boolean {
   return DRAWIO_EXT.has(extOf(name));
 }
 
-/** True if `name`'s extension is an archive the viewer can open. */
-export function isArchiveFile(name: string): boolean {
-  return ARCHIVE_EXT.has(extOf(name));
-}
-
-/** True if `name`'s extension is a CAD / 3D format the viewer can open. */
-export function isCadFile(name: string): boolean {
-  return CAD_EXT.has(extOf(name));
-}
-
 /** True if `name`'s extension is a HEIC/HEIF image the viewer can decode. */
 export function isHeicFile(name: string): boolean {
   return HEIC_EXT.has(extOf(name));
-}
-
-/** True if `name`'s extension is audio media-player needs transcoded to play. */
-export function isAudioTranscodeFile(name: string): boolean {
-  return AUDIO_TRANSCODE_EXT.has(extOf(name));
 }
 
 /** True if `name`'s extension is a font the viewer can render. */
@@ -254,14 +137,7 @@ export function isFontFile(name: string): boolean {
 }
 
 /** The kind of thumbnail Whale can produce for `name`, or null if none. */
-export type ThumbKind =
-  | 'image'
-  | 'svg'
-  | 'video'
-  | 'pdf'
-  | 'office'
-  | 'ebook'
-  | 'font';
+export type ThumbKind = 'image' | 'svg' | 'video' | 'pdf' | 'font';
 export function thumbKindOf(name: string): ThumbKind | null {
   const ext = extOf(name);
   // SVG gets a dedicated kind — it's vector input that sharp's librsvg renders
@@ -273,8 +149,6 @@ export function thumbKindOf(name: string): ThumbKind | null {
   if (IMAGE_EXT.has(ext)) return 'image';
   if (VIDEO_EXT.has(ext)) return 'video';
   if (PDF_EXT.has(ext)) return 'pdf';
-  if (OFFICE_EXT.has(ext)) return 'office';
-  if (EBOOK_EXT.has(ext)) return 'ebook';
   if (FONT_EXT.has(ext)) return 'font';
   // Note: .excalidraw and .drawio / .dio used to have a thumbnail renderer, but
   // the resulting previews were too faint at small sizes. They now render as
@@ -309,48 +183,14 @@ export const BINARY_EXT = new Set([
   ...IMAGE_EXT,
   ...VIDEO_EXT,
   ...PDF_EXT,
-  ...OFFICE_EXT,
-  ...EBOOK_EXT,
   // ...DRAWIO_EXT,  // intentionally excluded — see block comment above
-  ...ARCHIVE_EXT,
-  ...CAD_EXT,
   ...HEIC_EXT,
-  ...AUDIO_TRANSCODE_EXT,
   ...FONT_EXT,
-  'mp3',
-  'ogg',
-  'opus',
-  'wav',
-  'flac',
-  'aac',
-  'm4a',
-]);
-
-/** Audio extensions Chromium's `<audio>` can play natively (mirrors the
- *  literal list inside `BINARY_EXT` below; extracted so callers can answer
- *  "is this an audio file?" without re-spelling the extension list).
- *  Transcode-only formats (APE/WMA/AIFF/...) live in `AUDIO_TRANSCODE_EXT`
- *  and require ffmpeg — see `isAudioTranscodeFile`. */
-export const AUDIO_NATIVE_EXT = new Set([
-  'mp3',
-  'ogg',
-  'opus',
-  'wav',
-  'flac',
-  'aac',
-  'm4a',
 ]);
 
 /** True if `ext` (lowercase, no dot) is a binary format that extensions receive as base64. */
 export function isBinaryExtension(ext: string): boolean {
   return BINARY_EXT.has(ext.toLowerCase());
-}
-
-/** True if `name`'s extension is an audio file media-player can play
- *  (native or after ffmpeg transcode). Excludes video. */
-export function isAudioFile(name: string): boolean {
-  const ext = extOf(name);
-  return AUDIO_NATIVE_EXT.has(ext) || AUDIO_TRANSCODE_EXT.has(ext);
 }
 
 /** True if `name` starts with a dot and should be treated as hidden. */

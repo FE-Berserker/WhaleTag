@@ -349,7 +349,7 @@ describe('shell:revealAndSelect handler', () => {
  * Read-side confinement (docs/13 §13): `fs:readFile` / `fs:readTextFile` /
  * `fs:openNative` must refuse paths outside the configured locations —
  * previously they were bare `fsp.readFile` / `shell.openPath`, so an
- * extension iframe (`requestFileBytes` / `openLinkExternally`) could read or
+ * extension iframe (`openLinkExternally`) could read or
  * OS-launch anything on disk. The guard is the same
  * `assertWithinAllowedRoot` the write channels use, so it fails CLOSED when
  * no roots are registered.

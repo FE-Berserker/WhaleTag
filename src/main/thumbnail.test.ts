@@ -14,7 +14,6 @@ import {
   copyThumbnail,
   thumbPathFor,
 } from './thumbnail';
-import { isSofficeAvailable } from './office-binary';
 import { THUMBS_DIR } from '../shared/whale-meta';
 
 /** Per-test scratch directory under the OS temp root. */
@@ -213,29 +212,6 @@ describe('image thumbnails (.whale/thumbs/<file>.jpg)', () => {
     } finally {
       await fsp.rm(srcDir, { recursive: true, force: true });
       await fsp.rm(dstDir, { recursive: true, force: true });
-    }
-  });
-});
-
-describe('Office thumbnails (.whale/thumbs/<file>.jpg)', () => {
-  it('silently skips Office files when LibreOffice is unavailable', async () => {
-    if (await isSofficeAvailable()) {
-      // This machine has LibreOffice installed, so the "unavailable" scenario
-      // cannot be exercised here. The conversion path is covered by manual/dev
-      // testing; this test guards the fallback path on machines without it.
-      return;
-    }
-    const dir = await tmpDir();
-    try {
-      const src = path.join(dir, 'report.docx');
-      // Not a real Office file — soffice conversion will fail (or soffice is
-      // simply not installed). generateThumbnail must not throw; it should just
-      // leave no thumbnail behind so the UI falls back to a file-type icon.
-      await fsp.writeFile(src, 'fake docx content', 'utf8');
-      await assert.doesNotReject(generateThumbnail(src));
-      assert.equal(await loadThumbnail(src), null, 'no thumb created');
-    } finally {
-      await fsp.rm(dir, { recursive: true, force: true });
     }
   });
 });

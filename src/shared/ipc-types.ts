@@ -6,18 +6,8 @@ import type { LocationType, SidecarMeta, FolderMeta } from './whale-meta';
 import type { SearchQuery } from './search-query';
 import type {
   ExtensionRegistry,
-  RenderPdfOptions,
   RevisionInfo,
 } from './extension-types';
-import type { EbookAnnotations } from './ebook-annotations';
-import type {
-  ListArchiveOptions,
-  ListArchiveResult,
-  ReadArchiveEntryOptions,
-  ReadArchiveEntryResult,
-  ExtractArchiveOptions,
-  ExtractArchiveResult,
-} from './archive-types';
 import type {
   AiApprovalRequest,
   AiComponentInstallResult,
@@ -114,11 +104,6 @@ export interface WhaleLocation {
   createdAt: string;
 }
 
-export interface GenerateThumbnailOptions {
-  /** Explicit path to the LibreOffice `soffice` binary; null = auto-detect. */
-  sofficePath?: string | null;
-}
-
 /**
  * Server-pushed index build progress (docs/04 §10). Mirrors the worker
  * protocol's progress event in `src/main/index-protocol.ts` — broadcast to
@@ -162,13 +147,6 @@ export interface WhaleApi {
   readTextFile: (filePath: string) => Promise<string>;
   /** Reads an arbitrary file as an ArrayBuffer (for creating blob URLs in the renderer). */
   readFile: (filePath: string) => Promise<ArrayBuffer>;
-  /** Reads a byte slice of a file (pdfjs range transport; offsets clamped
-   *  to the file bounds, reads past EOF truncate). */
-  readFileRange: (
-    filePath: string,
-    offset: number,
-    length: number
-  ) => Promise<ArrayBuffer>;
   pathExists: (targetPath: string) => Promise<boolean>;
   openDirectoryDialog: () => Promise<string | null>;
   /** Shows the native file picker restricted to images. Returns null if cancelled. */
@@ -316,22 +294,9 @@ export interface WhaleApi {
     tag: string
   ) => Promise<void>;
 
-  // Ebook-viewer annotation persistence (`.whale/ebook-annotations/<basename>.json`).
-  // `readEbookAnnotations` returns `null` when the file does not exist yet
-  // (i.e. fresh book, no user data). `writeEbookAnnotations` deletes the file
-  // when the payload carries only defaults.
-  readEbookAnnotations: (filePath: string) => Promise<EbookAnnotations | null>;
-  writeEbookAnnotations: (
-    filePath: string,
-    payload: EbookAnnotations
-  ) => Promise<void>;
-
   // Image thumbnails — generate writes `.whale/thumbs/<file>.jpg`; load returns
   // a data: URL (null if none yet). See plan §6.6 P1.
-  generateThumbnail: (
-    filePath: string,
-    options?: GenerateThumbnailOptions
-  ) => Promise<void>;
+  generateThumbnail: (filePath: string) => Promise<void>;
   loadThumbnail: (filePath: string) => Promise<string | null>;
 
   // Folder thumbnails / backgrounds (`wst.jpg` / `wsb.jpg`).
@@ -347,102 +312,16 @@ export interface WhaleApi {
   backupRevision: (filePath: string) => Promise<void>;
   deleteRevision: (revisionPath: string) => Promise<void>;
   writeFileWithRevision: (filePath: string, content: string) => Promise<void>;
-  /** §paste-image — decode `dataURL`, save into `dirPath` as image-<ts>.<ext>,
-   *  return the absolute path. md-editor paste-image uses this. */
-  saveImageToFile: (dataURL: string, dirPath: string, ext: string) => Promise<string>;
   listRevisions: (filePath: string) => Promise<RevisionInfo[]>;
   restoreRevision: (
     filePath: string,
     revisionPath: string
   ) => Promise<void>;
   cleanupRevisions: (maxAgeDays: number) => Promise<void>;
-  /** Read a pdfjs-dist asset (cmap / standard font / wasm) for the PDF viewer
-   *  extension, by kind and bare filename. */
-  getPdfAsset: (kind: string, filename: string) => Promise<ArrayBuffer>;
-  /** Read the occt-import-js wasm bundled into the cad-viewer extension, so it
-   *  can be passed to emscripten as `wasmBinary` (fetch on whale-extension://
-   *  is unreliable — see the cad-viewer getOcct() loader). */
-  getCadWasm: () => Promise<ArrayBuffer>;
   /** Read the libheif-js wasm bundled into the heic-viewer extension, so it can
-   *  be passed to emscripten as `wasmBinary` (same fetch-bypass bridge as
-   *  getCadWasm — see the heic-viewer getLibheif() loader). */
+   *  be passed to emscripten as `wasmBinary` (see the heic-viewer getLibheif()
+   *  loader). */
   getHeicWasm: () => Promise<ArrayBuffer>;
-  /** Convert an Office document to PDF bytes using LibreOffice. Returns the PDF
-   *  as a Uint8Array (the main process returns a Buffer; Electron IPC serializes
-   *  it to a Uint8Array on the renderer — no intermediate ArrayBuffer copy). */
-  convertOfficeToPdf: (
-    filePath: string,
-    options?: { sofficePath?: string | null }
-  ) => Promise<Uint8Array>;
-  /** Convert a DWG file to DXF bytes via an external converter (LibreDWG
-   *  `dwg2dxf`, or ODA File Converter as fallback). Returns the DXF as a
-   *  Uint8Array (the main process returns a Buffer; Electron IPC serializes
-   *  it to a Uint8Array on the renderer — no intermediate ArrayBuffer copy).
-   *  Throws if no converter is installed or conversion fails. */
-  convertDwgToDxf: (
-    filePath: string,
-    options?: { dwg2dxfPath?: string | null; odaPath?: string | null }
-  ) => Promise<Uint8Array>;
-  /** Probe for the DWG converters used by {@link convertDwgToDxf}. Returns the
-   *  detected binary paths (or null) so the settings UI can show whether DWG
-   *  preview will work without actually converting a file. */
-  detectDwgConverters: () => Promise<{
-    dwg2dxf: string | null;
-    oda: string | null;
-  }>;
-  /** Convert a MOBI/AZW/AZW3 ebook to EPUB bytes using Calibre's ebook-convert.
-   *  Returns the EPUB as a Uint8Array (the main process returns a Buffer;
-   *  Electron IPC serializes it to a Uint8Array on the renderer — no
-   *  intermediate ArrayBuffer copy). Throws if Calibre is missing or the
-   *  conversion fails. */
-  convertEbookToEpub: (
-    filePath: string,
-    options?: { calibrePath?: string | null }
-  ) => Promise<Uint8Array>;
-  /** Probe for the Calibre `ebook-convert` binary used by
-   *  {@link convertEbookToEpub}. Returns the detected binary path (or null) so
-   *  the settings UI can show whether MOBI/AZW/AZW3 preview will work without
-   *  actually converting a file. */
-  detectEbookConverter: () => Promise<{ calibre: string | null }>;
-  /** Whether LibreOffice (`soffice`) is installed — office-viewer probes this
-   *  up front to show install guidance instead of a "not found" dead-end
-   *  (docs/09 §16.16). `options.sofficePath` = the user's explicit override
-   *  from settings (docs/09 §16.14); null/absent = auto-detect. */
-  isSofficeAvailable: (options?: {
-    sofficePath?: string | null;
-  }) => Promise<boolean>;
-  /** Main-process clipboard text read (Electron `clipboard.readText`) — used
-   *  by extension context menus' Paste (md-editor). Returns '' when the
-   *  clipboard holds no text. */
-  readClipboardText: () => Promise<string>;
-  /** Render an HTML document to a PDF via the main process's hidden
-   *  Chromium window (`webContents.printToPDF`). Used by md-editor's PDF
-   *  export. The HTML is the fully-rendered, self-contained preview output
-   *  (KaTeX/Mermaid already rendered, images as `whale-file://` URLs). Returns
-   *  the PDF bytes. */
-  renderHtmlToPdf: (
-    html: string,
-    options?: RenderPdfOptions
-  ) => Promise<Uint8Array>;
-  // Phase 4b — Archive viewer (main-process decoder)
-  /** List the entries of a supported archive (zip/tar/tgz/7z/bz2/xz/gz).
-   *  Throws if the format is unsupported or the archive is unreadable. */
-  listArchive: (
-    filePath: string,
-    options?: ListArchiveOptions
-  ) => Promise<ListArchiveResult>;
-  /** Read a single archive entry as base64 bytes. Throws on error. */
-  readArchiveEntry: (
-    filePath: string,
-    entryPath: string,
-    options?: ReadArchiveEntryOptions
-  ) => Promise<ReadArchiveEntryResult | null>;
-  /** Extract all safe entries from an archive to destDir. Throws on error. */
-  extractArchive: (
-    filePath: string,
-    destDir: string,
-    options?: ExtractArchiveOptions
-  ) => Promise<ExtractArchiveResult>;
   /** Native "save as" dialog for images; resolves to the chosen path or null. */
   saveImageDialog: (defaultPath: string) => Promise<string | null>;
   /** Write a base64-encoded file (e.g. an exported chart image) to disk. */

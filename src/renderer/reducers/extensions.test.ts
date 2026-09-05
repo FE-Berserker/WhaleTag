@@ -27,7 +27,7 @@ function makeRegistry(ids: string[]): ExtensionRegistry {
 
 describe('extensions reducer', () => {
   it('loads registry and returns it on state', () => {
-    const reg = makeRegistry(['md-editor', 'pdf-viewer']);
+    const reg = makeRegistry(['text-editor', 'json-viewer']);
     const state = extensionsReducer(undefined, loadExtensionRegistry(reg));
     assert.equal(state.registry, reg);
   });
@@ -39,9 +39,9 @@ describe('extensions reducer', () => {
     } as never);
     state = extensionsReducer(
       state,
-      setDefaultExtension('md', 'md-editor')
+      setDefaultExtension('md', 'text-editor')
     );
-    assert.equal(state.userDefaults.md, 'md-editor');
+    assert.equal(state.userDefaults.md, 'text-editor');
     state = extensionsReducer(state, setDefaultExtension('md', null));
     assert.equal(!(state.userDefaults as Record<string, unknown>).md, true);
   });
@@ -53,36 +53,36 @@ describe('extensions reducer', () => {
     } as never);
     state = extensionsReducer(
       state,
-      setExtensionEnabled('pdf-viewer', false)
+      setExtensionEnabled('json-viewer', false)
     );
-    assert.equal(state.enabledOverrides['pdf-viewer'], false);
+    assert.equal(state.enabledOverrides['json-viewer'], false);
   });
 
   describe('LOAD_EXTENSION_REGISTRY stale-state cleanup', () => {
     it('drops userDefaults whose extension id is no longer in the new registry', () => {
-      // Simulate persisted state from before md-viewer was deleted: user had
-      // chosen md-viewer as the default for markdown.
+      // Simulate persisted state from before a now-removed extension was
+      // deleted: user had chosen it as the default for markdown.
       const stale = extensionsReducer(undefined, {
         type: 'init',
         payload: undefined,
       } as never);
       let state = extensionsReducer(
         stale,
-        setDefaultExtension('md', 'md-viewer')
+        setDefaultExtension('md', 'legacy-viewer')
       );
       state = extensionsReducer(
         state,
-        setDefaultExtension('pdf', 'pdf-viewer')
+        setDefaultExtension('pdf', 'json-viewer')
       );
 
-      // New registry no longer contains md-viewer.
-      const newReg = makeRegistry(['md-editor', 'pdf-viewer']);
+      // New registry no longer contains legacy-viewer.
+      const newReg = makeRegistry(['text-editor', 'json-viewer']);
       const next = extensionsReducer(state, loadExtensionRegistry(newReg));
 
-      // Orphan md→md-viewer is dropped.
+      // Orphan md→legacy-viewer is dropped.
       assert.equal((next.userDefaults as Record<string, unknown>).md, undefined);
-      // Valid pdf→pdf-viewer survives.
-      assert.equal(next.userDefaults.pdf, 'pdf-viewer');
+      // Valid pdf→json-viewer survives.
+      assert.equal(next.userDefaults.pdf, 'json-viewer');
     });
 
     it('drops enabledOverrides whose extension id is no longer in the new registry', () => {
@@ -92,23 +92,23 @@ describe('extensions reducer', () => {
       } as never);
       state = extensionsReducer(
         state,
-        setExtensionEnabled('md-viewer', false)
+        setExtensionEnabled('legacy-viewer', false)
       );
       state = extensionsReducer(
         state,
-        setExtensionEnabled('md-editor', true)
+        setExtensionEnabled('text-editor', true)
       );
 
-      const newReg = makeRegistry(['md-editor']);
+      const newReg = makeRegistry(['text-editor']);
       const next = extensionsReducer(state, loadExtensionRegistry(newReg));
 
-      // Orphan md-viewer override is dropped.
+      // Orphan legacy-viewer override is dropped.
       assert.equal(
-        (next.enabledOverrides as Record<string, unknown>)['md-viewer'],
+        (next.enabledOverrides as Record<string, unknown>)['legacy-viewer'],
         undefined
       );
       // Valid override survives.
-      assert.equal(next.enabledOverrides['md-editor'], true);
+      assert.equal(next.enabledOverrides['text-editor'], true);
     });
 
     it('keeps userDefaults / enabledOverrides untouched when all ids are still valid', () => {
@@ -118,18 +118,18 @@ describe('extensions reducer', () => {
       } as never);
       state = extensionsReducer(
         state,
-        setDefaultExtension('md', 'md-editor')
+        setDefaultExtension('md', 'text-editor')
       );
       state = extensionsReducer(
         state,
-        setExtensionEnabled('pdf-viewer', false)
+        setExtensionEnabled('json-viewer', false)
       );
 
-      const newReg = makeRegistry(['md-editor', 'pdf-viewer']);
+      const newReg = makeRegistry(['text-editor', 'json-viewer']);
       const next = extensionsReducer(state, loadExtensionRegistry(newReg));
 
-      assert.equal(next.userDefaults.md, 'md-editor');
-      assert.equal(next.enabledOverrides['pdf-viewer'], false);
+      assert.equal(next.userDefaults.md, 'text-editor');
+      assert.equal(next.enabledOverrides['json-viewer'], false);
     });
 
     it('a null payload only clears the registry reference, not persisted state', () => {
@@ -142,20 +142,20 @@ describe('extensions reducer', () => {
       } as never);
       state = extensionsReducer(
         state,
-        setDefaultExtension('md', 'md-editor')
+        setDefaultExtension('md', 'text-editor')
       );
-      state = extensionsReducer(state, setExtensionEnabled('md-editor', true));
+      state = extensionsReducer(state, setExtensionEnabled('text-editor', true));
 
       const next = extensionsReducer(state, loadExtensionRegistry(null));
 
       assert.equal(next.registry, null);
-      assert.equal(next.userDefaults.md, 'md-editor');
-      assert.equal(next.enabledOverrides['md-editor'], true);
+      assert.equal(next.userDefaults.md, 'text-editor');
+      assert.equal(next.enabledOverrides['text-editor'], true);
     });
   });
 
   it('ignores unknown action types and returns current state', () => {
-    const reg = makeRegistry(['md-editor']);
+    const reg = makeRegistry(['text-editor']);
     const state = extensionsReducer(undefined, loadExtensionRegistry(reg));
     const next = extensionsReducer(
       state,

@@ -1,4 +1,3 @@
-import path from 'path';
 import { ipcMain } from 'electron';
 import {
   readSidecars,
@@ -11,14 +10,13 @@ import {
   setTagLibraryDescription,
   clearTagLibraryDescription,
 } from '../tag-library';
-import { readEbookAnnotations, writeEbookAnnotations } from '../ebook-annotations';
 import { assertWithinAllowedRoot } from '../allowed-roots';
 import type { SidecarMeta, FolderMeta } from '../../shared/whale-meta';
 
 /**
  * `.whale/` metadata handlers: sidecars, folder meta, per-location tag
- * library, ebook annotations. Split out of the old god-registrar `ipc.ts`
- * (docs/01 §12) — behavior is verbatim.
+ * library. Split out of the old god-registrar `ipc.ts` (docs/01 §12) —
+ * behavior is verbatim.
  */
 
 export function registerMetaHandlers(): void {
@@ -77,29 +75,6 @@ export function registerMetaHandlers(): void {
     (_event, locationRoot: string, tag: string) => {
       assertWithinAllowedRoot(locationRoot);
       return clearTagLibraryDescription(locationRoot, tag);
-    }
-  );
-
-  // ---- Ebook-viewer annotation persistence (`.whale/ebook-annotations/<basename>.json`) ----
-  // Both channels assert on the ebook's parent directory so a renderer can
-  // never probe paths outside an allowed location root (the annotations file
-  // itself does not exist yet on first write).
-  ipcMain.handle(
-    'ebookAnnotations:read',
-    (_event, filePath: string) => {
-      assertWithinAllowedRoot(path.dirname(filePath));
-      return readEbookAnnotations(filePath);
-    }
-  );
-
-  ipcMain.handle(
-    'ebookAnnotations:write',
-    (_event, filePath: string, payload: unknown) => {
-      assertWithinAllowedRoot(path.dirname(filePath));
-      return writeEbookAnnotations(
-        filePath,
-        payload as Parameters<typeof writeEbookAnnotations>[1]
-      );
     }
   );
 }

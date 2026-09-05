@@ -1,11 +1,9 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { Box, Skeleton } from '@mui/material';
 import FolderIcon from '@mui/icons-material/Folder';
-import { useSelector } from 'react-redux';
 
 import type { DirEntry } from '../../shared/ipc-types';
-import { isOfficeFile, isThumbnailable } from '../../shared/whale-meta';
-import type { RootState } from '-/reducers';
+import { isThumbnailable } from '../../shared/whale-meta';
 import { ipcApi } from '-/services/ipc-api';
 import { enqueueThumbLoad, cancelThumbLoad } from '-/services/thumb-load-queue';
 import FileTypeIcon from './FileTypeIcon';
@@ -43,28 +41,15 @@ function ThumbIconBase({
   /** How the thumbnail image should fill its box. */
   objectFit?: 'cover' | 'contain';
 }) {
-  const officeThumbnailEnabled = useSelector(
-    (s: RootState) => s.settings?.officeThumbnailEnabled ?? false
-  );
-  const sofficePath = useSelector(
-    (s: RootState) => s.settings?.sofficePath ?? null
-  );
-
-  // Office thumbnails require an external binary and are opt-in; when disabled
-  // Office files render as a plain file icon instead of attempting conversion.
-  const canThumb =
-    !entry.isDirectory &&
-    isThumbnailable(entry.name) &&
-    (!isOfficeFile(entry.name) || officeThumbnailEnabled);
+  const canThumb = !entry.isDirectory && isThumbnailable(entry.name);
 
   const cacheKey = `${entry.path}|${entry.modified}`;
   const [dataUrl, setDataUrl] = useState<string | null>(
     () => thumbCache.get(cacheKey) ?? null
   );
   // Whether the lazy load has finished (regardless of result). Lets a file that
-  // genuinely has no thumbnail (e.g. an ebook with no embedded cover, or a
-  // failed Office conversion) fall back to a type glyph instead of an endless
-  // loading skeleton.
+  // genuinely has no thumbnail (e.g. a corrupt image) fall back to a type
+  // glyph instead of an endless loading skeleton.
   const [loaded, setLoaded] = useState<boolean>(() => thumbCache.has(cacheKey));
 
   // P0-1: gate the actual load on visibility. `rootRef` wraps the rendered
@@ -104,8 +89,7 @@ function ThumbIconBase({
         url = await ipcApi.loadThumbnail(entry.path);
         if (!url) {
           // Not generated yet — generate (mtime-shortcircuited in main), re-read.
-          const options = isOfficeFile(entry.name) ? { sofficePath } : undefined;
-          await ipcApi.generateThumbnail(entry.path, options);
+          await ipcApi.generateThumbnail(entry.path);
           url = await ipcApi.loadThumbnail(entry.path);
         }
       }

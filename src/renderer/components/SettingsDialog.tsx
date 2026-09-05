@@ -47,10 +47,7 @@ import TuneIcon from '@mui/icons-material/Tune';
 import { AiComponentSection } from './AiComponentSection';
 import UpdateSection from './UpdateSection';
 import UserCommandsSection from './UserCommandsSection';
-import CustomCalloutsSection from './CustomCalloutsSection';
-import MdTemplatesSection from './MdTemplatesSection';
 import VisibilityIcon from '@mui/icons-material/Visibility';
-import ExtensionIcon from '@mui/icons-material/Extension';
 import MapIcon from '@mui/icons-material/Map';
 import StyleIcon from '@mui/icons-material/Style';
 import NotificationsIcon from '@mui/icons-material/Notifications';
@@ -60,13 +57,6 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlined';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import KeyboardIcon from '@mui/icons-material/Keyboard';
-import ArchitectureIcon from '@mui/icons-material/Architecture';
-import MenuBookIcon from '@mui/icons-material/MenuBook';
-import AutoModeIcon from '@mui/icons-material/AutoMode';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import ErrorIcon from '@mui/icons-material/Error';
-import FolderOpenIcon from '@mui/icons-material/FolderOpen';
-import HelpIcon from '@mui/icons-material/Help';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import SearchIcon from '@mui/icons-material/Search';
 
@@ -81,13 +71,8 @@ import {
   removeFulltextPath,
   setDeleteToTrash,
   setDefaultViewMode,
-  setOfficeThumbnailEnabled,
   setShowHiddenFiles,
   setShowLunar,
-  setSofficePath,
-  setDwg2dxfPath,
-  setOdaPath,
-  setCalibrePath,
   setTaskReminderEnabled,
   setTaskReminderLocationId,
   setTaskReminderStageIds,
@@ -97,21 +82,13 @@ import {
   setDefaultEntrySize,
   setKeybinding,
   resetKeybindings,
-  setMdKeybinding,
-  resetMdKeybindings,
   setAiSettings,
-  setMdRenderTheme,
-  setMdImageSaveMode,
-  setMdImageSubfolder,
-  setMdPdfHeader,
-  setMdPdfFooter,
   DEFAULT_ENTRY_SIZE,
   normalizeFsPath,
   type ThemeMode,
   type MapProvider,
 } from '-/reducers/settings';
 import { setExtensionEnabled, setDefaultExtension } from '-/reducers/extensions';
-import type { MdRenderThemePref, MdImageSaveMode } from '../../shared/extension-types';
 import type { ViewMode } from '../../shared/whale-meta';
 import {
   type TagShape,
@@ -124,8 +101,6 @@ import {
   KEYBOARD_ACTIONS,
   type KeyAction,
 } from '../domain/keybindings';
-import { MD_KEY_ACTIONS } from '../domain/md-keybindings';
-import { KeyCaptureInput } from '-/components/KeyCaptureInput';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { ipcApi } from '-/services/ipc-api';
 import AiMcpSection from '-/components/ai/AiMcpSection';
@@ -156,7 +131,6 @@ export type SettingsSectionId =
   | 'notifications'
   | 'ai'
   | 'commands'
-  | 'extensions'
   | 'about'
   | 'advanced';
 
@@ -773,12 +747,6 @@ function ViewSection() {
   const tagShape = useSelector(
     (s: RootState) => s.settings?.tagShape ?? 'rounded'
   );
-  const officeThumbnailEnabled = useSelector(
-    (s: RootState) => s.settings?.officeThumbnailEnabled ?? false
-  );
-  const sofficePath = useSelector(
-    (s: RootState) => s.settings?.sofficePath ?? null
-  );
 
   return (
     <Stack sx={{ gap: 2 }}>
@@ -896,37 +864,6 @@ function ViewSection() {
       </Field>
 
       <Divider />
-
-      <Field
-        label={t('officeThumbnails')}
-        hint={t('officeThumbnailsHint')}
-      >
-        <FormControlLabel
-          control={
-            <Switch
-              checked={officeThumbnailEnabled}
-              onChange={(e) =>
-                dispatch(setOfficeThumbnailEnabled(e.target.checked))
-              }
-            />
-          }
-          label={t('enabled')}
-        />
-      </Field>
-      {/* docs/09 §16.14: not gated behind `officeThumbnailEnabled` — the
-          override also drives office-viewer rendering / availability probes,
-          which work regardless of the thumbnail toggle. */}
-      <Field label={t('sofficePath')} hint={t('sofficePathHint')}>
-        <TextField
-          size="small"
-          fullWidth
-          placeholder={t('sofficePathPlaceholder')}
-          value={sofficePath ?? ''}
-          onChange={(e) =>
-            dispatch(setSofficePath(e.target.value.trim() || null))
-          }
-        />
-      </Field>
     </Stack>
   );
 }
@@ -1163,7 +1100,7 @@ function NotificationsSection() {
 }
 
 /**
- * Card-wrapped section for an external converter family (DWG, ebook, etc.).
+ * Card-wrapped section for the fulltext index manager.
  * Shows an icon avatar + title + hint subheader so users can scan the
  * "Advanced" tab and immediately tell which subsystem each card belongs
  * to. The original layout was a flat `Stack` of plain text + input rows
@@ -1217,337 +1154,11 @@ function ConverterCard({
     </Card>
   );
 }
-
-/**
- * A single binary-path row inside a `ConverterCard`. Shows the binary's
- * human label, a status chip (detected / not detected, with icon), the
- * optional override TextField, and a small caption that either shows the
- * auto-detected path or notes the custom override.
- *
- * Detected path is hidden from the TextField by design — leaving the field
- * blank means "use the auto-detected one", which is the right behaviour for
- * 99% of installs and avoids the "is this the path I want?" confusion that
- * prefilling the field caused in the original design.
- */
-function ConverterRow({
-  label,
-  hint,
-  value,
-  detected,
-  onChange,
-  isLoading,
-}: {
-  label: string;
-  hint: string;
-  value: string | null;
-  detected: string | null;
-  onChange: (v: string | null) => void;
-  isLoading?: boolean;
-}) {
-  const { t } = useTranslation();
-  const detectedOk = !!detected;
-  const hasOverride = !!value && value !== detected;
-  const status = detectedOk
-    ? {
-        color: 'success' as const,
-        icon: <CheckCircleIcon sx={{ fontSize: 16 }} />,
-        label: t('converterDetected'),
-      }
-    : {
-        color: 'warning' as const,
-        icon: isLoading ? (
-          <AutoModeIcon sx={{ fontSize: 16 }} />
-        ) : (
-          <HelpIcon sx={{ fontSize: 16 }} />
-        ),
-        label: t('converterNotDetected'),
-      };
-
-  return (
-    <Box>
-      <Stack
-        direction="row"
-        sx={{ alignItems: 'center', gap: 1, mb: 0.5, flexWrap: 'wrap' }}
-      >
-        <Typography variant="body2" sx={{ fontWeight: 500 }}>
-          {label}
-        </Typography>
-        <Chip
-          size="small"
-          color={status.color}
-          icon={status.icon}
-          label={status.label}
-        />
-        {hasOverride ? (
-          <Chip
-            size="small"
-            variant="outlined"
-            color="primary"
-            icon={<ErrorIcon sx={{ fontSize: 16 }} />}
-            label={t('converterCustomPath')}
-          />
-        ) : null}
-      </Stack>
-      <TextField
-        size="small"
-        fullWidth
-        placeholder={t('sofficePathPlaceholder')}
-        value={value ?? ''}
-        onChange={(e) => onChange(e.target.value.trim() || null)}
-      />
-      <Stack
-        direction="row"
-        sx={{ alignItems: 'center', gap: 0.5, mt: 0.5 }}
-      >
-        {detectedOk ? (
-          <Tooltip title={detected ?? ''} placement="bottom-start">
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                maxWidth: '100%',
-                fontFamily: 'monospace',
-                fontSize: '0.7rem',
-              }}
-            >
-              <FolderOpenIcon
-                sx={{ fontSize: 12, mr: 0.5, verticalAlign: 'middle' }}
-              />
-              {t('converterDetectedAt', { path: detected })}
-            </Typography>
-          </Tooltip>
-        ) : hasOverride ? (
-          <Typography variant="caption" color="primary.main">
-            {t('converterUsingDefault').split('。')[0]}
-          </Typography>
-        ) : (
-          <Typography variant="caption" color="text.secondary">
-            {hint}
-          </Typography>
-        )}
-      </Stack>
-    </Box>
-  );
-}
-
-function DwgConverterSection() {
-  const { t } = useTranslation();
-  const dispatch = useDispatch();
-  const dwg2dxfPath = useSelector(
-    (s: RootState) => s.settings?.dwg2dxfPath ?? null
-  );
-  const odaPath = useSelector((s: RootState) => s.settings?.odaPath ?? null);
-  const [detected, setDetected] = useState<{
-    dwg2dxf: string | null;
-    oda: string | null;
-  }>({ dwg2dxf: null, oda: null });
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    setIsLoading(true);
-    ipcApi
-      .detectDwgConverters()
-      .then((result) => {
-        if (!cancelled) setDetected(result);
-      })
-      .catch(() => {
-        if (!cancelled) setDetected({ dwg2dxf: null, oda: null });
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [dwg2dxfPath, odaPath]);
-
-  return (
-    <ConverterCard
-      icon={<ArchitectureIcon />}
-      title={t('dwgConverterSection')}
-      hint={t('dwgConverterHint')}
-    >
-      <ConverterRow
-        label={t('dwg2dxfPath')}
-        hint={t('dwg2dxfPathHint')}
-        value={dwg2dxfPath}
-        detected={detected.dwg2dxf}
-        isLoading={isLoading}
-        onChange={(v) => dispatch(setDwg2dxfPath(v))}
-      />
-      <ConverterRow
-        label={t('odaPath')}
-        hint={t('odaPathHint')}
-        value={odaPath}
-        detected={detected.oda}
-        isLoading={isLoading}
-        onChange={(v) => dispatch(setOdaPath(v))}
-      />
-    </ConverterCard>
-  );
-}
-
-function EbookConverterSection() {
-  const { t } = useTranslation();
-  const dispatch = useDispatch();
-  const calibrePath = useSelector(
-    (s: RootState) => s.settings?.calibrePath ?? null
-  );
-  const [detected, setDetected] = useState<{ calibre: string | null }>({
-    calibre: null,
-  });
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    setIsLoading(true);
-    ipcApi
-      .detectEbookConverter()
-      .then((result) => {
-        if (!cancelled) setDetected(result);
-      })
-      .catch(() => {
-        if (!cancelled) setDetected({ calibre: null });
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [calibrePath]);
-
-  return (
-    <ConverterCard
-      icon={<MenuBookIcon />}
-      title={t('ebookConverterSection')}
-      hint={t('ebookConverterHint')}
-    >
-      <ConverterRow
-        label={t('calibrePath')}
-        hint={t('calibrePathHint')}
-        value={calibrePath}
-        detected={detected.calibre}
-        isLoading={isLoading}
-        onChange={(v) => dispatch(setCalibrePath(v))}
-      />
-    </ConverterCard>
-  );
-}
-
 function AdvancedSection() {
   return (
     <Stack sx={{ gap: 3 }}>
       <ExtensionsSection />
       <FulltextSection />
-      <DwgConverterSection />
-      <EbookConverterSection />
-    </Stack>
-  );
-}
-
-/**
- * Per-extension settings (docs/07 extension system). Starts with md-editor:
- * the render-theme select (moved from General) and the callout manager
- * (moved from the standalone 提示框 section, now a subsection here). Future
- * extension-specific options get their own subsections in this pane.
- */
-function PerExtensionSettingsSection() {
-  const { t } = useTranslation();
-  const dispatch = useDispatch();
-  const mdRenderTheme = useSelector(
-    (s: RootState) => s.settings.mdEditorRenderTheme ?? 'auto'
-  );
-  const mdImageSaveMode = useSelector(
-    (s: RootState) => s.settings.mdImageSaveMode ?? 'subfolder'
-  );
-  const mdImageSubfolder = useSelector(
-    (s: RootState) => s.settings.mdImageSubfolder ?? '${filename}.assets'
-  );
-  const mdPdfHeader = useSelector(
-    (s: RootState) => s.settings.mdPdfHeader ?? ''
-  );
-  const mdPdfFooter = useSelector(
-    (s: RootState) => s.settings.mdPdfFooter ?? ''
-  );
-  return (
-    <Stack sx={{ gap: 2 }}>
-      <Typography variant="subtitle2">{t('extMdEditorTitle')}</Typography>
-      <Field label={t('mdRenderTheme')}>
-        <FormControl size="small" sx={{ minWidth: 180 }}>
-          <Select
-            value={mdRenderTheme}
-            onChange={(e) =>
-              dispatch(setMdRenderTheme(e.target.value as MdRenderThemePref))
-            }
-          >
-            <MenuItem value="auto">{t('mdRenderThemeAuto')}</MenuItem>
-            <MenuItem value="github-light">GitHub Light</MenuItem>
-            <MenuItem value="github-dark">GitHub Dark</MenuItem>
-            <MenuItem value="solarized-light">Solarized Light</MenuItem>
-            <MenuItem value="solarized-dark">Solarized Dark</MenuItem>
-            <MenuItem value="dracula">Dracula</MenuItem>
-            <MenuItem value="nord">Nord</MenuItem>
-            <MenuItem value="gruvbox">Gruvbox</MenuItem>
-            <MenuItem value="one-dark">One Dark</MenuItem>
-            <MenuItem value="latex">Latex</MenuItem>
-          </Select>
-        </FormControl>
-      </Field>
-      <Field label={t('mdImageSaveMode')}>
-        <FormControl size="small" sx={{ minWidth: 180 }}>
-          <Select
-            value={mdImageSaveMode}
-            onChange={(e) =>
-              dispatch(setMdImageSaveMode(e.target.value as MdImageSaveMode))
-            }
-          >
-            <MenuItem value="current">{t('mdImageSaveModeCurrent')}</MenuItem>
-            <MenuItem value="subfolder">{t('mdImageSaveModeSubfolder')}</MenuItem>
-          </Select>
-        </FormControl>
-      </Field>
-      {mdImageSaveMode === 'subfolder' && (
-        <Field label={t('mdImageSubfolder')}>
-          <TextField
-            size="small"
-            value={mdImageSubfolder}
-            onChange={(e) => dispatch(setMdImageSubfolder(e.target.value))}
-            helperText={t('mdImageSubfolderHint')}
-            sx={{ minWidth: 260 }}
-          />
-        </Field>
-      )}
-      <Divider />
-      <CustomCalloutsSection />
-      <Divider />
-      <MdTemplatesSection />
-      <Divider />
-      <Typography variant="caption" color="text.secondary">
-        {t('mdPdfSectionTitle')}
-      </Typography>
-      <Field label={t('mdPdfHeader')}>
-        <TextField
-          size="small"
-          value={mdPdfHeader}
-          onChange={(e) => dispatch(setMdPdfHeader(e.target.value))}
-          helperText={t('mdPdfHeaderHint')}
-          sx={{ minWidth: 260 }}
-        />
-      </Field>
-      <Field label={t('mdPdfFooter')}>
-        <TextField
-          size="small"
-          value={mdPdfFooter}
-          onChange={(e) => dispatch(setMdPdfFooter(e.target.value))}
-          helperText={t('mdPdfFooterHint')}
-          sx={{ minWidth: 260 }}
-        />
-      </Field>
     </Stack>
   );
 }
@@ -1618,73 +1229,6 @@ function KeyboardSection() {
           onClick={() => dispatch(resetKeybindings())}
         >
           {t('resetKeybindings')}
-        </Button>
-      </Box>
-      <MdKeyboardSection query={query} />
-    </Stack>
-  );
-}
-
-/** md-editor keymap panel: each action's combo is editable via KeyCaptureInput.
- *  Conflict detection flags two actions sharing a combo. Changes dispatch
- *  setMdKeybinding → ExtensionHost pushes setKeybindings → editor reconfigures
- *  its keymapCompartment live (see md-keymaps.ts / domain/md-keybindings.ts). */
-function MdKeyboardSection({ query = '' }: { query?: string }) {
-  const { t } = useTranslation();
-  const dispatch = useDispatch();
-  const bindings = useSelector((s: RootState) => s.settings?.mdKeybindings);
-  const q = query.trim().toLowerCase();
-  // combo → how many actions claim it (for conflict highlighting).
-  const counts: Record<string, number> = {};
-  if (bindings) {
-    for (const combo of Object.values(bindings)) {
-      if (combo) counts[combo] = (counts[combo] ?? 0) + 1;
-    }
-  }
-  return (
-    <Stack sx={{ gap: 2, mt: 3 }}>
-      <Typography variant="subtitle2">
-        {t('settingsSectionMdKeyboard')}
-      </Typography>
-      <Typography variant="body2" color="text.secondary">
-        {t('mdKeyboardHint')}
-      </Typography>
-      <Stack sx={{ gap: 1 }}>
-        {MD_KEY_ACTIONS.filter(({ labelKey }) =>
-          !q || t(labelKey).toLowerCase().includes(q)
-        ).map(({ action, labelKey }) => {
-          const value = bindings?.[action] ?? '';
-          const conflict = !!value && (counts[value] ?? 0) > 1;
-          return (
-            <Stack
-              key={action}
-              direction="row"
-              spacing={1.5}
-              sx={{ alignItems: 'center', minHeight: 40 }}
-            >
-              <Typography
-                variant="body2"
-                noWrap
-                sx={{ flex: 1, minWidth: 0 }}
-              >
-                {t(labelKey)}
-              </Typography>
-              <KeyCaptureInput
-                value={value}
-                onChange={(combo) => dispatch(setMdKeybinding(action, combo))}
-                conflict={conflict}
-              />
-            </Stack>
-          );
-        })}
-      </Stack>
-      <Box sx={{ mt: 1 }}>
-        <Button
-          size="small"
-          variant="outlined"
-          onClick={() => dispatch(resetMdKeybindings())}
-        >
-          {t('resetMdKeybindings')}
         </Button>
       </Box>
     </Stack>
@@ -2063,7 +1607,6 @@ const SECTIONS: {
   },
   { id: 'ai', labelKey: 'settingsSectionAi', Icon: SmartToyIcon },
   { id: 'commands', labelKey: 'settingsSectionCommands', Icon: TerminalIcon },
-  { id: 'extensions', labelKey: 'settingsSectionExtensions', Icon: ExtensionIcon },
   { id: 'about', labelKey: 'settingsSectionAbout', Icon: InfoOutlinedIcon },
   { id: 'advanced', labelKey: 'settingsSectionAdvanced', Icon: SettingsIcon },
 ];
@@ -2111,8 +1654,6 @@ export default function SettingsDialog({
         return <AiSection />;
       case 'commands':
         return <UserCommandsSection />;
-      case 'extensions':
-        return <PerExtensionSettingsSection />;
       case 'about':
         return <UpdateSection />;
       case 'advanced':
