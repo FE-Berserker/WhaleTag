@@ -41,6 +41,9 @@ Thumbs.db
 # Claude Code 本机设置（含 API key / token，绝不能提交）
 **/.claude/settings.local.json
 
+# ZCode 会话产物（个人会话计划快照，不入库；agents/ 子智能体定义入库）
+.zcode/plans/
+
 # Scratch / temp files
 test_string.txt
 doc_20260705.zip
