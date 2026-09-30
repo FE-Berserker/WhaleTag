@@ -22,7 +22,6 @@
 | [docs/08-data-depth.md](docs/08-data-depth.md) | `DirectoryContentContextProvider` 单一数据源、全局 `viewDepth`、path-keyed 投影 |
 | [docs/09-known-issues.md](docs/09-known-issues.md) | 已修关键 bug 与反复踩过的坑(冷启动黑魔法、redux-persist 引用一致性等) |
 | [docs/10-ui.md](docs/10-ui.md) | 11 种主题模式、12 套 `PRESETS` token、`'system'` 必须解析、设置面板 |
-| [docs/11-ai.md](docs/11-ai.md) | AI 助手(Claude Code CLI + HTTP provider)、流式侧栏、工具/批准、safeStorage 密钥 |
 | [docs/12-frontend-checklist.md](docs/12-frontend-checklist.md) | 前端 UI 手动核对清单 |
 | [docs/13-security.md](docs/13-security.md) | 当前安全模型(隔离/沙箱/CSP/allowedRoots)+ 不在范围的能力 |
 | [docs/14-packaging.md](docs/14-packaging.md) | `npm run package:win` 流程、nsis 离线、打包/AI 调试排坑(国内网络) |
@@ -31,6 +30,7 @@
 | [docs/18-auto-update.md](docs/18-auto-update.md) | 应用自动更新(electron-updater + GitHub Releases) |
 | [docs/19-code-audit.md](docs/19-code-audit.md) | 代码质量审计与改进清单(§F 例外追踪文档) |
 | [docs/20-relative-links.md](docs/20-relative-links.md) | drawio/excalidraw 文件链接相对路径方案(§F 例外方案追踪) |
+| [docs/21-mcp.md](docs/21-mcp.md) | 本地 MCP 服务器:外部 AI 客户端经 Streamable HTTP + Bearer token 搜索/读取/打标/打包,文件级操作需审批 |
 | [docs/UI.md](docs/UI.md) | 设计语言(从 Pencil `.pen` 导出的主题 token) |
 
 > 找不到某模块的现状?直接从对应 `docs/0X-*.md` 入口找,不必翻 git 历史。

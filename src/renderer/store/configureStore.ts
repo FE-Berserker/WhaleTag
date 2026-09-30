@@ -33,9 +33,10 @@ const persistConfig = {
   // Bump when the shape of any persisted slice changes in a way that the
   // per-slice `=== undefined` migrations in the reducers can't paper over.
   // v1 = initial 9-slice layout (locations, settings, taglibrary, workflow,
-  // recent, savedsearches, extensions, ai). Add v2 here the next time the
-  // schema moves and write a `migrate` that handles the upgrade.
-  version: 1,
+  // recent, savedsearches, extensions, ai). v2 = the `ai` conversation slice
+  // was removed together with the built-in AI assistant (0.5.0) — the v2
+  // migrate drops the stale persisted key so combineReducers never sees it.
+  version: 2,
   storage: mainProcessStorage,
   whitelist: [
     'locations',
@@ -45,15 +46,20 @@ const persistConfig = {
     'recent',
     'savedsearches',
     'extensions',
-    'ai',
   ] as string[],
   transforms: [extensionsTransform],
-  // Default no-op migrate — rehydrated state is taken as-is. The per-slice
-  // reducers already migrate `=== undefined` fields on every action, so
-  // adding new optional fields never requires a bump. Keep this here as the
-  // explicit hook for future schema changes.
-  migrate: (state: unknown, _version: number): Promise<unknown> =>
-    Promise.resolve(state),
+  // v2: drop the removed `ai` slice from any pre-0.5.0 persisted root. The
+  // settings-level `ai*` fields are stripped separately by the settings
+  // reducer (see stripRemovedAiFields in reducers/settings.ts) because
+  // settings rehydrates per-key via autoMergeLevel1, not via this migrate.
+  migrate: (state: unknown, version: number): Promise<unknown> => {
+    if (version < 2 && state && typeof state === 'object') {
+      const next = { ...(state as Record<string, unknown>) };
+      delete next.ai;
+      return Promise.resolve(next);
+    }
+    return Promise.resolve(state);
+  },
   // Verbose redux-persist logging in dev; off in production. The console
   // errors added in storage.ts and persist-storage.ts cover the production
   // case (a corrupt file surfaces in DevTools instead of silently

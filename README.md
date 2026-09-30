@@ -40,7 +40,6 @@
   </tr>
   <tr>
     <td width="50%" align="center"><img src="docs/screenshots/09_knowledge-graph.png" alt="Knowledge graph"/><br/><sub>知识图谱视角 · Knowledge graph</sub></td>
-    <td width="50%" align="center"><img src="docs/screenshots/10_ai.png" alt="AI assistant"/><br/><sub>AI 助手 · AI assistant</sub></td>
   </tr>
 </table>
 
@@ -69,7 +68,6 @@ whole library stays movable.
 | Thumbnails | image / svg / video / pdf / office / ebook / font (7 kinds) + folder thumbnails; 39 fallback icons |
 | Themes | **11 themes** (3 classic + 8 curated); `'system'` is always resolved before reaching MUI |
 | Extensions | **15 built-in** viewers/editors; revision history; Open With; archive-viewer decodes 9 formats; cad-viewer 4 tiers |
-| AI assistant | Embedded Claude Code CLI + HTTP provider (ollama / openai); streaming sidebar; read-only guardrails; safeStorage keys |
 
 ### Tech stack
 
@@ -98,7 +96,7 @@ WhaleTag/
 │   └── build/                 # installer output (git-ignored)
 └── src/
     ├── shared/                # pure logic shared across main ↔ renderer (types + pure fns)
-    ├── main/                  # MAIN process — all FS IO, thumbnails, index, extensions, AI CLI
+    ├── main/                  # MAIN process — all FS IO, thumbnails, index, extensions
     │   ├── main.ts / preload.ts / ipc/ (domain handlers) / menu.ts
     └── renderer/              # RENDERER process (React UI, web target)
 ```
@@ -203,7 +201,6 @@ MIT. Third-party notices (e.g. bundled FFmpeg under GPL-3.0) live in [LICENSES/]
 | 缩略图 | image / svg / video / pdf / office / ebook / font(7 种)+ 文件夹缩略图;39 类回退图标 |
 | 主题 | **11 种**(3 经典 + 8 策划);`'system'` 必须先解析再流入 MUI |
 | 扩展 | **15 个内置**(viewer / editor);修订历史;右键 Open With;archive-viewer 解码 9 种;cad-viewer 4 tier |
-| AI 助手 | 嵌入 Claude Code CLI + HTTP provider(`ollama` / `openai`);流式侧栏;只读护栏;safeStorage 存 key |
 
 ### 技术栈
 

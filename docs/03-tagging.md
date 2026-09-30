@@ -186,7 +186,7 @@ runMigration(allowedRoots): Promise<MigrationResult>
   // 二次运行幂等(只看 changed)
 ```
 
-**触发时机(2026-07-18 修复)**:首次**非空** `fs:setAllowedRoots` 推送时触发 —— [fs-roots.ts](../src/main/ipc/fs-roots.ts) handler 里 `triggerStartupMigration(getAllowedRoots())`(once-guard 防 location 增删的重推送重跑;空推送不消耗 guard,渲染层 rehydration 前可能先推一次 `[]`)。原先在 `bootstrap()` 里跑时 roots 必为空(渲染层尚未挂载),迁移从未真正执行 —— 见 [docs/09 §26](./09-known-issues.md)。
+**触发时机(2026-07-18 修复)**:首次**非空** `fs:setAllowedRoots` 推送时触发 —— [fs-roots.ts](../src/main/ipc/fs-roots.ts) handler 里 `triggerStartupMigration(getAllowedRoots())`(once-guard 防 location 增删的重推送重跑;空推送不消耗 guard,渲染层 rehydration 前可能先推一次 `[]`)。原先在 `bootstrap()` 里跑时 roots 必为空(渲染层尚未挂载),迁移从未真正执行 —— 见 [docs/09 §24](./09-known-issues.md)。
 
 ## 12. 已知取舍
 

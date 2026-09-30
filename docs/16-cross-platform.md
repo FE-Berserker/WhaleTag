@@ -2,7 +2,7 @@
 
 # 16 · macOS / Linux 跨平台打包可行性
 
-> **2026-07-12** 的跨平台可行性评估,覆盖 `src/main` + `src/shared` 的平台相关代码、`resources/builder.json`、webpack 配置、原生模块、AI 组件打包。
+> **2026-07-12** 的跨平台可行性评估,覆盖 `src/main` + `src/shared` 的平台相关代码、`resources/builder.json`、webpack 配置、原生模块。
 >
 > ⚠️ **文档定位**:同 [docs/15](./15-perf-audit.md),是 plan.md §F「不做未来计划」的**经确认例外**——一份评估 + 可勾选追踪清单。每项完成后勾 `- [x]` 并回写对应模块 doc;评估**不做**的移到文末「已接受的取舍」。
 >
@@ -12,7 +12,7 @@
 
 ## 总体结论:🟢 可行性高
 
-源码本身基本就是跨平台的——几乎所有平台敏感路径都已有正确的 `win32` / `darwin` / `linux` 分支;secretStore 也并非直调 Windows DPAPI,而是 Electron `safeStorage` 全平台(详见下表)。
+源码本身基本就是跨平台的——几乎所有平台敏感路径都已有正确的 `win32` / `darwin` / `linux` 分支。
 
 真正的工作量在**构建配置 + 签名 + CI 矩阵**,不在应用代码。**无架构改动。**
 
@@ -22,15 +22,11 @@
 
 | 项 | 位置 | 状态 |
 |---|---|---|
-| AI 密钥存储 | [secretStore.ts](../src/main/ai/security/secretStore.ts) | `safeStorage` 全平台;非 DPAPI 直调,无 `powershell.exe` |
 | ffmpeg | [thumbnail.ts](../src/main/thumbnail.ts) | `ffmpeg-static` 包自带各平台二进制,asarUnpack 已含(视频首帧缩略图) |
-| 7za | [sevenzip.ts](../src/main/sevenzip.ts) | `7zip-bin` 自带 win/mac/linux 全部二进制 + PATH 探测(AI 组件安装解压用);PATH 探针走异步 `execFile` 不冻主进程(P1-1 同款) |
-| claude CLI | [findClaudeCliPath.ts](../src/main/ai/providers/claude/cli/findClaudeCliPath.ts) | 范本级跨平台:Win 查 AppData / Program Files,非 Win 查 `/usr/local/bin`、`/opt/homebrew/bin`、`~/.volta`、`~/.asdf`、`~/.npm-global`、`~/.local/bin` |
-| spawn / shell-quote | [customSpawn.ts](../src/main/ai/providers/claude/customSpawn.ts) / [shell-quote.ts](../src/main/shell-quote.ts) | `.cmd/.bat/.ps1` 仅 win32 走 `shell:true`;POSIX 单引号转义正确 |
-| env / path 工具 | [ai/utils/env.ts](../src/main/ai/utils/env.ts) / [ai/utils/path.ts](../src/main/ai/utils/path.ts) | PATH 分隔符、大小写归一、`node` vs `node.exe` 全按平台分 |
+| 7za | [sevenzip.ts](../src/main/sevenzip.ts) | `7zip-bin` 自带 win/mac/linux 全部二进制 + PATH 探测;PATH 探针走异步 `execFile` 不冻主进程(P1-1 同款) |
+| shell-quote | [shell-quote.ts](../src/main/shell-quote.ts) | 路径引号按平台分:win32 cmd 双引号 + 内嵌 `"` 翻倍,POSIX 单引号 close-reopen |
 | userData / 菜单 / 回收站 / reveal | [main.ts](../src/main/main.ts) ~L349-369 / [menu.ts](../src/main/menu.ts) / [shell.ts](../src/main/ipc/shell.ts) | 三分支齐全;mac「关窗不退出」行为正确 |
 | webpack externals | [.erb/configs/](../.erb/configs/) | [docs/14 坑4](./14-packaging.md) 的 pdfjs 子路径修是 OS 无关正则,无 `file:///C:/` 泄漏 |
-| AI 组件 `.whaleai` | [build-ai-component.js](../scripts/build-ai-component.js) | 按设计每平台各跑一次,读当前平台 optionalDeps |
 | asarUnpack globs | [builder.json](../resources/builder.json) ~L16-25 | `@img/**` / `@napi-rs/**` 正确覆盖 mac/linux prebuild 路径 |
 | 原生模块 rebuild | better-sqlite3 / sharp / @napi-rs/canvas | electron-builder 26 打包时自动按 Electron ABI rebuild;`occt-import-js` 是 WASM 全便携 |
 
@@ -88,7 +84,6 @@
 
 ## 🟢 零碎 / 纯装饰(可不改)
 
-- [ ] [ai/prompt.ts](../src/main/ai/prompt.ts) ~L133:AI 系统 prompt 举例用 `C:\Music\Album\track.flac`,mac/linux 换成 `~/Music/...` 更贴切。
 - [ ] [ipc-types.ts](../src/shared/ipc-types.ts) ~L30:JSDoc 举例 Windows 路径,无运行时影响。
 - [ ] [thumbnail.ts](../src/main/thumbnail.ts) ~L662-674:`loadFolderThumbnail` 的 EBUSY 重试循环在 mac/linux 是死代码(读取不会 EBUSY),无害,无需改。
 - [ ] [webpack.config.renderer.prod.ts](../.erb/configs/) `favicon: icon.ico`:`.ico` 在 mac/linux Chromium 也认,纯风格问题,可换 `.png`。
@@ -99,7 +94,7 @@
 
 | 步骤 | 工作量 | 必要性 |
 |---|---|---|
-| **CI 矩阵**:macos-latest(arm64 + x64)+ ubuntu-latest(x64)各跑 `package:{mac,linux}` + `build-ai-component` | 配置活,半天 | **必须**(原生模块不能从 Windows 交叉编译,须在目标 OS 上 `npm install` + 打包) |
+| **CI 矩阵**:macos-latest(arm64 + x64)+ ubuntu-latest(x64)各跑 `package:{mac,linux}` | 配置活,半天 | **必须**(原生模块不能从 Windows 交叉编译,须在目标 OS 上 `npm install` + 打包) |
 | 生成 `.icns` + 补 `mac.icon`(C-3) | 1-2 小时 | 想要正经图标就得做;否则 fallback Electron 图标 |
 | Linux 路径守卫大小写修复(C-1) | — | ✅ 已完成(2026-07-16) |
 | Linux 终端 / reveal / zip fallback(C-2) | moderate,半天 | 想要 linux 体验完整就得做 |
@@ -108,7 +103,7 @@
 
 **最短可跑路径**(dev / 自用即达标,不用签名):加 `.icns`(C-3)+ 在 mac 和 linux 各跑一次 `package:mac` / `package:linux` 冒烟,验证无崩。
 
-**注意**:打包前同样要 `unset ELECTRON_RUN_AS_NODE`([docs/14 坑3](./14-packaging.md)),Claude Code host 注入该 env 是 OS 无关的。
+**注意**:打包前同样要 `unset ELECTRON_RUN_AS_NODE`([docs/14 坑3](./14-packaging.md)),env 残留与 OS 无关。
 
 ---
 
@@ -116,5 +111,4 @@
 
 | 项 | 理由 |
 |---|---|
-| headless linux 上 `safeStorage` 不可用 | 无 gnome-keyring / kwallet 时 `isEncryptionAvailable()` 返 false,用户得干净报错;桌面 Electron 应用可接受 |
 | mac 不签名自用 | Gatekeeper 手动绕过可忍;公开分发再补(B-1) |

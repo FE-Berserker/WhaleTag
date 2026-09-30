@@ -5,7 +5,6 @@ import os from 'os';
 import { app, BrowserWindow, ipcMain, Menu, protocol, session, shell } from 'electron';
 import windowStateKeeper from 'electron-window-state';
 import { registerIpcHandlers } from './ipc';
-import { registerAiCoreHandlers, maybeRegisterAiRuntimeHandlers } from './ai/ipc-ai-core';
 // P0-2: index utilityProcess lifecycle hook. The worker is lazy-spawned on
 // first IPC request and torn down on app quit — graceful `shutdown` op first
 // (WAL checkpoint), then best-effort kill.
@@ -15,6 +14,10 @@ import { setDirChangedBroadcast, closeAllWatchers } from './dir-watcher';
 // Lazy-spawned on the first pdf/font thumbnail; torn down here on app
 // quit (best-effort kill).
 import { killThumbWorker } from './thumb-worker-host';
+// Local MCP server (Streamable HTTP on 127.0.0.1) that exposes WhaleTag's
+// search / tagging / packaging to external AI clients. Opt-in, bearer-token
+// gated — see docs/21-mcp.md.
+import { initMcpServer, shutdownMcpServer } from './mcp/mcp-server';
 // Phase 6: application auto-update via electron-updater + GitHub Releases.
 // The IPC handlers + startup-delayed check + dev-mode short-circuit all
 // live in this module. See docs/18-auto-update.md for the full flow.
@@ -165,6 +168,16 @@ function createWindow(): void {
     isQuitting = false;
   });
 
+  // docs/13: never let the renderer navigate the window away from the app
+  // shell — the preload bridge (window.whale) would ride along to the target
+  // page and hand it the full IPC surface. Dev permits only the dev server
+  // (HMR reloads don't fire will-navigate); production blocks everything.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!(isDev && url.startsWith(DEV_SERVER_URL))) {
+      event.preventDefault();
+    }
+  });
+
   if (isDev) {
     mainWindow.loadURL(DEV_SERVER_URL);
     mainWindow.webContents.openDevTools({ mode: 'detach' });
@@ -273,7 +286,6 @@ function registerAutoUpdateHandlers(): void {
 function bootstrap(): void {
   Menu.setApplicationMenu(buildMenu());
   registerIpcHandlers();
-  registerAiCoreHandlers();
   // docs/04 §10: forward index-worker build progress to the renderer
   // (SearchBar's index build + Settings → Full-text builds). Broadcast to
   // every window like the auto-update events above; consumers filter by
@@ -291,10 +303,6 @@ function bootstrap(): void {
       if (!win.isDestroyed()) win.webContents.send('fs:dirChanged', ev);
     }
   });
-  // Register the SDK-backed AI runtime handlers iff the optional AI component
-  // is installed (user-installed .whaleai → <userData>/components/ai). Core
-  // handlers — keys, CLI discovery, component install/state — always register.
-  void maybeRegisterAiRuntimeHandlers();
   // Application auto-update (electron-updater + GitHub Releases). Wire the
   // `electron-updater` event bus into our local listener Set; the IPC
   // handlers below (app:update-check / app:update-download / etc.) and the
@@ -302,6 +310,10 @@ function bootstrap(): void {
   initAutoUpdater();
   registerAutoUpdateHandlers();
   scheduleStartupCheck();
+
+  // Local MCP server for external AI clients (disabled unless the user
+  // enabled it in Settings → Integrations; config is main-process owned).
+  void initMcpServer();
 
   // Phase 4 date-tag migration is NOT launched here: it is triggered by the
   // first non-empty `fs:setAllowedRoots` push (see ipc.ts) — at bootstrap the
@@ -350,6 +362,8 @@ function bootstrap(): void {
         killThumbWorker();
         // docs/04 §10: location fs.watch handles.
         closeAllWatchers();
+        // MCP listener (deny pending approvals, release the port).
+        void shutdownMcpServer();
       } finally {
         app.quit();
       }

@@ -250,9 +250,9 @@ const nodeRequire = /* createRequire() */ undefined;
 
 **修复**:[scripts/run-tests.cjs](../scripts/run-tests.cjs) 用 glob 自动发现 `src` + `scripts` 下全部测试交给 `electron --test`,新增测试无需改 package.json。补全 2 个测试文件的 provider 包裹(对照一直绿着的 [KanbanView.test.tsx](../src/renderer/components/KanbanView.test.tsx))。全套从"红"修到 **1702 绿**(每批加测试递增)。
 
-**问题 B — 构建全链路不做类型检查**:所有 `build:*` 带 `TS_NODE_TRANSPILE_ONLY` + ts-loader `transpileOnly`,无 CI、无 pretest 钩子。[src/main/ai/prompt.ts](../src/main/ai/prompt.ts) 有个类型导入路径错(`../../../shared/whale-meta`,多一层 `../`),运行时是 type-position 被擦除所以不崩,但 `tsc` 报错 —— 被 transpileOnly 掩盖已久。
+**问题 B — 构建全链路不做类型检查**:所有 `build:*` 带 `TS_NODE_TRANSPILE_ONLY` + ts-loader `transpileOnly`,无 CI、无 pretest 钩子。`src/main` 里有个类型导入路径错(`../../../shared/whale-meta`,多一层 `../`),运行时是 type-position 被擦除所以不崩,但 `tsc` 报错 —— 被 transpileOnly 掩盖已久。
 
-**修复**:加 `"pretest": "npm run type-check"`。`npm test` 先跑 `tsc --noEmit` 再跑测试;修了 prompt.ts 路径。之后 #11 加 `markExifProcessedMany` 时,pretest 当场抓到漏改 `WhaleApi` 接口([ipc-types.ts](../src/shared/ipc-types.ts)),避免了带病上线。
+**修复**:加 `"pretest": "npm run type-check"`。`npm test` 先跑 `tsc --noEmit` 再跑测试;并修掉那处类型导入路径。之后 #11 加 `markExifProcessedMany` 时,pretest 当场抓到漏改 `WhaleApi` 接口([ipc-types.ts](../src/shared/ipc-types.ts)),避免了带病上线。
 
 **教训**:`transpileOnly` 下 pretest 是**唯一**的类型校验点;给桥(`window.whale` / `WhaleApi`)加方法必须三处同步改:[preload.ts](../src/main/preload.ts)(实现)+ [ipc-types.ts](../src/shared/ipc-types.ts)(接口)+ [ipc-api.ts](../src/renderer/services/ipc-api.ts)(renderer 侧)—— pretest 会拦下漏改。
 
@@ -273,52 +273,7 @@ Internal React error: Expected static flag was missing. Please notify the React 
 
 **教训**:给 renderer 加 `React.lazy` 拆包(见 [docs/01 §8](./01-architecture.md))后,**dev 配置也要同步 `splitChunks`**,否则 dev 下多份 React 触发这个内部错。和 §19(createRequire)一样,这类 webpack 配置问题只有真跑起来才暴露 —— dev / smoke test 验证不可省。
 
-## 22. AI `allowDangerouslySkipPermissions` 常开 → SDK shadow canUseTool → 授权弹窗不弹 + MCP 工具空字段 deny 抛错 (2026-07-10)
-
-**症状**:normal/plan 模式下让 AI 调一个需要授权的工具(如 MCP 的 `mmx`),授权弹窗**根本不弹**(`ApprovalModal` 没机会出现),工具直接走 CLI 自己的 bypass 路径,对未预批准的 MCP 工具返回一个**空字段的 deny**,SDK 校验器抛错。dev 日志里有 SDK 警告:
-
-```
-[CLAUDE_SDK_CAN_USE_TOOL_SHADOWED] canUseTool will not be invoked:
-permissionMode 'bypassPermissions' auto-approves every tool call
-(except explicit deny rules) before the callback is consulted.
-```
-
-**根因**:[buildQueryOptions.ts](../src/main/ai/providers/claude/buildQueryOptions.ts) 曾对**所有**权限模式(normal/plan/yolo)都设 `allowDangerouslySkipPermissions: true`。这个 flag 是 SDK 启用 `bypassPermissions` 的开关——设了它,SDK **强制 bypassPermissions**(即使 Whale 请求的是 `'default'`/`'plan'`),于是 `canUseTool` 被 **shadow**(永不调用)→ 弹窗不弹 → 工具落进 CLI bypass 路径 → 空字段 deny → 校验器抛错。
-
-**修复**:`allowDangerouslySkipPermissions` 只在 `'yolo'` 模式设(`settings.permissionMode === 'yolo'`)。normal/plan 不设 → SDK 尊重 `permissionMode: 'default'`/`'plan'` → **咨询 `canUseTool`** → Whale 弹窗出现 + 决定。
-
-**教训**:`canUseTool` 是 SDK 在**非 bypass 模式**下的闸门;`allowDangerouslySkipPermissions` 只是 bypass 的**启用开关**,绝不能在 normal/plan 开(开了就把 `canUseTool` 整个废掉,且无编译/类型错误——只有真跑 AI 工具调用才暴露)。和 §19/§21 同类:协议层配置坑,smoke test 验证不可省。详见 [docs/11 §5](./11-ai.md)。
-
-## 23. AI 流式回复 thinking/text 重复 — CLI uuid 每行随机,uuid 去重整体失效 (2026-07-11 发现,2026-07-18 确诊修复)
-
-**症状**:Claude CLI provider 的回复里,**1 个 assistant 气泡内出现两段一模一样的思考(thinking)块**;修好 thinking 后,**两段一模一样的正文(text)**浮出。partial 流(token by token)累积成一段,complete 消息又原样发一段。yolo / normal 模式均可复现。
-
-**根因(2026-07-18 实跑 CLI 抓 stream-json 确诊)**:直接跑 `claude.exe -p "..." --output-format stream-json --include-partial-messages --verbose` 抓输出(比 app 内加 log 干净),发现 **每一行(每条 `stream_event` / `assistant`)都带一个全新的随机 uuid** —— 不止 partial 与 complete 不匹配,partial 之间也互不相同。因此 [transformSdkMessage.ts](../src/main/ai/providers/claude/stream/transformSdkMessage.ts) 依赖 `message.uuid` 的 `startedMsgs`/`streamedMsgs` 去重**整体失效**:complete 的 uuid 永远查不到 → text/thinking 重发一遍;complete 还因 `startedMsgs` miss 再 yield 一个 `assistant_message_start` → **空气泡**。2026-07-11 观察到"只 1 个气泡"是当时旧版 CLI:`message_start` 与 complete 共享 uuid、delta 不共享 —— 所以 `startedMsgs` 半生效、`streamedMsgs` 失效;新版 CLI 改全行随机后还会多一个空气泡。subagent 文本同病且当时的 boolean 兜底没覆盖(parent 分支不置标志)→ 重复。
-
-抓包同时证实两条之前未知的 wire 事实:
-
-1. **complete `assistant` 在某块的 delta 流完即发出,早于该块的 `content_block_stop`**;且一条 API 消息可拆成**多个非累积 complete**(如 `[thinking]` 再 `[tool_use]`)。
-2. 块的完整文本 = 其 delta 拼接,**逐字节相等**(thinking 81 字符、text 4 字符实测一致);tool_use 块 id(`call_*`)在 stream 与 complete 间稳定。**这些才是真正的去重键,uuid 不是**。
-
-**修复(2026-07-18)**:transformSdkMessage 重写,删 `startedMsgs` / `streamedMsgs` / `thinkingStreamed` / `textStreamed`(boolean 兜底一并移除):
-
-- **per-scope flow 状态机**:scope = `parent_tool_use_id`(顶层 `''`;subagent 流与顶层交错,各持一份);`message_start` 开新 flow;`bubbleOpen` 保证一条 API 消息只开一个气泡(没收到 `message_start` 时 complete 自己开 —— recovery 路径)。
-- **text/thinking 按内容精确匹配去重**:delta 按块 index 累积(`flow.acc`),complete 块与在途累积 + 已展示池(`flow.shown`)做**全串精确匹配**(非子串,无歧义),命中跳过;`content_block_stop` 把累积落进 shown;complete 发出的块也入 shown(防累积式 complete 重发)。已知取舍:同一 API 消息里两个**内容完全相同**的 text 块,complete 回声会坍缩(流式路径两块本身都正常显示,complete 不再多加)。
-- **tool_use 按稳定块 id 双向去重**:complete 先到(常见,见 wire 事实 1)则发 complete 版(顺带拿到完整解析好的 input)并删掉 pending 组装,stop 到时不再重发;stop 先到则 `emittedToolIds` 挡 complete。
-- `toolBlocks` 键从块 index 改为 `${scope}:${index}`(并行 subagent 同 index 不互撞)。
-
-**测试**:6 个真实 wire-shape 回归用例(逐行随机 uuid / 分裂 complete / complete 早于 stop / 无 stream 的 recovery / 累积重复 / subagent 不同 uuid)+ 原 12 个全过;两份真实抓包 JSONL 逐 chunk 回放校验正确。
-
-**遗留**:无。boolean 兜底已删,uuid 不再用作任何去重键(仅作气泡 `itemId` 展示标识,每行唯一即可)。
-
-**教训**:
-- 流式协议里"partial + complete"去重必须**实测验证**——光看代码"complete 检查 streamed 跳过"会以为没问题,但 uuid 匹配是隐含前提,SDK 内部 id 体系不一致就**静默失效**(无报错、无类型错,只有 UI 重复)。
-- **别把对端协议的 id 语义当契约**:CLI 的 uuid 是"每行一个"还是"每条消息一个"没有文档承诺,版本间还变过(旧版 message_start 与 complete 共享,新版全行随机);去重键要用有内容语义的字段(块文本 / 工具 id)。
-- dev 热重载(electronmon)在 Windows 的进程清理是独立坑(与 §1 `ELECTRON_RUN_AS_NODE` 同类 dev 黑魔法):诊断流式问题绕开 watch,直接跑 CLI 二进制抓 stream-json 输出,比 app 内加 log 更快更干净。
-
-**关联**:[docs/11 §4 流式与渲染](./11-ai.md)。
-
-## 24. 自定义命令:Windows 路径含 `%` 被拒(2026-07-12)
+## 22. 自定义命令:Windows 路径含 `%` 被拒(2026-07-12)
 
 **症状**:右键一个文件名含 `%` 的文件(如 `data%20file.csv`)→ "命令" 子菜单跑用户命令 → toast `commandPathBlocked`,命令不运行。
 
@@ -326,18 +281,18 @@ permissionMode 'bypassPermissions' auto-approves every tool call
 
 **处理**:[runUserCommand](../src/main/shell-command.ts) 在替换前检测 `targetPath.includes('%')` → 直接拒,renderer 映射到 `commandPathBlocked` 文案。`!`(cmd 默认 delayed expansion 关)放行。99.99% 文件名不含 `%`。用户解法:重命名文件去掉 `%`,或改用不含 `${path}` 的命令。
 
-**通用教训**:任何"用户模板 + 文件路径替换进 cmd"的功能,`%` 是 cmd 引号套不住的唯一元字符 —— 要么拒(当前方案)、要么改走 PowerShell(`psQuote` 单引号全安全,见 [fs-write.ts runOsZip](../src/main/ipc/fs-write.ts))、要么写临时 .bat(批处理内 `%%` 生效)。详见 [docs/13 §11](./13-security.md)。
+**通用教训**:任何"用户模板 + 文件路径替换进 cmd"的功能,`%` 是 cmd 引号套不住的唯一元字符 —— 要么拒(当前方案)、要么改走 PowerShell(`psQuote` 单引号全安全,见 [fs-write.ts runOsZip](../src/main/ipc/fs-write.ts))、要么写临时 .bat(批处理内 `%%` 生效)。详见 [docs/13 §8](./13-security.md)。
 
 ---
 
-## 25. utilityProcess 子进程:`parentPort` 在 `process` 上不在 `electron` 导出上;且 fork 能直读 app.asar(2026-07-13,P0-2 索引迁出主进程)
+## 23. utilityProcess 子进程:`parentPort` 在 `process` 上不在 `electron` 导出上;且 fork 能直读 app.asar(2026-07-13,P0-2 索引迁出主进程)
 
 **症状**:P0-2 把 SQLite / FTS5 / EXIF 管线迁进 `utilityProcess`([index-worker.ts](../src/main/index-worker.ts)),type-check 过、dev 不报错,但 worker **一启动就 `exit code 1`**,所有 `index:*` / `fulltext:*` / `exif:*` IPC 全 reject「index worker exited unexpectedly」。dev 没被发现是因为 worker 惰性 spawn(首次索引请求才拉起)。
 
 **根因(三个独立坑,前两个打包才触发,第三个 dev 才触发)**:
 
 1. **`parentPort` 取错地方**:`index-worker.ts` 写 `import { parentPort } from 'electron'`。但 Electron 42 的 utilityProcess 子进程里 `parentPort` **只在 `process.parentPort` 上**;`require('electron').parentPort` 运行时是 `undefined`(Electron 的 `.d.ts` 把类型挂在 electron 导出上 → TS 不报错,值却不在)→ `if (!parentPort) throw` → 启动即崩。探针实证:`{ hasProcessParentPort: true, hasElectronParentPort: false }`。
-2. **`utilityProcess.fork` 能直读 asar**(P0-1):`index-worker-spawn.ts` 误把 [docs/14 §5](./14-packaging.md) 的「外部 node 读不了 asar」教训套到 utilityProcess 上,做了 `app.asar → app.asar.unpacked` 重写。但 utilityProcess 是 Electron 原生进程、asar 感知(不同于 `child_process.fork`,见 electron#2708);而 worker entry **不在 `asarUnpack`**(只原生 node_modules 解包了)→ 重写后路径不存在 → 打包版 fork ENOENT。dev 无 asar,不触发。
+2. **`utilityProcess.fork` 能直读 asar**(P0-1):`index-worker-spawn.ts` 误把「外部 node 读不了 asar」的教训套到 utilityProcess 上,做了 `app.asar → app.asar.unpacked` 重写。但 utilityProcess 是 Electron 原生进程、asar 感知(不同于 `child_process.fork`,见 electron#2708);而 worker entry **不在 `asarUnpack`**(只原生 node_modules 解包了)→ 重写后路径不存在 → 打包版 fork ENOENT。dev 无 asar,不触发。
 3. **dev 下 `app.getAppPath()` 是项目根**(第 3 个坑,dev 冒烟才发现):原 `index-worker-spawn.ts` 用 `path.join(app.getAppPath(), 'dist', 'main', ...)` 拼 worker 路径。打包时 `getAppPath()` = `app.asar`,拼出来对;但 **dev(electronmon 跑 `.`)`getAppPath()` 返回项目根 `c:\WhaleTag`**,拼出 `c:\WhaleTag\dist\main\index-worker.js`(不存在,真文件在 `release/app/dist/main/`)→ dev fork `ERR_MODULE_NOT_FOUND`。打包不触发。
 
 **修复**:
@@ -349,11 +304,11 @@ permissionMode 'bypassPermissions' auto-approves every tool call
 
 **通用教训**:
 - utilityProcess 子进程的 parent port 用 `process.parentPort`,**不要** `import from 'electron'`——类型在、运行时值不在。Electron 类型声明误导的高发区。
-- `utilityProcess.fork`(Electron 原生)≠ `child_process.fork`(纯 Node)。前者 asar 感知,后者读不了 asar(electron#2708)。docs/14 §5 的 asar 重写只对外部 node 子进程成立。
+- `utilityProcess.fork`(Electron 原生)≠ `child_process.fork`(纯 Node)。前者 asar 感知,后者读不了 asar(electron#2708)—— 对 asar 内 entry 做 `app.asar → app.asar.unpacked` 重写只对外部 node 子进程成立,utilityProcess 反而会 ENOENT。
 - **`app.getAppPath()` 在 dev 和打包返回值不同**(dev = 启动目录/项目根,打包 = `app.asar`)。要拿「和 main.js 同目录的文件」,锚定 `__dirname`(前提 webpack `node.__dirname:false`),别用 `getAppPath()` 拼。
 - utilityProcess / 打包相关改动,type-check 发现不了;dev 和打包各自的坑只有各自冒烟才暴露。**`npm run dev` 触发一次索引 + `npm run package` fork 冒烟,两个都要做**。详见 [docs/15 P0-2](./15-perf-audit.md)。
 
-## 26. 启动时序:主进程 bootstrap 早于渲染层 roots 推送,启动迁移静默空跑(2026-07-18)
+## 24. 启动时序:主进程 bootstrap 早于渲染层 roots 推送,启动迁移静默空跑(2026-07-18)
 
 **症状**:`wsd.json` / `wsm.json` 里的老前缀日期标签(`today-YYYYMMDD` 等)在生产环境从未被迁移;启动日志恒为 `scanned=0 migrated=0`。
 
@@ -363,7 +318,7 @@ permissionMode 'bypassPermissions' auto-approves every tool call
 
 **教训**:主进程 `bootstrap()` 里任何依赖**渲染层推送状态**(allowedRoots / settings)的逻辑,启动时拿到的都是初始空值 —— 这类"启动即跑"的任务必须挂到首次推送之后,或像 `TaskReminder` 那样 `waitForAllowedRoots()`。详见 [docs/03 §11](./03-tagging.md)。
 
-## 27. console.* 写死管道 → EPIPE 未捕获异常(2026-07-19)
+## 25. console.* 写死管道 → EPIPE 未捕获异常(2026-07-19)
 
 **症状**:dev 长时间运行 + electronmon 多轮重启后,打开地图视角触发 `Uncaught Exception: EPIPE: broken pipe, write`,栈顶停在 `extractGps` 的 `console.debug`。
 
@@ -373,7 +328,7 @@ permissionMode 'bypassPermissions' auto-approves every tool call
 
 **教训**:主进程任何 `console.*`(含 `process.stdout.write` 直写)都是潜在 EPIPE 崩溃点;per-file 调试日志不进库。清场重启(docs/01 §8)只缓解,守卫才是根治。
 
-## 28. 组件在 hooks 之前 early-return → 条件态切换时 hooks 数变化,React 整树崩溃(2026-07-22)
+## 26. 组件在 hooks 之前 early-return → 条件态切换时 hooks 数变化,React 整树崩溃(2026-07-22)
 
 **症状**:Kanban 视角打开 `WorkflowManagerDialog` 删掉最后一个阶段(或反过来,空阶段配置下新增首个),整个视角被 ErrorBoundary 接管,报 `Rendered fewer hooks than expected`。
 
@@ -383,9 +338,9 @@ permissionMode 'bypassPermissions' auto-approves every tool call
 
 **教训**:任何"空态提前 return"都必须放在组件 hooks 链末尾(或改为 JSX 条件分支)。MatrixView 本来就是对的;新写视角组件时把空态当一等分支审。
 
-> 同类陷阱(同日修):悬停打开的 MUI 嵌套子菜单,**子 Menu 的 ModalRoot 是 fixed inset-0 全屏层**,会盖住父菜单项制造幻影 mouseLeave/Enter 循环(飞窗闪烁)——flyout root 须 `pointer-events:none`(paper 恢复 `auto`)。详见 [docs/13 §11](./13-security.md) 菜单形态条。
+> 同类陷阱(同日修):悬停打开的 MUI 嵌套子菜单,**子 Menu 的 ModalRoot 是 fixed inset-0 全屏层**,会盖住父菜单项制造幻影 mouseLeave/Enter 循环(飞窗闪烁)——flyout root 须 `pointer-events:none`(paper 恢复 `auto`)。详见 [docs/13 §8](./13-security.md) 菜单形态条。
 
-## 29. 用本地化文案前缀匹配推断 toast 严重度 → 五种语言全部误判(2026-07-22)
+## 27. 用本地化文案前缀匹配推断 toast 严重度 → 五种语言全部误判(2026-07-22)
 
 **症状**:ja/ko 界面下所有 toast(包括真错误)显示绿色"成功";en/zh 下"移动/打包成功"反而显示红色错误。
 
@@ -395,7 +350,7 @@ permissionMode 'bypassPermissions' auto-approves every tool call
 
 **同类陷阱**(同日修):DirectoryTree 删除确认固定用 `confirmDelete`("不可撤销")但底层默认走回收站 —— 文案必须与 `deleteToTrash` 实际行为分支一致。
 
-## 30. MUI Snackbar 关闭时仍渲染子元素 + 项目级 strictNullChecks 未开 → 空引用崩溃编译期不可见(2026-07-22)
+## 28. MUI Snackbar 关闭时仍渲染子元素 + 项目级 strictNullChecks 未开 → 空引用崩溃编译期不可见(2026-07-22)
 
 **症状**:FileList 渲染即崩 `TypeError: Cannot read properties of null (reading 'severity')`,整树被 ErrorBoundary 接管。
 
@@ -405,6 +360,6 @@ permissionMode 'bypassPermissions' auto-approves every tool call
 
 **教训**:① Snackbar 的子元素是"常驻渲染"的,任何读状态的表达式都必须 null-safe(或把条件判断挪到 Snackbar 外面,代价是失去退出动画)。② 本项目 null 安全靠人工,不靠编译器 —— 评审 `| null` 状态的渲染路径时要主动找 naked property access;若未来开 `strictNullChecks`,这是一大波既有错误的入口,需专项评估。
 
-## 31. pdfjs 自定义 range transport 必须 `extends PDFDataRangeTransport` —— 鸭子类型被 `instanceof` 静默吞掉(2026-07-25)
+## 29. pdfjs 自定义 range transport 必须 `extends PDFDataRangeTransport` —— 鸭子类型被 `instanceof` 静默吞掉(2026-07-25)
 
 ✅ 消费方 pdf-viewer 已随 0.4.9 瘦身移除(2026-09),`WhaleRangeTransport` 与 `fs:readFileRange` 桥随之删除,本条归档。通用教训仍然有效:第三方库的"鸭子类型接口"一律先查源码有没有 `instanceof` 品牌检查(pdfjs 尤甚);命中检查时不会报"类型不对",而是报一个误导性的"参数缺失"(如 `getDocument` 的 `expected either 'data', 'range', or 'url'`)。

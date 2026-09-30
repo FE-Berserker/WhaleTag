@@ -35,7 +35,10 @@ export function registerMetaHandlers(): void {
 
   ipcMain.handle(
     'sidecar:write',
-    (_event, filePath: string, meta: SidecarMeta) => writeSidecar(filePath, meta)
+    (_event, filePath: string, meta: SidecarMeta) => {
+      assertWithinAllowedRoot(filePath); // writes <dir>/.whale/
+      return writeSidecar(filePath, meta);
+    }
   );
 
   // ---- Folder metadata (`.whale/wsm.json`): tags/color/description + view prefs ----

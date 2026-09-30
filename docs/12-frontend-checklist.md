@@ -20,8 +20,7 @@
 | 五 | 搜索与索引 | ___ |
 | 六 | 缩略图管线 | ___ |
 | 七 | UI 主题与外观 | ___ |
-| 八 | AI 助手 | ___ |
-| 九 | 设置面板 / 数据层 | ___ |
+| 八 | 设置面板 / 数据层 | ___ |
 
 ---
 
@@ -170,7 +169,7 @@
 
 ### text-editor
 
-CodeMirror 6,查找/替换、字体缩放、Wrap、代码折叠、状态栏、`requestSelection`/`applyReplacement` AI 编辑桥。
+CodeMirror 6,查找/替换、字体缩放、Wrap、代码折叠、状态栏。
 
 ### image-viewer / heic-viewer
 
@@ -352,88 +351,11 @@ image-viewer 11 种格式,jpg/jpeg/png/gif/webp/bmp/avif/tiff/tif/ico/svg;Lightb
 
 ---
 
-## 八、AI 助手
+## 八、设置面板 / 架构 / 数据层
 
-> 完整 spec 见 [docs/11-ai.md](./11-ai.md)。
+### 设置面板
 
-### 侧栏与布局
-
-- [ ] 侧栏底栏 AI 切换钮展开 AiPanel(MainLayout 最右栏)
-- [ ] AiPanel 开启时 FileList 内层 tray 自动隐去
-
-### 流式输出
-
-- [ ] AiPanel 输入并发送,主进程真实 Claude CLI 流式文本(逐 token)
-- [ ] 取消按钮中断当前流式轮次
-- [ ] 错误经 `ai:error` 在 UI 显示
-- [ ] 消息气泡 markdown 渲染
-
-### 工具与批准
-
-- [ ] ToolCall 折叠卡显示工具名 / 摘要 / 状态 / 输入 / 结果
-- [ ] ThinkingBlock 折叠
-- [ ] subagent 子消息嵌套在父 ToolCall 卡片
-- [ ] 工具调用弹 ApprovalModal
-- [ ] `ai:resolveApproval` 正确回传
-- [ ] 只读 location 下 Write/Edit/MultiEdit/NotebookEdit/Bash 被自动拒绝
-- [ ] plan mode 下 ExitPlanMode 渲染 input.plan 为可读文本
-
-### 输入条
-
-- [ ] ModelPicker 切换 sonnet / opus / haiku
-- [ ] PermissionToggle 切换 normal / yolo / plan
-- [ ] ContextGauge 显示上下文占用百分比 + token 数 tooltip,≥80% 转黄
-
-### 文件上下文
-
-- [ ] 恰好选中 1 个文件时 ContextChip 显示文件名
-- [ ] 回形针开关控制是否作为 current note 附加(默认开)
-- [ ] 小文本文件(白名单扩展 + ≤ `MAX_INLINE_BYTES = 50_000`)内容内联
-
-### 多标签 / 历史 / 持久化
-
-- [ ] AiTabs 多标签 + 新建 + 切换
-- [ ] 历史 Menu:打开 / 删除
-- [ ] 关再开会话与消息正文保留(redux-persist,**上限 50**,按 `updatedAt` 驱逐最旧已关闭)
-- [ ] 本地兜底标题:首条用户消息前 40 字;AI 生成标题(HTTP only)上限 60 字符
-
-### API Key
-
-- [ ] 设置页能设 / 清除 key,显示已设 / 未设状态(**不回显明文**)
-- [ ] safeStorage 不可用时拒绝存储
-
-### HTTP provider
-
-- [ ] provider 选择 Claude / Ollama / OpenAI(两个共享同一 HTTP runtime)
-- [ ] Ollama / OpenAI endpoint URL 可配
-- [ ] OpenAI key 设置 / 清除(`ai:setOpenaiKey` / `ai:clearOpenaiKey` / `ai:hasOpenaiKey`)
-- [ ] HTTP 工具系统默认开(`aiHttpTools`);关则纯聊天
-
-### Claude CLI
-
-- [ ] 「发现」按钮 + 手动覆盖 CLI 路径
-
-### MCP UI(Claude only)
-
-- [ ] 列表启用开关 + 删除 + 新增表单(name / transport / command+args+env / url)
-
-### warm query
-
-- [ ] 面板打开 / 切会话触发预热,首轮响应明显快于冷启动
-- [ ] model / effort / permission 改动后热进程被丢弃
-
-### inline-edit
-
-- [ ] "✨ AI 编辑选中"按钮(text/md 编辑器 + HTTP provider + 非只读)
-- [ ] InlineEditModal → AI 改写 → 回写选区
-
----
-
-## 九、设置面板 / 架构 / 数据层
-
-### 设置面板(8 个分类)
-
-- [ ] 左侧分类导航:`general` / `view` / `keyboard` / `mapique` / `tags` / `notifications` / `ai` / `advanced`
+- [ ] 左侧分类导航:`general` / `view` / `keyboard` / `mapique` / `tags` / `notifications` / `mcp` / `commands` / `about` / `advanced`
 - [ ] **Ctrl+, / Cmd+, 全局开关设置对话框**(SettingsDialogProvider 监听;扩展 iframe 内按键不触发)
 - [ ] `WorkflowManagerDialog` 从 Settings → Tags & Workflow 进入
 
@@ -444,10 +366,6 @@ image-viewer 11 种格式,jpg/jpeg/png/gif/webp/bmp/avif/tiff/tif/ico/svg;Lightb
 ### 视图 View
 
 - [ ] 默认深度 / 默认条目尺寸 / 标签形状 / 默认视角
-
-### AI(新增分类)
-
-- [ ] AI enable / 模型 / 权限 / effort / CLI 路径 / load-user-settings / system prompt / env 覆盖 / API key / MCP 区(en/zh 双语)
 
 ### 全局深度控件
 

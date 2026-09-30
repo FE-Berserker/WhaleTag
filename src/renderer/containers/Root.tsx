@@ -15,7 +15,6 @@ import { LocationIndexContextProvider } from '-/hooks/LocationIndexContextProvid
 import { TagMetaContextProvider } from '-/hooks/TagMetaContextProvider';
 import { LocationTagLibraryContextProvider } from '-/hooks/LocationTagLibraryContextProvider';
 import { ExtensionContextProvider } from '-/hooks/ExtensionContextProvider';
-import { AiComponentProvider } from '-/hooks/useAiComponent';
 import { setActiveLocation } from '-/reducers/locations';
 import { createWhaleTheme } from '-/theme';
 import { useResolvedTheme } from '-/theme/useResolvedThemeMode';
@@ -122,7 +121,6 @@ export default function Root() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <DndAny {...dndBackend}>
-        <AiComponentProvider>
         <CurrentLocationContextProvider>
           <DirectoryContentContextProvider>
             <DirectoryTreeRefreshContextProvider>
@@ -145,7 +143,6 @@ export default function Root() {
             </DirectoryTreeRefreshContextProvider>
           </DirectoryContentContextProvider>
         </CurrentLocationContextProvider>
-        </AiComponentProvider>
       </DndAny>
     </ThemeProvider>
   );

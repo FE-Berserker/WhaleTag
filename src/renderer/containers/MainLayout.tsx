@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useDispatch } from 'react-redux';
 import { useTranslation } from 'react-i18next';
 import { Box, Divider, IconButton, Tab, Tabs, Tooltip, useMediaQuery } from '@mui/material';
@@ -7,7 +7,6 @@ import CreateNewFolderIcon from '@mui/icons-material/CreateNewFolder';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { FileSelectionProvider } from '-/hooks/FileSelectionContextProvider';
 import { addLocation } from '-/reducers/locations';
-import { setTrayVisible } from '-/reducers/settings';
 import Sidebar, { SidebarActionsBar } from '-/components/Sidebar';
 import DirectoryTree from '-/components/DirectoryTree';
 import FileToolbar from '-/components/FileToolbar';
@@ -18,14 +17,11 @@ import WelcomePanel from '-/components/WelcomePanel';
 import AddLocationDialog from '-/components/AddLocationDialog';
 import { PeriodTagDialogProvider } from '-/components/PeriodTagDialog';
 import { SettingsDialogProvider } from '-/components/SettingsDialogProvider';
+import McpApprovalDialog from '-/components/McpApprovalDialog';
 import { useResolvedThemeMode } from '-/theme/useResolvedThemeMode';
 import { useExtensionContext } from '-/hooks/ExtensionContextProvider';
 import { useSelector } from 'react-redux';
 import { RootState } from '-/reducers';
-
-// AI panel pulls marked + dompurify + the streaming UI. Lazy-load so the weight
-// is only paid when AI is enabled and the panel is opened.
-const AiPanel = lazy(() => import('../components/ai/AiPanel'));
 
 /**
  * Top-level layout: sidebar (locations) + main area (toolbar + file list, or a
@@ -44,18 +40,12 @@ export default function MainLayout() {
   const resolvedThemeMode = useResolvedThemeMode(themeMode);
   const [addOpen, setAddOpen] = useState(false);
   const { t } = useTranslation();
-  const aiPanelOpen = useSelector((s: RootState) => s.settings.aiPanelOpen);
-  const aiEnabled = useSelector((s: RootState) => s.settings.aiEnabled);
 
   // Narrow viewport: collapse the Sidebar (locations) + DirectoryTree into one
   // tabbed panel so the left side takes a single column (~240px) instead of
   // two (~500px), giving the workspace room. Each renders "embedded" (no own
-  // header — the tab bar below replaces it). Also forced when the AI panel is
-  // open: its 380px right column would otherwise squeeze the workspace with
-  // both left columns still up, so opening AI trades the left pair for the
-  // tabbed panel (reverts when the panel closes).
-  const aiOpen = aiEnabled && aiPanelOpen;
-  const narrow = useMediaQuery('(max-width: 1400px)') || aiOpen;
+  // header — the tab bar below replaces it).
+  const narrow = useMediaQuery('(max-width: 1400px)');
   const [leftTab, setLeftTab] = useState<'locations' | 'tree'>(
     currentLocation ? 'tree' : 'locations'
   );
@@ -63,13 +53,6 @@ export default function MainLayout() {
   // locations (the tree tab is also disabled then).
   const activeTab: 'locations' | 'tree' =
     leftTab === 'tree' && !currentLocation ? 'locations' : leftTab;
-
-  // The AI panel shares the right edge with the PropertiesTray (which lives
-  // inside FileList). When the AI panel is open, hide the tray so the two
-  // "right-side detail" surfaces don't stack; it returns when the panel closes.
-  useEffect(() => {
-    if (aiOpen) dispatch(setTrayVisible(false));
-  }, [aiOpen, dispatch]);
 
   const handleAdd = (name: string, path: string, readOnly: boolean) => {
     dispatch(addLocation(name, path, readOnly));
@@ -254,17 +237,14 @@ export default function MainLayout() {
                   )}
                 </Box>
               </Box>
-              {aiOpen ? (
-                <Suspense fallback={null}>
-                  <AiPanel />
-                </Suspense>
-              ) : null}
             </Box>
             <AddLocationDialog
               open={addOpen}
               onClose={() => setAddOpen(false)}
               onAdd={handleAdd}
             />
+            {/* MCP write-op approvals (external AI clients) — one at a time. */}
+            <McpApprovalDialog />
           </Box>
         </SettingsDialogProvider>
       </PeriodTagDialogProvider>

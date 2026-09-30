@@ -6,7 +6,6 @@ import workflow, { WorkflowState } from './workflow';
 import recent, { RecentState } from './recent';
 import savedsearches, { SavedSearchesState } from './savedsearches';
 import extensions, { ExtensionsState } from './extensions';
-import ai, { AiState } from './ai';
 
 /** Root state shape. Add new slices here as they are created. */
 export interface RootState {
@@ -17,7 +16,6 @@ export interface RootState {
   recent: RecentState;
   savedsearches: SavedSearchesState;
   extensions: ExtensionsState;
-  ai: AiState;
 }
 
 const rootReducer = combineReducers<RootState>({
@@ -28,7 +26,6 @@ const rootReducer = combineReducers<RootState>({
   recent,
   savedsearches,
   extensions,
-  ai,
 });
 
 export default rootReducer;

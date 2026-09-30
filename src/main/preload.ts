@@ -18,17 +18,11 @@ type AppUpdateEventPayload =
   | string;
 import type { SidecarMeta, FolderMeta } from '../shared/whale-meta';
 import type { SearchQuery } from '../shared/search-query';
+import type { McpApprovalRequest } from '../shared/mcp-types';
 import type {
   ExtensionRegistry,
   RevisionInfo,
 } from '../shared/extension-types';
-import type {
-  AiApprovalRequest,
-  AiQueryPayload,
-  ApprovalDecision,
-  AskUserAnswers,
-  StreamChunk,
-} from '../shared/ai-types';
 
 /**
  * Preload bridge: the ONLY channel between the (untrusted) renderer and the
@@ -53,7 +47,6 @@ const whaleApi: WhaleApi = {
   pathExists: (targetPath: string) => ipcRenderer.invoke('fs:pathExists', targetPath),
   openDirectoryDialog: () => ipcRenderer.invoke('dialog:openDirectory'),
   openImageFileDialog: () => ipcRenderer.invoke('dialog:openImageFile'),
-  openComponentFileDialog: () => ipcRenderer.invoke('dialog:openComponentFile'),
 
   // Lets the renderer register its configured location roots so the main
   // process can confine writes to them (defense-in-depth).
@@ -196,8 +189,8 @@ const whaleApi: WhaleApi = {
     ipcRenderer.invoke('ext:loadRegistry') as Promise<ExtensionRegistry | null>,
   backupRevision: (filePath: string) =>
     ipcRenderer.invoke('ext:backupRevision', filePath),
-  deleteRevision: (revisionPath: string) =>
-    ipcRenderer.invoke('ext:deleteRevision', revisionPath),
+  deleteRevision: (filePath: string, revisionPath: string) =>
+    ipcRenderer.invoke('ext:deleteRevision', filePath, revisionPath),
   writeFileWithRevision: (filePath: string, content: string) =>
     ipcRenderer.invoke('ext:writeFile', filePath, content),
   listRevisions: (filePath: string) =>
@@ -230,51 +223,23 @@ const whaleApi: WhaleApi = {
   startFileDrag: (filePath: string) =>
     ipcRenderer.send('drag:startFile', filePath),
 
-  // Phase 5 — AI assistant (Claude Code CLI, embedded in main).
-  //
-  // Streaming is the one place Whale pushes main→renderer: `aiQuery` returns
-  // immediately and the turn's StreamChunks arrive via the `onAiChunk`
-  // subscription. Each subscription returns an unsubscribe function and is
-  // scoped to a fixed `ai:*` channel — the bridge is NOT generalized.
-  aiQuery: (payload: AiQueryPayload) =>
-    ipcRenderer.invoke('ai:query', payload),
-  aiCancel: (conversationId: string) =>
-    ipcRenderer.invoke('ai:cancel', conversationId),
-  aiPrewarm: (payload: AiQueryPayload) =>
-    ipcRenderer.invoke('ai:prewarm', payload),
-  aiGenerateTitle: (
-    args: {
-      settings: AiQueryPayload['settings'];
-      history: AiQueryPayload['history'];
-    }
-  ) => ipcRenderer.invoke('ai:generateTitle', args),
-  aiInlineEdit: (
-    args: {
-      settings: AiQueryPayload['settings'];
-      selection: string;
-      instruction: string;
-    }
-  ) => ipcRenderer.invoke('ai:inlineEdit', args),
-  aiSetApiKey: (key: string) => ipcRenderer.invoke('ai:setApiKey', key),
-  aiClearApiKey: () => ipcRenderer.invoke('ai:clearApiKey'),
-  aiHasApiKey: () => ipcRenderer.invoke('ai:hasApiKey'),
-  aiDiscoverCli: (override: string | null) =>
-    ipcRenderer.invoke('ai:discoverCli', override),
-  aiResolveApproval: (
-    reqId: string,
-    decision: ApprovalDecision,
-    answers?: AskUserAnswers,
-    note?: string
-  ) =>
-    ipcRenderer.invoke('ai:resolveApproval', { reqId, decision, answers, note }),
-  aiSetOpenaiKey: (key: string) =>
-    ipcRenderer.invoke('ai:setOpenaiKey', key),
-  aiClearOpenaiKey: () => ipcRenderer.invoke('ai:clearOpenaiKey'),
-  aiHasOpenaiKey: () => ipcRenderer.invoke('ai:hasOpenaiKey'),
-  aiGetComponentState: () => ipcRenderer.invoke('ai:getComponentState'),
-  aiInstallComponent: (filePath: string) =>
-    ipcRenderer.invoke('ai:installComponent', filePath),
-  aiUninstallComponent: () => ipcRenderer.invoke('ai:uninstallComponent'),
+  // Local MCP server (docs/21) — status polling + approval decisions.
+  mcpGetStatus: () => ipcRenderer.invoke('mcp:getStatus'),
+  mcpSetEnabled: (enabled: boolean) =>
+    ipcRenderer.invoke('mcp:setEnabled', enabled),
+  mcpSetReadOnly: (readOnly: boolean) =>
+    ipcRenderer.invoke('mcp:setReadOnly', readOnly),
+  mcpRegenerateToken: () => ipcRenderer.invoke('mcp:regenerateToken'),
+  mcpResolveApproval: (reqId: string, allowed: boolean) =>
+    ipcRenderer.invoke('mcp:resolveApproval', reqId, allowed),
+  mcpPendingApprovals: () => ipcRenderer.invoke('mcp:pendingApprovals'),
+  onMcpApprovalRequest: (cb: (req: McpApprovalRequest) => void) => {
+    const listener = (_e: unknown, payload: McpApprovalRequest): void =>
+      cb(payload);
+    ipcRenderer.on('mcp:approvalRequest', listener);
+    return () => ipcRenderer.off('mcp:approvalRequest', listener);
+  },
+
   onIndexProgress: (cb: (ev: IndexProgressEvent) => void) => {
     const listener = (_e: unknown, payload: IndexProgressEvent): void =>
       cb(payload);
@@ -286,32 +251,6 @@ const whaleApi: WhaleApi = {
       cb(payload);
     ipcRenderer.on('fs:dirChanged', listener);
     return () => ipcRenderer.off('fs:dirChanged', listener);
-  },
-  onAiChunk: (
-    cb: (e: { conversationId: string; chunk: StreamChunk }) => void
-  ) => {
-    const listener = (
-      _e: unknown,
-      payload: { conversationId: string; chunk: StreamChunk }
-    ): void => cb(payload);
-    ipcRenderer.on('ai:chunk', listener);
-    return () => ipcRenderer.off('ai:chunk', listener);
-  },
-  onAiError: (
-    cb: (e: { conversationId: string; message: string }) => void
-  ) => {
-    const listener = (
-      _e: unknown,
-      payload: { conversationId: string; message: string }
-    ): void => cb(payload);
-    ipcRenderer.on('ai:error', listener);
-    return () => ipcRenderer.off('ai:error', listener);
-  },
-  onAiApprovalRequest: (cb: (req: AiApprovalRequest) => void) => {
-    const listener = (_e: unknown, payload: AiApprovalRequest): void =>
-      cb(payload);
-    ipcRenderer.on('ai:approvalRequest', listener);
-    return () => ipcRenderer.off('ai:approvalRequest', listener);
   },
 
   // Lifecycle: let the renderer flush redux-persist before the window closes.

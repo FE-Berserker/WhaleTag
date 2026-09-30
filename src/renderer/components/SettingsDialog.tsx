@@ -41,12 +41,11 @@ import WaterDropIcon from '@mui/icons-material/WaterDrop';
 import WbTwilightIcon from '@mui/icons-material/WbTwilight';
 import ParkIcon from '@mui/icons-material/Park';
 import ContrastIcon from '@mui/icons-material/Contrast';
-import SmartToyIcon from '@mui/icons-material/SmartToy';
 import TerminalIcon from '@mui/icons-material/Terminal';
 import TuneIcon from '@mui/icons-material/Tune';
-import { AiComponentSection } from './AiComponentSection';
 import UpdateSection from './UpdateSection';
 import UserCommandsSection from './UserCommandsSection';
+import McpSection from './McpSection';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import MapIcon from '@mui/icons-material/Map';
 import StyleIcon from '@mui/icons-material/Style';
@@ -58,6 +57,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlined';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import KeyboardIcon from '@mui/icons-material/Keyboard';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import HubIcon from '@mui/icons-material/Hub';
 import SearchIcon from '@mui/icons-material/Search';
 
 import { RootState } from '-/reducers';
@@ -82,7 +82,6 @@ import {
   setDefaultEntrySize,
   setKeybinding,
   resetKeybindings,
-  setAiSettings,
   DEFAULT_ENTRY_SIZE,
   normalizeFsPath,
   type ThemeMode,
@@ -103,7 +102,6 @@ import {
 } from '../domain/keybindings';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { ipcApi } from '-/services/ipc-api';
-import AiMcpSection from '-/components/ai/AiMcpSection';
 import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '-/i18n';
 import { THEME_MODE_PRESET_MAP } from '-/theme/presets';
 import { tagDisplayLabel } from '-/services/tag-display';
@@ -129,7 +127,7 @@ export type SettingsSectionId =
   | 'mapique'
   | 'tags'
   | 'notifications'
-  | 'ai'
+  | 'mcp'
   | 'commands'
   | 'about'
   | 'advanced';
@@ -1235,359 +1233,6 @@ function KeyboardSection() {
   );
 }
 
-/**
- * Phase 5 — AI assistant. The non-secret config (model, permission, prompts,
- * env) lives in redux; the `ANTHROPIC_API_KEY` is stored encrypted in the main
- * process (safeStorage) and only ever shown here as set / not-set.
- */
-function AiSection() {
-  const { t } = useTranslation();
-  const dispatch = useDispatch();
-  const s = useSelector((state: RootState) => state.settings);
-  const [hasKey, setHasKey] = useState<boolean | null>(null);
-  const [keyInput, setKeyInput] = useState('');
-  const [hasOpenaiKey, setHasOpenaiKey] = useState<boolean | null>(null);
-  const [openaiKeyInput, setOpenaiKeyInput] = useState('');
-  const [cliFound, setCliFound] = useState<string | null | undefined>(undefined);
-
-  useEffect(() => {
-    void ipcApi.aiHasApiKey().then(setHasKey);
-    void ipcApi.aiHasOpenaiKey().then(setHasOpenaiKey);
-  }, []);
-
-  const discoverCli = () => {
-    setCliFound(null);
-    void ipcApi.aiDiscoverCli(s.aiCliPath).then((r) => setCliFound(r.path));
-  };
-
-  return (
-    <Stack sx={{ gap: 2 }}>
-      <SectionHeader title={t('aiSettingsTitle')} hint={t('aiSettingsHint')} />
-
-      <AiComponentSection />
-
-      <Field label={t('aiProvider')} hint={t('aiProviderHint')}>
-        <Select
-          size="small"
-          value={s.aiProvider}
-          onChange={(e) =>
-            dispatch(
-              setAiSettings({
-                aiProvider: e.target.value as
-                  | 'claude-cli'
-                  | 'ollama'
-                  | 'openai',
-              })
-            )
-          }
-        >
-          <MenuItem value="claude-cli">{t('aiProviderClaude')}</MenuItem>
-          <MenuItem value="ollama">{t('aiProviderOllama')}</MenuItem>
-          <MenuItem value="openai">{t('aiProviderOpenai')}</MenuItem>
-        </Select>
-      </Field>
-
-      {s.aiProvider === 'ollama' ? (
-        <Field label={t('aiOllamaUrl')} hint={t('aiOllamaUrlHint')}>
-          <TextField
-            size="small"
-            sx={{ width: 260 }}
-            value={s.aiOllamaUrl}
-            onChange={(e) =>
-              dispatch(setAiSettings({ aiOllamaUrl: e.target.value }))
-            }
-          />
-        </Field>
-      ) : null}
-      {s.aiProvider === 'openai' ? (
-        <>
-          <Field label={t('aiOpenaiUrl')} hint={t('aiOpenaiUrlHint')}>
-            <TextField
-              size="small"
-              sx={{ width: 260 }}
-              value={s.aiOpenaiUrl}
-              onChange={(e) =>
-                dispatch(setAiSettings({ aiOpenaiUrl: e.target.value }))
-              }
-            />
-          </Field>
-          <Field label={t('aiOpenaiKeyStatus')}>
-            <Typography
-              variant="caption"
-              color={hasOpenaiKey ? 'success.main' : 'text.secondary'}
-            >
-              {hasOpenaiKey ? t('aiApiKeySet') : t('aiApiKeyNotSet')}
-            </Typography>
-          </Field>
-          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-            <TextField
-              size="small"
-              fullWidth
-              type="password"
-              placeholder={t('aiOpenaiKeyPlaceholder')}
-              value={openaiKeyInput}
-              onChange={(e) => setOpenaiKeyInput(e.target.value)}
-            />
-            <Button
-              size="small"
-              variant="contained"
-              disabled={!openaiKeyInput.trim()}
-              onClick={() => {
-                void ipcApi.aiSetOpenaiKey(openaiKeyInput).then(() => {
-                  setOpenaiKeyInput('');
-                  void ipcApi.aiHasOpenaiKey().then(setHasOpenaiKey);
-                });
-              }}
-            >
-              {t('aiApiKeySave')}
-            </Button>
-            <Button
-              size="small"
-              color="inherit"
-              disabled={!hasOpenaiKey}
-              onClick={() => {
-                void ipcApi.aiClearOpenaiKey().then(() =>
-                  void ipcApi.aiHasOpenaiKey().then(setHasOpenaiKey)
-                );
-              }}
-            >
-              {t('aiApiKeyClear')}
-            </Button>
-          </Stack>
-        </>
-      ) : null}
-
-      {s.aiProvider === 'ollama' || s.aiProvider === 'openai' ? (
-        <Field label={t('aiHttpTools')} hint={t('aiHttpToolsHint')}>
-          <Switch
-            checked={s.aiHttpTools}
-            onChange={(e) =>
-              dispatch(setAiSettings({ aiHttpTools: e.target.checked }))
-            }
-          />
-        </Field>
-      ) : null}
-
-      <Field label={t('aiEnabled')} hint={t('aiEnabledHint')}>
-        <Switch
-          checked={s.aiEnabled}
-          onChange={(e) => dispatch(setAiSettings({ aiEnabled: e.target.checked }))}
-        />
-      </Field>
-
-      <Field label={t('aiModel')}>
-        <Select
-          size="small"
-          value={s.aiModel}
-          onChange={(e) =>
-            dispatch(setAiSettings({ aiModel: String(e.target.value) }))
-          }
-        >
-          <MenuItem value="sonnet">Claude Sonnet</MenuItem>
-          <MenuItem value="opus">Claude Opus</MenuItem>
-          <MenuItem value="haiku">Claude Haiku</MenuItem>
-        </Select>
-      </Field>
-
-      <Field label={t('aiPermissionMode')} hint={t('aiPermissionModeHint')}>
-        <Select
-          size="small"
-          value={s.aiPermissionMode}
-          onChange={(e) =>
-            dispatch(
-              setAiSettings({
-                aiPermissionMode: e.target.value as 'yolo' | 'plan' | 'normal',
-              })
-            )
-          }
-        >
-          <MenuItem value="yolo">{t('aiPermissionYolo')}</MenuItem>
-          <MenuItem value="normal">{t('aiPermissionNormal')}</MenuItem>
-          <MenuItem value="plan">{t('aiPermissionPlan')}</MenuItem>
-        </Select>
-      </Field>
-
-      <Field label={t('aiEffort')}>
-        <Select
-          size="small"
-          value={s.aiEffort}
-          onChange={(e) =>
-            dispatch(
-              setAiSettings({
-                aiEffort: e.target.value as 'low' | 'medium' | 'high',
-              })
-            )
-          }
-        >
-          <MenuItem value="low">{t('aiEffortLow')}</MenuItem>
-          <MenuItem value="medium">{t('aiEffortMedium')}</MenuItem>
-          <MenuItem value="high">{t('aiEffortHigh')}</MenuItem>
-        </Select>
-      </Field>
-
-      <Field label={t('aiMaxTurns')} hint={t('aiMaxTurnsHint')}>
-        <TextField
-          type="number"
-          size="small"
-          fullWidth
-          value={s.aiMaxTurns}
-          slotProps={{ htmlInput: { min: 1, max: 1000, step: 1 } }}
-          onChange={(e) =>
-            dispatch(
-              setAiSettings({
-                aiMaxTurns: Math.max(1, Number(e.target.value) || 200),
-              })
-            )
-          }
-        />
-      </Field>
-
-      <Field label={t('aiCliPath')} hint={t('aiCliPathHint')}>
-        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-          <Button size="small" variant="outlined" onClick={discoverCli}>
-            {t('aiCliDiscover')}
-          </Button>
-          {cliFound !== undefined ? (
-            <Typography variant="caption" color={cliFound ? 'success.main' : 'error.main'}>
-              {cliFound ?? t('aiCliNotFound')}
-            </Typography>
-          ) : null}
-        </Stack>
-      </Field>
-      <TextField
-        size="small"
-        fullWidth
-        placeholder={t('aiCliPathPlaceholder')}
-        value={s.aiCliPath ?? ''}
-        onChange={(e) =>
-          dispatch(setAiSettings({ aiCliPath: e.target.value || null }))
-        }
-      />
-
-      <Field label={t('aiLoadUserSettings')} hint={t('aiLoadUserSettingsHint')}>
-        <Switch
-          checked={s.aiLoadUserSettings}
-          onChange={(e) =>
-            dispatch(setAiSettings({ aiLoadUserSettings: e.target.checked }))
-          }
-        />
-      </Field>
-
-      {s.aiProvider === 'claude-cli' ? (
-        <Field label={t('aiAnthropicBaseUrl')} hint={t('aiAnthropicBaseUrlHint')}>
-          <TextField
-            size="small"
-            fullWidth
-            placeholder="https://api.example.com"
-            value={s.aiAnthropicBaseUrl}
-            onChange={(e) =>
-              dispatch(setAiSettings({ aiAnthropicBaseUrl: e.target.value }))
-            }
-          />
-        </Field>
-      ) : null}
-
-      {s.aiProvider === 'claude-cli' ? (
-        <Field label={t('aiAnthropicAuthField')} hint={t('aiAnthropicAuthFieldHint')}>
-          <Select
-            size="small"
-            value={s.aiAnthropicAuthMode}
-            onChange={(e) =>
-              dispatch(
-                setAiSettings({
-                  aiAnthropicAuthMode: e.target.value as
-                    | 'apiKey'
-                    | 'authToken',
-                })
-              )
-            }
-          >
-            <MenuItem value="apiKey">{t('aiAnthropicAuthApiKey')}</MenuItem>
-            <MenuItem value="authToken">{t('aiAnthropicAuthToken')}</MenuItem>
-          </Select>
-        </Field>
-      ) : null}
-
-      <Divider />
-      <SectionHeader title={t('aiApiKey')} />
-      <Field label={t('aiApiKeyStatus')}>
-        <Typography
-          variant="caption"
-          color={hasKey ? 'success.main' : 'text.secondary'}
-        >
-          {hasKey ? t('aiApiKeySet') : t('aiApiKeyNotSet')}
-        </Typography>
-      </Field>
-      <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-        <TextField
-          size="small"
-          fullWidth
-          type="password"
-          placeholder={t('aiApiKeyPlaceholder')}
-          value={keyInput}
-          onChange={(e) => setKeyInput(e.target.value)}
-        />
-        <Button
-          size="small"
-          variant="contained"
-          disabled={!keyInput.trim()}
-          onClick={() => {
-            void ipcApi.aiSetApiKey(keyInput).then(() => {
-              setKeyInput('');
-              void ipcApi.aiHasApiKey().then(setHasKey);
-            });
-          }}
-        >
-          {t('aiApiKeySave')}
-        </Button>
-        <Button
-          size="small"
-          color="inherit"
-          disabled={!hasKey}
-          onClick={() => {
-            void ipcApi.aiClearApiKey().then(() =>
-              void ipcApi.aiHasApiKey().then(setHasKey)
-            );
-          }}
-        >
-          {t('aiApiKeyClear')}
-        </Button>
-      </Stack>
-
-      <Divider />
-      <SectionHeader title={t('aiSystemPrompt')} />
-      <TextField
-        size="small"
-        fullWidth
-        multiline
-        minRows={3}
-        maxRows={8}
-        placeholder={t('aiSystemPromptPlaceholder')}
-        value={s.aiCustomSystemPrompt}
-        onChange={(e) =>
-          dispatch(setAiSettings({ aiCustomSystemPrompt: e.target.value }))
-        }
-      />
-
-      <SectionHeader title={t('aiEnvOverrides')} hint={t('aiEnvOverridesHint')} />
-      <TextField
-        size="small"
-        fullWidth
-        multiline
-        minRows={2}
-        maxRows={6}
-        placeholder={'ANTHROPIC_BASE_URL=...\nHTTP_PROXY=...'}
-        value={s.aiEnvVarOverrides}
-        onChange={(e) =>
-          dispatch(setAiSettings({ aiEnvVarOverrides: e.target.value }))
-        }
-      />
-
-      {s.aiProvider === 'claude-cli' ? <AiMcpSection /> : null}
-    </Stack>
-  );
-}
-
 /** The left-nav order is the order users see the categories in. Keep stable;
  *  tests reference some IDs (e.g. `data-testid="open-workflow-manager"`). */
 const SECTIONS: {
@@ -1605,7 +1250,7 @@ const SECTIONS: {
     labelKey: 'settingsSectionNotifications',
     Icon: NotificationsIcon,
   },
-  { id: 'ai', labelKey: 'settingsSectionAi', Icon: SmartToyIcon },
+  { id: 'mcp', labelKey: 'settingsSectionMcp', Icon: HubIcon },
   { id: 'commands', labelKey: 'settingsSectionCommands', Icon: TerminalIcon },
   { id: 'about', labelKey: 'settingsSectionAbout', Icon: InfoOutlinedIcon },
   { id: 'advanced', labelKey: 'settingsSectionAdvanced', Icon: SettingsIcon },
@@ -1650,8 +1295,8 @@ export default function SettingsDialog({
         return <TagsSection onOpenWorkflowManager={() => setWorkflowOpen(true)} />;
       case 'notifications':
         return <NotificationsSection />;
-      case 'ai':
-        return <AiSection />;
+      case 'mcp':
+        return <McpSection />;
       case 'commands':
         return <UserCommandsSection />;
       case 'about':

@@ -22,7 +22,7 @@ import { assertWithinAllowedRoot } from '../allowed-roots';
  */
 
 /** Creates a directory (idempotent: no error if it already exists). */
-async function createDirectory(dirPath: string): Promise<void> {
+export async function createDirectory(dirPath: string): Promise<void> {
   assertWithinAllowedRoot(dirPath);
   await fsp.mkdir(dirPath, { recursive: true });
   // A new subfolder changes its ancestors' recursive listings — invalidate
@@ -34,7 +34,7 @@ async function createDirectory(dirPath: string): Promise<void> {
  * Creates a UTF-8 text file. Rejects if it already exists — never silently
  * clobber an existing file (data-safety).
  */
-async function createTextFile(filePath: string, content: string): Promise<void> {
+export async function createTextFile(filePath: string, content: string): Promise<void> {
   assertWithinAllowedRoot(filePath);
   if (existsSync(filePath)) {
     throw new Error(`File already exists: ${filePath}`);
@@ -62,7 +62,7 @@ async function writeBinaryFile(filePath: string, base64: string): Promise<void> 
  * Either way the entry's sidecar is removed best-effort — sidecars are
  * app-internal metadata, not user data, so they need not be recoverable.
  */
-async function deletePath(targetPath: string, useTrash = true): Promise<void> {
+export async function deletePath(targetPath: string, useTrash = true): Promise<void> {
   assertWithinAllowedRoot(targetPath);
   // App-internal metadata (sidecar entry + thumbnail) is removed best-effort —
   // it need not be recoverable the way user data is.
@@ -159,7 +159,7 @@ function runOsZip(sources: string[], zipPath: string): Promise<string> {
  * treated like a move/copy destination (exempt), so packaging a location root —
  * whose sibling lives one level up — still works. Resolves with the archive path.
  */
-function zipDirectory(dirPath: string): Promise<string> {
+export function zipDirectory(dirPath: string): Promise<string> {
   assertWithinAllowedRoot(dirPath);
   return runOsZip([dirPath], freeZipPath(dirPath));
 }
@@ -170,7 +170,7 @@ function zipDirectory(dirPath: string): Promise<string> {
  * destination is rejected if it already exists (the user chose the name, so a
  * collision is surfaced rather than silently suffixed or clobbered).
  */
-function zipEntries(paths: string[], zipPath: string): Promise<string> {
+export function zipEntries(paths: string[], zipPath: string): Promise<string> {
   if (!paths.length) throw new Error('Nothing selected to package');
   for (const p of paths) assertWithinAllowedRoot(p);
   if (existsSync(zipPath)) {
@@ -179,87 +179,103 @@ function zipEntries(paths: string[], zipPath: string): Promise<string> {
   return runOsZip(paths, zipPath);
 }
 
+/**
+ * Rename (same-directory rename OR move) - shared by the `fs:rename` IPC and
+ * the MCP tools. Never overwrites an existing destination; moves the sidecar
+ * + thumbnail along best-effort.
+ */
+export async function renameEntry(oldPath: string, newPath: string): Promise<void> {
+  assertWithinAllowedRoot(oldPath);
+  assertWithinAllowedRoot(newPath);
+  // Avoid silently overwriting an existing destination.
+  if (existsSync(newPath)) {
+    throw new Error(`A file already exists at: ${newPath}`);
+  }
+  await fsp.rename(oldPath, newPath);
+  // Keep the sidecar in sync with the rename/move (best-effort: never fails
+  // the rename itself if the sidecar can't be moved).
+  try {
+    await Promise.all([
+      moveSidecar(oldPath, newPath),
+      moveThumbnail(oldPath, newPath),
+      invalidateRecursiveScan(oldPath),
+      invalidateRecursiveScan(newPath),
+    ]);
+  } catch {
+    // file rename already succeeded; metadata sync is non-critical
+  }
+}
+
+/**
+ * Move an entry to an arbitrary destination (EXDEV-safe copy+delete fallback).
+ * Shared by the `fs:move` IPC and the MCP tools.
+ */
+export async function moveEntry(oldPath: string, newPath: string): Promise<void> {
+  assertWithinAllowedRoot(oldPath); // destination may be any folder the user picked
+  if (existsSync(newPath)) {
+    throw new Error(`A file already exists at: ${newPath}`);
+  }
+  try {
+    await fsp.rename(oldPath, newPath);
+  } catch (e) {
+    // rename fails with EXDEV across filesystems (e.g. C: -> D:, different
+    // mounts). Fall back to copy-then-delete so the source stays intact
+    // until the copy is durable (merge-over-wipe, never wipe-then-merge).
+    if ((e as NodeJS.ErrnoException).code !== 'EXDEV') throw e;
+    // `errorOnExist` keeps the merge-over-wipe guarantee: if a file appears
+    // at the destination between the pre-check above and now, fail loudly
+    // rather than silently overwriting it (matches importExternal / rename).
+    await fsp.cp(oldPath, newPath, { recursive: true, errorOnExist: true });
+    await fsp.rm(oldPath, { recursive: true, force: false });
+  }
+  try {
+    await Promise.all([
+      moveSidecar(oldPath, newPath),
+      moveThumbnail(oldPath, newPath),
+      invalidateRecursiveScan(oldPath),
+      invalidateRecursiveScan(newPath),
+    ]);
+  } catch {
+    // non-critical
+  }
+}
+
+/**
+ * Copy an entry (recursive for directories), carrying sidecar + thumbnail
+ * best-effort. Shared by the `fs:copy` IPC and the MCP tools.
+ */
+export async function copyEntry(sourcePath: string, destPath: string): Promise<void> {
+  assertWithinAllowedRoot(sourcePath); // destination may be any folder the user picked
+  if (existsSync(destPath)) {
+    throw new Error(`A file already exists at: ${destPath}`);
+  }
+  await fsp.cp(sourcePath, destPath, { recursive: true });
+  try {
+    await Promise.all([
+      copySidecar(sourcePath, destPath),
+      copyThumbnail(sourcePath, destPath),
+      invalidateRecursiveScan(destPath),
+    ]);
+  } catch {
+    // non-critical
+  }
+}
+
 export function registerFsWriteHandlers(): void {
   ipcMain.handle(
     'fs:rename',
-    (_event, oldPath: string, newPath: string) => rename(oldPath, newPath)
+    (_event, oldPath: string, newPath: string) => renameEntry(oldPath, newPath)
   );
-  async function rename(oldPath: string, newPath: string): Promise<void> {
-    assertWithinAllowedRoot(oldPath);
-    assertWithinAllowedRoot(newPath);
-    // Avoid silently overwriting an existing destination.
-    if (existsSync(newPath)) {
-      throw new Error(`A file already exists at: ${newPath}`);
-    }
-    await fsp.rename(oldPath, newPath);
-    // Keep the sidecar in sync with the rename/move (best-effort: never fails
-    // the rename itself if the sidecar can't be moved).
-    try {
-      await Promise.all([
-        moveSidecar(oldPath, newPath),
-        moveThumbnail(oldPath, newPath),
-        invalidateRecursiveScan(oldPath),
-        invalidateRecursiveScan(newPath),
-      ]);
-    } catch {
-      // file rename already succeeded; metadata sync is non-critical
-    }
-  }
 
   ipcMain.handle(
     'fs:move',
-    (_event, oldPath: string, newPath: string) => move(oldPath, newPath)
+    (_event, oldPath: string, newPath: string) => moveEntry(oldPath, newPath)
   );
-  async function move(oldPath: string, newPath: string): Promise<void> {
-    assertWithinAllowedRoot(oldPath); // destination may be any folder the user picked
-    if (existsSync(newPath)) {
-      throw new Error(`A file already exists at: ${newPath}`);
-    }
-    try {
-      await fsp.rename(oldPath, newPath);
-    } catch (e) {
-      // rename fails with EXDEV across filesystems (e.g. C: -> D:, different
-      // mounts). Fall back to copy-then-delete so the source stays intact
-      // until the copy is durable (merge-over-wipe, never wipe-then-merge).
-      if ((e as NodeJS.ErrnoException).code !== 'EXDEV') throw e;
-      // `errorOnExist` keeps the merge-over-wipe guarantee: if a file appears
-      // at the destination between the pre-check above and now, fail loudly
-      // rather than silently overwriting it (matches importExternal / rename).
-      await fsp.cp(oldPath, newPath, { recursive: true, errorOnExist: true });
-      await fsp.rm(oldPath, { recursive: true, force: false });
-    }
-    try {
-      await Promise.all([
-        moveSidecar(oldPath, newPath),
-        moveThumbnail(oldPath, newPath),
-        invalidateRecursiveScan(oldPath),
-        invalidateRecursiveScan(newPath),
-      ]);
-    } catch {
-      // non-critical
-    }
-  }
 
   ipcMain.handle(
     'fs:copy',
-    (_event, sourcePath: string, destPath: string) => copy(sourcePath, destPath)
+    (_event, sourcePath: string, destPath: string) => copyEntry(sourcePath, destPath)
   );
-  async function copy(sourcePath: string, destPath: string): Promise<void> {
-    assertWithinAllowedRoot(sourcePath); // destination may be any folder the user picked
-    if (existsSync(destPath)) {
-      throw new Error(`A file already exists at: ${destPath}`);
-    }
-    await fsp.cp(sourcePath, destPath, { recursive: true });
-    try {
-      await Promise.all([
-        copySidecar(sourcePath, destPath),
-        copyThumbnail(sourcePath, destPath),
-        invalidateRecursiveScan(destPath),
-      ]);
-    } catch {
-      // non-critical
-    }
-  }
 
   ipcMain.handle(
     'fs:importExternal',

@@ -59,9 +59,8 @@ export function setMapProvider(provider: MapProvider): SetMapProviderAction {
 
 /**
  * Replace the whole user-commands list. The Settings UI mutates the array
- * (add/edit/remove/toggle) and dispatches the new array — mirroring how
- * `setAiSettings({ aiMcpServers })` works. Whole-array replace keeps the
- * action surface to one creator.
+ * (add/edit/remove/toggle) and dispatches the new array. Whole-array replace
+ * keeps the action surface to one creator.
  */
 export function setUserCommands(
   commands: import('../../../shared/shell-types').UserCommand[]

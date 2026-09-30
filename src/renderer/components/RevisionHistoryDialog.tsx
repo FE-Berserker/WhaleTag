@@ -63,7 +63,7 @@ export default function RevisionHistoryDialog({
 
   const handleDelete = async (revisionPath: string) => {
     try {
-      await ipcApi.deleteRevision(revisionPath);
+      await ipcApi.deleteRevision(filePath, revisionPath);
       setRevisions((prev) => prev.filter((r) => r.path !== revisionPath));
     } catch {
       // ignore

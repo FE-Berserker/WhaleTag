@@ -25,12 +25,17 @@ export function registerExtensionHandlers(): void {
   // ---- Phase 4: Extension system (viewers / editors / revisions) ----
   ipcMain.handle('ext:loadRegistry', () => loadExtensionRegistry());
 
-  ipcMain.handle('ext:backupRevision', (_event, filePath: string) =>
-    backupRevision(filePath)
-  );
+  ipcMain.handle('ext:backupRevision', (_event, filePath: string) => {
+    assertWithinAllowedRoot(filePath); // writes <dir>/.whale/revisions/
+    return backupRevision(filePath);
+  });
 
-  ipcMain.handle('ext:deleteRevision', (_event, revisionPath: string) =>
-    deleteRevision(revisionPath)
+  ipcMain.handle(
+    'ext:deleteRevision',
+    (_event, filePath: string, revisionPath: string) => {
+      assertWithinAllowedRoot(filePath);
+      return deleteRevision(filePath, revisionPath);
+    }
   );
 
   ipcMain.handle(
@@ -45,8 +50,10 @@ export function registerExtensionHandlers(): void {
 
   ipcMain.handle(
     'ext:restoreRevision',
-    (_event, filePath: string, revisionPath: string) =>
-      restoreRevision(filePath, revisionPath)
+    (_event, filePath: string, revisionPath: string) => {
+      assertWithinAllowedRoot(filePath); // rewrites the file itself
+      return restoreRevision(filePath, revisionPath);
+    }
   );
 
   ipcMain.handle('ext:cleanupRevisions', (_event, maxAgeDays: number) => {

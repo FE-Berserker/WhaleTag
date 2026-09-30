@@ -46,7 +46,7 @@ src/extensions/
 
 **Host ↔ Extension 协议**:统一 envelope `ExtensionEnvelope<T> { protocolVersion: 1, source: 'host' | 'extension', message }`,走 `window.postMessage`。
 
-**Host → Ext 全部消息类型**(`HostMessage` 联合,`src/shared/extension-types.ts:250-274`):
+**Host → Ext 全部消息类型**(`HostMessage` 联合,`src/shared/extension-types.ts:151-161`):
 
 | 消息 | 用途 |
 |---|---|
@@ -56,7 +56,6 @@ src/extensions/
 | `requestSave` | 触发扩展保存 |
 | `heicWasm` | HEIC wasm 经 host IPC 供给(绕 iframe CSP) |
 | `externalDrag` / `fileEmbed` / `siblings` | 文件夹拖入 / 嵌入 / 同级条目 |
-| `requestSelection` / `applyReplacement` | AI inline-edit 桥(host ↔ CodeMirror) |
 
 **Ext → Host 全部消息类型**(`ExtensionMessage` 联合,`src/shared/extension-types.ts`):
 
@@ -64,7 +63,7 @@ src/extensions/
 
 资产请求:`requestHeicWasm`(heic-viewer wasm 经 host IPC 读取)
 
-图片编辑:`requestFileEmbed` / `requestFile` / `thumbnailGenerated` / `openLinkExternally` / `error` / `editorSelection`
+图片编辑:`requestFileEmbed` / `requestFile` / `thumbnailGenerated` / `openLinkExternally` / `error`
 
 **安全**:iframe sandbox = `allow-same-origin allow-scripts allow-modals allow-downloads`;Host 只接受 `event.source === iframe.contentWindow`;每个扩展 HTML 自带严格 CSP meta。
 
@@ -106,7 +105,7 @@ src/extensions/
 
 **修订历史**:
 
-- IPC `ext:backupRevision` / `ext:writeFile` / `ext:listRevisions` / `ext:restoreRevision`
+- IPC `ext:backupRevision` / `ext:writeFile` / `ext:listRevisions` / `ext:restoreRevision` / `ext:deleteRevision`——均过 `assertWithinAllowedRoot`;`deleteRevision` 把 revision 路径绑定到所属文件的 `.whale/revisions/` 前缀(与 restore 相同),拒绝删除任意路径
 - UI:`RevisionHistoryDialog`
 
 **i18n**:host `setLocale` 推送,机制见 §8;全局类型抽到 `src/extensions/shared/whale-ext.d.ts`(扩展不再各自 `declare global`)。

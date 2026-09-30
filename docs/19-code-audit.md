@@ -7,7 +7,7 @@
 >
 > **审计方法**:6 维度并行静态扫描 —— ① 已知问题汇总(避免重复 docs/09/15/16)② 代码异味 ③ 类型安全 ④ 测试覆盖缺口 ⑤ 错误处理/异步 ⑥ 当前 working tree diff 审查。代码内生产路径几乎无 `TODO/FIXME/HACK` 标记。
 >
-> **范围与边界**:本篇聚焦**正确性 bug + 测试缺口 + 类型/可维护性**;**不重复** [docs/09](./09-known-issues.md)(已知坑主档)、[docs/13](./13-security.md)(安全模型/不在范围)、[docs/15](./15-perf-audit.md)(性能)、[docs/16](./16-cross-platform.md)(跨平台)。审计基线为 2026-07-28 的 working tree(含未提交的 md-editor / AI 改动),相关项已标注。
+> **范围与边界**:本篇聚焦**正确性 bug + 测试缺口 + 类型/可维护性**;**不重复** [docs/09](./09-known-issues.md)(已知坑主档)、[docs/13](./13-security.md)(安全模型/不在范围)、[docs/15](./15-perf-audit.md)(性能)、[docs/16](./16-cross-platform.md)(跨平台)。审计基线为 2026-07-28 的 working tree(含未提交的 md-editor 改动),相关项已标注。
 
 ---
 
@@ -20,7 +20,7 @@
 **✅ 已修(2026-07-28)**(根因与修法见 git 历史)。md-editor 已随 0.4.9 瘦身移除,本条目随模块删除归档。
 
 ### P0-3. AI `maxTurns` clamp 错位 + 两处 `buildSnapshot` 重复 ✅
-**working tree 未提交**。新导出的 [clampMaxTurns](../src/renderer/components/ai/buildSnapshot.ts)(clamp [1,1000],NaN→200)只被 `buildAiSnapshot` 调用,而 `buildAiSnapshot` 仅服务于 `InlineEditModal` —— [inlineEdit.ts:123](../src/main/ai/inlineEdit.ts#L123) 硬编码 `maxTurns:1`,**根本不读 snapshot.maxTurns**。真正消费的是聊天路径 [buildClaudeOptions](../src/main/ai/providers/claude/buildQueryOptions.ts) 读 `settings.maxTurns`,它走 [useAiStream.ts](../src/renderer/components/ai/useAiStream.ts) 里那份**本地** `buildSnapshot`,裸传 `s.aiMaxTurns`、**无 clamp / 无 NaN 兜底**。store 被外部改成 NaN/0/负数时(`Math.max(1, Number(x)||200)` 只挡 UI 输入,不挡直改 store / 旧数据)`query()` 会报错。**✅ 已修(2026-07-28)**:[useAiStream.ts](../src/renderer/components/ai/useAiStream.ts) 删本地 `buildSnapshot`,三处调用(title-gen / prewarm / send)改用共享 `buildAiSnapshot` → `maxTurns` 走 `clampMaxTurns`;[buildQueryOptions.ts:139](../src/main/ai/providers/claude/buildQueryOptions.ts#L139) 读 `snapshot.maxTurns` 自动拿到 clamped 值。
+**✅ 已修(2026-07-28)**(根因与修法见 git 历史)。AI 助手模块已整体移除(2026-09),本条目随模块删除归档。
 
 ---
 
@@ -44,7 +44,7 @@
 [shell-quote.test.ts](../src/main/shell-quote.test.ts) 已扩展「adversarial inputs」describe:POSIX 下分号/与号/管道/$/反引号/圆括号/重定向等元字符在单引号内原样、CJK 路径、换行与控制符、NUL 字节、单引号 close-reopen(中和 `';echo pwned` 注入);Windows 下 `%VAR%`(加引号但 `%` 原样,锁定「真正的 % 防护在上游 runUserCommand」契约)、各元字符触发引号、CJK+空格、换行。
 
 ### P1-6. `secretStore.ts` — 加密往返 + 明文不泄露 ✅
-[secretStore.ts](../src/main/ai/security/secretStore.ts)(118 行)。新建 [secretStore.test.ts](../src/main/ai/security/secretStore.test.ts):用 require.cache 注入 reversible(非 identity)cipher 的 electron stub,覆盖加密往返、**blob 不含明文 canary**、missing secret 返空、空值删除、clearSecret、**stale undecryptable blob 被清理并报 unset**。真实加密强度由 Electron/OS-keychain 保证,本测试锁定「经 encrypt/decrypt 才存、绝不存明文」契约。
+**✅ 已随 AI 助手模块整体移除(2026-09)归档**:`secretStore` 与那份 require.cache 注入 cipher stub 的往返测试一并删除,本条目不再适用。
 
 ---
 
@@ -66,7 +66,7 @@
 ### P2-3. 主进程复制粘贴的 `as unknown as` ⏸️(评估后保留)
 [archive.ts:459](../src/main/archive.ts#L459) 与 [thumbnail.ts:174](../src/main/thumbnail.ts#L174) 的 `stdout as unknown as Buffer`;[index-worker-host.ts:133](../src/main/index-worker-host.ts#L133) 与 [thumb-worker-host.ts:126](../src/main/thumb-worker-host.ts#L126) 的 `.on('error')` 断言。**评估(2026-07-28)后保留**:抽 `execFileBuffer` helper 会牵连 thumbnail 的 ffmpeg ~1s/0 fallback 重试路径,风险 > 收益(archive 单独抽不消除复制粘贴);`onUtilityProcessError` helper 需新建文件 + 2 处 import 仅消除 2 处 cast,ROI 低。src/main 生产代码零 `: any`,保留现状可接受。
 
-> **无需动**:`src/shared`(零逃逸)、`src/main/ipc`、`src/main/allowed-roots.ts`、`src/main/ai/security/*`、`src/main/shell-quote.ts` 类型均严密;`src/main` 8 处 `as unknown as` 全有注释、范围窄、不暴露不可信输入。全仓零 `@ts-ignore` / `@ts-nocheck`。
+> **无需动**:`src/shared`(零逃逸)、`src/main/ipc`、`src/main/allowed-roots.ts`、`src/main/shell-quote.ts` 类型均严密;`src/main` 8 处 `as unknown as` 全有注释、范围窄、不暴露不可信输入。全仓零 `@ts-ignore` / `@ts-nocheck`。
 
 ---
 
@@ -80,7 +80,7 @@ md-editor 的 `md-context.ts` 副本已随 0.4.9 瘦身删除,仅剩 [text-edito
 
 ### P3-3. 超大组件拆分
 - [FileList.tsx:170](../src/renderer/components/FileList.tsx#L170) —— **单文件 1800 行单组件**,优先级最高。
-- [SettingsDialog.tsx](../src/renderer/components/SettingsDialog.tsx)(2200 行)已有天然 section 边界(`AiSection` / `FulltextSection` / `GeneralSection` 等),机械拆分成本低。
+- [SettingsDialog.tsx](../src/renderer/components/SettingsDialog.tsx) 已有天然 section 边界(`GeneralSection` / `ViewSection` / `FulltextSection` 等),机械拆分成本低。
 
 ### P3-4. extension viewer `getPref/setPref` 拷贝
 [font-viewer/index.ts:387-399](../src/extensions/font-viewer/index.ts#L387-L399) 与 [html-viewer/index.ts:224-236](../src/extensions/html-viewer/index.ts#L224-L236) 的 `STORAGE_PREFIX` getPref/setPref 逐字相同 → 抽 `extensions/shared/viewer-prefs.ts`。
@@ -96,10 +96,10 @@ md-editor 的 `md-context.ts` 副本已随 0.4.9 瘦身删除,仅剩 [text-edito
 
 | 项 | 出处 |
 |---|---|
-| 位置级 AES-256-GCM 加密 / 安全审计日志未做;扩展能力「全有或全无」;postMessage `targetOrigin:'*'` 收窄 | [docs/13](./13-security.md) §1/§12/§13、[docs/07 §10](./07-extensions.md) |
-| mac 代码签名硬阻塞;Linux DE fallback 链 / 图标 / 递归监听;`safeStorage` headless 不可用 | [docs/16](./16-cross-platform.md) B-1 / C-2~C-5 |
-| `strictNullChecks` 未开;`dir-lock.ts chains` Map 无界增长;`readSidecars` 每目录重读;`extractPdfText` 整 PDF 读内存;`loadFolderThumbnail` 无 LRU | [docs/09 §30](./09-known-issues.md)、[docs/02 §10](./02-file-io.md)、[docs/15](./15-perf-audit.md) P2-1/P3-5 |
-| AI MCP / FileToolbar 未做 v1;macOS notarization 阻塞自动更新 | [docs/11](./11-ai.md) §7/§13、[docs/18](./18-auto-update.md) |
+| 位置级 AES-256-GCM 加密 / 安全审计日志未做;扩展能力「全有或全无」;postMessage `targetOrigin:'*'` 收窄 | [docs/13](./13-security.md) §1/§9/§10、[docs/07 §10](./07-extensions.md) |
+| mac 代码签名硬阻塞;Linux DE fallback 链 / 图标 / 递归监听 | [docs/16](./16-cross-platform.md) B-1 / C-2~C-5 |
+| `strictNullChecks` 未开;`dir-lock.ts chains` Map 无界增长;`readSidecars` 每目录重读;`extractPdfText` 整 PDF 读内存;`loadFolderThumbnail` 无 LRU | [docs/09 §28](./09-known-issues.md)、[docs/02 §10](./02-file-io.md)、[docs/15](./15-perf-audit.md) P2-1/P3-5 |
+| macOS notarization 阻塞自动更新 | [docs/18](./18-auto-update.md) |
 | Mapique 地名搜索已尝试并回退(勿照原样重试) | [docs/05 §10](./05-perspectives.md) |
 
 ---

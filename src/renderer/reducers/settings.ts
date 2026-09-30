@@ -19,12 +19,6 @@ import {
   type IntegrationsFields,
 } from './settings/integrations';
 import {
-  migrateAi,
-  reduceAi,
-  aiInitial,
-  type AiFields,
-} from './settings/ai';
-import {
   migrateSystem,
   reduceSystem,
   systemInitial,
@@ -42,16 +36,55 @@ export interface SettingsState
   extends AppearanceFields,
     BrowserFields,
     IntegrationsFields,
-    AiFields,
     SystemFields {}
 
 export const initialState: SettingsState = {
   ...appearanceInitial,
   ...browserInitial,
   ...integrationsInitial,
-  ...aiInitial,
   ...systemInitial,
 };
+
+/**
+ * Strips the persisted `ai*` fields written by the removed built-in AI
+ * assistant (0.5.0). redux-persist rehydrates whatever keys are in the
+ * storage JSON; without this the stale keys would linger in storage forever.
+ * The `ai` conversation slice key is dropped by the persist migrate step in
+ * `configureStore.ts`.
+ */
+const REMOVED_AI_FIELDS = [
+  'aiProvider',
+  'aiOllamaUrl',
+  'aiOpenaiUrl',
+  'aiAnthropicBaseUrl',
+  'aiAnthropicAuthMode',
+  'aiEnabled',
+  'aiPanelOpen',
+  'aiPanelWidth',
+  'aiModel',
+  'aiPermissionMode',
+  'aiEffort',
+  'aiSafeMode',
+  'aiCustomSystemPrompt',
+  'aiEnvVarOverrides',
+  'aiCliPath',
+  'aiLoadUserSettings',
+  'aiMcpServers',
+  'aiHttpTools',
+  'aiMaxTurns',
+] as const;
+
+function stripRemovedAiFields(base: SettingsState): SettingsState {
+  let changed = false;
+  const next: Record<string, unknown> = { ...base };
+  for (const key of REMOVED_AI_FIELDS) {
+    if (key in next) {
+      delete next[key];
+      changed = true;
+    }
+  }
+  return changed ? (next as unknown as SettingsState) : base;
+}
 
 export default function settingsReducer(
   state = initialState,
@@ -66,13 +99,12 @@ export default function settingsReducer(
   base = migrateAppearance(base);
   base = migrateBrowser(base);
   base = migrateIntegrations(base);
-  base = migrateAi(base);
+  base = stripRemovedAiFields(base);
   base = migrateSystem(base);
 
   base = reduceAppearance(base, action);
   base = reduceBrowser(base, action);
   base = reduceIntegrations(base, action);
-  base = reduceAi(base, action);
   return reduceSystem(base, action);
 }
 
@@ -80,5 +112,4 @@ export * from './settings/types';
 export * from './settings/appearance';
 export * from './settings/browser';
 export * from './settings/integrations';
-export * from './settings/ai';
 export * from './settings/system';

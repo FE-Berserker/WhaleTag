@@ -45,17 +45,17 @@ type CreateKind = 'folder' | 'file';
 /**
  * Breakpoints for the FileToolbar responsive fold. Below each threshold the
  * named cluster is moved into the `⋮` overflow menu so the toolbar never
- * overflows its workspace column (and gets visually clipped under the
- * AiPanel on the right).
+ * overflows its workspace column (and gets visually clipped on the right
+ * edge of the window).
  *
  * The numbers are chosen against the natural content width of each cluster
  * (label + icon + slider for viewDepth; icon + label for new-folder/new-file),
  * plus 8px flex `gap` and a safety margin so a half-step resize doesn't
- * flicker. They were picked empirically against the default `aiPanelWidth=420`
- * (Sidebar 260 + DirectoryTree 240 + AiPanel 420 = 920px fixed) — at a 1024px
- * window that leaves ~104px for the workspace, and 720 / 560 give the
- * Breadcrumb / SearchBar room to coexist with the new-folder / new-file
- * actions before folding kicks in.
+ * flicker. They were picked empirically against the narrow-layout fixed left
+ * columns (Sidebar 260 + DirectoryTree 240 = 500px) — at a 1024px window that
+ * leaves ~524px for the workspace, and 720 / 560 give the Breadcrumb /
+ * SearchBar room to coexist with the new-folder / new-file actions before
+ * folding kicks in.
  *
  * Exported so `FileToolbar.test.ts` can lock the threshold values down and
  * future tweaks don't drift unintentionally.
@@ -126,10 +126,10 @@ export default function FileToolbar() {
   // Track the FileToolbar's content width so we can fold non-essential
   // clusters (viewDepth slider, new folder/file buttons) into the `⋮`
   // overflow menu when the workspace column gets narrow — typically when
-  // the AiPanel is open and the window is small. Without this the toolbar
+  // the window is small. Without this the toolbar
   // would overflow the column's right edge and the ThemeQuickToggle
-  // (rightmost child) would be visually clipped under the AiPanel's
-  // overlay paint order. We start at Infinity so the first paint shows
+  // (rightmost child) would be visually clipped under a right-side
+  // overlay. We start at Infinity so the first paint shows
   // everything, avoiding a flash of folded items on cold render.
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const [toolbarWidth, setToolbarWidth] = useState<number>(Infinity);
@@ -198,7 +198,7 @@ export default function FileToolbar() {
         alignItems: 'center',
         gap: 1,
         // H.17 P?: clip horizontal overflow at the toolbar's own right
-        // edge so a narrow workspace column + AiPanel can't visually
+        // edge so a narrow workspace column can't visually
         // overlap our rightmost children (ThemeQuickToggle). The `⋮`
         // menu + responsive folding above ensure the always-visible
         // cluster fits; overflow:hidden here is the safety net.

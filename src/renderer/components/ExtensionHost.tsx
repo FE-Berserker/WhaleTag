@@ -14,7 +14,6 @@ import ErrorOutlineIcon from '@mui/icons-material/ErrorOutlineOutlined';
 import SaveIcon from '@mui/icons-material/Save';
 import HistoryIcon from '@mui/icons-material/History';
 import DriveFileRenameOutlineIcon from '@mui/icons-material/DriveFileRenameOutline';
-import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import { useTranslation } from 'react-i18next';
 import type {
   ExtensionManifest,
@@ -33,7 +32,6 @@ import { useDirectoryUI } from '-/hooks/DirectoryContentContextProvider';
 import { useDirectoryTreeRefresh } from '-/hooks/DirectoryTreeRefreshContextProvider';
 import { createRpcHandler } from './extension-host/rpc-cases';
 import PromptDialog from '-/components/PromptDialog';
-import InlineEditModal from '-/components/ai/InlineEditModal';
 import { RootState } from '-/reducers';
 import {
   setFileEditState,
@@ -134,13 +132,6 @@ export default function ExtensionHost({
   const { refresh } = useDirectoryUI();
   const { refreshTree } = useDirectoryTreeRefresh();
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  // Inline-edit: pending `requestSelection` round-trips, keyed by requestId.
-  const pendingSelections = useRef(
-    new Map<
-      string,
-      (sel: { selectedText: string; from: number; to: number }) => void
-    >()
-  );
   const [ready, setReady] = useState(false);
   // Boot watchdog: the iframe must post `ready` within READY_TIMEOUT_MS of
   // mount, else show a retry-able failure instead of a permanent blank area
@@ -150,25 +141,6 @@ export default function ExtensionHost({
   const [retryKey, setRetryKey] = useState(0);
   const [saving, setSaving] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
-  // Inline-edit (AI rewrite of the editor selection).
-  const [inlineEditSel, setInlineEditSel] = useState<{
-    selectedText: string;
-    from: number;
-    to: number;
-  } | null>(null);
-  const aiProvider = useSelector(
-    (s: RootState) => s.settings.aiProvider ?? 'claude-cli'
-  );
-  // Inline-edit is offered on the text editor across all providers. The
-  // Claude CLI path uses a cold-start `query()` with a dedicated strict system
-  // prompt (see src/main/ai/inlineEdit.ts); HTTP providers use a single
-  // non-streaming chat completion. Both finalize as the rewritten selection.
-  const canInlineEdit =
-    !readOnly &&
-    manifest.id === 'text-editor' &&
-    (aiProvider === 'claude-cli' ||
-      aiProvider === 'ollama' ||
-      aiProvider === 'openai');
   const editState = useSelector(
     (s: RootState) => s.extensions.editState[filePath]
   );
@@ -210,34 +182,6 @@ export default function ExtensionHost({
   const handleRpc = useMemo(() => createRpcHandler(postToExtension), [
     postToExtension,
   ]);
-
-  /** Inline-edit: ask the editor for its current selection (3s timeout). */
-  const requestSelection = useCallback(async (): Promise<{
-    selectedText: string;
-    from: number;
-    to: number;
-  } | null> => {
-    const requestId = `sel-${Math.random().toString(36).slice(2)}`;
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        pendingSelections.current.delete(requestId);
-        resolve(null);
-      }, 3000);
-      pendingSelections.current.set(requestId, (sel) => {
-        clearTimeout(timer);
-        resolve(sel);
-      });
-      postToExtension({ type: 'requestSelection', requestId });
-    });
-  }, [postToExtension]);
-
-  /** Inline-edit: replace the selection range with AI-produced text. */
-  const applyReplacement = useCallback(
-    (from: number, to: number, text: string) => {
-      postToExtension({ type: 'applyReplacement', from, to, text });
-    },
-    [postToExtension]
-  );
 
   useEffect(() => {
     if (ready) {
@@ -323,8 +267,7 @@ export default function ExtensionHost({
   // §unsaved-close — resolver for the in-flight `requestSave` round-trip. Set
   // by `saveCurrent`, resolved by the `parentSaveDocument` case in onMessage
   // once the extension hands back its latest content and `handleSave` writes
-  // it. Mirrors `requestSelection`'s pendingSelections pattern (resolver +
-  // timeout) so we don't add a second message listener.
+  // it. Resolver + timeout, without a second message listener.
   const saveResolverRef = useRef<((ok: boolean) => void) | null>(null);
 
   // Ask the extension to save its current document and wait for the write to
@@ -548,19 +491,6 @@ export default function ExtensionHost({
         case 'contentChangedInEditor':
           dispatch(setFileEditState(filePath, { dirty: msg.dirty }));
           break;
-        case 'editorSelection': {
-          // Inline-edit: the editor answered our `requestSelection`.
-          const resolve = pendingSelections.current.get(msg.requestId);
-          if (resolve) {
-            pendingSelections.current.delete(msg.requestId);
-            resolve({
-              selectedText: msg.selectedText,
-              from: msg.from,
-              to: msg.to,
-            });
-          }
-          break;
-        }
         case 'openLinkExternally':
           if (
             msg.url.startsWith('http://') ||
@@ -665,21 +595,6 @@ export default function ExtensionHost({
                 </IconButton>
               </span>
             </Tooltip>
-            {canInlineEdit ? (
-              <Tooltip title={t('aiInlineEditButton')}>
-                <span>
-                  <IconButton
-                    size="small"
-                    onClick={async () => {
-                      const sel = await requestSelection();
-                      if (sel && sel.selectedText) setInlineEditSel(sel);
-                    }}
-                  >
-                    <AutoFixHighIcon fontSize="small" />
-                  </IconButton>
-                </span>
-              </Tooltip>
-            ) : null}
           </>
         )}
         <Tooltip title={t('rename')}>
@@ -792,17 +707,6 @@ export default function ExtensionHost({
         defaultValue={fileName}
         onConfirm={handleRename}
         onClose={() => setRenameOpen(false)}
-      />
-      <InlineEditModal
-        open={inlineEditSel !== null}
-        selection={inlineEditSel?.selectedText ?? ''}
-        onClose={() => setInlineEditSel(null)}
-        onApplied={(replacement) => {
-          if (inlineEditSel) {
-            applyReplacement(inlineEditSel.from, inlineEditSel.to, replacement);
-          }
-          setInlineEditSel(null);
-        }}
       />
     </Box>
   );

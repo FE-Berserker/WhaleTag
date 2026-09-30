@@ -173,7 +173,14 @@ async function extractPdfText(filePath: string): Promise<string | null> {
   });
 }
 
-async function extractText(
+/**
+ * Extract plain text from a single file (UTF-8 text formats + HTML tag
+ * strip + PDF via pdfjs). Shared by the fulltext indexer and the MCP
+ * `whale_extract_text` tool (on demand). Returns null when nothing
+ * text-like could be extracted. Collapses whitespace and caps at
+ * MAX_TEXT_PER_FILE.
+ */
+export async function extractText(
   fullPath: string,
   ext: string,
   size: number

@@ -33,11 +33,6 @@ export default merge(createBase(), {
   externals: [
     {
       electron: 'commonjs electron',
-      // Defensive guard only (see webpack.config.main.prod.ts for the full
-      // rationale): the SDK is loaded at runtime via loadClaudeSdk(), never
-      // statically imported, so this external is a belt-and-suspenders guard.
-      '@anthropic-ai/claude-agent-sdk':
-        'commonjs @anthropic-ai/claude-agent-sdk',
       'pdfjs-dist': 'commonjs pdfjs-dist',
       sharp: 'commonjs sharp',
       'better-sqlite3': 'commonjs better-sqlite3',

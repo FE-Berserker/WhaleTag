@@ -5,7 +5,7 @@
 
 ## 项目一句话
 
-Whale：本地优先、离线、隐私安全的 Electron 文件管理与打标应用（Electron + React + TypeScript，MIT 开源）。三进程模型：Main（全部 FS IO / SQLite 索引 / 缩略图 / 扩展转换 / AI 子进程）→ Preload（`window.whale` 唯一桥）→ Renderer（React）。
+Whale：本地优先、离线、隐私安全的 Electron 文件管理与打标应用（Electron + React + TypeScript，MIT 开源）。三进程模型：Main（全部 FS IO / SQLite 索引 / 缩略图 / 扩展转换）→ Preload（`window.whale` 唯一桥）→ Renderer（React）。
 
 ## 常用命令
 
@@ -29,7 +29,7 @@ Whale：本地优先、离线、隐私安全的 Electron 文件管理与打标�
 
 ## 目录职责
 
-- `src/main/`：Electron 主进程——FS IO、SQLite FTS5 索引（utilityProcess worker）、缩略图 worker、自定义协议（`whale-file/audio/extension`）、IPC handlers、AI CLI 子进程、原子写盘。
+- `src/main/`：Electron 主进程——FS IO、SQLite FTS5 索引（utilityProcess worker）、缩略图 worker、自定义协议（`whale-file/audio/extension`）、IPC handlers、原子写盘。
 - `src/renderer/`：React 渲染层——components、redux、domain（**纯前端域逻辑放这里**）、hooks、services、theme、locales（i18n 5 语言）。
 - `src/shared/`：main + renderer 双方引用的契约层（ipc-types、tags、extension-types 等类型与纯函数）。
 - `src/extensions/`：8 个内置扩展查看器/编辑器（双层 iframe 拓扑），由 `scripts/build-extensions.js` 独立构建。
@@ -70,4 +70,4 @@ Whale：本地优先、离线、隐私安全的 Electron 文件管理与打标�
 ## 平台备注
 
 - 开发机 Windows + Git Bash；仓库文本文件为 LF，勿引入 CRLF。
-- 国内网络环境：打包/AI 依赖下载有镜像与离线方案，排坑记录在 docs/14。
+- 国内网络环境：打包依赖下载有镜像与离线方案，排坑记录在 docs/14。

@@ -27,23 +27,9 @@ async function openImageFileDialog(): Promise<string | null> {
   return result.filePaths[0];
 }
 
-/** Shows the native "select AI component (.whaleai)" dialog. Returns null if cancelled. */
-async function openComponentFileDialog(): Promise<string | null> {
-  const result = await dialog.showOpenDialog({
-    properties: ['openFile'],
-    filters: [
-      { name: 'WhaleTag AI Component', extensions: ['whaleai'] },
-      { name: 'All Files', extensions: ['*'] },
-    ],
-  });
-  if (result.canceled || result.filePaths.length === 0) return null;
-  return result.filePaths[0];
-}
-
 export function registerDialogHandlers(): void {
   ipcMain.handle('dialog:openDirectory', () => openDirectoryDialog());
   ipcMain.handle('dialog:openImageFile', () => openImageFileDialog());
-  ipcMain.handle('dialog:openComponentFile', () => openComponentFileDialog());
 
   ipcMain.handle(
     'dialog:saveImage',

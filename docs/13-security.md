@@ -2,7 +2,7 @@
 
 # 13. 安全模型
 
-> 当前代码的安全边界、隔离策略、已知保护措施。位置级加密(AES-256-GCM)未实现,见 §12。
+> 当前代码的安全边界、隔离策略、已知保护措施。位置级加密(AES-256-GCM)未实现,见 §9。
 
 ## 1. 进程与渲染层隔离
 
@@ -21,6 +21,8 @@
 - Windows 大小写归一(`isSameOrDescendant` 比较前 `toLowerCase`)
 
 **只读位置**:从不在 `setAllowedRoots` 注册 → 写 IPC 早 throw → UI 写按钮 disabled。
+
+修订历史 IPC(`ext:backupRevision` / `ext:restoreRevision` / `ext:deleteRevision`)过同一闸;`deleteRevision` 额外把 revision 路径绑定到所属文件的 `<dir>/.whale/revisions/` 前缀(与 restore 相同)——`rm --force` 不进回收站,不做绑定就是任意路径强删。详见 [docs/07-extensions.md](./07-extensions.md)。
 
 详见 [docs/02-file-io.md §6](./02-file-io.md)。
 
@@ -42,45 +44,25 @@
 - 主进程只接受 `event.source === iframe.contentWindow` 的消息
 - 每个扩展 HTML 自带严格 CSP meta(`script-src 'self' whale-extension://*`,不内联 handler)
 
-## 5. API Key 与凭据
-
-- **AI API key**(ANTHROPIC / OPENAI):Electron `safeStorage`(DPAPI / Keychain)加密落盘 `userData/ai-secrets.json`
-- `safeStorage.isEncryptionAvailable()=false` 拒绝存储
-- **绝不**进 redux-persist / **绝不**回显明文
-- 设置页只显示"已设 / 未设"状态
-
-## 6. 流式推送通道
-
-- 唯一 main → renderer 推送通道 = `ai:chunk` / `ai:error` / `ai:approvalRequest`
-- `preload.onAi*` 返回 unsubscribe
-- **仅固定 `ai:*` 通道**,不泛化整桥
-- AI 关闭时通道不暴露
-
-## 7. 工具系统护栏
-
-- **Claude 路径**:CLI 自带 Read/Write/Edit/**Bash** 直接碰盘;`canUseTool` 回调先过 `readOnlyGuard` 再决定是否推批准
-- **HTTP 路径**(Whale 自有工具 `read_file` / `list_directory` / `write_file`):每个执行器经 `assertWithinAllowedRoot` 守护,写经 `atomicWriteText`;共用 `decideToolCall` 在 Claude 与 HTTP 间一致
-
-**只读位置硬拒**:只读根下 Write / Edit / NotebookEdit / Bash 调用 → 批准弹框**之前**直接 reject,不再问用户。
-
-## 8. 数据层
+## 5. 数据层
 
 - **redux-persist** 走主进程同步 IPC + atomic write(`.tmp + renameSync`),不丢数据;详见 [docs/02-file-io.md §8](./02-file-io.md)
 - **sidecar**:标签 / 描述 / 颜色走 `.whale/wsd.json` 目录级聚合,不嵌入文件名
 - 路径存储为相对路径(便于整体迁移)
 
-## 9. 外部链接
+## 6. 外部链接
 
 - 扩展内的 `<a href="https://...">` 点击 → `window.whaleExt.postMessage({ type: 'openLinkExternally', url })` → 主进程 `shell.openExternal`
 - 不在应用内导航,不在扩展内直接跳转
+- 主窗口 `will-navigate` 锁定:渲染层无法把窗口导航到任意外部页面——preload 桥(`window.whale`)会随导航留在新页面,等同于把全套 IPC 交给目标页。dev 仅放行 dev server origin(HMR reload 不触发 will-navigate),生产全部 `preventDefault`;外链仍走 `setWindowOpenHandler` → `shell.openExternal`。
 
-## 10. Trash
+## 7. Trash
 
 - 删除默认走 `shell.trashItem`(系统回收站),可恢复
 - 设置 `deleteToTrash: false`(redux-persist 设置项)才走 `fs.rm` 永久删除
 - toast 提供"打开回收站"按钮
 
-## 11. 用户自定义 shell 命令(设置 → 命令)
+## 8. 用户自定义 shell 命令(设置 → 命令)
 
 用户在设置里录入命令行模板(如 `python process.py ${path}`),右键文件/文件夹 → "命令" 子菜单运行,弹**新终端窗口**显示输出。本地优先 power-user 能力,安全模型见 [src/main/shell-command.ts](../src/main/shell-command.ts):
 
@@ -89,13 +71,13 @@
 - **opt-in**:模板存 redux-persist `settings.userCommands`(默认空 `[]`),未配置则右键菜单不显示"命令"子菜单。
 - **路径不可信,模板可信**:模板是用户显式录入;被替换进去的**文件路径**不可信(文件名可能含 `&` `|` `"` `%` 元字符 → 命令注入)。
 - **主进程做替换 + 引号**:renderer 只传 `{ template, targetPath }`;主进程 `runUserCommand` 把 `${path}` / `${dir}` / `${name}` 替换成**加好引号的值**再拼命令。renderer 永不构造 shell 字符串。
-- **引号复用** [windowsCmdShim.ts](../src/main/ai/utils/windowsCmdShim.ts) 的 `quoteWindowsShellArgument`(cmd 双引号 + 内嵌 `"` 翻倍)+ POSIX 单引号([shell-quote.ts](../src/main/shell-quote.ts))。
+- **引号复用** [shell-quote.ts](../src/main/shell-quote.ts) 的 `quotePathForShell` —— win32 走 cmd 双引号 + 内嵌 `"` 翻倍,POSIX 单引号 close-reopen。
 - **`assertWithinAllowedRoot(targetPath)` 在 IPC 入口**(`shell:runCommand`,[shell.ts](../src/main/ipc/shell.ts))—— 拒配置位置外的路径 / symlink 逃逸 / 未注册根(fail-closed),对齐 `fs:rename` / `fs:delete`。
-- **Windows `%` 拒绝**:cmd 默认下 `"..."` 内的 `%VAR%` 仍展开(`%%` 只在 .bat 内有效,`cmd /k` 内不可靠转义)→ 路径含 `%` 直接拒,renderer toast 报 `commandPathBlocked`。`!`(delayed expansion 关)放行。详见 [docs/09 §24](./09-known-issues.md)。
+- **Windows `%` 拒绝**:cmd 默认下 `"..."` 内的 `%VAR%` 仍展开(`%%` 只在 .bat 内有效,`cmd /k` 内不可靠转义)→ 路径含 `%` 直接拒,renderer toast 报 `commandPathBlocked`。`!`(delayed expansion 关)放行。详见 [docs/09 §22](./09-known-issues.md)。
 - **`spawn` + `detached` + `child.unref()`**(fire-and-forget,新终端窗口归用户);永不 `exec`。
-- **不按只读位置拒绝**:命令是用户显式 opt-in 的外部进程(可能只读分析),`readOnlyGuard`(约束 WhaleTag/AI 自身的写)不适用 —— 只保留 `assertWithinAllowedRoot` 这道基础闸。
+- **不按只读位置拒绝**:命令是用户显式 opt-in 的外部进程(可能只读分析),只保留 `assertWithinAllowedRoot` 这道基础闸。
 
-## 12. 已知不在范围
+## 9. 已知不在范围
 
 | 项 | 状态 | 说明 |
 |---|---|---|
@@ -106,10 +88,20 @@
 
 > 任何"安全加强"需求先列到对应模块文档的"已知取舍 / 遗留"或新章节,不开"未来加密"段。
 
-## 13. 读侧边界(2026-07-18 审阅 + 修复)
+## 10. 读侧边界(2026-07-18 审阅 + 修复)
 
 写操作 33 处过 `assertWithinAllowedRoot`(§2);读路径此前完全不受限、与威胁模型不一致,通道闸已修:
 
-- ✅ `fs:readFile` / `fs:readTextFile` handler 入口加 `assertWithinAllowedRoot`([fs-read.ts](../src/main/ipc/fs-read.ts))。渲染层调用方全部为用户动作驱动(打开文件 / AI 附件 / 灯箱 / 搜索命中,均在位置内),fail-closed 不伤启动路径;AiPanel 附件读取带 try/catch 降级(读不到就只发路径)。
+- ✅ `fs:readFile` / `fs:readTextFile` handler 入口加 `assertWithinAllowedRoot`([fs-read.ts](../src/main/ipc/fs-read.ts))。渲染层调用方全部为用户动作驱动(打开文件 / 灯箱 / 搜索命中,均在位置内),fail-closed 不伤启动路径。
 - ✅ `fs:openNative` 同闸;扩展 `openLinkExternally`(http(s) 分流 `window.open` 后)与 `openNative` 消息汇到它,"任意路径启动 OS 程序"的面被封。
+- ✅ `exif:extractGps` / `exif:get-summary` 同闸([search-index.ts](../src/main/ipc/search-index.ts))——Mapique 只对位置内文件取 EXIF,与此节声明对齐。
 - ⏳ **遗留**:能力授予"全有或全无"——manifest 无 permissions / capabilities 字段,text-editor 与 image-viewer 拥有完全相同的宿主能力面。目前 8 个扩展全是内置自研,威胁面可控;引入第三方 / 用户扩展机制前须补"按 manifest 声明能力白名单放行 `request*` 消息类型"。
+
+## 11. 本地 MCP 服务器(0.5.0)
+
+外部 AI 客户端的文件操作入口(详见 [./21-mcp.md](./21-mcp.md)):
+
+- 只监听 `127.0.0.1`,默认关闭;每个请求必须携带 Bearer token(`timingSafeEqual` 比较,设置页可再生成);Host 头必须是回环自身(先于 401 返回 403,防 DNS rebinding)。
+- 所有工具路径过 `assertWithinAllowedRoot`;且比渲染层 IPC 更严——move/copy 的**目的地**也必须在 roots 内。
+- 写操作分级:sidecar 级(标签/描述)免审批;文件级(move/copy/delete/zip/create)推送审批弹窗,**无窗口 / 60s 超时 / 拒绝一律视为拒绝**(fail-closed)。
+- 只读模式(默认开)拒绝一切变更工具;删除仅回收站,不提供永久删除。

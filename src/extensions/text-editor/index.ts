@@ -762,27 +762,6 @@ function handleMessage(msg: HostMessage) {
  });
  }
  break;
- case 'requestSelection':
- if (currentPath && view) {
- const { from, to } = view.state.selection.main;
- window.whaleExt.postMessage({
- type: 'editorSelection',
- requestId: msg.requestId,
- path: currentPath,
- selectedText: view.state.sliceDoc(from, to),
- from,
- to,
- });
- }
- break;
- case 'applyReplacement':
- if (view && !view.state.readOnly) {
- view.dispatch({
- changes: { from: msg.from, to: msg.to, insert: msg.text },
- selection: { anchor: msg.from + msg.text.length },
- });
- }
- break;
  default:
  break;
  }

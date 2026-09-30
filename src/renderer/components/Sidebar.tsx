@@ -30,7 +30,6 @@ import RestoreFromTrashIcon from '@mui/icons-material/RestoreFromTrash';
 import SettingsIcon from '@mui/icons-material/Settings';
 import GestureIcon from '@mui/icons-material/Gesture';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
-import SmartToyIcon from '@mui/icons-material/SmartToy';
 
 import { RootState } from '-/reducers';
 import { COLUMN_HEADER_HEIGHT } from '-/theme';
@@ -41,14 +40,12 @@ import {
 } from '-/reducers/locations';
 import {
   setDefaultLocation,
-  setAiSettings,
   setTaskReminderEnabled,
   setTaskReminderLocationId,
 } from '-/reducers/settings';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { useNewExcalidraw } from '-/hooks/useNewExcalidraw';
 import { useNewDrawio } from '-/hooks/useNewDrawio';
-import { useAiComponent } from '-/hooks/useAiComponent';
 import { ipcApi } from '-/services/ipc-api';
 import { DND_TYPE_LOCATION, type LocationDragItem } from '-/services/dnd';
 import type { WhaleLocation } from '../../shared/ipc-types';
@@ -68,20 +65,16 @@ interface SidebarProps {
 }
 
 /**
- * Bottom actions row (trash / AI panel / new excalidraw / new drawio /
- * settings). Lives at the bottom of the Sidebar in wide mode; in narrow
- * (tabbed) mode MainLayout renders it below the tab content instead, so the
- * DirectoryTree tab can't push it off-screen or cover it — that was the
- * "tree occludes the buttons" regression. Exported for MainLayout.
+ * Bottom actions row (trash / new excalidraw / new drawio / settings). Lives
+ * at the bottom of the Sidebar in wide mode; in narrow (tabbed) mode
+ * MainLayout renders it below the tab content instead, so the DirectoryTree
+ * tab can't push it off-screen or cover it — that was the "tree occludes the
+ * buttons" regression. Exported for MainLayout.
  */
 export function SidebarActionsBar() {
   const { t } = useTranslation();
-  const dispatch = useDispatch();
-  const aiEnabled = useSelector((s: RootState) => s.settings.aiEnabled);
-  const aiPanelOpen = useSelector((s: RootState) => s.settings.aiPanelOpen);
   const newExcalidraw = useNewExcalidraw();
   const newDrawio = useNewDrawio();
-  const aiComponent = useAiComponent();
   // Settings dialog is owned one level up by SettingsDialogProvider so other
   // surfaces (file row right-click, kanban card right-click, …) can deep-link
   // to a particular section via `useSettingsDialog().openDialog({ section })`.
@@ -101,30 +94,6 @@ export function SidebarActionsBar() {
           <RestoreFromTrashIcon fontSize="small" />
         </IconButton>
       </Tooltip>
-      {aiEnabled ? (
-        aiComponent.state.installed ? (
-          <Tooltip title={t('aiToggle')}>
-            <IconButton
-              size="small"
-              data-testid="ai-toggle-button"
-              color={aiPanelOpen ? 'primary' : 'default'}
-              onClick={() =>
-                dispatch(setAiSettings({ aiPanelOpen: !aiPanelOpen }))
-              }
-            >
-              <SmartToyIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-        ) : (
-          <Tooltip title={t('aiComponentNotInstalled')}>
-            <span>
-              <IconButton size="small" disabled>
-                <SmartToyIcon fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
-        )
-      ) : null}
       {newExcalidraw.available && (
         <Tooltip title={t('newExcalidraw')}>
           <span>

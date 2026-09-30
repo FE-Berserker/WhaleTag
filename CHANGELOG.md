@@ -7,6 +7,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),并遵循[语义化版本](https://semver.org/spec/v2.0.0.html)。
 
+## [0.5.0] - 2026-09-15
+
+### Added
+
+- **本地 MCP 服务器**:新增设置 ▸ MCP 服务器,外部 AI 客户端(Claude Desktop、ZCode 等)可经 Streamable HTTP(仅 127.0.0.1)+ Bearer token 接入,提供 18 个工具覆盖四大场景——搜索(FTS 名/路径/标签/正文全文)、读取(编码自适应文本、PDF 抽取、sidecar 元数据)、整理(打标/描述写 sidecar 免审批;移动/复制/删除(仅回收站)/打包/建夹需在应用窗口弹窗审批,超时即拒绝)、打包(zip 多文件、报告落盘)。默认关闭且默认只读;所有路径过 allowedRoots 校验,move/copy 目的地也必须在位置内。归纳结果推荐写入文件描述(sidecar,可搜索)。详见 docs/21。
+  **Local MCP server**: Settings ▸ MCP Server exposes WhaleTag to external AI clients (Claude Desktop, ZCode, …) over Streamable HTTP (127.0.0.1 only) + bearer token, with 18 tools across four scenarios — search (FTS name/path/tag + full-text content), reading (encoding-adaptive text, PDF extraction, sidecar metadata), organizing (tags/descriptions to sidecar without approval; move/copy/delete (recycle bin only)/zip/create-folder gated by an in-app approval dialog, fail-closed on timeout), and packaging (multi-file zip, report files). Disabled and read-only by default; every path passes the allowedRoots guard, and move/copy destinations must also sit inside configured locations. Summaries are meant to land in file descriptions (sidecar, searchable). See docs/21.
+
+### Removed
+
+- **移除内置 AI 助手**:删除整个 AI 子系统——`src/main/ai/`(Claude Code CLI 运行时、Ollama/OpenAI HTTP provider、safeStorage 密钥管理、审批闸门、内联改写、标题生成)、`.whaleai` 可选组件安装系统、AI 侧栏面板与会话 redux slice、设置页 AI 分类(19 个 `ai*` 设置字段)、扩展编辑器 AI 选区桥(`requestSelection`/`applyReplacement`)与「AI 编辑选中」按钮、5 语言各 108 个文案键;卸载 `@anthropic-ai/claude-agent-sdk`、`@anthropic-ai/claude-code`(~229MB claude.exe)与 `marked` 依赖,安装包显著瘦身。AI 能力由本地 MCP 服务器 + 外部客户端取代(见上)。搜索/索引/打标/缩略图零受影响;旧持久化会话与 `ai*` 设置字段在迁移中清理。
+  **Removed the built-in AI assistant**: the entire AI subsystem is gone — `src/main/ai/` (Claude Code CLI runtime, Ollama/OpenAI HTTP providers, safeStorage key management, approval gate, inline rewrite, title generation), the `.whaleai` optional-component installer, the AI side panel + conversation redux slice, the settings AI section (19 `ai*` fields), the extension-editor AI selection bridge (`requestSelection`/`applyReplacement`) with its "AI edit selection" button, and 108 locale keys × 5 languages; uninstalled `@anthropic-ai/claude-agent-sdk`, `@anthropic-ai/claude-code` (~229MB claude.exe) and `marked`, notably slimming the installer. AI capability is superseded by the local MCP server + external clients (above). Search/indexing/tagging/thumbnails are unaffected; legacy persisted conversations and `ai*` settings fields are cleaned up in migration.
+
+### Fixed
+
+- **安全加固**:`ext:deleteRevision` 此前接受渲染层传来的任意路径并 `rm --force`(绕过回收站与 allowedRoots)——现在与 `restoreRevision` 相同,把 revision 绑定到所属文件的 `.whale/revisions/` 前缀,`backup`/`restore` 入口补 `assertWithinAllowedRoot`;`sidecar:write`、`exif:extractGps`、`exif:get-summary` 三个 IPC 入口补 allowedRoots 校验;主窗口锁定 `will-navigate`(渲染层无法携带 preload 桥导航离站);升级 `pdfjs-dist`(≥6.2.108,恶意 PDF 任意 JS 执行)与 `sharp`(≥0.35.4,libheif)两个特权进程解析依赖。
+  **Security hardening**: `ext:deleteRevision` used to accept any renderer-supplied path and `rm --force` it (bypassing the recycle bin and allowedRoots) — it now binds the revision to its owner file's `.whale/revisions/` prefix (same check as restore), and the backup/restore entries gain `assertWithinAllowedRoot`; the `sidecar:write`, `exif:extractGps` and `exif:get-summary` IPC entries gain the allowedRoots guard; the main window locks `will-navigate` (the renderer can no longer carry the preload bridge off-site); and the two privileged-process parser dependencies are bumped — `pdfjs-dist` (≥6.2.108, malicious-PDF arbitrary JS execution) and `sharp` (≥0.35.4, libheif).
+
+- **MCP 审批体验与加固**:审批弹窗明细改为完整路径(可滚动,超过 20 条显式标注未展示数量),summary 显示完整目标路径;**Deny 成为默认焦点**——连按 Enter 不再等于放行;`whale_apply_tags` 写入前经 `normalizeSmartTags` 规范化,与 UI 打标行为同源;HTTP 端点校验 Host 头(先于 401 返回 403,防 DNS rebinding);MCP 配置变更在生命周期队列内先原子落盘再生效,切换开关后立即崩溃不再丢状态。
+  **MCP approval UX & hardening**: the approval dialog lists FULL paths (scrollable, with an explicit "N more not shown" beyond 20) and shows complete destination paths in the summary; **Deny is the default focus** — mashing Enter no longer means allow; `whale_apply_tags` normalizes through `normalizeSmartTags` so external writes match the UI's tag shapes; the HTTP endpoint validates the Host header (403 before the 401 challenge, a DNS-rebinding defense); and MCP config changes persist atomically inside the serialized lifecycle before taking effect, so a crash right after a toggle can't lose it.
+
+- **杂项**:移除 `shell:runCommand` 遗留的 TEMP DEBUG 命令行日志;清理 `protocol-range.ts` 中已删除的 `whale-audio://` 注释残留;修正 `fs-read.ts` 的 `readTextFile` 函数体换行;plan.md 移除已删除 docs/11-ai.md 的索引死链。
+  **Misc**: removed the leftover TEMP DEBUG command logging in `shell:runCommand`; cleaned the stale `whale-audio://` comment in `protocol-range.ts`; fixed the `readTextFile` line break in `fs-read.ts`; and dropped the dead docs/11-ai.md index row from plan.md.
+
 ## [0.4.9] - 2026-09-05
 
 ### Removed

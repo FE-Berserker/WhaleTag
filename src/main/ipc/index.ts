@@ -9,6 +9,7 @@ import { registerThumbnailHandlers } from './thumbnails';
 import { registerExtensionHandlers } from './extensions';
 import { registerWindowHandlers } from './window';
 import { registerPersistHandlers } from './persist';
+import { registerMcpHandlers } from '../mcp/ipc-mcp';
 
 /**
  * IPC registrar — thin composition root after the 2026-07-18 god-file split
@@ -30,4 +31,5 @@ export function registerIpcHandlers(): void {
   registerExtensionHandlers();
   registerWindowHandlers();
   registerPersistHandlers();
+  registerMcpHandlers();
 }

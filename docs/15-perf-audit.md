@@ -15,7 +15,7 @@
 [index-db.ts](../src/main/index-db.ts) `ingestFiles` 改签名增量:`filesPrior(rootPath)` + `filesSignature = mtime|size|tags`,签名匹配行跳过 upsert(不碰 `files_au` FTS 触发器),删除走 `prior.keys 不在 seen` 逐条删。**tags 强制进签名**(sidecar 改标签不改 mtime,漏了标签编辑就不重索引)。
 
 ### P0-2. 索引进 utilityProcess 沙箱 ✅
-[index-worker.ts](../src/main/index-worker.ts)(utilityProcess)+ [host](../src/main/index-worker-host.ts)(惰性 spawn / 崩溃重 spawn / before-quit kill)+ [protocol](../src/main/index-protocol.ts)(11 op 判别联合)+ spawn(锚 `__dirname`)。`ipc.ts` 11 handler 转 `request()` 转发,`assertWithinAllowedRoot` 留主进程;`index-db.ts` 加 `!process.parentPort` 守卫防管线回主进程。**打包坑**:`utilityProcess.fork` 是 asar 原生(别做 asar→unpacked 重写,否则 ENOENT);worker 用 `process.parentPort` 不是 `import {parentPort}`(Electron 42 后者 undefined);entry 锚 `__dirname`(dev getAppPath 是项目根)。详见 [docs/04 §9](./04-search-index.md) / [docs/09 §25](./09-known-issues.md)。
+[index-worker.ts](../src/main/index-worker.ts)(utilityProcess)+ [host](../src/main/index-worker-host.ts)(惰性 spawn / 崩溃重 spawn / before-quit kill)+ [protocol](../src/main/index-protocol.ts)(11 op 判别联合)+ spawn(锚 `__dirname`)。`ipc.ts` 11 handler 转 `request()` 转发,`assertWithinAllowedRoot` 留主进程;`index-db.ts` 加 `!process.parentPort` 守卫防管线回主进程。**打包坑**:`utilityProcess.fork` 是 asar 原生(别做 asar→unpacked 重写,否则 ENOENT);worker 用 `process.parentPort` 不是 `import {parentPort}`(Electron 42 后者 undefined);entry 锚 `__dirname`(dev getAppPath 是项目根)。详见 [docs/04 §9](./04-search-index.md) / [docs/09 §23](./09-known-issues.md)。
 
 ### P0-3. Mapique marker 不重建 ✅
 [MapiqueView.tsx](../src/renderer/components/MapiqueView.tsx) 抽 `React.memo <GeoMarker>`,传原始 `state` 字面量(非整 `selected` Set)→ 仅状态真变的 marker 重渲;icon/position/eventHandlers 各 `useMemo`。**关键 spoiler**:`selectRow` 原闭包捕获 `visibleTrayEntries`,`distance` 排序下 `moveend` 每次平移让它换身份 → 废掉所有 marker memo;改 ref(`visibleTrayEntriesRef` + `trayIndexByPathRef`,顺带 O(n) findIndex→O(1))。
@@ -89,7 +89,7 @@ office-viewer `openOfficeFile` 并行 fire `requestThumbnail` + `requestOfficeCo
 保活一个 LibreOffice UNO listener,后续 office→PDF 转换复用已初始化进程(~200–500ms),冷启动只一次。Node 无原生 UNO 客户端,故 bundle 一个 Python worker(借用 LO 自带 `python`+`pythonuno`)做桥接,worker 起不来时带 cooldown 自动回退现有 `execFile`(**零 regression**)。详见 [docs/17](./17-office-worker.md)。顺带把 `convertOfficeToPdf` 与 `encodeOfficeThumb` 两处重复的 spawn body 合并成共享 `convertOfficeToPdfVia`(worker 优先 + execFile 兜底,`sofficeSemaphore` 包两路)。
 
 ### P3-4. AI 流式 boolean 兜底 ✅
-确诊(2026-07-18,实跑 CLI 抓 stream-json):**uuid 每行随机**(partial 之间也互不相同),不止 partial/complete 不匹配;且 complete 在**块 delta 流完即发(早于 `content_block_stop`)**、一条 API 消息可拆多个非累积 complete。[transformSdkMessage.ts](../src/main/ai/providers/claude/stream/transformSdkMessage.ts) 重写:per-scope(`parent_tool_use_id`)flow 状态机;text/thinking 按**内容精确匹配**去重(delta 拼接与 complete 逐字节相等,已实证);tool_use 按稳定块 id 双向去重(complete 先到则杀 pending,stop 先到则查 `emittedToolIds`);删 `startedMsgs`/`streamedMsgs`/boolean 兜底。附带修好:complete 误开第二**空气泡**、subagent 文本重复(原兜底未覆盖)。6 个真实 wire-shape 回归测试 + 两份真实抓包回放校验。详见 [docs/09 §23](./09-known-issues.md)。
+✅ 已随 AI 助手模块整体移除(2026-09);`transformSdkMessage` 的 per-scope 去重状态机与 wire-shape 回归测试随代码删除。通用教训仍有效:流式协议 partial/complete 去重必须实测验证,去重键要用有内容语义的字段(块文本 / 工具 id),别把对端协议的 id 语义当契约。
 
 ### P3-5. 零碎项
 - ~~`firstThumbnailableFile`~~ — **评估不做**:find-first + 早返回,首候选即中(1 stat),并发反而过度取数。
@@ -131,4 +131,4 @@ office-viewer `openOfficeFile` 并行 fire `requestThumbnail` + `requestOfficeCo
 
 ## 剩余
 
-无。Tier 0–3 全部完成(2026-07-12 ~ 07-18);最后收尾的是 P3-4(见上)。
+无。Tier 0–3 全部完成(2026-07-12 ~ 07-18)。

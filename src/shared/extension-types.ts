@@ -88,23 +88,6 @@ export interface RequestSaveMessage {
   path: string;
 }
 
-/** Host -> Extension (inline edit): ask the editor for its current selection.
- *  The extension responds with {@link EditorSelectionMessage} carrying the same
- *  `requestId`. */
-export interface RequestSelectionMessage {
-  type: 'requestSelection';
-  requestId: string;
-}
-
-/** Host -> Extension (inline edit): replace the given document range with the
- *  AI-produced text (originally the selection range). */
-export interface ApplyReplacementMessage {
-  type: 'applyReplacement';
-  from: number;
-  to: number;
-  text: string;
-}
-
 /** Host -> Extension: the libheif-js wasm bytes requested by heic-viewer.
  *  Fetching `whale-extension://` is unreliable in this Electron build, so the
  *  extension asks the host for the wasm and feeds it to emscripten as
@@ -175,9 +158,7 @@ export type HostMessage =
   | HeicWasmMessage
   | ExternalDragMessage
   | FileEmbedMessage
-  | SiblingsMessage
-  | RequestSelectionMessage
-  | ApplyReplacementMessage;
+  | SiblingsMessage;
 
 // Extension -> Host messages
 
@@ -252,18 +233,6 @@ export interface RequestFileMessage {
   path: string;
 }
 
-/** Extension -> Host (inline edit): the editor's current selection, in reply to
- *  {@link RequestSelectionMessage}. `selectedText` is empty when nothing is
- *  selected. `from`/`to` are CodeMirror document offsets. */
-export interface EditorSelectionMessage {
-  type: 'editorSelection';
-  requestId: string;
-  path: string;
-  selectedText: string;
-  from: number;
-  to: number;
-}
-
 export type ExtensionMessage =
   | ReadyMessage
   | LoadDefaultTextContentMessage
@@ -275,8 +244,7 @@ export type ExtensionMessage =
   | ErrorMessage
   | RequestHeicWasmMessage
   | RequestFileEmbedMessage
-  | RequestFileMessage
-  | EditorSelectionMessage;
+  | RequestFileMessage;
 
 /** Runtime API injected into each extension iframe as `window.whaleExt`. */
 export interface WhaleExtApi {

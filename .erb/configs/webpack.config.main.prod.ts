@@ -34,13 +34,6 @@ export default merge(createBase(), {
   externals: [
     {
       electron: 'commonjs electron',
-      // Defensive guard only: the Agent SDK is never statically imported in the
-      // main bundle — it's loaded at runtime via loadClaudeSdk() (component-resolver),
-      // which uses eval('require') + createRequire so webpack never sees it. Keeping
-      // this external ensures any future stray static import stays externalized
-      // rather than bundling a Node-only package into main.js.
-      '@anthropic-ai/claude-agent-sdk':
-        'commonjs @anthropic-ai/claude-agent-sdk',
       'pdfjs-dist': 'commonjs pdfjs-dist',
       sharp: 'commonjs sharp',
       'better-sqlite3': 'commonjs better-sqlite3',

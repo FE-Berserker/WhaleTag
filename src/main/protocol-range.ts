@@ -1,13 +1,12 @@
 /**
- * Range-serving helper shared by the `whale-file://` and `whale-audio://`
- * protocol handlers. Both serve a regular file to `<video>` / `<audio>` /
- * `<img>` with HTTP Range support so the browser can scrub and load metadata
- * without re-downloading from byte 0.
+ * Range-serving helper for the `whale-file://` protocol handler: serves a
+ * regular file to `<video>` / `<audio>` / `<img>` with HTTP Range support so
+ * the browser can scrub and load metadata without re-downloading from byte 0.
  *
  * Factored out of `main.ts` so the Range math (`parseRange`) becomes unit-
  * testable and the Node→Web stream adaptation (with its load-bearing
- * double-close guard) isn't duplicated. See `registerWhaleFileProtocol` and
- * the cache-hit branch of `registerWhaleAudioProtocol` in `main.ts`.
+ * double-close guard) isn't duplicated. See `registerWhaleFileProtocol` in
+ * `main.ts`.
  */
 import { createReadStream, statSync } from 'fs';
 

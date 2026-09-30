@@ -22,7 +22,7 @@ import type { UserCommand } from '../../shared/shell-types';
 
 /**
  * Manage user-defined shell commands (right-click file/folder → Commands).
- * Clones the AiMcpSection pattern: a local-state "add" form + read-only rows
+ * A local-state "add" form + read-only rows
  * (toggle enabled / delete). Editing a template = delete + re-add (avoids
  * dispatching on every keystroke, which would sync-write redux-persist to
  * disk on each char). The template's `${path}` is substituted + quoted by the

@@ -11,14 +11,14 @@
 │ MAIN 进程 (Node/Electron, src/main/)                │
 │   - BrowserWindow、CSP、生命周期                     │
 │   - 所有文件 IO(ipc/ 域模块 / sidecar.ts / thumbnail.ts) │
-│   - 缩略图、索引、AI CLI 子进程                      │
+│   - 缩略图、索引、扩展转换                           │
 │   - 注册 whale-extension:// + whale-file:// 协议    │
 └────────────────────────────────────────────────────┘
                        ↕ ipcMain.handle / event.sender.send
 ┌────────────────────────────────────────────────────┐
 │ PRELOAD (src/main/preload.ts)                       │
 │   contextBridge.exposeInMainWorld('whale', whaleApi) │
-│   ~100 个方法 + AI 流式订阅 + persist 同步通道      │
+│   ~100 个方法 + 事件订阅 + persist 同步通道         │
 └────────────────────────────────────────────────────┘
                        ↕ window.whale.* + 推送
 ┌────────────────────────────────────────────────────┐
@@ -76,14 +76,14 @@ folder/
 [src/main/preload.ts](../src/main/preload.ts) 暴露 `window.whale`:
 
 - **所有 FS 操作** = `invoke('fs:*' | 'sidecar:*' | 'thumbnail:*' | ...)`
-- **AI 流式** = `event.sender.send('ai:chunk' | 'ai:error' | 'ai:approvalRequest')`;preload 暴露 `onAiChunk(cb)` / `onAiApprovalRequest(cb)` 返回 unsubscribe。**仅限固定 ai: 通道,不泛化整桥** —— 这是唯一 main→renderer 推送通道
+- **主进程 → 渲染层事件**:`index:progress` / `fs:dirChanged` / `window:maximizeChange` / `app:update-*` / `app:request-flush`,preload 各自暴露 `onX(cb)` 返回 unsubscribe。**均为固定通道,不泛化整桥**
 - **redux-persist**:`persistRead/Write/DeleteSync` 等同步 IPC(走主进程 `writeFileSync(.tmp) + renameSync`,Chromium localStorage 异步 flush 在 OS 强杀 / 3s close-fallback 时会丢数据)
 
 ## 6. 状态管理
 
-**Redux + redux-persist**(不用 Toolkit,plain reducer)。`configureStore` 加载 8 个 slice:
+**Redux + redux-persist**(不用 Toolkit,plain reducer)。`configureStore` 加载 7 个 slice:
 
-- `locations` `settings` `taglibrary` `workflow` `recent` `savedsearches` `extensions` `ai`
+- `locations` `settings` `taglibrary` `workflow` `recent` `savedsearches` `extensions`
 
 **Context Providers**(挂在 [src/renderer/containers/Root.tsx](../src/renderer/containers/Root.tsx)):
 
@@ -101,8 +101,6 @@ CurrentLocation → DirectoryContent → DirectoryTreeRefresh → IOActions
 - 所有文件 IO 集中在 [src/main/ipc/](../src/main/ipc/)(按域拆分:fs-read / fs-write / fs-roots / dialogs / shell / search-index / meta / thumbnails / extensions / window / persist),写操作经 `assertWithinAllowedRoot` 限制在已注册位置内
 - 扩展 iframe sandbox = `allow-same-origin allow-scripts allow-modals allow-downloads`;主进程只接受 `event.source === iframe.contentWindow` 的消息
 - 外部链接走 `shell.openExternal` / 系统浏览器,不在扩展内跳转
-- AI 写操作经只读护栏 + 用户批准(`ApprovalModal`)
-- API key 存于 Electron `safeStorage`(DPAPI / Keychain),不进 redux-persist / 不回显明文
 
 ## 8. 构建 / 打包
 
@@ -174,9 +172,9 @@ try {
 - **自动发现**:[scripts/run-tests.cjs](../scripts/run-tests.cjs) 用 glob 枚举全部测试文件交给 `electron --test`——**新增测试无需改 package.json**。
 - **`pretest` 闸门**:`npm test` 先跑 `tsc --noEmit`;类型回归当场红。`build:*` 都带 `transpileOnly`,pretest 是唯一的类型校验点。
 
-## 11. 设置面板(8 个分类)
+## 11. 设置面板
 
-[src/renderer/components/SettingsDialog.tsx](../src/renderer/components/SettingsDialog.tsx) = 左侧分类导航 + 右侧分类面板双栏布局(类 VS Code Preferences)。**8 个分类**(代码 `SECTIONS` 数组顺序):
+[src/renderer/components/SettingsDialog.tsx](../src/renderer/components/SettingsDialog.tsx) = 左侧分类导航 + 右侧分类面板双栏布局(类 VS Code Preferences)。**分类**(代码 `SECTIONS` 数组顺序):
 
 | 分类 | key | Section 组件 |
 |---|---|---|
@@ -186,8 +184,10 @@ try {
 | 地图 | `mapique` | `MapSection` |
 | 标签与工作流 | `tags` | `TagsSection`(内嵌 `WorkflowManagerDialog`) |
 | 通知 | `notifications` | `NotificationsSection` |
-| AI | `ai` | `AiSection`(enable / 模型 / 权限 / CLI / API key / MCP) |
-| 高级 | `advanced` | `AdvancedSection`(内嵌 `ExtensionsSection` + `FulltextSection` + `DwgConverterSection`) |
+| MCP 服务器 | `mcp` | `McpSection`(本地 MCP 服务,docs/21) |
+| 命令 | `commands` | `UserCommandsSection` |
+| 关于 | `about` | `UpdateSection` |
+| 高级 | `advanced` | `AdvancedSection`(内嵌 `ExtensionsSection` + `FulltextSection`) |
 
 侧栏(`Sidebar.tsx`)底栏只剩 4 个图标:回收站 / 新建 Excalidraw / 新建 Drawio / 设置。`WorkflowManagerDialog` 由 SettingsDialog 在 `tags` 分类 stateful 渲染。
 
@@ -203,12 +203,11 @@ try {
 **响应式布局(窄窗口)**:
 
 - **视角切换器折叠**:[FileListHeader](../src/renderer/components/FileListHeader.tsx) `ResizeObserver` 测宽——workspace ≥ 720 时 9 个视角全 inline;< 720 时 list/grid/gallery inline + 其余 6 个进 `⋯` 溢出菜单(当前专门视角的图标显示在触发按钮上,活动视角不丢)。
-- **左栏标签页**:[MainLayout](../src/renderer/containers/MainLayout.tsx) viewport ≤ 1400px **或 AI 面板打开时**(`aiEnabled && aiPanelOpen`,2026-07-22 起——AI 面板占 380px 右栏,左双列会让工作区过窄),Sidebar(位置)+ DirectoryTree(目录树)合成**单个标签页面板**(位置 / 目录树 切换 + `+` 加位置),省 ~260px 给工作区;AI 面板关闭且 > 1400px 恢复并排。两组件各加 `embedded` 模式(去标题栏、宽度 100%)。
-- **AI 面板宽度**:默认 420 → **380**(`aiPanelWidth`,迁移把旧 420 也降到 380;自定义值保留)。
+- **左栏标签页**:[MainLayout](../src/renderer/containers/MainLayout.tsx) viewport ≤ 1400px(`useMediaQuery('(max-width: 1400px)')`)时,Sidebar(位置)+ DirectoryTree(目录树)合成**单个标签页面板**(位置 / 目录树 切换 + `+` 加位置),省 ~260px 给工作区;> 1400px 恢复并排。两组件各加 `embedded` 模式(去标题栏、宽度 100%)。
 
 ## 13. 架构审阅遗留(2026-07-18)
 
-> 2026-07-18 全仓架构审阅发现的结构项(性能项见 docs/15,不重复)已全部修复,以下记录修复后的当前结构与防复发 gotcha。模块级遗留记在各模块文档:索引生命周期 → [docs/04 §10](./04-search-index.md);扩展宿主 → [docs/07 §10](./07-extensions.md);读侧边界 → [docs/13 §13](./13-security.md)。审阅发现的迁移时序 bug 与 persist 同步链路已修,分别见 [docs/09 §26](./09-known-issues.md) / [docs/02 §10](./02-file-io.md)。
+> 2026-07-18 全仓架构审阅发现的结构项(性能项见 docs/15,不重复)已全部修复,以下记录修复后的当前结构与防复发 gotcha。模块级遗留记在各模块文档:索引生命周期 → [docs/04 §10](./04-search-index.md);扩展宿主 → [docs/07 §10](./07-extensions.md);读侧边界 → [docs/13 §10](./13-security.md)。审阅发现的迁移时序 bug 与 persist 同步链路已修,分别见 [docs/09 §24](./09-known-issues.md) / [docs/02 §10](./02-file-io.md)。
 
 **主进程结构**
 
@@ -219,7 +218,7 @@ try {
 **状态管理(§6)**
 
 - redux-thunk 已删注册(`configureStore.ts` 不再 `applyMiddleware`;全库零 thunk action)。异步 IPC 经 ipcApi 直调留在组件 / Provider —— 这是既定模式,真需要编排时再往 services 收敛。
-- `reducers/settings.ts` god-slice 已按**同形状拆分**成 [reducers/settings/](../src/renderer/reducers/settings/) 5 个域模块 —— `appearance`(主题/标签色/字体/列/tray)、`browser`(默认视图/回收站/隐藏文件/lunar/viewDepth/fulltext)、`integrations`(地图 + 用户命令)、`ai`(ai* 18 字段单 action)、`system`(默认位置/自动更新/keybindings/任务提醒 + REMOVE_LOCATION/REMOVE_STAGE 跨 slice 反应);各域自持字段接口 / 初始值 / 迁移 / reduce;主文件是 ~90 行组合层(接口 extends 组合 + initialState 展开 + migrate/reduce 链 + `export *` 全量再导出)。**state 形状零变化**:selector / redux-persist 不受影响;keybindings sanitize 的 `autoMergeLevel1` 敏感段原注释随迁。
+- `reducers/settings.ts` god-slice 已按**同形状拆分**成 [reducers/settings/](../src/renderer/reducers/settings/) 4 个域模块 —— `appearance`(主题/标签色/字体/列/tray)、`browser`(默认视图/回收站/隐藏文件/lunar/viewDepth/fulltext)、`integrations`(地图 + 用户命令)、`system`(默认位置/自动更新/keybindings/任务提醒 + REMOVE_LOCATION/REMOVE_STAGE 跨 slice 反应);各域自持字段接口 / 初始值 / 迁移 / reduce;主文件是 ~110 行组合层(接口 extends 组合 + initialState 展开 + migrate/reduce 链 + `export *` 全量再导出),链上顺带丢弃持久化遗留的 `ai*` 键。**state 形状零变化**(新键不会凭空出现):selector / redux-persist 不受影响;keybindings sanitize 的 `autoMergeLevel1` 敏感段原注释随迁。
 
 **渲染层桥(§5)**
 
@@ -237,5 +236,5 @@ try {
 
 **Shared 层(§1)**
 
-- 19 个视角 / 领域模块已迁入 `src/renderer/domain/`;contracts(ipc-types / whale-meta / extension-types / ai-types 等)留 shared;smart-tags 因 main 仍引用故留下。
-- period 解析(`isPeriodTag` / `dateTagRangeKey` / `DateTagRange` / `parseYyyymmdd`)在 [smart-tags.ts](../src/shared/smart-tags.ts)(main 的 HTTP `apply_tag` 与日期迁移要用),[calendar.ts](../src/renderer/domain/calendar.ts) import + re-export,渲染层调用点零改动;全库不再有 shared → renderer/domain 反向依赖。
+- 19 个视角 / 领域模块已迁入 `src/renderer/domain/`;contracts(ipc-types / whale-meta / extension-types 等)留 shared;smart-tags 因 main 仍引用故留下。
+- period 解析(`isPeriodTag` / `dateTagRangeKey` / `DateTagRange` / `parseYyyymmdd`)在 [smart-tags.ts](../src/shared/smart-tags.ts)(main 的日期标签迁移要用),[calendar.ts](../src/renderer/domain/calendar.ts) import + re-export,渲染层调用点零改动;全库不再有 shared → renderer/domain 反向依赖。

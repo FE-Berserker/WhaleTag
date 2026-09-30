@@ -17,9 +17,10 @@ import type { SearchQuery } from '../../shared/search-query';
 
 export function registerSearchIndexHandlers(): void {
   // ---- EXIF / GPS (Mapique perspective) ----
-  ipcMain.handle('exif:extractGps', (_event, filePath: string) =>
-    extractGps(filePath)
-  );
+  ipcMain.handle('exif:extractGps', (_event, filePath: string) => {
+    assertWithinAllowedRoot(filePath); // reads the full file's bytes
+    return extractGps(filePath);
+  });
 
   // P3-4: persisted EXIF extraction cache. Reads return the full record set
   // for the current root; writes upsert a single record. The renderer reads
@@ -31,9 +32,10 @@ export function registerSearchIndexHandlers(): void {
   });
   // P3-7: popup EXIF summary. Lazy — the renderer fetches this when a
   // marker is clicked, never on the initial map render.
-  ipcMain.handle('exif:get-summary', (_event, filePath: string) =>
-    getExifSummary(filePath)
-  );
+  ipcMain.handle('exif:get-summary', (_event, filePath: string) => {
+    assertWithinAllowedRoot(filePath); // reads the full file's bytes
+    return getExifSummary(filePath);
+  });
   ipcMain.handle(
     'exif:mark-processed',
     (

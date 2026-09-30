@@ -2,7 +2,7 @@
 
 # 14. Windows 打包流程与排坑
 
-> `npm run package:win` 的完整流程,以及在打包/AI 调试过程中踩过的坑(症状 → 根因 → 修法)。国内网络环境特有。
+> `npm run package:win` 的完整流程,以及在打包调试过程中踩过的坑(症状 → 根因 → 修法)。国内网络环境特有。
 
 ## 1. 打包命令
 
@@ -17,25 +17,19 @@ find release/build -mindepth 1 -delete
 unset ELECTRON_RUN_AS_NODE
 export ELECTRON_BUILDER_NSIS_RESOURCES_DIR="C:/WhaleTag/tools/nsis-resources-3.4.1"
 npm run package:win > package.log 2>&1
-
-# 4) (可选,与安装包分开交付)打 AI 组件包 —— 见 docs/11 §12
-npm run build:ai-component
-# → release/components/whaletag-ai-<ver>.whaleai(~159 MiB,平台专用,每平台各跑一次)
 ```
 
 产物:`release/build/WhaleTag Setup <ver>.exe` + `release/build/win-unpacked/`(免安装版,可直接跑 `WhaleTag.exe`)。
-
-> **0.2.0 起安装包不再内置 Claude CLI**:`@anthropic-ai/claude-code`(~229MB)从主包移除(改可选 AI 组件,见 [docs/11 §12](./11-ai.md)),安装包体积相应下降。`npm run package:win`(`= npm run build && electron-builder`)**不**自动产 `.whaleai` —— 上面的 step 4 是独立脚本,产物 `release/components/whaletag-ai-*.whaleai` 与安装包**分开发布**,用户在 设置 → AI 里手动安装。
 
 ## 2. 前置(一次性)
 
 - **nsis-resources 离线**(国内必做):下载 `nsis-resources-3.4.1.7z`(`github.com/electron-userland/electron-builder-binaries`),用 `node_modules/7zip-bin/win/x64/7za.exe` 解压到 `tools/nsis-resources-3.4.1/`,打包时设 `ELECTRON_BUILDER_NSIS_RESOURCES_DIR` 指向它,绕过 GitHub 下载(electron-builder 源码 `nsisUtil.js` 优先读这个 env)。SHA-512:`Dqd6g+2buwwvoG1Vyf6BHR1b+25QMmPcwZx40atOT57gH27rkjOei1L0JTldxZu4NFoEmW4kJgZ3DlSWVON3+Q==`。
 - `node_modules` 完整(`npm install`)。
-- `nsis-3.0.4.1` 编译器、`winCodeSign` 通常已在 `%LOCALAPPDATA%/electron-builder/Cache` 缓存,不用重下(winCodeSign 缺失时的后果见坑 9/10)。
+- `nsis-3.0.4.1` 编译器、`winCodeSign` 通常已在 `%LOCALAPPDATA%/electron-builder/Cache` 缓存,不用重下(winCodeSign 缺失时的后果见坑 5/6)。
 
 ## 3. 验证打包成功
 
-- exe 大小 ~447 MiB(0.1.0 及更早,含内置 claude-code);0.2.0 起去掉内置 CLI 后应明显更小 —— 打包后以实际为准。PE `MZ` 头 OK(`node -e "console.log(require('fs').readFileSync('...').slice(0,2))"`)。
+- exe 大小以实际产物为准(打包日志会打印);PE `MZ` 头 OK(`node -e "console.log(require('fs').readFileSync('...').slice(0,2))"`)。
 - 日志收尾有 `building block map`(electron-builder 最后一步)。
 - `grep -c "file:///C:/Whale" release/app/dist/main/main.js` = 0(无 import.meta.url 硬编码,见坑 4)。
 
@@ -52,7 +46,7 @@ npm run build:ai-component
 
 ### 坑 3:@electron/rebuild 异常 / ELECTRON_RUN_AS_NODE
 - **症状**:native 依赖(better-sqlite3 / sharp / @napi-rs)rebuild 失败,或 electron 子进程行为异常。
-- **根因**:Claude Code 的 host 会注入 `ELECTRON_RUN_AS_NODE`,让 electron 以纯 node 模式跑。
+- **根因**:shell 里残留 `ELECTRON_RUN_AS_NODE=1`(跑过 Electron 测试后常见,见 [docs/09 §1](./09-known-issues.md))会让 electron 退化为纯 Node 解释器。
 - **修法**:打包命令前 `unset ELECTRON_RUN_AS_NODE`。
 
 ### 坑 4:别机主进程崩 "ReferenceError: DOMMatrix is not defined"
@@ -67,43 +61,7 @@ npm run build:ai-component
   ```
   验证:`node -e "require('pdfjs-dist/legacy/build/pdf.mjs')"` 在 Electron 42(node 22)可行。
 
-### 坑 5:AI "MODULE_NOT_FOUND" requireStack []
-- **症状**:设了 API key 后 AI 报 `code: 'MODULE_NOT_FOUND', requireStack: []`(node 入口加载失败)。
-- **根因**:`findClaudeCliPath` 的 `bundledCliPath` 用 `require.resolve` 拿到 **`app.asar` 逻辑路径**(Electron 对 asar 透明,即使文件 asarUnpack'd,逻辑路径仍记 app.asar)。customSpawn 用**外部 node**跑 `cli-wrapper.cjs`,外部 node 读不到 `.asar` 归档(它是单个打包文件,不是目录)→ 入口找不到。
-- **修法**:`bundledCliPath` 把路径里 `app.asar` 重映射到 `app.asar.unpacked`(`@anthropic-ai/claude-code` 被 asarUnpack,物理在那):
-  ```ts
-  if (pkgJsonPath.includes('app.asar'))
-    pkgJsonPath = pkgJsonPath.replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2');
-  ```
-  通用教训:Electron 主进程把 asar 内文件路径传给**外部子进程**时,必须转成 `app.asar.unpacked` 真实路径。
-
-> ⚠️ **0.2.0 起此坑对 AI CLI 已失效**:`@anthropic-ai/claude-code` 不再内置打包(改可选 AI 组件,见 [docs/11 §12](./11-ai.md)),packaged build 的 `bundledCliPath()` 直接返 null(两包是 devDep、不在 packaged node_modules),这段 `app.asar → app.asar.unpacked` 重映射对 claude-code 已是死代码(dev 下命中 node_modules 也不走 asar);CLI 现从 `<userData>/components/ai/` 解析。**通用教训本身对其他 asarUnpack 二进制仍然成立**,只是 claude-code 不再是其用例。
-
-### 坑 6:AI "Claude Code process exited with code 1"(黑盒)
-- **症状**:AI 报裸 exit code,看不出真正原因。
-- **根因**:`customSpawn.ts` 的 stdio 第三项 `'ignore'`,claude.exe / cli-wrapper.cjs 的 stderr 全丢。
-- **修法**:stdio 改 `'pipe'` + 模块级 ring buffer 缓存 stderr 尾部(~64KB)+ `child.on('exit')` 记录非零退出诊断;导出 `consumeRecentSpawnExit(code)`;`ClaudeChatRuntime.errorMessage` 正则匹配 `exited with code N` 拼上 stderr 尾 8 行;`AiPanel` 用 `whiteSpace:'pre-wrap'` 多行显示。
-  - cli-wrapper.cjs 用 `stdio:'inherit'` 调 claude.exe,所以 claude.exe 的 stderr 会流到 customSpawn 的 child.stderr,pipe 即可拿到。
-  - SDK 的 `SpawnedProcess` 接口没有 stderr 字段(它不读 stderr),改 pipe 对 SDK 透明。
-  - **必须消费 stderr**,否则管道写满(~64KB)会让 claude.exe 阻塞 hang。
-
-### 坑 7:UI 显示 API key "已设置",但 AI 要 login
-- **症状**:设置显示"已设置(加密存储)",但 claude.exe 提示要登录(没收到凭证)。
-- **根因**:`secretStore.ts` 的 `hasSecret` 只查文件里有没有 key 条目,**不验证解密**。反复安装 exe / 换机器后,旧 DPAPI blob 残留(DPAPI 绑定 Windows 用户 + 机器,不可移植),`getSecret` 解密失败返回空,但 `hasSecret` 仍返回 true → UI 误导。
-- **修法**:`hasSecret` 先尝试解密,解密失败返回 false 并清掉 stale blob:
-  ```ts
-  const encrypted = readAll()[name];
-  if (!encrypted) return false;
-  if (decryptValue(encrypted) !== '') return true;
-  // stale undecryptable blob — drop it
-  ```
-
-### 坑 8:中转 403 "Failed to authenticate / Request not allowed"
-- **症状**:设 API key 后 AI 403。
-- **根因**:中转/代理用 `ANTHROPIC_AUTH_TOKEN`(Bearer 头),而 WhaleTag 默认设 `ANTHROPIC_API_KEY`(x-api-key 头);新版 Claude Code(2.1+)只读环境变量,不读 `~/.claude/settings.json`。
-- **修法**:设置 → AI(claude-cli)加「认证字段」下拉(`ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN`,cc-switch 默认后者)+「Anthropic 基础地址」字段(`ANTHROPIC_BASE_URL`,中转端点);`buildQueryOptions` 按选择写对应 env。参考 cc-switch(`github.com/farion1231/cc-switch`)的 Claude Code 供应商配置。
-
-### 坑 9/10:任务栏显示 Electron 默认图标 / rcedit 下载 winCodeSign 卡 GitHub(✅ 已解决)
+### 坑 5/6:任务栏显示 Electron 默认图标 / rcedit 下载 winCodeSign 卡 GitHub(✅ 已解决)
 - **历史**:`builder.json` 曾把 `win.signAndEditExecutable` 设 `false` 绕开 rcedit —— rcedit(app-builder 的 `pkg/rcedit`)需要 `winCodeSign` 包,从 GitHub 下载,国内卡(`Get https://github.com/.../winCodeSign-2.6.0.7z: ... wsarecv: ... timeout` → `ERR_ELECTRON_BUILDER_CANNOT_EXECUTE`);代价是 exe 保留 Electron 默认图标(任务栏/Alt+Tab 不显示蓝色 W)。
 - **现状**:`winCodeSign-2.6.0` 已离线缓存在 `%LOCALAPPDATA%/electron-builder/Cache/winCodeSign/winCodeSign-2.6.0/`,`resources/builder.json` **不再**带 `signAndEditExecutable: false`(回退默认 `true`)→ rcedit 跑通,把 `resources/icon.ico`(蓝色 W,多分辨率)嵌进 exe。**0.3.0 起验证**:从打包后的 `win-unpacked/WhaleTag.exe` 抽出的图标 MD5 与 Electron 默认图标不同 → 自定义 W 已嵌入。
 - **迁移注意**:换机器/清缓存后需重新落 `winCodeSign-2.6.0`(下载 `winCodeSign-2.6.0.7z` 解压到上述 Cache 目录);否则 `signAndEditExecutable:true` 又会在 editResources 卡 GitHub,或临时回退 `false`(图标退回默认)。
@@ -114,23 +72,4 @@ npm run build:ai-component
 |---|---|
 | `resources/builder.json` | electron-builder 配置(icon / asarUnpack / win.signAndEditExecutable) |
 | `.erb/configs/webpack.config.main.{dev,prod}.ts` | main bundle webpack(externals) |
-| `src/main/ai/providers/claude/cli/findClaudeCliPath.ts` | 解析 claude(.exe) 路径(顺序:settings > dev node_modules > AI 组件 > 系统装 > npm-global > PATH,见 [docs/11 §12](./11-ai.md)) |
-| `src/main/ai/component-resolver.ts` / `component-installer.ts` | 可选 AI 组件:SDK 运行时加载 + `.whaleai` 原子安装/卸载(见 [docs/11 §12](./11-ai.md)) |
-| `scripts/build-ai-component.js` | 打 `.whaleai` 7z 包(claude-code + sdk + 平台 optionalDeps)→ `release/components/` |
-| `src/main/ai/providers/claude/customSpawn.ts` | spawn claude.exe + stderr 捕获(ring buffer) |
-| `src/main/ai/providers/claude/buildQueryOptions.ts` | 构造 env(API_KEY/AUTH_TOKEN/BASE_URL) |
-| `src/main/ai/providers/claude/ClaudeChatRuntime.ts` | runTurn / 预热降级 / 认证预检 / errorMessage |
-| `src/main/ai/security/secretStore.ts` | DPAPI 加密 key 存储(hasSecret 验证解密) |
 | `tools/nsis-resources-3.4.1/` | 离线 nsis-resources |
-
-## 6. AI 调用链(理解坑 5-8)
-
-```
-renderer ai:query  →  ipc-ai-runtime.ts streamTurn(组件装了才注册,见 docs/11 §12.5) →  ClaudeChatRuntime.runTurn
-   →  loadClaudeSdk() →  claude-agent-sdk query()/startup()
-   →  customSpawn spawn(外部 node, [cli-wrapper.cjs, ...])
-   →  cli-wrapper.cjs spawnSync(claude.exe, ...)
-   →  claude.exe  读 env(ANTHROPIC_API_KEY/AUTH_TOKEN/BASE_URL)+ ~/.claude/.credentials.json
-```
-
-认证与 endpoint 全靠 env 透传(`buildQueryOptions` 构造,customSpawn 透传,cli-wrapper 再 spawnSync 透传)。新版 Claude Code(2.1+)**只读环境变量**,不读 `~/.claude/settings.json`(见 cc-switch Issue #1046)。

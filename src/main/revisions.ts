@@ -107,8 +107,25 @@ export async function restoreRevision(
   await atomicWriteText(filePath, content);
 }
 
-/** Deletes a single revision file. */
-export async function deleteRevision(revisionPath: string): Promise<void> {
+/**
+ * Deletes a single revision file. Binds the revision to `filePath` (same
+ * prefix check as {@link restoreRevision}) so a compromised renderer can't
+ * turn this into an arbitrary-path delete — `force: true` bypasses the
+ * recycle bin entirely.
+ */
+export async function deleteRevision(
+  filePath: string,
+  revisionPath: string
+): Promise<void> {
+  const revDir = revisionsDirFor(filePath);
+  const resolvedRev = path.resolve(revisionPath);
+  const resolvedDir = path.resolve(revDir);
+  const prefix = resolvedDir.endsWith(path.sep)
+    ? resolvedDir
+    : `${resolvedDir}${path.sep}`;
+  if (!resolvedRev.startsWith(prefix)) {
+    throw new Error('Invalid revision path');
+  }
   await fsp.rm(revisionPath, { force: true });
 }
 

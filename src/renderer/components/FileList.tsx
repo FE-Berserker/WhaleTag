@@ -550,7 +550,7 @@ export default function FileList() {
     [visible, selectedTick]
   );
 
-  // Mirror the selection into FileSelectionContext so siblings (the AI panel)
+  // Mirror the selection into FileSelectionContext so sibling surfaces
   // can read the current selection without reaching into FileList's internals.
   const { setSelectedEntries: setSelectedEntriesCtx } =
     useFileSelectionContext();

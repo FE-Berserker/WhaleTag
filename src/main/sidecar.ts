@@ -404,6 +404,36 @@ export async function writeSidecar(
 }
 
 /**
+ * Atomically read-modify-write a single file's sidecar fields under the
+ * directory lock — the whole-entry sibling of {@link updateFileTags}, used by
+ * the MCP server's `whale_write_description` tool. `mutator` receives the
+ * current meta (empty object if absent) and returns the next meta; returning
+ * an empty meta drops the entry. Everything runs inside the lock so a
+ * concurrent tag write to the same file can't be clobbered by a stale
+ * read-snapshot (merge-over-wipe).
+ */
+export async function mutateSidecar(
+  filePath: string,
+  mutator: (current: SidecarMeta) => SidecarMeta
+): Promise<SidecarMeta> {
+  const dir = path.dirname(filePath);
+  const name = path.basename(filePath);
+  return withLock(dir, async () => {
+    const files = await loadFilesOrMigrate(dir);
+    const before = files[name] ?? {};
+    const after = mutator({ ...before });
+    const next = { ...files };
+    if (isSidecarEmpty(after)) {
+      delete next[name];
+    } else {
+      next[name] = after;
+    }
+    await persistWsd(dir, next);
+    return after;
+  });
+}
+
+/**
  * Atomically read-modify-write a single file's tag array, preserving any
  * existing `color` / `description` / `created` / `modified` fields. The
  * `mutator` receives the current tag list (empty if the file has no sidecar
@@ -411,8 +441,8 @@ export async function writeSidecar(
  * directory lock so a concurrent UI write to another file in the same
  * directory can't be clobbered.
  *
- * The pure-tag helper this exposes — used by the HTTP AI provider's
- * `apply_tag` tool, which needs removal/add operations to be merge-safe
+ * The pure-tag helper this exposes — used by the MCP server's
+ * `whale_apply_tags` tool, which needs removal/add operations to be merge-safe
  * against the user's interactive writes. The mutator is responsible for
  * smart-tag normalization (see `shared/smart-tags.ts:normalizeSmartTags`); this
  * function does not enforce it, to stay tag-shape-agnostic.

@@ -187,7 +187,7 @@ export async function request<O extends IndexWorkerOp>(
 /**
  * Subscribe to server-pushed events (`ready` on boot; `progress` during
  * `index:build` / `fulltext:build`). Returns an unsubscribe function —
- * mirror the `onAiChunk` shape at `src/main/preload.ts:291-316`.
+ * mirror the subscription shape used by preload's push channels.
  */
 export function subscribe(handler: (ev: IndexWorkerEvent) => void): () => void {
   subscribers.add(handler);

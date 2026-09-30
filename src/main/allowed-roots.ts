@@ -75,9 +75,31 @@ export function setAllowedRoots(roots: string[]): void {
       allowedRoots.add(foldPath(path.resolve(r)));
     }
   }
+  for (const l of rootsListeners) {
+    try {
+      l(roots ?? []);
+    } catch {
+      // A broken listener must never break the root sync.
+    }
+  }
 }
 
 /** Returns a snapshot of the currently configured location roots. */
 export function getAllowedRoots(): string[] {
   return Array.from(allowedRoots);
+}
+
+type RootsListener = (rawRoots: string[]) => void;
+const rootsListeners = new Set<RootsListener>();
+
+/**
+ * Subscribe to raw (un-folded) root pushes — e.g. the MCP server surfaces the
+ * configured locations to external AI clients and needs display-correct
+ * paths, not the case-folded guard strings. Returns an unsubscribe.
+ */
+export function onAllowedRootsChanged(listener: RootsListener): () => void {
+  rootsListeners.add(listener);
+  return () => {
+    rootsListeners.delete(listener);
+  };
 }

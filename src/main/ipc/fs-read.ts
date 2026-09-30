@@ -59,7 +59,7 @@ async function buildEntry(dirPath: string, name: string): Promise<DirEntry | nul
 }
 
 /** Resolves metadata for every direct child of `dirPath`. */
-async function listDirectory(dirPath: string): Promise<DirEntry[]> {
+export async function listDirectory(dirPath: string): Promise<DirEntry[]> {
   const names = (await fsp.readdir(dirPath)).filter((n) => !HIDDEN.has(n));
   // Stat entries with bounded concurrency — a 10k-file directory would
   // otherwise fan out 10k simultaneous stat syscalls.
@@ -123,7 +123,8 @@ async function listDirectoryRecursive(
 }
 
 /** Reads a text file and returns it as UTF-8, auto-detecting non-UTF-8 encodings. */
-async function readTextFile(filePath: string): Promise<string> {  const buf = await fsp.readFile(filePath);
+export async function readTextFile(filePath: string): Promise<string> {
+  const buf = await fsp.readFile(filePath);
 
   // UTF-8 BOM: strip the marker and decode the remainder as UTF-8.
   if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {

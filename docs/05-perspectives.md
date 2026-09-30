@@ -172,7 +172,7 @@ Gallery 拖拽打标已实现 P0。
 >
 > **根因**:地图瓦片用高德(`autonavi.com`,国内通、免 key),geocoding 却用 Nominatim(OSM,国内不通)——服务体系不一致。当初选 Nominatim 是为免 key,忽略了国内可达性。
 >
-> **若以后要做**:① 高德 geocoding(`restapi.amap.com`,国内通、与高德瓦片同坐标系 GCJ-02),但要一个免费 web key + 设置项;② 或**走 AI 助手**——让 AI 处理「找天安门、定位过去」这类自然语言地名查询,免 key、免自接 geocoder。
+> **若以后要做**:高德 geocoding(`restapi.amap.com`,国内通、与高德瓦片同坐标系 GCJ-02),但要一个免费 web key + 设置项。
 
 ### 10.1 相关现状(与搜索功能无关,仍然成立)
 

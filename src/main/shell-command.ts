@@ -99,14 +99,6 @@ export async function runUserCommand(
     name: path.basename(targetPath),
   };
   const finalCommand = substituteAndQuote(template, values);
-  // TEMP DEBUG (UNC slash investigation) — prints the raw template WhaleTag
-  // received + the final command handed to cmd.exe, so we can see exactly
-  // which backslashes WhaleTag rewrites (if any). JSON.stringify keeps
-  // backslashes visible. Remove once resolved.
-  // eslint-disable-next-line no-console
-  console.log('[user-command] template:', JSON.stringify(template));
-  // eslint-disable-next-line no-console
-  console.log('[user-command] final:   ', JSON.stringify(finalCommand));
   openTerminalWindow(finalCommand);
   return { ok: true };
 }
@@ -120,7 +112,7 @@ export async function runUserCommand(
  * Platform notes:
  *  - Windows: `cmd /d /s /k "<command>"` opens a persistent cmd window. `/s`
  *    + the outer `"..."` (with `windowsVerbatimArguments`) is the robust cmd
- *    quoting pattern used by the Claude CLI `.cmd` shim — it strips the outer
+ *    quoting pattern for `cmd /s` — it strips the outer
  *    quotes and runs the inner command verbatim. `/k` keeps the window open.
  *  - macOS: AppleScript tells Terminal.app to run the command (the only
  *    reliable way to open a visible Terminal window with a command).

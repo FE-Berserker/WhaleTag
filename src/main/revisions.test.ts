@@ -137,9 +137,31 @@ describe('revision history', () => {
       const revs = await listRevisions(filePath);
       assert.equal(revs.length, 1);
 
-      await deleteRevision(revs[0].path);
+      await deleteRevision(filePath, revs[0].path);
       const after = await listRevisions(filePath);
       assert.equal(after.length, 0);
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('deleteRevision rejects a revision bound to another file (no arbitrary delete)', async () => {
+    const dir = await tmpDir();
+    try {
+      const a = path.join(dir, 'a.txt');
+      const b = path.join(dir, 'b.txt');
+      await fsp.writeFile(a, 'v1', 'utf8');
+      await fsp.writeFile(b, 'v1', 'utf8');
+      await backupRevision(a);
+      const revsA = await listRevisions(a);
+      assert.equal(revsA.length, 1);
+
+      await assert.rejects(
+        () => deleteRevision(b, revsA[0].path),
+        /Invalid revision path/
+      );
+      // The revision itself must survive the rejected call.
+      assert.equal((await listRevisions(a)).length, 1);
     } finally {
       await fsp.rm(dir, { recursive: true, force: true });
     }

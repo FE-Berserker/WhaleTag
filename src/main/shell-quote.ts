@@ -3,21 +3,37 @@
  * no Electron side effects — unit-tested under `node:test` without an Electron
  * runtime.
  *
- * Reuses the proven Windows cmd.exe quoting (`quoteWindowsShellArgument`) the
- * Claude CLI `.cmd` shim already relies on, and adds the POSIX single-quote
- * equivalent. The path the user right-clicks is the UNTRUSTED input here (the
- * command template itself is user-authored and trusted), so it must be quoted
- * before it lands in a shell string — see `docs/13-security.md`.
+ * The Windows branch is the cmd.exe double-quote + `""`-doubling rule that
+ * used to live in the (removed) Claude CLI `.cmd`-shim helper, plus the POSIX
+ * single-quote equivalent. The path the user right-clicks is the UNTRUSTED
+ * input here (the command template itself is user-authored and trusted), so
+ * it must be quoted before it lands in a shell string — see
+ * `docs/13-security.md`.
  */
-import { quoteWindowsShellArgument } from './ai/utils/windowsCmdShim';
+
+const WINDOWS_CMD_ARGUMENT_CHARS = /[\s"&<>|{}^=;!'+,`~()%@]/u;
+
+function requiresWindowsShellQuoting(value: string): boolean {
+  return (
+    WINDOWS_CMD_ARGUMENT_CHARS.test(value) ||
+    value.includes('[') ||
+    value.includes(']')
+  );
+}
+
+function quoteWindowsShellArgument(value: string): string {
+  if (!value.length) return '""';
+  if (!requiresWindowsShellQuoting(value)) return value;
+  return `"${value.replace(/"/g, '""')}"`;
+}
 
 /**
  * Quote a single path/value for the platform's shell so it's passed verbatim
  * (spaces, `&`, `|`, `"`, etc. are neutralized).
  *
- * - Windows (cmd.exe): double-quote + double embedded `"` (delegates to the
- *   shim helper). NOTE: `%` survives this — `runUserCommand` rejects paths
- *   containing `%` on Windows before they reach here.
+ * - Windows (cmd.exe): double-quote + double embedded `"`. NOTE: `%` survives
+ *   this — `runUserCommand` rejects paths containing `%` on Windows before
+ *   they reach here.
  * - POSIX (macOS/Linux): single-quote + `'\''` close-reopen. Nothing is
  *   special inside `'…'`, so this is fully robust.
  */

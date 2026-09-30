@@ -5,7 +5,7 @@ import { existsSync } from 'fs';
  * Locates the 7za binary (7zip-bin's bundled binary or system PATH).
  *
  * Extracted from the old `archive.ts` (archive-viewer) — the remaining consumer
- * is the AI component installer, which unpacks `.whaleai` (7z) packages.
+ * is archive-viewer's `.7z` listing.
  *
  * Memoized PATH-probe result for the bare `7za` command. The probe runs as an
  * asynchronous `execFile` so the main process never blocks on a cold PATH

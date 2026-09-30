@@ -8,16 +8,7 @@ import type {
   ExtensionRegistry,
   RevisionInfo,
 } from './extension-types';
-import type {
-  AiApprovalRequest,
-  AiComponentInstallResult,
-  AiComponentState,
-  AiComponentUninstallResult,
-  AiQueryPayload,
-  ApprovalDecision,
-  AskUserAnswers,
-  StreamChunk,
-} from './ai-types';
+import type { McpApprovalRequest, McpStatus } from './mcp-types';
 
 export interface DirEntry {
   /** Display name, e.g. "report.pdf". */
@@ -151,7 +142,6 @@ export interface WhaleApi {
   openDirectoryDialog: () => Promise<string | null>;
   /** Shows the native file picker restricted to images. Returns null if cancelled. */
   openImageFileDialog: () => Promise<string | null>;
-  openComponentFileDialog: () => Promise<string | null>;
 
   /** Register configured location roots so main can confine writes to them. */
   setAllowedRoots: (roots: string[]) => Promise<void>;
@@ -310,7 +300,8 @@ export interface WhaleApi {
   // Phase 4 — Extension system (viewers / editors / revisions)
   loadExtensionRegistry: () => Promise<ExtensionRegistry | null>;
   backupRevision: (filePath: string) => Promise<void>;
-  deleteRevision: (revisionPath: string) => Promise<void>;
+  /** Deletes one revision. `filePath` binds the revision to its owner file. */
+  deleteRevision: (filePath: string, revisionPath: string) => Promise<void>;
   writeFileWithRevision: (filePath: string, content: string) => Promise<void>;
   listRevisions: (filePath: string) => Promise<RevisionInfo[]>;
   restoreRevision: (
@@ -347,60 +338,25 @@ export interface WhaleApi {
    *  Fire-and-forget; must be called during the renderer's dragstart. */
   startFileDrag: (filePath: string) => void;
 
-  // Phase 5 — AI assistant. `aiQuery` returns immediately and streams
-  // `StreamChunk`s via `onAiChunk` (the only main→renderer push channel).
-  aiQuery: (payload: AiQueryPayload) => Promise<{ ok: true }>;
-  aiCancel: (conversationId: string) => Promise<{ ok: true }>;
-  /** Pre-warm the Claude CLI for the given options (best-effort, no-op for HTTP). */
-  aiPrewarm: (payload: AiQueryPayload) => Promise<{ ok: true }>;
-  /** Generate a short conversation title (HTTP providers; '' for Claude CLI). */
-  aiGenerateTitle: (args: {
-    settings: AiQueryPayload['settings'];
-    history: AiQueryPayload['history'];
-  }) => Promise<{ title: string }>;
-  /** Rewrite an editor selection per an instruction (HTTP providers only). */
-  aiInlineEdit: (args: {
-    settings: AiQueryPayload['settings'];
-    selection: string;
-    instruction: string;
-  }) => Promise<{ replacement: string }>;
-  /** Encrypts the key with Electron safeStorage; plaintext never crosses IPC. */
-  aiSetApiKey: (key: string) => Promise<{ ok: true }>;
-  aiClearApiKey: () => Promise<{ ok: true }>;
-  /** True if a key is stored (does not reveal it). */
-  aiHasApiKey: () => Promise<boolean>;
-  /** Resolve the Claude Code CLI path, honoring a settings override. */
-  aiDiscoverCli: (
-    override: string | null
-  ) => Promise<{ path: string | null }>;
-  /** Resolve a pushed approval request (from `onAiApprovalRequest`). For an
-   *  AskUserQuestion request, pass the user's `answers` with `decision='allow'`.
-   *  For a deny, `note` optionally carries feedback back to the model (plan
-   *  mode's "Request changes"). */
-  aiResolveApproval: (
+  // Local MCP server (Settings → Integrations). Config is main-process
+  // owned (docs/21); these poll status and push decisions only.
+  /** Snapshot: running / port / endpoint / token / readOnly / sessions. */
+  mcpGetStatus: () => Promise<McpStatus>;
+  /** Bring the listener up/down to match. Resolves fresh status. */
+  mcpSetEnabled: (enabled: boolean) => Promise<McpStatus>;
+  /** Read-only mode refuses every mutating tool call. */
+  mcpSetReadOnly: (readOnly: boolean) => Promise<McpStatus>;
+  /** New bearer token (invalidates configured clients until updated). */
+  mcpRegenerateToken: () => Promise<McpStatus>;
+  /** Answer a pushed approval request (from onMcpApprovalRequest). */
+  mcpResolveApproval: (
     reqId: string,
-    decision: ApprovalDecision,
-    answers?: AskUserAnswers,
-    note?: string
+    allowed: boolean
   ) => Promise<{ ok: true }>;
-  /** OpenAI-compatible provider key (encrypted; never reveals plaintext). */
-  aiSetOpenaiKey: (key: string) => Promise<{ ok: true }>;
-  aiClearOpenaiKey: () => Promise<{ ok: true }>;
-  aiHasOpenaiKey: () => Promise<boolean>;
-  // Optional AI component (user-installed .whaleai → <userData>/components/ai).
-  aiGetComponentState: () => Promise<AiComponentState>;
-  aiInstallComponent: (filePath: string) => Promise<AiComponentInstallResult>;
-  aiUninstallComponent: () => Promise<AiComponentUninstallResult>;
-  /** Subscribe to tool-call approval requests. Returns unsubscribe. */
-  onAiApprovalRequest: (cb: (req: AiApprovalRequest) => void) => () => void;
-  /** Subscribe to streamed chunks for the active turn. Returns unsubscribe. */
-  onAiChunk: (
-    cb: (e: { conversationId: string; chunk: StreamChunk }) => void
-  ) => () => void;
-  /** Subscribe to fatal turn errors. Returns unsubscribe. */
-  onAiError: (
-    cb: (e: { conversationId: string; message: string }) => void
-  ) => () => void;
+  /** Unanswered approval requests (dialog remount after a reload). */
+  mcpPendingApprovals: () => Promise<McpApprovalRequest[]>;
+  /** Subscribe to write-op approval requests. Returns unsubscribe. */
+  onMcpApprovalRequest: (cb: (req: McpApprovalRequest) => void) => () => void;
 
   /**
    * Lifecycle hook: the main process fires this right before the window closes
