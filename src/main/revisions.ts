@@ -133,14 +133,23 @@ async function cleanupDir(dir: string, cutoff: number): Promise<void> {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       await cleanupDir(fullPath, cutoff);
-      const remaining = await fsp.readdir(fullPath).catch(() => []);
+      const remaining = await fsp.readdir(fullPath).catch((e) => {
+        // Keep the directory (and log it): an unreadable revision folder must
+        // not be treated as empty and removed with its contents unknown.
+        console.warn('[revisions] failed to inspect a revision folder:', fullPath, e);
+        return [entry.name];
+      });
       if (remaining.length === 0) {
-        await fsp.rmdir(fullPath).catch(() => undefined);
+        await fsp.rmdir(fullPath).catch((e) => {
+          console.warn('[revisions] failed to prune an empty revision folder:', fullPath, e);
+        });
       }
     } else if (entry.isFile()) {
       const stat = await fsp.stat(fullPath).catch(() => null);
       if (stat && stat.mtime.getTime() < cutoff) {
-        await fsp.rm(fullPath, { force: true }).catch(() => undefined);
+        await fsp.rm(fullPath, { force: true }).catch((e) => {
+          console.warn('[revisions] failed to delete an expired revision:', fullPath, e);
+        });
       }
     }
   }

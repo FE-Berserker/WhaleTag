@@ -819,7 +819,11 @@ export default function MapiqueView({
 
   // H.26 P0-1: reveal the entry in the OS file manager.
   const handleReveal = useCallback((entry: DirEntry) => {
-    void ipcApi.revealAndSelect(entry.path);
+    void ipcApi.revealAndSelect(entry.path).catch((e) => {
+      // Nothing happened visually when the native reveal failed (path gone,
+      // permission) — say so instead of leaving a dead click.
+      setNotice({ message: e instanceof Error ? e.message : String(e) });
+    });
   }, []);
 
   const selectedEntries = useMemo(

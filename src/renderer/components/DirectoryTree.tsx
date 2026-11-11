@@ -13,6 +13,7 @@ import { List as VirtualTreeList } from 'react-window';
 import {
   Alert,
   Box,
+  Button,
   CircularProgress,
   Divider,
   IconButton,
@@ -47,9 +48,17 @@ import { useExtensionContext } from '-/hooks/ExtensionContextProvider';
 import { useConfirm } from '-/components/ConfirmDialogProvider';
 import { useDirectoryTreeRefresh } from '-/hooks/DirectoryTreeRefreshContextProvider';
 import { ipcApi } from '-/services/ipc-api';
+import { errorMessage } from '-/services/errors';
 import { COLUMN_HEADER_HEIGHT } from '-/theme';
 import { basename, joinPath, isSameOrDescendant } from '-/services/path-util';
 import { changedParentsToReload } from './directory-tree-refresh';
+import {
+  buildTreeRows,
+  type TreeErrorNode,
+  type TreeFileNode,
+  type TreeFolderNode,
+  type TreeNode,
+} from '-/domain/directory-tree-rows';
 import PromptDialog from '-/components/PromptDialog';
 
 /** Normalizes separators + trailing slash so two spellings of a path compare equal. */
@@ -83,22 +92,6 @@ function ancestorChain(root: string, target: string): string[] {
  */
 const TREE_ROW_HEIGHT = 32;
 
-/** A flattened folder row in the virtualized tree. */
-interface TreeFolderNode {
-  kind: 'folder';
-  name: string;
-  path: string;
-  depth: number;
-}
-/** A flattened file row in the virtualized tree. */
-interface TreeFileNode {
-  kind: 'file';
-  entry: DirEntry;
-  depth: number;
-}
-/** Discriminated union of the two row shapes `TreeRow` renders. */
-type TreeNode = TreeFolderNode | TreeFileNode;
-
 /** react-window v2 row component for the virtualized tree. react-window types
  *  `rowProps` from this component's own props (minus reserved index/style), so
  *  the data flows as individual props, not a `data` bag. Only the visible
@@ -109,18 +102,24 @@ function TreeRow({
   nodes,
   renderFolder,
   renderFile,
+  renderError,
 }: {
   index: number;
   style: CSSProperties;
   nodes: TreeNode[];
   renderFolder: (n: TreeFolderNode) => ReactNode;
   renderFile: (n: TreeFileNode) => ReactNode;
+  renderError: (n: TreeErrorNode) => ReactNode;
 }) {
   const node = nodes[index];
   if (!node) return null;
   return (
     <div style={style}>
-      {node.kind === 'folder' ? renderFolder(node) : renderFile(node)}
+      {node.kind === 'folder'
+        ? renderFolder(node)
+        : node.kind === 'error'
+          ? renderError(node)
+          : renderFile(node)}
     </div>
   );
 }
@@ -146,6 +145,11 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [childrenByPath, setChildrenByPath] = useState<Map<string, DirEntry[]>>(
+    new Map()
+  );
+  // Per-folder load failures. A failed `listDirectory` used to store an empty
+  // child list, which made the folder look empty and permanently cached it.
+  const [childrenError, setChildrenError] = useState<Map<string, string>>(
     new Map()
   );
   const [loading, setLoading] = useState<Set<string>>(new Set());
@@ -227,9 +231,19 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
           return a.name.localeCompare(b.name);
         });
       setChildrenByPath((prev) => new Map(prev).set(dirPath, visible));
-    } catch {
-      // Mark as loaded-but-empty so we stop showing a spinner / expand affordance.
-      setChildrenByPath((prev) => new Map(prev).set(dirPath, []));
+      setChildrenError((prev) => {
+        if (!prev.has(dirPath)) return prev;
+        const next = new Map(prev);
+        next.delete(dirPath);
+        return next;
+      });
+    } catch (e) {
+      // Keep the folder "unloaded" and surface an inline error row with a
+      // Retry action — an empty folder would be a lie (and the old code also
+      // cached the empty list, so expanding again never retried).
+      setChildrenError((prev) =>
+        new Map(prev).set(dirPath, errorMessage(e))
+      );
     } finally {
       setLoading((prev) => {
         const next = new Set(prev);
@@ -243,6 +257,7 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
   useEffect(() => {
     requestedRef.current = new Set();
     setChildrenByPath(new Map());
+    setChildrenError(new Map());
     setLoading(new Set());
     if (currentLocation) {
       setExpanded(new Set([currentLocation.path]));
@@ -467,6 +482,8 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
   // the drop. The extension clears it on drop or via a safety timeout.
   const startEntryDrag = (entry: DirEntry) => (e: React.DragEvent) => {
     e.preventDefault();
+    // Fire-and-forget IPC (returns void at the bridge layer); the extension
+    // clears the pending path on drop or via its safety timeout.
     ipcApi.startFileDrag(entry.path);
     window.dispatchEvent(
       new CustomEvent('whale:extdrag-start', {
@@ -482,26 +499,19 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
   // L12: flatten the expanded tree (depth-first) into a visible-node list so it
   // can be rendered by a virtualized List — a fully-expanded big subtree used
   // to mount a ListItemButton per node (thousands for a repo's node_modules).
+  // The row-shape rules live in `-/domain/directory-tree-rows` so they can be
+  // unit-tested without mounting the tree.
   const visibleNodes = useMemo(() => {
-    const out: Array<
-      | { kind: 'folder'; name: string; path: string; depth: number }
-      | { kind: 'file'; entry: DirEntry; depth: number }
-    > = [];
-    if (!currentLocation) return out;
-    const walk = (name: string, path: string, depth: number) => {
-      out.push({ kind: 'folder', name, path, depth });
-      if (!expanded.has(path)) return;
-      const kids = childrenByPath.get(path);
-      if (!kids) return;
-      const visibleKids = showFiles ? kids : kids.filter((k) => k.isDirectory);
-      for (const k of visibleKids) {
-        if (k.isDirectory) walk(k.name, k.path, depth + 1);
-        else out.push({ kind: 'file', entry: k, depth: depth + 1 });
-      }
-    };
-    walk(currentLocation.name, currentLocation.path, 0);
-    return out;
-  }, [currentLocation, expanded, childrenByPath, showFiles]);
+    if (!currentLocation) return [] as TreeNode[];
+    return buildTreeRows({
+      rootName: currentLocation.name,
+      rootPath: currentLocation.path,
+      expanded,
+      childrenByPath,
+      childrenError,
+      showFiles,
+    });
+  }, [currentLocation, expanded, childrenByPath, childrenError, showFiles]);
 
   // Leaf node for a file. Double-click opens it (image → full-screen lightbox,
   // everything else → a tab); dragging starts a native OS drag into the editor
@@ -538,6 +548,40 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
         slotProps={{ primary: { noWrap: true, variant: 'body2' } }}
       />
     </ListItemButton>
+  );
+
+  // Inline failure row for a folder whose children could not be listed.
+  const renderErrorNode = (node: TreeErrorNode): ReactNode => (
+    <Box
+      key={`error:${node.path}`}
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
+        pl: node.depth * 1.25 + 2.5,
+        pr: 1,
+        minHeight: 28,
+      }}
+    >
+      <Typography
+        variant="caption"
+        color="error"
+        noWrap
+        title={node.message}
+        sx={{ flex: 1, minWidth: 0 }}
+      >
+        {t('folderLoadFailed')}
+      </Typography>
+      <Button
+        size="small"
+        onClick={(e) => {
+          e.stopPropagation();
+          reloadChildren(node.path);
+        }}
+      >
+        {t('retry')}
+      </Button>
+    </Box>
   );
 
   const renderNode = (
@@ -682,6 +726,7 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
               nodes: visibleNodes,
               renderFolder: (n: TreeFolderNode) => renderNode(n.name, n.path, n.depth),
               renderFile: (n: TreeFileNode) => renderFileNode(n.entry, n.depth),
+              renderError: (n: TreeErrorNode) => renderErrorNode(n),
             } as any}
             style={{ height: '100%' }}
           />

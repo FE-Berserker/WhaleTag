@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  Alert,
   Button,
   Dialog,
   DialogActions,
@@ -15,6 +16,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import RestoreIcon from '@mui/icons-material/Restore';
 import { useTranslation } from 'react-i18next';
 import { ipcApi } from '-/services/ipc-api';
+import { errorMessage } from '-/services/errors';
 import type { RevisionInfo } from '../../shared/extension-types';
 
 interface RevisionHistoryDialogProps {
@@ -33,22 +35,27 @@ export default function RevisionHistoryDialog({
   const { t } = useTranslation();
   const [revisions, setRevisions] = useState<RevisionInfo[]>([]);
   const [loading, setLoading] = useState(false);
+  // A failed list used to render as "no revisions" and a failed delete as
+  // nothing at all — both lied about the user's files.
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setLoading(true);
+    setError(null);
     ipcApi
       .listRevisions(filePath)
       .then((revs) => {
         setRevisions(revs);
       })
-      .catch(() => {
+      .catch((e) => {
         setRevisions([]);
+        setError(t('operationFailed', { message: errorMessage(e) }));
       })
       .finally(() => {
         setLoading(false);
       });
-  }, [open, filePath]);
+  }, [open, filePath, t]);
 
   const handleRestore = async (revisionPath: string) => {
     try {
@@ -56,8 +63,7 @@ export default function RevisionHistoryDialog({
       onRestored();
       onClose();
     } catch (e) {
-      // eslint-disable-next-line no-alert
-      alert(t('revisionRestoreError', { message: e instanceof Error ? e.message : String(e) }));
+      setError(t('revisionRestoreError', { message: errorMessage(e) }));
     }
   };
 
@@ -65,8 +71,8 @@ export default function RevisionHistoryDialog({
     try {
       await ipcApi.deleteRevision(filePath, revisionPath);
       setRevisions((prev) => prev.filter((r) => r.path !== revisionPath));
-    } catch {
-      // ignore
+    } catch (e) {
+      setError(t('operationFailed', { message: errorMessage(e) }));
     }
   };
 
@@ -74,6 +80,15 @@ export default function RevisionHistoryDialog({
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
       <DialogTitle>{t('revisionHistory')}</DialogTitle>
       <DialogContent dividers>
+        {error ? (
+          <Alert
+            severity="error"
+            sx={{ mb: 1 }}
+            onClose={() => setError(null)}
+          >
+            {error}
+          </Alert>
+        ) : null}
         {loading ? (
           <ListItemText primary={t('loading')} />
         ) : revisions.length === 0 ? (

@@ -679,5 +679,9 @@
   "mcpApproveTitle": "파일 작업 승인",
   "mcpApproveIntro": "외부 AI 클라이언트({{tool}}) 요청:",
   "mcpApproveAllow": "허용",
-  "mcpApproveDeny": "거부"
+  "mcpApproveDeny": "거부",
+  "operationFailed": "작업 실패: {{message}}",
+  "searchFailed": "검색 실패: {{message}}",
+  "folderLoadFailed": "이 폴더를 불러오지 못했습니다",
+  "retry": "다시 시도"
 }

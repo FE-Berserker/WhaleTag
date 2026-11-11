@@ -101,6 +101,7 @@ import {
 } from '../domain/keybindings';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { ipcApi } from '-/services/ipc-api';
+import { errorMessage } from '-/services/errors';
 import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '-/i18n';
 import { THEME_MODE_PRESET_MAP } from '-/theme/presets';
 import { tagDisplayLabel } from '-/services/tag-display';
@@ -232,13 +233,27 @@ function FulltextSection() {
     for (const p of paths) {
       const key = normalizeFsPath(p);
       if (status[key]) continue;
-      void ipcApi.hasFulltextIndex(p).then((has) => {
-        setStatus((prev) =>
-          prev[key]
-            ? prev
-            : { ...prev, [key]: { state: has ? 'ready' : 'unbuilt' } }
-        );
-      });
+      void ipcApi
+        .hasFulltextIndex(p)
+        .then((has) => {
+          setStatus((prev) =>
+            prev[key]
+              ? prev
+              : { ...prev, [key]: { state: has ? 'ready' : 'unbuilt' } }
+          );
+        })
+        .catch((e) => {
+          // Probe failure is not "no index": show it as an error row so the
+          // user doesn't rebuild (or trust) a state we never determined.
+          setStatus((prev) =>
+            prev[key]
+              ? prev
+              : {
+                  ...prev,
+                  [key]: { state: 'error', error: errorMessage(e) },
+                }
+          );
+        });
     }
   }, [paths]);
 

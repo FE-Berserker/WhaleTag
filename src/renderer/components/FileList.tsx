@@ -101,6 +101,7 @@ import { useNewExcalidraw } from '-/hooks/useNewExcalidraw';
 import { useNewDrawio } from '-/hooks/useNewDrawio';
 import { useListCommands } from '-/hooks/useListCommands';
 import { ipcApi } from '-/services/ipc-api';
+import { errorMessage } from '-/services/errors';
 import {
   withSingleRating,
   withSingleQuadrant,
@@ -1847,7 +1848,13 @@ export default function FileList() {
                 color="inherit"
                 size="small"
                 onClick={() => {
-                  void ipcApi.revealAndSelect(notice.backupPath!).catch(() => undefined);
+                  void ipcApi
+                    .revealAndSelect(notice.backupPath!)
+                    .catch((e) =>
+                      showNotice(
+                        t('operationFailed', { message: errorMessage(e) })
+                      )
+                    );
                 }}
               >
                 {t('sidecarRevealBackup')}
@@ -1856,7 +1863,15 @@ export default function FileList() {
               <Button
                 color="inherit"
                 size="small"
-                onClick={() => ipcApi.openTrash()}
+                onClick={() => {
+                  void ipcApi
+                    .openTrash()
+                    .catch((e) =>
+                      showNotice(
+                        t('operationFailed', { message: errorMessage(e) })
+                      )
+                    );
+                }}
               >
                 {t('openTrash')}
               </Button>
@@ -1990,6 +2005,7 @@ export default function FileList() {
         onRemoveTagFromMany={(entries, tag) =>
           commands.removeTagFromMany(entries, tag)
         }
+        showError={(msg) => showNotice(msg)}
       />
       {/* Full-screen media lightbox for double-clicking media in list/grid. */}
       {lightboxEntry !== null

@@ -72,12 +72,20 @@ async function writeBinaryFile(filePath: string, base64: string): Promise<void> 
 export async function deletePath(targetPath: string, useTrash = true): Promise<void> {
   assertWithinAllowedRoot(targetPath);
   // App-internal metadata (sidecar entry + thumbnail) is removed best-effort —
-  // it need not be recoverable the way user data is.
+  // it need not be recoverable the way user data is. Failures are logged (a
+  // stale sidecar would otherwise resurrect tags for a deleted path on the
+  // next scan) instead of failing the delete the user already completed.
   const cleanupMeta = () =>
     Promise.all([
-      removeSidecar(targetPath).catch(() => undefined),
-      removeThumbnail(targetPath).catch(() => undefined),
-      invalidateRecursiveScan(targetPath).catch(() => undefined),
+      removeSidecar(targetPath).catch((e) =>
+        console.warn('[fs-write] failed to drop the sidecar after delete:', targetPath, e)
+      ),
+      removeThumbnail(targetPath).catch((e) =>
+        console.warn('[fs-write] failed to drop the thumbnail after delete:', targetPath, e)
+      ),
+      invalidateRecursiveScan(targetPath).catch((e) =>
+        console.warn('[fs-write] failed to invalidate the scan cache after delete:', targetPath, e)
+      ),
     ]);
 
   if (useTrash) {
@@ -117,17 +125,59 @@ function freeZipPath(dirPath: string): string {
 }
 
 /**
+ * Absolute ancestor chain of `p`, root first (`['/', '/a', '/a/b']`).
+ * Used to find the deepest directory containing every zip source.
+ */
+function ancestorChain(p: string): string[] {
+  const chain: string[] = [];
+  let current = path.resolve(p);
+  for (;;) {
+    chain.push(current);
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return chain.reverse();
+}
+
+/**
+ * Deepest directory that contains every source. Archives are built from this
+ * directory so entries keep their relative layout for sources from different
+ * folders — `zip -r` with `cwd: dirname(sources[0])` silently dropped or
+ * duplicated the rest (an MCP client can select across locations).
+ */
+export function commonParentDir(sources: string[]): string {
+  if (sources.length === 0) {
+    throw new Error('commonParentDir requires at least one path');
+  }
+  let common = ancestorChain(path.dirname(path.resolve(sources[0])));
+  for (const source of sources.slice(1)) {
+    const chain = ancestorChain(path.dirname(path.resolve(source)));
+    let i = 0;
+    while (i < common.length && i < chain.length && common[i] === chain[i]) {
+      i += 1;
+    }
+    common = common.slice(0, i);
+  }
+  if (common.length === 0) {
+    return path.parse(path.resolve(sources[0])).root;
+  }
+  return common[common.length - 1];
+}
+
+/**
  * Runs the OS's built-in zip tool (no bundled dependency): PowerShell's
  * Compress-Archive on Windows, the `zip` CLI elsewhere. `sources` are absolute
- * paths to files/folders that share one parent directory (the selection always
- * comes from a single folder); they're stored in the archive by their leaf
- * names. Resolves once the archive exists; rejects (surfacing stderr) otherwise.
+ * paths to files/folders inside configured locations; on POSIX the archive is
+ * built from their deepest common parent so entries keep relative names.
+ * Resolves once the archive exists; rejects (surfacing stderr) otherwise.
  */
 function runOsZip(sources: string[], zipPath: string): Promise<string> {
+  const archive = path.resolve(zipPath);
   return new Promise<string>((resolve, reject) => {
     const done = (err: Error | null) => {
       if (err) return reject(err);
-      if (!existsSync(zipPath)) {
+      if (!existsSync(archive)) {
         return reject(new Error('Archive was not created'));
       }
       resolve(zipPath);
@@ -140,7 +190,7 @@ function runOsZip(sources: string[], zipPath: string): Promise<string> {
       const psQuote = (s: string) => `'${s.replace(/'/g, "''")}'`;
       const literal = sources.map(psQuote).join(',');
       const command = `Compress-Archive -LiteralPath ${literal} -DestinationPath ${psQuote(
-        zipPath
+        archive
       )}`;
       execFile(
         'powershell.exe',
@@ -150,10 +200,11 @@ function runOsZip(sources: string[], zipPath: string): Promise<string> {
     } else {
       // `zip -r` from the shared parent so entries are stored by relative name
       // (extract back to the same folder layout, not loose/absolute paths).
+      const cwd = commonParentDir(sources);
       execFile(
         'zip',
-        ['-r', '-q', zipPath, ...sources.map((s) => path.basename(s))],
-        { cwd: path.dirname(sources[0]) },
+        ['-r', '-q', archive, ...sources.map((s) => path.relative(cwd, s))],
+        { cwd },
         (err) => done(err)
       );
     }

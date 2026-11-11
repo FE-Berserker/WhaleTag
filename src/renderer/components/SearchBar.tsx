@@ -2,6 +2,7 @@ import { useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
 import {
+  Alert,
   Box,
   Button,
   CircularProgress,
@@ -31,6 +32,7 @@ import { ipcApi } from '-/services/ipc-api';
 import { joinPath } from '-/services/path-util';
 import { normalizeFsPath } from '-/reducers/settings';
 import { searchAllFulltext } from '-/services/fulltext-search';
+import { errorMessage } from '-/services/errors';
 import AdvancedSearchDialog from '-/components/AdvancedSearchDialog';
 
 /** True if `s` contains any CJK ideograph / symbol / fullwidth character. */
@@ -112,6 +114,9 @@ export default function SearchBar() {
   const [contentResults, setContentResults] = useState<FulltextHit[]>([]);
   const [contentMode, setContentMode] = useState(false);
   const [contentBusy, setContentBusy] = useState(false);
+  // A failed search must not look like "no results" (or, worse, leave the
+  // previous query's hits on screen as if they answered this query).
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const anchorRef = useRef<HTMLDivElement>(null);
@@ -138,54 +143,78 @@ export default function SearchBar() {
       // Full-text content search across enabled roots (runs in main process).
       if (!q) {
         setContentResults([]);
+        setSearchError(null);
         setOpen(false);
         return;
       }
       setContentBusy(true);
-      searchAllFulltext(fulltextPaths, q)
-        .then((hits) => setContentResults(hits))
-        .finally(() => {
-          setContentBusy(false);
-          setOpen(true);
-        });
+      setSearchError(null);
+      try {
+        setContentResults(await searchAllFulltext(fulltextPaths, q));
+      } catch (e) {
+        // Clear the previous hits: keeping them would present stale data as
+        // this query's result while the failure stayed invisible.
+        setContentResults([]);
+        setSearchError(t('searchFailed', { message: errorMessage(e) }));
+      } finally {
+        setContentBusy(false);
+        setOpen(true);
+      }
       return;
     }
     // CJK single-character queries are allowed; Latin/ASCII need >= 2 chars
     // (a single ASCII letter would match far too many files).
     if (status !== 'ready' || !q || (q.length < 2 && !hasCjk(q))) {
       setResults([]);
+      setSearchError(null);
       setOpen(false);
       return;
     }
-    const hits = await search(query);
-    setResults(hits);
+    setSearchError(null);
+    try {
+      setResults(await search(query));
+    } catch (e) {
+      setResults([]);
+      setSearchError(t('searchFailed', { message: errorMessage(e) }));
+    }
     setOpen(true);
   };
 
   const handlePick = async (entry: IndexEntry) => {
     if (!currentLocation) return;
-    const abs = joinPath(currentLocation.path, entry.path);
-    const dir = await ipcApi.parentDir(abs);
-    navigateTo(dir);
-    setOpen(false);
-    setQuery('');
+    try {
+      const abs = joinPath(currentLocation.path, entry.path);
+      const dir = await ipcApi.parentDir(abs);
+      navigateTo(dir);
+      setOpen(false);
+      setQuery('');
+    } catch (e) {
+      // Navigating from a hit used to reject silently inside the click handler.
+      setSearchError(t('searchFailed', { message: errorMessage(e) }));
+      setOpen(true);
+    }
   };
 
   /** Navigate to a content hit — into its location if known, else open natively. */
   const handlePickContent = async (hit: FulltextHit) => {
-    const target = normalizeFsPath(hit.path);
-    const loc = locations.find((l) => {
-      const lp = normalizeFsPath(l.path);
-      return target === lp || target.startsWith(`${lp}/`);
-    });
-    if (loc) {
-      const dir = await ipcApi.parentDir(hit.path);
-      navigateToInLocation(loc.id, dir);
-    } else {
-      await ipcApi.openNative(hit.path).catch(() => undefined);
+    try {
+      const target = normalizeFsPath(hit.path);
+      const loc = locations.find((l) => {
+        const lp = normalizeFsPath(l.path);
+        return target === lp || target.startsWith(`${lp}/`);
+      });
+      if (loc) {
+        const dir = await ipcApi.parentDir(hit.path);
+        navigateToInLocation(loc.id, dir);
+      } else {
+        await ipcApi.openNative(hit.path);
+      }
+      setOpen(false);
+      setQuery('');
+    } catch (e) {
+      setSearchError(t('searchFailed', { message: errorMessage(e) }));
+      setOpen(true);
     }
-    setOpen(false);
-    setQuery('');
   };
 
   const clear = () => {
@@ -245,6 +274,7 @@ export default function SearchBar() {
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
+            setSearchError(null);
             setOpen(false); // hide stale results while editing; reopen on Enter
           }}
           onKeyDown={(e) => {
@@ -293,7 +323,24 @@ export default function SearchBar() {
           anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
           slotProps={{ paper: { sx: { width: 380 } } }}
         >
-          {contentMode ? (
+          {searchError ? (
+            <Alert
+              severity="error"
+              sx={{ m: 1 }}
+              action={
+                <Button
+                  color="inherit"
+                  size="small"
+                  onClick={() => void runSearch()}
+                >
+                  {t('retry')}
+                </Button>
+              }
+            >
+              {searchError}
+            </Alert>
+          ) : null}
+          {searchError ? null : contentMode ? (
             contentResults.length === 0 ? (
               <Typography variant="body2" sx={{ p: 2 }} color="text.secondary">
                 {t('fulltextNoResults')}

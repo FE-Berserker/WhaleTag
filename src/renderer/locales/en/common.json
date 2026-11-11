@@ -694,5 +694,9 @@
   "mcpApproveTitle": "Approve file operation",
   "mcpApproveIntro": "An external AI client ({{tool}}) requests:",
   "mcpApproveAllow": "Allow",
-  "mcpApproveDeny": "Deny"
+  "mcpApproveDeny": "Deny",
+  "operationFailed": "Operation failed: {{message}}",
+  "searchFailed": "Search failed: {{message}}",
+  "folderLoadFailed": "Couldn't load this folder",
+  "retry": "Retry"
 }

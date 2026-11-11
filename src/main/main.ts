@@ -355,15 +355,25 @@ function bootstrap(): void {
     if (quitTeardownDone) return; // second pass — our own app.quit() below
     event.preventDefault();
     quitTeardownDone = true;
-    void shutdownIndexWorker().finally(() => {
+    void shutdownIndexWorker().finally(async () => {
       try {
         killIndexWorker();
         // Thumbnail-render utilityProcess (pdf/font); best-effort kill.
         killThumbWorker();
         // docs/04 §10: location fs.watch handles.
         closeAllWatchers();
-        // MCP listener (deny pending approvals, release the port).
-        void shutdownMcpServer();
+        // MCP listener: deny pending approvals and release the port. Await it
+        // (bounded) — quitting while the listener still accepts a tool call
+        // would run a write after the windows are gone.
+        await Promise.race([
+          shutdownMcpServer(),
+          new Promise<void>((resolve) => {
+            setTimeout(resolve, 2_000).unref();
+          }),
+        ]).catch((e) => {
+          // eslint-disable-next-line no-console
+          console.error('[main] MCP shutdown failed:', e);
+        });
       } finally {
         app.quit();
       }

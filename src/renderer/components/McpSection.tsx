@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
+  Alert,
   Box,
   Button,
   IconButton,
@@ -17,6 +18,7 @@ import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import RefreshIcon from '@mui/icons-material/Refresh';
 
 import { ipcApi } from '-/services/ipc-api';
+import { errorMessage } from '-/services/errors';
 import { useConfirm } from '-/components/ConfirmDialogProvider';
 import type { McpStatus } from '../../shared/mcp-types';
 
@@ -34,12 +36,19 @@ export default function McpSection(): JSX.Element {
   const [showToken, setShowToken] = useState(false);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  // A rejected mcp:* call used to be swallowed — the switch simply snapped
+  // back and the user had no idea the change (e.g. a failed config write)
+  // never reached the main process.
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = () => {
     void ipcApi
       .mcpGetStatus()
-      .then(setStatus)
-      .catch(() => undefined);
+      .then((s) => {
+        setStatus(s);
+        setError(null);
+      })
+      .catch((e) => setError(errorMessage(e)));
   };
 
   useEffect(refresh, []);
@@ -56,9 +65,13 @@ export default function McpSection(): JSX.Element {
 
   const apply = (fn: () => Promise<McpStatus>) => {
     setBusy(true);
+    setError(null);
     void fn()
-      .then(setStatus)
-      .catch(() => undefined)
+      .then((s) => {
+        setStatus(s);
+        setError(null);
+      })
+      .catch((e) => setError(errorMessage(e)))
       .finally(() => setBusy(false));
   };
 
@@ -85,6 +98,12 @@ export default function McpSection(): JSX.Element {
           {t('mcpSettingsHint')}
         </Typography>
       </Stack>
+
+      {error ? (
+        <Alert severity="error" onClose={() => setError(null)}>
+          {t('operationFailed', { message: error })}
+        </Alert>
+      ) : null}
 
       <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2 }}>
         <Box sx={{ flex: 1 }}>

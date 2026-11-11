@@ -679,5 +679,9 @@
   "mcpApproveTitle": "批准文件操作",
   "mcpApproveIntro": "外部 AI 客户端（{{tool}}）请求：",
   "mcpApproveAllow": "允许",
-  "mcpApproveDeny": "拒绝"
+  "mcpApproveDeny": "拒绝",
+  "operationFailed": "操作失败：{{message}}",
+  "searchFailed": "搜索失败：{{message}}",
+  "folderLoadFailed": "无法加载此文件夹",
+  "retry": "重试"
 }

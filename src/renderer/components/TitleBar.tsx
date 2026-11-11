@@ -21,11 +21,27 @@ export default function TitleBar(): JSX.Element {
 
   useEffect(() => {
     // Sync initial state, then subscribe to main-process maximize/unmaximize so
-    // the toggle button's icon tracks the real window state.
-    ipcApi.windowIsMaximized().then(setMaximized);
+    // the toggle button's icon tracks the real window state. A failed probe
+    // used to reject unhandled; keep the last known state and log the reason.
+    ipcApi
+      .windowIsMaximized()
+      .then(setMaximized)
+      .catch((e) => {
+        // eslint-disable-next-line no-console
+        console.warn('[titlebar] window state probe failed', e);
+      });
     const unsubscribe = ipcApi.onWindowMaximizeChange(setMaximized);
     return unsubscribe;
   }, []);
+
+  // Window-control failures are not actionable by the user (the window is
+  // still there); log with a tag instead of leaving unhandled rejections.
+  const fire = (p: Promise<unknown>) => {
+    void p.catch((e) => {
+      // eslint-disable-next-line no-console
+      console.warn('[titlebar] window command failed', e);
+    });
+  };
 
   return (
     <Box
@@ -50,14 +66,14 @@ export default function TitleBar(): JSX.Element {
       <Box sx={{ flex: 1 }} />
       <Box sx={{ display: 'flex', WebkitAppRegion: 'no-drag' }}>
         <Tooltip title={t('minimize')} enterDelay={500}>
-          <IconButton size="small" onClick={() => void ipcApi.windowMinimize()}>
+          <IconButton size="small" onClick={() => fire(ipcApi.windowMinimize())}>
             <RemoveIcon fontSize="small" />
           </IconButton>
         </Tooltip>
         <Tooltip title={maximized ? t('restore') : t('maximize')} enterDelay={500}>
           <IconButton
             size="small"
-            onClick={() => void ipcApi.windowMaximizeToggle()}
+            onClick={() => fire(ipcApi.windowMaximizeToggle())}
           >
             {maximized ? (
               <FilterNoneIcon fontSize="small" />
@@ -69,7 +85,7 @@ export default function TitleBar(): JSX.Element {
         <Tooltip title={t('close')} enterDelay={500}>
           <IconButton
             size="small"
-            onClick={() => void ipcApi.windowClose()}
+            onClick={() => fire(ipcApi.windowClose())}
             sx={{
               '&:hover': { bgcolor: 'rgba(232,17,35,0.9)', color: '#fff' },
             }}

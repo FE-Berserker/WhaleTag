@@ -47,6 +47,8 @@ import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvide
 import { useNewExcalidraw } from '-/hooks/useNewExcalidraw';
 import { useNewDrawio } from '-/hooks/useNewDrawio';
 import { ipcApi } from '-/services/ipc-api';
+import { errorMessage } from '-/services/errors';
+import { notifyApp } from '-/services/app-notice';
 import { DND_TYPE_LOCATION, type LocationDragItem } from '-/services/dnd';
 import type { WhaleLocation } from '../../shared/ipc-types';
 import { useSettingsDialog } from '-/components/SettingsDialogProvider';
@@ -90,7 +92,14 @@ export function SidebarActionsBar() {
       }}
     >
       <Tooltip title={t('openTrash')}>
-        <IconButton size="small" onClick={() => void ipcApi.openTrash()}>
+        <IconButton
+          size="small"
+          onClick={() =>
+            void ipcApi.openTrash().catch((e) =>
+              notifyApp(t('operationFailed', { message: errorMessage(e) }))
+            )
+          }
+        >
           <RestoreFromTrashIcon fontSize="small" />
         </IconButton>
       </Tooltip>

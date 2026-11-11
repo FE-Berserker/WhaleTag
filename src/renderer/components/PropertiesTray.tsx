@@ -81,6 +81,7 @@ function useTagActions({
   descByName,
   save,
   saveMany,
+  onError,
 }: {
   entries: DirEntry[];
   readOnly: boolean;
@@ -88,6 +89,8 @@ function useTagActions({
   descByName: Map<string, string>;
   save: (entry: DirEntry, meta: SidecarMeta) => Promise<void>;
   saveMany: (updates: { entry: DirEntry; meta: SidecarMeta }[]) => Promise<void>;
+  /** Failure sink — the quick-add rows call these actions fire-and-forget. */
+  onError?: (msg: string) => void;
 }) {
   const dispatch = useDispatch();
   const tagColors = useSelector(
@@ -122,15 +125,22 @@ function useTagActions({
         })
         .filter(Boolean) as { entry: DirEntry; meta: SidecarMeta }[];
       if (updates.length === 0) return;
-      if (entries.length === 1) {
-        // Single: avoid the merge path — saveMany exists but is one IPC round
-        // trip less if we go straight to `save` for the common single-file case.
-        await save(updates[0].entry, updates[0].meta);
-      } else {
-        await saveMany(updates);
+      try {
+        if (entries.length === 1) {
+          // Single: avoid the merge path — saveMany exists but is one IPC round
+          // trip less if we go straight to `save` for the common single-file case.
+          await save(updates[0].entry, updates[0].meta);
+        } else {
+          await saveMany(updates);
+        }
+      } catch (e) {
+        // Every quick-add row calls these actions as `void tagActions.x(...)`,
+        // so an unhandled rejection here used to be completely invisible: the
+        // chip simply did not change. Report through the tray's notice sink.
+        onError?.(e instanceof Error ? e.message : String(e));
       }
     },
-    [entries, readOnly, tagsByName, descByName, save, saveMany]
+    [entries, readOnly, tagsByName, descByName, save, saveMany, onError]
   );
 
   return {
@@ -284,6 +294,7 @@ export default function PropertiesTray({
     descByName,
     save,
     saveMany,
+    onError,
   });
 
   // Period tag picker: lives in a global provider (mounted in MainLayout);

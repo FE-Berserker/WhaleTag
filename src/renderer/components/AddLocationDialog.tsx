@@ -15,6 +15,7 @@ import {
 import FolderIcon from '@mui/icons-material/Folder';
 
 import { ipcApi } from '-/services/ipc-api';
+import { errorMessage } from '-/services/errors';
 import { basename } from '-/services/path-util';
 
 interface AddLocationDialogProps {
@@ -45,11 +46,16 @@ export default function AddLocationDialog({
   }, [open]);
 
   const handleBrowse = async () => {
-    const picked = await ipcApi.openDirectoryDialog();
-    if (picked) {
-      setPath(picked);
-      if (!name) setName(basename(picked));
-      setError(null);
+    try {
+      const picked = await ipcApi.openDirectoryDialog();
+      if (picked) {
+        setPath(picked);
+        if (!name) setName(basename(picked));
+        setError(null);
+      }
+    } catch (e) {
+      // A failed native picker used to look like the user cancelled it.
+      setError(t('operationFailed', { message: errorMessage(e) }));
     }
   };
 

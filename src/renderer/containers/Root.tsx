@@ -5,6 +5,7 @@ import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 
 import MainLayout from '-/containers/MainLayout';
+import AppNoticeHost from '-/components/AppNoticeHost';
 import { ConfirmDialogProvider } from '-/components/ConfirmDialogProvider';
 import TaskReminder from '-/components/TaskReminder';
 import { CurrentLocationContextProvider } from '-/hooks/CurrentLocationContextProvider';
@@ -100,13 +101,21 @@ export default function Root() {
     (s: RootState) => s.settings?.fulltextPaths ?? []
   );
   useEffect(() => {
-    void ipcApi.syncFulltextPaths(fulltextPaths).catch(() => undefined);
+    void ipcApi.syncFulltextPaths(fulltextPaths).catch((e) => {
+      // Watcher-sync failure is background; a tagged log is the honest level
+      // (nobody clicked anything, and a toast per settings change would spam).
+      // eslint-disable-next-line no-console
+      console.warn('[root] fulltext path sync failed', e);
+    });
   }, [fulltextPaths]);
 
   // Clean up stale extension revisions once on startup.
   useEffect(() => {
     if (locationItems.length === 0) return;
-    void ipcApi.cleanupRevisions(30);
+    void ipcApi.cleanupRevisions(30).catch((e) => {
+      // eslint-disable-next-line no-console
+      console.warn('[root] revision cleanup failed', e);
+    });
   }, []);
 
   // Pin the react-dnd HTML5 backend to a singleton via useMemo so React 18
@@ -134,6 +143,7 @@ export default function Root() {
                       <ExtensionContextProvider>
                         <MainLayout />
                         <TaskReminder />
+                        <AppNoticeHost />
                       </ExtensionContextProvider>
                     </LocationTagLibraryContextProvider>
                   </TagMetaContextProvider>

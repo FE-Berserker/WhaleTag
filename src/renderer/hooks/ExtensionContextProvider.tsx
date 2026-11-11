@@ -449,12 +449,22 @@ export function ExtensionContextProvider({
       // Don't clobber unsaved editor edits — the user's in-progress work wins
       // over a stale-on-disk reload.
       if (editStateMapRef.current[filePath]?.dirty) return;
-      const { content, encoding, size } = await readFileContent(t.filePath);
-      setTabs((prev) =>
-        prev.map((x) =>
-          x.id === t.id ? { ...x, fileContent: content, encoding, fileSize: size } : x
-        )
-      );
+      try {
+        const { content, encoding, size } = await readFileContent(t.filePath);
+        setTabs((prev) =>
+          prev.map((x) =>
+            x.id === t.id
+              ? { ...x, fileContent: content, encoding, fileSize: size }
+              : x
+          )
+        );
+      } catch (e) {
+        // Background fs.watch sync: the file may have been deleted or locked
+        // between the event and this read. Log with a tag instead of throwing
+        // into the watcher callback (nobody can await it).
+        // eslint-disable-next-line no-console
+        console.warn('[extension-reload] failed to reload', filePath, e);
+      }
     },
     [readFileContent]
   );

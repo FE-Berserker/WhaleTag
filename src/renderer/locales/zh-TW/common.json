@@ -679,5 +679,9 @@
   "mcpApproveTitle": "核准檔案操作",
   "mcpApproveIntro": "外部 AI 客戶端（{{tool}}）請求：",
   "mcpApproveAllow": "允許",
-  "mcpApproveDeny": "拒絕"
+  "mcpApproveDeny": "拒絕",
+  "operationFailed": "操作失敗：{{message}}",
+  "searchFailed": "搜尋失敗：{{message}}",
+  "folderLoadFailed": "無法載入此資料夾",
+  "retry": "重試"
 }

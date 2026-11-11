@@ -679,5 +679,9 @@
   "mcpApproveTitle": "ファイル操作の承認",
   "mcpApproveIntro": "外部 AI クライアント（{{tool}}）の要求:",
   "mcpApproveAllow": "許可",
-  "mcpApproveDeny": "拒否"
+  "mcpApproveDeny": "拒否",
+  "operationFailed": "操作に失敗しました: {{message}}",
+  "searchFailed": "検索に失敗しました: {{message}}",
+  "folderLoadFailed": "このフォルダーを読み込めませんでした",
+  "retry": "再試行"
 }

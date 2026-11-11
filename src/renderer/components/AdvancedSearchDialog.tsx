@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDispatch, useSelector } from 'react-redux';
 import {
+  Alert,
   Autocomplete,
   Box,
   Button,
@@ -30,6 +31,7 @@ import { EMPTY_ARR, EMPTY_OBJ } from '-/constants';
 import { addSavedSearch, removeSavedSearch } from '-/reducers/savedsearches';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { ipcApi } from '-/services/ipc-api';
+import { errorMessage } from '-/services/errors';
 import { joinPath } from '-/services/path-util';
 import {
   isQueryEmpty,
@@ -127,6 +129,9 @@ export default function AdvancedSearchDialog({
   const [before, setBefore] = useState('');
 
   const [results, setResults] = useState<IndexEntry[] | null>(null);
+  // A failed query used to leave the previous query's rows in place, which
+  // reads as "this query matched these files". Errors now replace the rows.
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [savePromptOpen, setSavePromptOpen] = useState(false);
 
   const buildQuery = (): SearchQuery => {
@@ -155,9 +160,18 @@ export default function AdvancedSearchDialog({
   const runQuery = async (q: SearchQuery) => {
     if (!currentLocation) {
       setResults([]);
+      setSearchError(null);
       return;
     }
-    setResults(await ipcApi.advancedIndex(currentLocation.path, q));
+    setSearchError(null);
+    try {
+      setResults(await ipcApi.advancedIndex(currentLocation.path, q));
+    } catch (e) {
+      // Do not keep stale rows: they would be presented as this query's
+      // result while the failure stayed invisible.
+      setResults(null);
+      setSearchError(t('searchFailed', { message: errorMessage(e) }));
+    }
   };
 
   /** Loads a saved query into the form fields and runs it immediately. */
@@ -355,6 +369,23 @@ export default function AdvancedSearchDialog({
               slotProps={{ inputLabel: { shrink: true } }}
             />
           </Stack>
+
+          {searchError ? (
+            <Alert
+              severity="error"
+              action={
+                <Button
+                  color="inherit"
+                  size="small"
+                  onClick={() => void runQuery(buildQuery())}
+                >
+                  {t('retry')}
+                </Button>
+              }
+            >
+              {searchError}
+            </Alert>
+          ) : null}
 
           {results !== null ? (
             <Box>

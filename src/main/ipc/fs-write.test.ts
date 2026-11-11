@@ -5,7 +5,7 @@ import path from 'path';
 import { existsSync, promises as fsp } from 'fs';
 
 import { setAllowedRoots } from '../allowed-roots';
-import { copyEntry, createTextFile, moveEntry } from './fs-write';
+import { commonParentDir, copyEntry, createTextFile, moveEntry } from './fs-write';
 
 describe('fs-write createTextFile', () => {
   it('rejects an existing file without changing its bytes', async () => {
@@ -122,5 +122,33 @@ describe('fs-write concurrent copies/moves to one destination', () => {
       setAllowedRoots([]);
       await fsp.rm(scratch, { recursive: true, force: true });
     }
+  });
+});
+
+describe('fs-write commonParentDir', () => {
+  const base = path.resolve(os.tmpdir(), 'whale-zip-plan');
+
+  it('uses the shared folder when all sources are siblings', () => {
+    const dir = path.join(base, 'a');
+    assert.equal(commonParentDir([path.join(dir, 'x.txt'), path.join(dir, 'y.txt')]), dir);
+  });
+
+  it('walks up to the common ancestor for sources in different folders', () => {
+    const sources = [
+      path.join(base, 'a', 'x.txt'),
+      path.join(base, 'b', 'y.txt'),
+      path.join(base, 'b', 'c', 'z.txt'),
+    ];
+    assert.equal(commonParentDir(sources), base);
+  });
+
+  it('handles a single source (its own folder) and relative input', () => {
+    const single = path.join(base, 'a', 'x.txt');
+    assert.equal(commonParentDir([single]), path.dirname(single));
+    assert.equal(commonParentDir([path.relative(process.cwd(), single)]), path.dirname(single));
+  });
+
+  it('rejects an empty selection', () => {
+    assert.throws(() => commonParentDir([]), /at least one path/);
   });
 });

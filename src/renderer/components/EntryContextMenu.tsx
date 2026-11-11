@@ -849,6 +849,8 @@ export interface TagChipContextMenuProps {
   isInBulkContext?: (entry: DirEntry) => boolean;
   selectedEntries?: readonly DirEntry[];
   onRemoveTagFromMany?: (entries: DirEntry[], tag: string) => Promise<number> | void;
+  /** Failure sink — the remove handlers are fire-and-forget in the menu. */
+  showError?: (msg: string) => void;
 }
 
 export function TagChipContextMenu(props: TagChipContextMenuProps) {
@@ -867,6 +869,7 @@ export function TagChipContextMenu(props: TagChipContextMenuProps) {
     isInBulkContext,
     selectedEntries,
     onRemoveTagFromMany,
+    showError,
   } = props;
   const bulk = ctx ? !!isInBulkContext?.(ctx.entry) : false;
   return (
@@ -930,11 +933,10 @@ export function TagChipContextMenu(props: TagChipContextMenuProps) {
                     try {
                       await save(ctx.entry, meta);
                     } catch (err) {
-                      // eslint-disable-next-line no-console
-                      console.error(
-                        '[edit-period] save failed for',
-                        ctx.entry.path,
-                        err
+                      // The dialog has already closed by now; without this the
+                      // user would see the old period chip and no explanation.
+                      showError(
+                        err instanceof Error ? err.message : String(err)
                       );
                     }
                   },
@@ -956,7 +958,9 @@ export function TagChipContextMenu(props: TagChipContextMenuProps) {
           <MenuItem
             disabled={readOnly}
             onClick={() => {
-              void onRemoveTag(ctx.entry, ctx.tag);
+              void Promise.resolve(onRemoveTag(ctx.entry, ctx.tag)).catch(
+                (e) => showError?.(e instanceof Error ? e.message : String(e))
+              );
               onClose();
             }}
           >
@@ -981,9 +985,10 @@ export function TagChipContextMenu(props: TagChipContextMenuProps) {
           <MenuItem
             disabled={readOnly}
             onClick={() => {
-              void onRemoveTagFromMany(
-                selectedEntries as DirEntry[],
-                ctx.tag
+              void Promise.resolve(
+                onRemoveTagFromMany(selectedEntries as DirEntry[], ctx.tag)
+              ).catch((e) =>
+                showError?.(e instanceof Error ? e.message : String(e))
               );
               onClose();
             }}
