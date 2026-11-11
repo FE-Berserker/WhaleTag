@@ -54,9 +54,13 @@ import {
   type FolderVizNode,
   type FolderVizType,
 } from '../domain/folderviz';
-import type { DirEntry } from '../../shared/ipc-types';
+import { readPrefs, writePrefs } from '../domain/perspective-prefs';
 import type { FileCellData } from '-/components/file-cell';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
+import {
+  useDirectoryContent,
+  useDirectoryUI,
+} from '-/hooks/DirectoryContentContextProvider';
 import { useImageExport, base64FromDataUrl, type ClipboardKind } from '-/hooks/useImageExport';
 import { ipcApi } from '-/services/ipc-api';
 import { formatSize, truncate } from '-/services/format';
@@ -97,37 +101,25 @@ interface FolderVizPrefs {
 
 /** Read prefs from localStorage. Returns null on miss / parse error / bounds violation. */
 function loadFolderVizPrefs(locationId: string): FolderVizPrefs | null {
-  try {
-    const raw = localStorage.getItem(PREFS_KEY_PREFIX + locationId);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<FolderVizPrefs>;
-    if (
-      typeof parsed.vizType === 'string' &&
-      (parsed.vizType === 'tree' ||
-        parsed.vizType === 'radial' ||
-        parsed.vizType === 'treemap' ||
-        parsed.vizType === 'sunburst')
-    ) {
-      return { vizType: parsed.vizType };
-    }
-    return null;
-  } catch {
-    return null;
+  const parsed = readPrefs<FolderVizPrefs>(PREFS_KEY_PREFIX + locationId);
+  if (
+    parsed &&
+    typeof parsed.vizType === 'string' &&
+    (parsed.vizType === 'tree' ||
+      parsed.vizType === 'radial' ||
+      parsed.vizType === 'treemap' ||
+      parsed.vizType === 'sunburst')
+  ) {
+    return { vizType: parsed.vizType };
   }
+  return null;
 }
 
 /** Best-effort write. Swallows quota / disabled-storage errors — prefs are
  *  convenience, not core data, and we never want a save failure to break the
  *  view. */
 function saveFolderVizPrefs(locationId: string, prefs: FolderVizPrefs): void {
-  try {
-    localStorage.setItem(
-      PREFS_KEY_PREFIX + locationId,
-      JSON.stringify(prefs)
-    );
-  } catch {
-    // localStorage full / disabled (private mode) — silently ignore
-  }
+  writePrefs(PREFS_KEY_PREFIX + locationId, prefs);
 }
 
 /**
@@ -142,14 +134,15 @@ export default function FolderVizView({ data }: FolderVizViewProps) {
   const chartRef = useRef<ReactECharts>(null);
 
   const [vizType, setVizType] = useState<FolderVizType>('tree');
-  // H.24 R4: depth comes from the global `viewDepth` setting. `maxDepth` is a
-  // debounced copy so the recursive `listDirectoryRecursive` IPC fires once
-  // per settled value, not per slider tick.
+  // H.24 R4: depth comes from the global `viewDepth` setting. `maxDepth` is
+  // debounced so both the Provider scan and chart projection settle together.
   const viewDepth = useSelector((s: RootState) => s.settings?.viewDepth ?? 1);
   const [maxDepth, setMaxDepth] = useState(viewDepth);
-  const [tree, setTree] = useState<FolderVizNode | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // DirectoryContentProvider already owns this recursive scan (including depth
+  // debounce, loading/error and refresh). Reuse it instead of issuing a second
+  // IPC scan for every filter toggle.
+  const { entries } = useDirectoryContent();
+  const { loading, error, refresh } = useDirectoryUI();
   // Per-node right-click anchor (plan §H.20 A). null = no menu open. Empty-canvas
   // right-clicks never reach this state — see `handleNodeContextMenu`.
   const [nodeCtx, setNodeCtx] = useState<{
@@ -159,13 +152,6 @@ export default function FolderVizView({ data }: FolderVizViewProps) {
     isDirectory: boolean;
     name: string;
   } | null>(null);
-  // Original DirEntry by absolute path. The tree only carries (name, path,
-  // size, isDirectory, fileCount) — `modified`, `extension`, real `name`
-  // and `size` come from here when we hand an entry back to `onOpen`.
-  // Recomputed on every `load()` (plan §H.20 H).
-  const [entriesByPath, setEntriesByPath] = useState<Map<string, DirEntry>>(
-    () => new Map()
-  );
   // In-tree search box (plan §H.20 B). Raw input drives the TextField;
   // `deferredQuery` feeds the option-decorating useMemo so a fast typist
   // doesn't stall the chart at every keystroke.
@@ -175,40 +161,30 @@ export default function FolderVizView({ data }: FolderVizViewProps) {
   // user toggles via:
   //   - right-click → "折叠" / "展开" on a directory node (per-folder)
   //   - toolbar 全部展开 / 全部折叠 (global: clear / fill the set)
-  // Paths are absolute so the set survives `load()` refreshes in the same
+  // Paths are absolute so the set survives Provider refreshes in the same
   // session; it's lost on component unmount (FileList re-creates the view
   // on directory change anyway).
   const [hiddenFilesInFolders, setHiddenFilesInFolders] = useState<
     Set<string>
   >(() => new Set());
-  // Mode filter (plan §H.20 F): 'all' | 'dir' | 'file'. Drives `buildTree`
-  // via the `filter` option — for "仅文件", files in subdirectories become
-  // unreachable (dir placeholders can't be synthesized). Documented in
-  // plan §H.20 F trade-offs.
+  // Mode filter (plan §H.20 F): 'all' | 'dir' | 'file'. This is now a pure
+  // projection of Provider entries, never another filesystem request.
   const [filterMode, setFilterMode] = useState<FilterMode>('all');
 
-  const load = useCallback(async () => {
-    if (!currentDirectoryPath) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const all = await ipcApi.listDirectoryRecursive(currentDirectoryPath, {
-        maxDepth,
-      });
-      setTree(buildTree(currentDirectoryPath, all, { maxDepth, filter: filterMode }));
-      const map = new Map<string, DirEntry>();
-      for (const e of all) map.set(e.path, e);
-      setEntriesByPath(map);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [currentDirectoryPath, maxDepth, filterMode]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const tree = useMemo(
+    () =>
+      currentDirectoryPath
+        ? buildTree(currentDirectoryPath, entries, {
+            maxDepth,
+            filter: filterMode,
+          })
+        : null,
+    [currentDirectoryPath, entries, maxDepth, filterMode]
+  );
+  const entriesByPath = useMemo(
+    () => new Map(entries.map((entry) => [entry.path, entry])),
+    [entries]
+  );
 
   // Persist vizType + maxDepth to localStorage, keyed by locationId. The save
   // is debounced (same 200ms as the slider commit) so dragging the depth
@@ -866,7 +842,12 @@ export default function FolderVizView({ data }: FolderVizViewProps) {
 
         <Tooltip title={t('folderVizRefresh')}>
           <span>
-            <IconButton size="small" onClick={() => void load()} disabled={loading}>
+            <IconButton
+              size="small"
+              onClick={() => void refresh()}
+              disabled={loading}
+              aria-label={t('folderVizRefresh')}
+            >
               {loading ? (
                 <CircularProgress size={18} />
               ) : (
@@ -922,7 +903,7 @@ export default function FolderVizView({ data }: FolderVizViewProps) {
           severity="error"
           sx={{ m: 2 }}
           action={
-            <Button color="inherit" size="small" onClick={() => void load()}>
+            <Button color="inherit" size="small" onClick={() => void refresh()}>
               {t('extRetry')}
             </Button>
           }

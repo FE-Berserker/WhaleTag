@@ -34,7 +34,8 @@ import { foldPath } from './path-fold';
 export function isWithinRoot(child: string, root: string): boolean {
   const c = foldPath(child);
   const r = foldPath(root);
-  return c === r || c.startsWith(r + path.sep);
+  const rootPrefix = r.endsWith(path.sep) ? r : r + path.sep;
+  return c === r || c.startsWith(rootPrefix);
 }
 
 /**

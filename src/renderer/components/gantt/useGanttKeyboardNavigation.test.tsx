@@ -18,7 +18,7 @@ import globalJsdom from 'global-jsdom';
 
 import { afterEach, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { act, cleanup, fireEvent, render } from '@testing-library/react';
+import { act, cleanup, render } from '@testing-library/react';
 import {
   forwardRef,
   useEffect,
@@ -134,9 +134,8 @@ function getPeriod(path: string): GanttPeriod | undefined {
 }
 
 describe('useGanttKeyboardNavigation', () => {
-  let cleanupJsdom: (() => void) | undefined;
   before(() => {
-    cleanupJsdom = globalJsdom();
+    globalJsdom();
   });
   afterEach(() => {
     cleanup();

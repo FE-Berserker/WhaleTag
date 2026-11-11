@@ -132,6 +132,43 @@ development builds" so unit tests, `npm run dev` sessions, and the
 "Run from source" path don't hit a confusing "no updates found" or a
 stack trace.
 
+## Concurrency and shutdown safety
+
+The renderer can fire the same intent twice (double-click, two windows,
+a laggy IPC round-trip), so every entry point is written to be
+idempotent in flight rather than to rely on the UI:
+
+- `checkForUpdates()` keeps a single `_checkInFlight` promise; a second
+  call joins the running probe instead of racing a second
+  `checkForUpdates()` against `electron-updater`.
+- `downloadUpdate()` does the same with `_downloadInFlight`. Without
+  it, the second click landed in `electron-updater`'s own
+  "download already in progress" rejection and surfaced as an error
+  toast even though the first download was healthy. The shared promise
+  is cleared in `finally`, so a later retry after failure still works.
+- `quitAndInstall()` wraps `autoUpdater.quitAndInstall()` in
+  `try/catch` and logs `[auto-update] quitAndInstall failed:`. Asking
+  to install before a download has finished makes `electron-updater`
+  throw **synchronously**; unguarded, that throw escaped the IPC
+  listener into the main process, which has no `uncaughtException`
+  handler.
+- `emit()` fans out to every subscriber through `try/catch`, so one
+  throwing renderer listener cannot starve the others or turn an
+  update event into a main-process rejection.
+
+## Tests
+
+`src/main/auto-update.test.ts` (18 tests, ~0.4 s) stubs both `electron`
+and `electron-updater` by patching `Module._load` before importing the
+module under test, and drives a `FakeUpdater` extending `EventEmitter`.
+It pins the feed wiring (`FE-Berserker/WhaleTag`, `autoDownload=false`,
+`autoInstallOnAppQuit=false`, idempotent `initAutoUpdater`), release-note
+normalization (string and array form), "no update" on equal/newer
+versions, error translation, in-flight dedupe for check and download,
+event fan-out isolation, the `quitAndInstall` guard, the dev-mode
+short-circuit, and the delayed startup probe (fires once when enabled,
+never when disabled).
+
 ## macOS / Linux status
 
 - **Windows (NSIS):** full path. `autoUpdater` reads `app-update.yml`

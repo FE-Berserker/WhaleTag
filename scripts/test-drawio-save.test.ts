@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fsp, existsSync } from 'fs';
 import path from 'path';
-import { writeFileWithRevision, backupRevision } from '../src/main/revisions';
+import { backupRevision } from '../src/main/revisions';
 
 /**
  * Simulates the full drawio save path WITHOUT drawio itself: build a fresh

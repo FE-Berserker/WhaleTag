@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useWhaleBridge } from './useWhaleBridge';
 import { getDrawioUrl, useDrawioBridge, type DrawioTheme } from './drawio-bridge';
 import {
@@ -24,6 +24,15 @@ export default function App() {
   } = useWhaleBridge();
   const lastSavedRef = useRef<string>('');
   const pendingSaveRef = useRef(false);
+  // Effect reruns are not unmounts: in-flight saves/inserts must survive fresh
+  // file/callback identities, but must not continue after the iframe is gone.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const [error, setError] = useState<string | null>(null);
   const [loadTimedOut, setLoadTimedOut] = useState(false);
   // External drag overlay (visible while a file/folder from the directory tree
@@ -46,6 +55,10 @@ export default function App() {
   // separate "reset" effect that ran AFTER the load check, leaving the
   // new file un-loadable on a switch.
   const lastLoadedPathRef = useRef<string | null>(null);
+  const currentFilePathRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    currentFilePathRef.current = file?.path ?? null;
+  }, [file?.path]);
   const messages = getMessages(locale);
 
   // Hardcoded to 'kennedy' (drawio's default light theme) regardless of
@@ -121,15 +134,14 @@ export default function App() {
 
   // Theme is passed via `ui=...` in the URL when the iframe is created.
   // The drawio embed API has no `setTheme` action — calling it just
-  // produces `unknownMessage` noise. A live theme switch would require
-  // tearing down + re-creating the iframe (TODO: figure out a cleaner
-  // path when we actually need dark-mode switching in drawio).
+  // produces `unknownMessage` noise. Theme remains fixed for this editor;
+  // useDrawioBridge owns listener/request cleanup when the iframe unmounts.
   // useEffect(() => { bridge.setTheme(drawioTheme); }, [bridge, drawioTheme]);
 
   // Handle host save request.
   useEffect(() => {
-    onRequestSave(async () => {
-      if (!file || pendingSaveRef.current) return;
+    const unregister = onRequestSave(async () => {
+      if (!mountedRef.current || !file || pendingSaveRef.current) return;
       pendingSaveRef.current = true;
       try {
         // getXml() returns drawio's COMPRESSED wire format. Decode it to raw,
@@ -139,16 +151,20 @@ export default function App() {
         // the on-disk format is consumed only by our own decodeDrawioDiagram,
         // and raw is readable by the external drawio app too).
         const compressed = await bridge.getXml();
+        if (!mountedRef.current) return;
         const decoded = decodeDrawioDiagram(compressed) ?? compressed;
         const xml = rewriteDrawioLinksToRelative(decoded, file.path);
         lastSavedRef.current = xml;
         save(xml);
       } catch (err) {
-        handleError(err instanceof Error ? err.message : String(err));
+        if (mountedRef.current) {
+          handleError(err instanceof Error ? err.message : String(err));
+        }
       } finally {
         pendingSaveRef.current = false;
       }
     });
+    return unregister;
   }, [bridge, file, handleError, onRequestSave, save]);
 
   // Clear dirty state when host confirms save.
@@ -311,8 +327,9 @@ async function getImageDataUrlDimensions(
 }
 
 useEffect(() => {
+    let active = true;
     const off = window.whaleExt.onMessage(async (msg) => {
-      if (msg.type !== 'fileEmbed') return;
+      if (!active || msg.type !== 'fileEmbed') return;
       // Always clear overlay state, regardless of whether we can insert.
       // (see isExternalDragging watcher above — we also force the DOM
       // update via overlayRef to bypass React reconciliation timing.)
@@ -325,6 +342,7 @@ useEffect(() => {
       if (!drag) {
         return;
       }
+      const documentPath = currentFilePathRef.current;
       const cellKind: 'image' | 'labeled' = drag.isImage ? 'image' : 'labeled';
       const { x, y } = nextDropPosition(dropIndexRef.current);
       dropIndexRef.current += 1;
@@ -350,6 +368,9 @@ useEffect(() => {
         }
       }
 
+      // A file-content refresh must not cancel the insert, but switching from
+      // document A to B must not write A's dragged cell into B's diagram.
+      if (!mountedRef.current || currentFilePathRef.current !== documentPath) return;
       void bridge
         .insertLinkedThumbnail({
           filePath: drag.path,
@@ -363,12 +384,18 @@ useEffect(() => {
           height,
         })
         .catch((err) => {
+          if (!active) return;
           // eslint-disable-next-line no-console
           console.error('[drawio] insertLinkedThumbnail threw:', err);
         });
-      setDirty(true);
+      if (mountedRef.current && currentFilePathRef.current === documentPath) {
+        setDirty(true);
+      }
     });
-    return off;
+    return () => {
+      active = false;
+      off();
+    };
   }, [bridge, clearExternalDrag, externalDragRef, setDirty]);
 
   const handleDropOverlay = useCallback(

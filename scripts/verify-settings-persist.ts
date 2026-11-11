@@ -16,7 +16,6 @@
 import { spawn, ChildProcess } from 'child_process';
 import fs from 'fs';
 import http from 'http';
-import os from 'os';
 import path from 'path';
 import WebSocket from 'ws';
 
@@ -120,7 +119,6 @@ async function cdpEval<T = unknown>(
 ): Promise<T> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl);
-    let enabled = false;
 
     ws.on('open', () => {
       ws.send(JSON.stringify({ id: 1, method: 'Runtime.enable', params: {} }));
@@ -134,7 +132,6 @@ async function cdpEval<T = unknown>(
       };
 
       if (msg.id === 1) {
-        enabled = true;
         ws.send(
           JSON.stringify({
             id: 2,
@@ -164,20 +161,6 @@ async function cdpEval<T = unknown>(
       }
     });
 
-    ws.on('error', reject);
-  });
-}
-
-async function cdpCommand(wsUrl: string, method: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(wsUrl);
-    ws.on('open', () => {
-      ws.send(JSON.stringify({ id: 1, method, params: {} }));
-    });
-    ws.on('message', () => {
-      ws.close();
-      resolve();
-    });
     ws.on('error', reject);
   });
 }
@@ -220,7 +203,7 @@ function startElectron(cdpPort: number): ChildProcess {
   return proc;
 }
 
-async function killProcess(proc: ChildProcess, label: string): Promise<void> {
+async function killProcess(proc: ChildProcess): Promise<void> {
   if (!proc || proc.killed) return;
   return new Promise((resolve) => {
     proc.on('exit', () => resolve());
@@ -377,9 +360,9 @@ async function main(): Promise<void> {
     console.error('\n❌ ERROR:', e);
     process.exitCode = 1;
   } finally {
-    if (electron2) await killProcess(electron2, 'electron2');
-    if (electron) await killProcess(electron, 'electron');
-    await killProcess(devServer, 'dev server');
+    if (electron2) await killProcess(electron2);
+    if (electron) await killProcess(electron);
+    await killProcess(devServer);
   }
 }
 

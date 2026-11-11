@@ -23,9 +23,6 @@ export const MIN_ZOOM_FACTOR_OF_FIT = 0.25;
 /** Hard maximum zoom factor (16× natural size). */
 export const MAX_ZOOM = 16;
 
-/** Wheel zoom step per notch (10% per `deltaY` unit, exponential). */
-export const WHEEL_FACTOR = 1.1;
-
 /** Button / keyboard zoom step (25% per press, multiplicative). */
 export const STEP_FACTOR = 1.25;
 
@@ -187,8 +184,6 @@ export interface ViewportState {
 }
 
 export interface ViewportControllerOptions {
-  /** Element that receives `style.transform` (the `<img>` or `<canvas>). */
-  imageEl: HTMLElement;
   /** Stage / container that wheel + drag + dblclick + resize events listen on. */
   stageEl: HTMLElement;
   /**
@@ -204,8 +199,6 @@ export interface ViewportControllerOptions {
    * boxes). Defaults to `() => 0` for callers that don't rotate.
    */
   getRotation?: () => Rotation;
-  /** Multiplicative zoom factor per wheel notch (default 1.1). */
-  wheelFactor?: number;
   /** Hard min/max zoom overrides; defaults to `[fitZoom * 0.25, 16]`. */
   zoomBounds?: { min?: number; max?: number };
   /** Sub-handler switches (all default `true`). */
@@ -258,12 +251,10 @@ export function createViewportController(
   opts: ViewportControllerOptions,
 ): ViewportController {
   const {
-    imageEl,
     stageEl,
     getNaturalSize,
     getViewportSize,
     getRotation = () => 0,
-    wheelFactor = WHEEL_FACTOR,
     zoomBounds,
     enableWheel = true,
     enableDrag = true,
@@ -303,10 +294,6 @@ export function createViewportController(
 
   function getMaxZoom(): number {
     return zoomBounds?.max ?? MAX_ZOOM;
-  }
-
-  function clampZoom(z: number): number {
-    return Math.max(getMinZoom(), Math.min(getMaxZoom(), z));
   }
 
   // ── Public API ──────────────────────────────────────────────────────
@@ -412,8 +399,7 @@ export function createViewportController(
     // Smooth trackpad pinch gestures stream small deltas; physical wheels
     // produce larger deltas. Map both to an exponential factor — matches
     // the original image-viewer behavior (line 232) for zero behavior
-    // change. `wheelFactor` is documented for future tuning but kept
-    // out of the math so the pre-extraction feel is preserved exactly.
+    // change. Keep the fixed exponential curve to preserve the existing feel.
     const factor = Math.exp(-e.deltaY * 0.0015);
     const next = zoomAtPoint(
       factor,

@@ -29,12 +29,14 @@ export function registerThumbnailHandlers(): void {
   );
 
   // ---- Folder thumbnails / backgrounds (`.whale/wst.jpg` / `.whale/wsb.jpg`) ----
-  ipcMain.handle('thumbnail:loadFolder', (_event, dirPath: string) =>
-    loadFolderThumbnail(dirPath)
-  );
-  ipcMain.handle('thumbnail:loadFolderBackground', (_event, dirPath: string) =>
-    loadFolderBackground(dirPath)
-  );
+  ipcMain.handle('thumbnail:loadFolder', (_event, dirPath: string) => {
+    assertWithinAllowedRoot(dirPath);
+    return loadFolderThumbnail(dirPath);
+  });
+  ipcMain.handle('thumbnail:loadFolderBackground', (_event, dirPath: string) => {
+    assertWithinAllowedRoot(dirPath);
+    return loadFolderBackground(dirPath);
+  });
   ipcMain.handle(
     'thumbnail:setFolderThumbnail',
     (_event, dirPath: string, sourcePath: string) => {

@@ -1,10 +1,9 @@
 import { Box, Tooltip } from '@mui/material';
 import DateRangeIcon from '@mui/icons-material/DateRange';
 import { useDrag } from 'react-dnd';
-import type { TFunction } from 'i18next';
 
 import { DND_TYPE_TAG, type TagDragItem } from '-/services/dnd';
-import { smartTagI18nKey, type SmartTagDef } from '../../shared/smart-tags';
+import type { SmartTagDef } from '../../shared/smart-tags';
 import { PERIOD_COLOR } from '../domain/tag-colors';
 
 /**
@@ -189,20 +188,4 @@ export function PeriodChip({
     </Box>
   );
   return hint ? <Tooltip title={hint}>{body}</Tooltip> : body;
-}
-
-/**
- * Tiny helper used by surfaces that render these chips: given a `t()` from
- * react-i18next, return the per-chip label honoring the smart-tag variant
- * (ratings show star glyphs; everything else is the localized title).
- */
-export function quickChipLabel(
-  def: SmartTagDef,
-  t: TFunction,
-  glyphFallback: string | null
-): string {
-  // Rating values are constant glyphs (★..★★★★★) — language-independent.
-  // smartTagGlyph returns null for non-rating defs; fall through to the
-  // localized title for time/quadrant defs.
-  return glyphFallback ?? t(smartTagI18nKey(def.functionality));
 }

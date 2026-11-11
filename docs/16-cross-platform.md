@@ -23,7 +23,7 @@
 | 项 | 位置 | 状态 |
 |---|---|---|
 | ffmpeg | [thumbnail.ts](../src/main/thumbnail.ts) | `ffmpeg-static` 包自带各平台二进制,asarUnpack 已含(视频首帧缩略图) |
-| 7za | [sevenzip.ts](../src/main/sevenzip.ts) | `7zip-bin` 自带 win/mac/linux 全部二进制 + PATH 探测;PATH 探针走异步 `execFile` 不冻主进程(P1-1 同款) |
+| 7za | —— | 已随 archive 模块移除:应用内不再解压归档,`7zip-bin` 依赖已删(打包脚本若需解 `.7z` 请用系统 7-Zip) |
 | shell-quote | [shell-quote.ts](../src/main/shell-quote.ts) | 路径引号按平台分:win32 cmd 双引号 + 内嵌 `"` 翻倍,POSIX 单引号 close-reopen |
 | userData / 菜单 / 回收站 / reveal | [main.ts](../src/main/main.ts) ~L349-369 / [menu.ts](../src/main/menu.ts) / [shell.ts](../src/main/ipc/shell.ts) | 三分支齐全;mac「关窗不退出」行为正确 |
 | webpack externals | [.erb/configs/](../.erb/configs/) | [docs/14 坑4](./14-packaging.md) 的 pdfjs 子路径修是 OS 无关正则,无 `file:///C:/` 泄漏 |
@@ -56,7 +56,7 @@
   - [shell-command.ts](../src/main/shell-command.ts) ~L113-117:「用户命令」开终端只 `xterm -e bash -c`。GNOME / KDE / Cinnamon 默认不带 xterm;spawn 失败被吞(L119-123,文档记为「已知限制」)。
   - [shell.ts](../src/main/ipc/shell.ts) `revealAndSelect`:linux 只 fallback 到 `nautilus --select`(GNONE 专);KDE 是 `dolphin --select`、XFCE 是 `thunar`。`xdg-open` 已覆盖主场景,这是锦上添花。
   - [fs-write.ts](../src/main/ipc/fs-write.ts) `runOsZip`:linux 走外部 `zip -r` 命令,最小化 linux 镜像 / 容器未必装;失败是干净报错,不崩。
-- **修法**:① 终端 DE 感知 fallback(`gnome-terminal` / `konsole` / `xfce4-terminal` / `xterm` 兜底,**moderate**);② reveal fallback 扩展 `dolphin --select`(**trivial**);③ `zip` 可 fallback 到已依赖的 7zip,或记为运行时前置(**moderate**)。
+- **修法**:① 终端 DE 感知 fallback(`gnome-terminal` / `konsole` / `xfce4-terminal` / `xterm` 兜底,**moderate**);② reveal fallback 扩展 `dolphin --select`(**trivial**);③ `zip` 可 fallback 到 Python/`busybox unzip`,或记为运行时前置(**moderate**;原先说的「fallback 到已依赖的 7zip」已随 archive 模块移除而不成立)。
 
 - [ ] 终端 DE fallback
 - [ ] reveal fallback 扩展

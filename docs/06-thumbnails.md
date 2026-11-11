@@ -35,8 +35,9 @@ type ThumbKind = 'image' | 'svg' | 'video' | 'pdf' | 'font';
 
 - `wst.jpg`(文件夹缩略图)+ `wsb.jpg`(文件夹背景,1024px)
 - `loadFolderThumbnail(dir)` 懒加载(IntersectionObserver + 4 并发 FIFO 队列)
-- `setFolderThumbnail(dir, srcPath)` 手动设置
+- `setFolderThumbnail(dir, srcPath)` 手动设置；srcPath 可以是原生对话框从位置外选择的图片、SVG、视频、PDF 或字体，服务只读取源文件；已有缓存仅在不旧于源文件时复用，过期则直接重新编码到目标 `wst.jpg`，绝不创建或更新源目录的 `.whale/`
 - `clearFolderThumbnail(dir)` 清除
+- 右键菜单的封面/背景设置与清除统一捕获同步/异步错误并交给 `showError`；失败时不清空缩略图缓存
 - `generateFolderThumbnail` 取目录内首张可缩略文件(`firstThumbnailableFile` 不递归子目录,只看直接子文件)
 
 `ThumbIcon.tsx` 是所有视图里文件夹缩略图的**唯一渲染路径**,守卫逻辑避免提前 return 跳过目录(`isDirectory && !canThumb` 当前正确短路)
@@ -49,7 +50,7 @@ type ThumbKind = 'image' | 'svg' | 'video' | 'pdf' | 'font';
 - 原子写 / mtime 缓存 / in-flight 去重 / delete/rename/move/copy 清理钩子**全部格式无关**
 - 失败一律静默回退类型图标(FileTypeIcon),不阻塞其它缩略图
 - **主进程并发闸门**([src/main/concurrency.ts](../src/main/concurrency.ts) 的 `Semaphore`):`thumbnailSemaphore` 限制同时进行的缩略图编码数(sharp / ffmpeg / pdfjs),只包住编码那一段,后续写盘不持锁。
-- **二进制探测记忆化**:外部二进制(如 ffmpeg / 7za,见 [src/main/sevenzip.ts](../src/main/sevenzip.ts))的 `--version` PATH 探测(异步 `execFile`,最多 3s timeout)**每进程只跑一次**(模块级缓存);override / 候选路径的 `existsSync` 仍每次跑(便宜);**并发首调用 inflight 去重**。**P1-1 之前是 `execFileSync`,冷启动 Windows 上 PATH 查找 + 二进制 bootstrap 吃满 3s timeout 阻塞整个主进程事件循环**(改 async 后消除冻结,详见 [docs/15-perf-audit.md P1-1](./15-perf-audit.md))
+- **ffmpeg 路径**:`ffmpegPath()` 取 `ffmpeg-static` 自带二进制,打包态把路径里的 `app.asar` 换成 `app.asar.unpacked`;缺失时返回 `null`,视频缩略图直接回退类型图标(不做 PATH 探测)。
 - **pdfjs 惰性**:PDF 缩略图用的 pdfjs-dist 经 `getPdfjs()`(`nodeRequire`)在首次 PDF 缩略图时才 load,不在启动顶层(见 [docs/01 §4](./01-architecture.md))
 
 ## 4. ThumbIcon 加载机制(前端)
@@ -61,6 +62,7 @@ type ThumbKind = 'image' | 'svg' | 'video' | 'pdf' | 'font';
 - 同 key 去重;scroll-out 调 `cancelThumbLoad` 摘除未启动的 task
 - `thumbCache` key = `${path}|${modified}` → data URL,卸载 / 复用时 `observed` 标志丢弃"in-flight 完成后但 cell 已 recycle"的脏结果
 - **IO `observed` 双向同步**:`isIntersecting: true` 分支复位 `observed = true`,`false` 分支置 `false`。否则快速滚过的 cell 永远停在 Skeleton,滚回视口也不会再填充(细节见 [docs/09-known-issues.md §12](./09-known-issues.md))
+- 加载/解码失败会 catch 并回退类型或文件夹图标，不产生 unhandled rejection；失败结果不写 `thumbCache`，之后重新进入视口仍可重试
 
 ## 5. 按格式区分的回退图标
 

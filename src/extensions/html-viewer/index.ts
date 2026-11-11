@@ -24,6 +24,7 @@
 import './viewer.css';
 import DOMPurify from 'dompurify';
 import type { HostMessage } from '../../shared/extension-types';
+import { createViewerPrefs } from '../shared/viewer-prefs';
 
 import {
  formatBytes,
@@ -221,49 +222,33 @@ const state: State = {
 let currentFitZoom = 1;
 
 // --- Persistence ----------------------------------------------------------
-const STORAGE_PREFIX = 'html-viewer.';
-
-function lsGet(key: string): string | null {
- try {
- return window.localStorage.getItem(STORAGE_PREFIX + key);
- } catch {
- return null;
- }
-}
-
-function lsSet(key: string, value: string): void {
- try {
- window.localStorage.setItem(STORAGE_PREFIX + key, value);
- } catch {
- // Sandbox may disable localStorage; silently degrade.
- }
-}
+const prefs = createViewerPrefs('html-viewer.');
 
 function loadPersistedState() {
- const mz = lsGet('manualZoom');
+ const mz = prefs.getPref('manualZoom');
  if (mz !== null) {
  const parsed = parseFloat(mz);
  if (Number.isFinite(parsed)) {
  state.manualZoom = clampZoom(parsed);
  }
  }
- const zm = lsGet('zoomMode');
+ const zm = prefs.getPref('zoomMode');
  if (zm === 'fit-width' || zm === 'manual') {
  state.zoomMode = zm;
  }
- const ie = lsGet('imagesEnabled');
+ const ie = prefs.getPref('imagesEnabled');
  if (ie === 'false') {
  state.imagesEnabled = false;
  }
 }
 
 function persistZoom() {
- lsSet('manualZoom', String(state.manualZoom));
- lsSet('zoomMode', state.zoomMode);
+ prefs.setPref('manualZoom', String(state.manualZoom));
+ prefs.setPref('zoomMode', state.zoomMode);
 }
 
 function persistImages() {
- lsSet('imagesEnabled', String(state.imagesEnabled));
+ prefs.setPref('imagesEnabled', String(state.imagesEnabled));
 }
 
 // --- Style extraction -----------------------------------------------------

@@ -17,14 +17,14 @@
 | [docs/03-tagging.md](docs/03-tagging.md) | `wsd.json` 聚合 sidecar、标签库/组、互斥家族、颜色回退、InlineTagInput |
 | [docs/04-search-index.md](docs/04-search-index.md) | SQLite FTS5 即时搜索、目录/全文索引、高级查询、保存搜索 |
 | [docs/05-perspectives.md](docs/05-perspectives.md) | 9 类有效视角 + Task 第三档(Kanban/Matrix/Gantt)与全局递归深度 |
-| [docs/06-thumbnails.md](docs/06-thumbnails.md) | 缩略图管线(7 种 ThumbKind)、文件夹缩略图、回退图标 |
+| [docs/06-thumbnails.md](docs/06-thumbnails.md) | 缩略图管线(5 种 ThumbKind)、文件夹缩略图、回退图标 |
 | [docs/07-extensions.md](docs/07-extensions.md) | 扩展协议、8 个内置扩展、修订历史、双层 iframe 拓扑 |
 | [docs/08-data-depth.md](docs/08-data-depth.md) | `DirectoryContentContextProvider` 单一数据源、全局 `viewDepth`、path-keyed 投影 |
 | [docs/09-known-issues.md](docs/09-known-issues.md) | 已修关键 bug 与反复踩过的坑(冷启动黑魔法、redux-persist 引用一致性等) |
-| [docs/10-ui.md](docs/10-ui.md) | 11 种主题模式、12 套 `PRESETS` token、`'system'` 必须解析、设置面板 |
+| [docs/10-ui.md](docs/10-ui.md) | 11 种主题模式、13 套 `PRESETS` token、`'system'` 必须解析、设置面板 |
 | [docs/12-frontend-checklist.md](docs/12-frontend-checklist.md) | 前端 UI 手动核对清单 |
 | [docs/13-security.md](docs/13-security.md) | 当前安全模型(隔离/沙箱/CSP/allowedRoots)+ 不在范围的能力 |
-| [docs/14-packaging.md](docs/14-packaging.md) | `npm run package:win` 流程、nsis 离线、打包/AI 调试排坑(国内网络) |
+| [docs/14-packaging.md](docs/14-packaging.md) | `npm run package:win` 流程、nsis 离线、打包排坑(国内网络) |
 | [docs/15-perf-audit.md](docs/15-perf-audit.md) | 性能审计与待办清单(§F 例外追踪文档) |
 | [docs/16-cross-platform.md](docs/16-cross-platform.md) | macOS / Linux 打包可行性(§F 例外评估文档) |
 | [docs/18-auto-update.md](docs/18-auto-update.md) | 应用自动更新(electron-updater + GitHub Releases) |
@@ -48,7 +48,7 @@
 
 ## B. 架构速览
 
-三进程 ERB 模型:**Main**(全部 FS IO / 缩略图 / 索引 / 扩展转换 / AI CLI 子进程)→ **Preload**(`contextBridge` 暴露 `window.whale`,渲染层唯一桥)→ **Renderer**(React,web target)。`src/shared/` 只放 main + renderer 都引用的契约;纯渲染层逻辑放 `src/renderer/domain/`。持久化走主进程 IPC 原子落盘(tmp+rename),不用 Chromium localStorage。元数据全部在 `.whale/` 目录(sidecar + 索引 + 缩略图 + 修订),相对路径存储便于整体迁移。
+三进程 ERB 模型:**Main**(全部 FS IO / 缩略图 / 索引 / 扩展宿主协议)→ **Preload**(`contextBridge` 暴露 `window.whale`,渲染层唯一桥)→ **Renderer**(React,web target)。`src/shared/` 只放 main + renderer 都引用的契约;纯渲染层逻辑放 `src/renderer/domain/`。持久化走主进程 IPC 原子落盘(tmp+rename),不用 Chromium localStorage。元数据全部在 `.whale/` 目录(sidecar + 索引 + 缩略图 + 修订),相对路径存储便于整体迁移。
 
 详见 [docs/01-architecture.md](docs/01-architecture.md)。
 

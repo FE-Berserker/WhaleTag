@@ -30,7 +30,7 @@
                        ↕ postMessage + whale-extension:// 协议
 ┌────────────────────────────────────────────────────┐
 │ 扩展 (src/extensions/<id>/) 沙箱 iframe            │
-│   15 个内置扩展(viewer / editor)                     │
+│   8 个内置扩展(viewer / editor)                      │
 └────────────────────────────────────────────────────┘
 ```
 
@@ -60,7 +60,7 @@ folder/
 | 协议 | 用法 |
 |---|---|
 | `whale-extension://<ext-id>/...` | 沙箱扩展 iframe 资源;`registerSchemesAsPrivileged({standard, secure})` 在 `app.ready` **之前** 调用,否则 origin 是 opaque,`document.cookie` 抛 `SecurityError`。各扩展自己 meta CSP 治理,主进程 CSP **跳过** 该协议 |
-| `whale-file://<encoded-path>` | 支持 Range 的流式文件服务,渲染层 `<video>` / `<audio>` / `<img>` 直接用;`createReadStream` + Range 响应,不进渲染层内存 |
+| `whale-file://<encoded-path>` | 支持 Range 的流式文件服务,渲染层 `<video>` / `<audio>` / `<img>` 直接用;Node stream 经 Web Stream `pull()` 驱动,慢消费者下只有有界预读,不整份入队 |
 
 ## 4. 主进程入口
 
@@ -167,7 +167,7 @@ try {
 
 ## 10. 测试命令
 
-`electron --test`(Node test runner,经 ts-node)跑 `src` + `scripts` 下所有 `*.test.ts(x)`(~1700 用例 / 98 文件)。
+`electron --test`(Node test runner,经 ts-node)跑 `src` + `scripts` 下所有 `*.test.ts(x)`(实测 108 个文件 / 1605 用例)。
 
 - **自动发现**:[scripts/run-tests.cjs](../scripts/run-tests.cjs) 用 glob 枚举全部测试文件交给 `electron --test`——**新增测试无需改 package.json**。
 - **`pretest` 闸门**:`npm test` 先跑 `tsc --noEmit`;类型回归当场红。`build:*` 都带 `transpileOnly`,pretest 是唯一的类型校验点。
@@ -197,7 +197,7 @@ try {
 
 - **Context 拆分(L11)**:`DirectoryContentContext` 拆成 meta(数据,重新扫描才变)+ UI(loading/sort/视角,动作才变)两个 context,单片消费者互不连带重渲染。详见 [docs/08 §1](./08-data-depth.md)。
 - **FileListHeader memo(M6)**:[FileListHeader](../src/renderer/components/FileListHeader.tsx) `React.memo` + 稳定 `useCallback`(列宽 / 可见性 / 密度 handler)+ `setSort` 直传;选行 / 滚动时表头跳过重渲染(曾每次 FileList 重渲染都连带)。
-- **useNow 共享(M10)**:[useNow](../src/renderer/hooks/useNow.ts) 所有消费者(FileList / PropertiesTray / TagMeta)共享**一个** `setInterval`(`useSyncExternalStore` + 模块级 store,首消费者启动 / 末消费者停止),每分钟一次批量重渲染(曾每消费者一个定时器)。
+- **useNow 共享与按需订阅(M10)**:[useNow](../src/renderer/hooks/useNow.ts) 用 `useSyncExternalStore` + 模块级 store 共享一个 `setInterval`;FileList 唯一直挂且经 `FROZEN_NOW` 门控,TagMeta 仅在存在日期族标签时条件订阅,PropertiesTray 只在 addTag 动作时取当前时间。
 - **TagMeta 批量上色(M9)**:新 tag 的色攒成一个 `setTagColors` 一次 dispatch(1 次 persist 写,曾 N 次)。详见 [docs/03 §5](./03-tagging.md)。
 
 **响应式布局(窄窗口)**:
@@ -211,7 +211,7 @@ try {
 
 **主进程结构**
 
-- `src/main/ipc/` 按域拆分(11 个域模块,清单见 §7),各域持有自己的业务逻辑与闭包;[index.ts](../src/main/ipc/index.ts) 是 ~40 行薄注册器,`import './ipc'` 经目录解析到 index(调用方零改)。**测试坑**:`ipc.test.ts` 的 require.cache 失效必须枚举全部 12 个模块(只清 `./ipc` 会让域模块钉在旧 stub 上)。**路径坑**:`readCadWasm` / `readHeicWasm` / registry 的 `__dirname/../extensions` 随目录加深为 `../../extensions`。
+- `src/main/ipc/` 按域拆分(11 个域模块,清单见 §7),各域持有自己的业务逻辑与闭包;[index.ts](../src/main/ipc/index.ts) 是 ~40 行薄注册器,`import './ipc'` 经目录解析到 index(调用方零改)。**测试坑**:`ipc.test.ts` 的 require.cache 失效必须枚举全部 12 个模块(只清 `./ipc` 会让域模块钉在旧 stub 上)。**路径坑**:`readHeicWasm` / registry 的 `__dirname/../extensions` 随目录加深为 `../../extensions`。
 - `drawio-thumb.ts` / `excalidraw-thumb.ts` 为未接入主流程的死代码(thumbnail.ts 无 drawio/excalidraw kind 分支,缩略图走品牌图标),已删。
 - index / thumb 两个 worker host 的 reqId 关联 / spawn 生命周期同构,公共层在 [worker-protocol.ts](../src/main/worker-protocol.ts)(newRequest / completeRequest / failRequest / rejectAllPending);spawn / 传输层各写一遍是有意的(utilityProcess vs 外部子进程)。
 

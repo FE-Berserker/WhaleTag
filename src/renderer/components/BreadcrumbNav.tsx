@@ -1,6 +1,6 @@
 import { Breadcrumbs, Link } from '@mui/material';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
-import { joinPath } from '-/services/path-util';
+import { joinPath, isSameOrDescendant } from '-/services/path-util';
 
 interface Crumb {
   name: string;
@@ -11,7 +11,7 @@ function buildCrumbs(dirPath: string, rootPath: string): Crumb[] {
   if (!dirPath || !rootPath) return [];
   const normDir = dirPath.replace(/\\/g, '/');
   const normRoot = rootPath.replace(/\\/g, '/');
-  if (!normDir.startsWith(normRoot)) {
+  if (!isSameOrDescendant(rootPath, dirPath)) {
     return [{ name: dirPath, path: dirPath }];
   }
   const rel = normDir.slice(normRoot.length).replace(/^\/+/, '');

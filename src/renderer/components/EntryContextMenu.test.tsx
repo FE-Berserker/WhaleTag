@@ -37,10 +37,6 @@ import type { DirEntry } from '../../shared/ipc-types';
 import type { ExtensionRegistry } from '../../shared/extension-types';
 import type { UserCommand } from '../../shared/shell-types';
 
-function makeT(): (key: string) => string {
-  return ((key: string) => key) as unknown as (key: string) => string;
-}
-
 function entry(name: string, extra: Partial<DirEntry> = {}): DirEntry {
   const dot = name.lastIndexOf('.');
   return {
@@ -118,7 +114,12 @@ function baseProps(): Omit<
 function renderMenu(
   ctx: ContextMenuPosition | null,
   spies: Spies = {},
-  opts: { isInBulkContext?: (e: DirEntry) => boolean; tagsByName?: Map<string, string[]>; userCommands?: UserCommand[] } = {}
+  opts: {
+    isInBulkContext?: (e: DirEntry) => boolean;
+    tagsByName?: Map<string, string[]>;
+    userCommands?: UserCommand[];
+    overrides?: Partial<React.ComponentProps<typeof EntryContextMenu>>;
+  } = {}
 ) {
   return render(
     <I18nextProvider i18n={i18next} defaultNS="common">
@@ -144,6 +145,7 @@ function renderMenu(
             spies.runCommand.called += 1;
             spies.runCommand.last = { entry: e, command };
           }}
+          {...opts.overrides}
         />
       </Provider>
     </I18nextProvider>
@@ -410,5 +412,31 @@ describe('EntryContextMenu #4: Commands flyout', () => {
     );
     await new Promise((r) => setTimeout(r, 0));
     assert.equal(queryByText('Disabled cmd'), null);
+  });
+
+  it('reports folder thumbnail failures without clearing the cache', async () => {
+    cleanup();
+    const errors: string[] = [];
+    let clears = 0;
+    const e = entry('folder', { isFile: false, isDirectory: true });
+    const { findByText } = renderMenu(
+      { x: 0, y: 0, entry: e },
+      {},
+      {
+        overrides: {
+          setFolderThumbnail: async () => {
+            throw new Error('decode failed');
+          },
+          showError: (message) => errors.push(message),
+          thumbCacheClear: () => {
+            clears += 1;
+          },
+        },
+      }
+    );
+    fireEvent.click(await findByText('setFolderThumbnail'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(errors, ['decode failed']);
+    assert.equal(clears, 0);
   });
 });

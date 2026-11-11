@@ -22,7 +22,7 @@ export const FILTERABLE_CATEGORIES: TagCategory[] = [
   'geo',
 ];
 
-/** Shown by default â€?workflow/priority/date/geo are noise in a frequency cloud
+/** Shown by default â€” workflow/priority/date/geo are noise in a frequency cloud
  *  or relationship graph, so only ratings start visible. */
 export const DEFAULT_SHOWN_CATEGORIES: TagCategory[] = ['rating'];
 
@@ -79,12 +79,12 @@ export function readPrefs<T>(key: string): Partial<T> | null {
 
 /**
  * Best-effort localStorage write. Swallows quota / disabled-storage (private
- * mode) errors â€?a failed save must never surface to the user.
+ * mode) errors â€” a failed save must never surface to the user.
  */
 export function writePrefs<T>(key: string, value: T): void {
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch {
-    // localStorage full / disabled â€?prefs are convenience, not core data
+    // localStorage full / disabled â€” prefs are convenience, not core data
   }
 }

@@ -101,16 +101,6 @@ export function getExtensionById(
   return state.registry?.extensions.find((e) => e.id === id);
 }
 
-export function isExtensionEnabled(
-  state: ExtensionsState,
-  id: string
-): boolean {
-  const manifest = getExtensionById(state, id);
-  if (!manifest) return false;
-  const override = state.enabledOverrides[id];
-  return override !== undefined ? override : manifest.enabled;
-}
-
 export default function extensionsReducer(
   state = initialState,
   action:

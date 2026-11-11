@@ -43,29 +43,67 @@ function isUsableToken(token: unknown): token is string {
   return typeof token === 'string' && token.length >= 16 && !/\s/.test(token);
 }
 
+/**
+ * Coerce an arbitrary parsed JSON document into a usable config. Exported so
+ * the validation matrix (non-object documents, bad ports, unusable tokens)
+ * can be unit-tested without touching the filesystem or Electron.
+ */
+export function normalizeMcpConfig(loaded: unknown): McpConfig {
+  const doc =
+    loaded && typeof loaded === 'object' && !Array.isArray(loaded)
+      ? (loaded as Partial<McpConfig>)
+      : {};
+  const port = doc.port;
+  return {
+    enabled: doc.enabled === true,
+    port:
+      typeof port === 'number' && Number.isFinite(port) && port > 0 && port < 65536
+        ? Math.floor(port)
+        : DEFAULT_PORT,
+    token: isUsableToken(doc.token) ? doc.token : generateToken(),
+    readOnly: doc.readOnly !== false, // default ON: safest first run
+  };
+}
+
 let cached: McpConfig | null = null;
+
+/**
+ * Serialize every atomic write so a load-triggered persist can't interleave
+ * with a settings toggle, and so `flushMcpConfigWrites()` gives tests (and an
+ * orderly quit) a single promise to await.
+ */
+let writeQueue: Promise<void> = Promise.resolve();
 
 export function loadMcpConfig(): McpConfig {
   if (cached) return cached;
-  let loaded: Partial<McpConfig> = {};
+  let loaded: unknown = null;
+  const p = configPath();
   try {
-    const p = configPath();
     if (existsSync(p)) {
-      loaded = JSON.parse(readFileSync(p, 'utf8')) as Partial<McpConfig>;
+      const parsed: unknown = JSON.parse(readFileSync(p, 'utf8'));
+      // `null`, an array or a scalar is valid JSON but not a config object.
+      // Without this guard `loaded.enabled` throws on a null document and the
+      // whole bootstrap (which loads MCP config before any window exists)
+      // would fail to start.
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        loaded = parsed;
+      } else {
+        // eslint-disable-next-line no-console
+        console.warn(
+          '[mcp] config file is not a JSON object; falling back to defaults'
+        );
+      }
     }
-  } catch {
-    // Corrupt config file: fall through to defaults + persist a fresh one.
+  } catch (e) {
+    // Corrupt JSON or unreadable file: fall through to defaults + persist a
+    // fresh one. This regenerates the bearer token, so say it out loud —
+    // otherwise every configured client starts failing with 401 for no
+    // visible reason.
+    // eslint-disable-next-line no-console
+    console.warn('[mcp] config unreadable, regenerating with defaults:', e);
   }
-  cached = {
-    enabled: loaded.enabled === true,
-    port:
-      typeof loaded.port === 'number' && loaded.port > 0 && loaded.port < 65536
-        ? Math.floor(loaded.port)
-        : DEFAULT_PORT,
-    token: isUsableToken(loaded.token) ? loaded.token : generateToken(),
-    readOnly: loaded.readOnly !== false, // default ON: safest first run
-  };
-  void persist();
+  cached = normalizeMcpConfig(loaded);
+  schedulePersist();
   return cached;
 }
 
@@ -74,25 +112,47 @@ async function persist(): Promise<void> {
   try {
     await atomicWriteJson(configPath(), cached);
   } catch (e) {
-    // Never crash the app over config persistence — surface in dev console.
+    // eslint-disable-next-line no-console
     console.error('[mcp] failed to persist config:', e);
+    // Re-throw so the settings IPC call fails loudly: resolving here makes the
+    // renderer show a new switch/token that disk never received, which then
+    // silently reverts on restart (or 401s clients holding the "current" token).
+    throw e;
   }
+}
+
+function schedulePersist(): void {
+  // Bootstrap write: nothing awaits it, so keep a failure from becoming an
+  // unhandled rejection (it is logged by persist()).
+  writeQueue = writeQueue.then(persist).catch(() => undefined);
+}
+
+/** Queue a write behind any in-flight one and await its completion. */
+async function persistNow(): Promise<void> {
+  const write = writeQueue.then(persist);
+  writeQueue = write.catch(() => undefined);
+  await write;
+}
+
+/** Await every queued config write (tests / orderly shutdown). */
+export async function flushMcpConfigWrites(): Promise<void> {
+  await writeQueue;
 }
 
 export async function setMcpEnabled(enabled: boolean): Promise<McpConfig> {
   loadMcpConfig().enabled = enabled;
-  await persist();
+  await persistNow();
   return { ...loadMcpConfig() };
 }
 
 export async function setMcpReadOnly(readOnly: boolean): Promise<McpConfig> {
   loadMcpConfig().readOnly = readOnly;
-  await persist();
+  await persistNow();
   return { ...loadMcpConfig() };
 }
 
 export async function regenerateMcpToken(): Promise<McpConfig> {
   loadMcpConfig().token = generateToken();
-  await persist();
+  await persistNow();
   return { ...loadMcpConfig() };
 }

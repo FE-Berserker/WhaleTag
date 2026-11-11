@@ -73,7 +73,7 @@ drawio / excalidraw 扩展支持把目录树里的文件/文件夹**拖进画布
 - **加载**(在 [app.tsx:66-84 applyScene](../src/extensions/excalidraw-editor/app.tsx#L66-L84) 里):`restore` 后遍历 image 元素,`link` 若为相对 → `resolveAbsolute(rel, dirname(path))`。
 - **保存**(在 [app.tsx:86-96 doSave](../src/extensions/excalidraw-editor/app.tsx#L86-L96) 里):`computeJson()` 序列化(`serializeAsJSON` 产出 `{elements:[…]}`)后扫描 `elements[].link` 中目录内绝对路径 → `toRelative`;或序列化前改 scene 元素 `.link`。insert 写 `link`([app.tsx:155](../src/extensions/excalidraw-editor/app.tsx#L155))、`onLinkOpen` 读([:259](../src/extensions/excalidraw-editor/app.tsx#L259)),实现见 [excalidraw-links.ts](../src/extensions/excalidraw-editor/excalidraw-links.ts) + 单测。
 
-## 7. 共享路径工具(纯函数,新建 `extensions/shared/relpath.ts`)
+## 7. 共享路径工具(纯函数,新建 `src/extensions/shared/relpath.ts`)
 
 ```ts
 /** 绝对 → 相对(若 target 在 baseDir 内,正斜杠;否则 null = 保留绝对)。 */
@@ -109,9 +109,9 @@ POC 四项全部用**代码分析 + 既有测试**闭环回答,无需 GUI 手测
 
 ## 12. 状态追踪
 
-- [x] POC §8 四项(代码分析 + 既有测试闭环)
-- [x] 共享 [`extensions/shared/relpath.ts`](../src/extensions/shared/relpath.ts) + [`relpath.test.ts`](../src/extensions/shared/relpath.test.ts)(平台分支 / 大小写 / UNC / CJK / `..` 拒绝 / round-trip)
-- [x] drawio 加载重写(rel→abs)+ 保存还原(abs→rel,存 raw):[`drop-xml.ts`](../src/extensions/drawio-editor/drop-xml.ts) `rewriteDrawioLinksToAbsolute/Relative` + [`app.tsx`](../src/extensions/drawio-editor/app.tsx) load/save effect + 单测
-- [x] excalidraw 加载重写 + 保存还原:[`excalidraw-links.ts`](../src/extensions/excalidraw-editor/excalidraw-links.ts) + [`app.tsx`](../src/extensions/excalidraw-editor/app.tsx) `applyScene`/`doSave` + 单测
+✅ 已闭环(2026-07-22):POC §8 四项(代码分析 + 既有测试);共享 [`src/extensions/shared/relpath.ts`](../src/extensions/shared/relpath.ts) + [`relpath.test.ts`](../src/extensions/shared/relpath.test.ts)(平台分支 / 大小写 / UNC / CJK / `..` 拒绝 / round-trip);drawio [`drop-xml.ts`](../src/extensions/drawio-editor/drop-xml.ts) `rewriteDrawioLinksToAbsolute/Relative` 与 excalidraw [`excalidraw-links.ts`](../src/extensions/excalidraw-editor/excalidraw-links.ts) 的加载 rel→abs / 保存 abs→rel(存 raw)+ 各自单测。
+
+仍未闭环:
+
 - [ ] 真机端到端 + 存量回归(`npm run dev`:拖文件入 drawio/excalidraw → 存盘看 link 变 `./…` → 移动整个目录 → 重开 → 点击缩略图仍能打开;老绝对链接文件打开→保存后自动迁移)
 - [ ] 回写 [docs/07-extensions.md](./07-extensions.md) 现状说明(link 相对路径已支持)—— 待真机验证后补

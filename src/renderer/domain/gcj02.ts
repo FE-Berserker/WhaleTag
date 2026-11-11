@@ -1,11 +1,11 @@
 /**
- * WGS-84 â†?GCJ-02 coordinate transform.
+ * WGS-84 â†’ GCJ-02 coordinate transform.
  *
  * China mandates the GCJ-02 ("Mars") datum for maps published within the
  * country, which applies a non-linear offset to true WGS-84 coordinates.
  * Gaode/AutoNavi (and most domestic providers) serve GCJ-02 tiles, while GPS
  * EXIF and our stored `geo:lat,lng` tags are WGS-84. Placing raw WGS-84 points
- * on a GCJ-02 base map shows them offset by ~100â€?00 m inside China.
+ * on a GCJ-02 base map shows them offset by ~100â€“300 m inside China.
  *
  * These pure functions convert between the two so markers land correctly and
  * map clicks are stored back as WGS-84. The algorithm is the widely-used

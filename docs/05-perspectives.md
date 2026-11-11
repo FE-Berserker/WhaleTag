@@ -18,7 +18,7 @@
 | `task` | active | TaskView | 第三档子视图:Kanban / Matrix / Gantt |
 | `calendar` | active | CalendarView | 5 档子视图:month / week / year / agenda / week-timeline / year-heatmap |
 | `mapique` | active | MapiqueView | Leaflet 地图 + 右侧详情托盘 |
-| `folderviz` | active | FolderVizView | 4 图:tree / radial / treemap / sunburst(递归结构,直接调 `listDirectoryRecursive`) |
+| `folderviz` | active | FolderVizView | 4 图:tree / radial / treemap / sunburst(复用 Provider 递归结果,前端重建嵌套树) |
 | `tagcloud` | active | TagCloudView | echarts-wordcloud,字号按文件数 sqrt |
 | `knowledge-graph` | active | KnowledgeGraphView | xyflow(react-flow v12)标签↔文件二部图;导出三件套(save / save-as / copy,2026-07-22 补齐 copy);节点拖拽位置按 location 持久化(`whale.kg.<id>` prefs,2026-07-22) |
 | `mindmap` | **legacy** | (无对应视图) | 旧 `ViewMode = 'mindmap'` 迁移为 `knowledge-graph` |
@@ -102,7 +102,7 @@ Eisenhower 2×2 四象限 + 底部未分类托盘(**常显**,2026-07-22:空了�
 
 `FileToolbar` 顶部全局入口,各视图自带深度滑块已删除(原 TagCloud / KG / Mapique 各自维护的 `whale.<view>.<id>.maxDepth` 已清理)。
 
-**FolderViz 例外**:仍直接调 `ipcApi.listDirectoryRecursive`(`maxDepth` 来自全局 `viewDepth`),因为它需要嵌套树结构(`dirs + entries` 重建树)。`whale.folderViz.<id>` localStorage 只保 `vizType`,`hiddenFilesInFolders` / `filterMode` 视图局部状态不动。
+**FolderViz 数据复用**:同样从 Provider 读取 `entries` / `loading` / `error` / `refresh`,用 `useMemo` 重建嵌套树;`filterMode` 切换只是纯前端投影,不再发第二次递归 IPC。隐藏文件遵循 Provider 的 `showHiddenFiles` 规则。`whale.folderViz.<id>` localStorage 只保 `vizType`,`hiddenFilesInFolders` / `filterMode` 视图局部状态不动。
 
 ## 5. 拖拽打标一致性
 
@@ -176,7 +176,7 @@ Gallery 拖拽打标已实现 P0。
 
 ### 10.1 相关现状(与搜索功能无关,仍然成立)
 
-- **mapProvider**:二元 `'gaode' | 'osm'`([settings.ts:46](../src/renderer/reducers/settings.ts#L46)),默认 `'gaode'`。**无 baidu/google**。
+- **mapProvider**:二元 `'gaode' | 'osm'`([settings/integrations.ts:22](../src/renderer/reducers/settings/integrations.ts#L22)),默认 `'gaode'`。**无 baidu/google**。
 - **tile**:二元 if/else([MapiqueView.tsx:226-229](../src/renderer/components/MapiqueView.tsx#L226)),gaode = GCJ-02(`webrd0{1-4}.is.autonavi.com`),osm = WGS-84(`tile.openstreetmap.org`)。
 - **坐标系**:内部/存储统一 **WGS-84**;GCJ-02 只在 gaode 显示层。`toDisplay`(WGS-84→显示)/ `fromDisplay`(显示→WGS-84)是组件内闭包,调 [src/renderer/domain/gcj02.ts](../src/renderer/domain/gcj02.ts)。
 - **flyTo**:**无现成 flyTo/setView**(只有 `FitBounds`)。**nameQuery** 是文件名搜索(detail panel 文件筛选),**非地名**,不能复用。

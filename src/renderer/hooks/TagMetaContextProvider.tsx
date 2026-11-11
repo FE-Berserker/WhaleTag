@@ -13,6 +13,7 @@ import type { DirEntry } from '../../shared/ipc-types';
 import type { SidecarMeta } from '../../shared/whale-meta';
 import { ipcApi } from '-/services/ipc-api';
 import {
+  isAnyDateShapeTag,
   isPeriodTag,
   isStaleDateTag,
   smartFunctionalityOfTag,
@@ -23,7 +24,7 @@ import { setTagColors } from '-/reducers/settings';
 import { pickTagColor } from '../domain/tag-colors';
 import { useCurrentLocationContext } from './CurrentLocationContextProvider';
 import { useDirectoryContentContext } from './DirectoryContentContextProvider';
-import { useNow } from './useNow';
+import { getNowSnapshot, subscribeNow } from './useNow';
 
 export interface TagCount {
   tag: string;
@@ -70,10 +71,28 @@ export function TagMetaContextProvider({ children }: { children: ReactNode }) {
   // provider only owns the meta layer: active filter tag + sidecar writes.
   const { tagsByName } = useDirectoryContentContext();
   const { currentDirectoryPath } = useCurrentLocationContext();
-  // Phase 3: stale-date fold relies on a freshness check; the hook ticks once
-  // a minute so a directory open across midnight correctly re-aggregates the
-  // `日期` chip on the next render.
-  const now = useNow();
+  // Date-shaped tags are the only metadata that changes with time. Keep the
+  // shared minute ticker off entirely for ordinary/period-only directories.
+  const needsNow = useMemo(() => {
+    for (const tags of tagsByName.values()) {
+      for (const tag of tags) {
+        if (isAnyDateShapeTag(tag)) return true;
+      }
+    }
+    return false;
+  }, [tagsByName]);
+  const [now, setNow] = useState<Date | null>(null);
+  useEffect(() => {
+    if (!needsNow) {
+      // A later date-tag transition must not briefly reuse a stale snapshot.
+      setNow(null);
+      return undefined;
+    }
+    const unsubscribe = subscribeNow(() => setNow(getNowSnapshot()));
+    // Subscribe first: starting the shared timer also refreshes its snapshot.
+    setNow(getNowSnapshot());
+    return unsubscribe;
+  }, [needsNow]);
   const dispatch = useDispatch();
   const tagColors = useSelector(
     (s: RootState) => s.settings?.tagColors ?? {}
@@ -86,6 +105,7 @@ export function TagMetaContextProvider({ children }: { children: ReactNode }) {
   }, [currentDirectoryPath]);
 
   const allTags = useMemo(() => {
+    const effectiveNow = now ?? new Date();
     const counts = new Map<string, number>();
     for (const tags of tagsByName.values()) {
       // Track whether THIS file contributed to the period: / date: folds
@@ -112,7 +132,7 @@ export function TagMetaContextProvider({ children }: { children: ReactNode }) {
         // fold into a single "date:" chip with the text "日期" — captures
         // every historical date stamp regardless of original functionality
         // (today / yesterday / month / year / now / nextWeek).
-        if (isStaleDateTag(tag, now)) {
+        if (isStaleDateTag(tag, effectiveNow)) {
           fileHasStaleDate = true;
           continue;
         }
@@ -120,7 +140,7 @@ export function TagMetaContextProvider({ children }: { children: ReactNode }) {
         // into a single "smart:<fn>" entry so the library isn't flooded with
         // one row per timestamp. Stale variants were handled above and never
         // reach this branch.
-        const fn = smartFunctionalityOfTag(tag, now);
+        const fn = smartFunctionalityOfTag(tag, effectiveNow);
         const key = fn ? `smart:${fn}` : tag;
         counts.set(key, (counts.get(key) ?? 0) + 1);
       }

@@ -9,6 +9,7 @@
  * `main.ts`.
  */
 import { createReadStream, statSync } from 'fs';
+import type { Readable } from 'stream';
 
 /**
  * Parse an HTTP `Range:` header value into a single `{ start, end }` slice.
@@ -32,6 +33,91 @@ export function parseRange(
   if (start < 0 || start >= totalSize) return null;
   if (end < start || end >= totalSize) return null;
   return { start, end };
+}
+
+/**
+ * Adapt a paused Node readable to a Web stream without running ahead of the
+ * consumer. `ReadableStream` calls `pull()` only while its queue has room;
+ * each pull resumes the Node stream and the next `data` event pauses it again.
+ * Node may retain its own bounded read-ahead buffer, but a slow web consumer
+ * can no longer cause the whole file to be enqueued.
+ *
+ * Exported separately from `createFileRangeResponse` so producer pressure and
+ * teardown races can be tested deterministically with an instrumented stream.
+ */
+export function createBackpressuredWebStream(
+  nodeStream: Readable
+): ReadableStream<Uint8Array> {
+  let finished = false;
+  const destroy = (): void => {
+    try {
+      nodeStream.destroy();
+    } catch {
+      /* already destroyed */
+    }
+  };
+
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      const finish = (err?: Error): void => {
+        if (finished) return;
+        finished = true;
+        try {
+          if (err) {
+            controller.error(err);
+          } else {
+            controller.close();
+          }
+        } catch {
+          // controller already in terminal state — ignore the late call so
+          // the consumer's `cancel()` doesn't surface as an unhandled
+          // rejection.
+        }
+      };
+
+      // Adding a `data` listener normally enters flowing mode immediately.
+      // Pause first so only `pull()` can authorize the next chunk.
+      nodeStream.pause();
+      nodeStream.on('data', (chunk: Buffer | string) => {
+        nodeStream.pause();
+        if (finished) return;
+        try {
+          if (typeof chunk === 'string') {
+            controller.enqueue(new TextEncoder().encode(chunk));
+          } else {
+            // Slice the pool buffer — Node may reuse it after the listener
+            // returns.
+            const buf = chunk.buffer.slice(
+              chunk.byteOffset,
+              chunk.byteOffset + chunk.byteLength
+            );
+            controller.enqueue(new Uint8Array(buf));
+          }
+        } catch (err) {
+          finish(err instanceof Error ? err : new Error(String(err)));
+          destroy();
+        }
+      });
+      nodeStream.on('end', () => finish());
+      nodeStream.on('error', (err) => {
+        finish(err);
+        destroy();
+      });
+      // Electron's internal cast shim can close the controller again after a
+      // web consumer cancels during `<video>` / `<audio>` teardown. `finish`'s
+      // guard absorbs that race instead of leaking an unhandled rejection.
+      nodeStream.on('close', () => finish());
+    },
+    pull() {
+      if (!finished && !nodeStream.destroyed) nodeStream.resume();
+    },
+    cancel() {
+      // Mark terminal before `destroy()` emits `close`; cancellation already
+      // closes the web side and must not attempt a second controller close.
+      finished = true;
+      destroy();
+    },
+  });
 }
 
 /**
@@ -78,65 +164,7 @@ export function createFileRangeResponse(
     headers.set('Content-Length', String(stat.size));
   }
 
-  // Manual Node → Web ReadableStream adaptation with double-close guards.
-  // Electron's internal cast shim double-closes the controller on the Node
-  // `'close'` event when the web consumer has already cancelled — Chromium
-  // does this when `<video>` / `<audio>` is mid-teardown, when the user
-  // skips, when the renderer destroys the element via track-switch, etc.
-  // The double-close surfaces as
-  // `TypeError [ERR_INVALID_STATE]: ReadableStream is already closed` from
-  // undici, escaping `protocol.handle`'s try/catch (it's outside the async
-  // boundary) and bubbling up as an unhandled promise rejection that drags
-  // the entire renderer down with a "WhaleTag encountered an error" dialog.
-  // Manually driving `controller` with a `finished` flag swallows that race.
-  const webStream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      let finished = false;
-      const finish = (err?: Error): void => {
-        if (finished) return;
-        finished = true;
-        try {
-          if (err) {
-            controller.error(err);
-          } else {
-            controller.close();
-          }
-        } catch {
-          // controller already in terminal state — ignore the late call so
-          // the consumer's `cancel()` doesn't surface as an unhandled
-          // rejection.
-        }
-      };
-      nodeStream.on('data', (chunk: Buffer | string) => {
-        if (finished) return;
-        try {
-          if (typeof chunk === 'string') {
-            controller.enqueue(new TextEncoder().encode(chunk));
-          } else {
-            // Slice the pool buffer — Node may reuse it after the listener
-            // returns.
-            const buf = chunk.buffer.slice(
-              chunk.byteOffset,
-              chunk.byteOffset + chunk.byteLength
-            );
-            controller.enqueue(new Uint8Array(buf));
-          }
-        } catch (err) {
-          finish(err instanceof Error ? err : new Error(String(err)));
-        }
-      });
-      nodeStream.on('end', () => finish());
-      nodeStream.on('error', (err) => finish(err));
-      nodeStream.on('close', () => finish());
-    },
-    cancel() {
-      try {
-        nodeStream.destroy();
-      } catch {
-        /* already destroyed */
-      }
-    },
-  });
+  const webStream = createBackpressuredWebStream(nodeStream);
 
   return new Response(webStream, { status: range ? 206 : 200, headers });
 }

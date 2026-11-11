@@ -9,6 +9,7 @@ import {
   FOLDER_BACKGROUND_FILE,
   thumbKindOf,
   isThumbnailable,
+  type ThumbKind,
 } from '../shared/whale-meta';
 import { atomicWriteBytes } from './atomic-write';
 import { thumbnailSemaphore } from './concurrency';
@@ -144,6 +145,19 @@ async function encodeVideoThumb(srcPath: string): Promise<Buffer> {
   return encodeImageThumb(frame);
 }
 
+/** Encode any supported source to the common JPEG thumbnail format, without
+ * choosing a cache location or writing to the source directory. */
+async function encodeThumbnailBuffer(
+  srcPath: string,
+  kind: ThumbKind
+): Promise<Buffer> {
+  if (kind === 'video') return encodeVideoThumb(srcPath);
+  if (kind === 'pdf') return thumbRequest('thumb:pdf', { srcPath });
+  if (kind === 'font') return thumbRequest('thumb:font', { srcPath });
+  if (kind === 'svg') return encodeSvgThumb(srcPath);
+  return encodeImageThumb(srcPath);
+}
+
 /**
  * Generates (or refreshes) a file's thumbnail. Skips files Whale can't
  * thumbnail and reuses an existing thumbnail when the source hasn't changed
@@ -195,16 +209,7 @@ async function doGenerateThumbnail(filePath: string): Promise<void> {
   await thumbnailSemaphore.run(async () => {
     let buf: Buffer;
     try {
-      buf =
-        kind === 'video'
-          ? await encodeVideoThumb(filePath)
-          : kind === 'pdf'
-            ? await thumbRequest('thumb:pdf', { srcPath: filePath })
-            : kind === 'font'
-              ? await thumbRequest('thumb:font', { srcPath: filePath })
-              : kind === 'svg'
-                ? await encodeSvgThumb(filePath)
-                : await encodeImageThumb(filePath);
+      buf = await encodeThumbnailBuffer(filePath, kind);
     } catch (e) {
       // An SVG may have no viewBox / invalid XML / unsupported features
       // librsvg can't parse. Fonts may be corrupt or use an unsupported
@@ -327,24 +332,22 @@ export function folderBackgroundPathFor(dirPath: string): string {
 }
 
 /**
- * Resizes/crops an image file to a square folder thumbnail (JPEG) and writes it
- * to `wst.jpg`. Used for both manual picks and auto-generation.
+ * Encodes a manually picked supported source straight into the folder's own
+ * metadata. The source may be outside every location (native file picker);
+ * never call generateThumbnail(sourcePath) here, because that would create
+ * `.whale/` next to the source. Reuses every file-thumbnail backend and the
+ * shared semaphore.
  */
 async function writeFolderThumbImage(
   sourcePath: string,
   targetPath: string
 ): Promise<void> {
+  const kind = thumbKindOf(path.basename(sourcePath));
+  if (!kind) throw new Error('Unsupported folder thumbnail source');
+  const buf = await thumbnailSemaphore.run(() =>
+    encodeThumbnailBuffer(sourcePath, kind)
+  );
   await fsp.mkdir(path.dirname(targetPath), { recursive: true });
-  const buf = await getSharp()(sourcePath)
-    .rotate()
-    .resize({
-      width: THUMB_SIZE,
-      height: THUMB_SIZE,
-      fit: 'cover',
-      withoutEnlargement: true,
-    })
-    .jpeg({ quality: THUMB_QUALITY, mozjpeg: true })
-    .toBuffer();
   await atomicWriteBytes(targetPath, buf);
 }
 
@@ -400,7 +403,7 @@ export async function generateFolderThumbnail(
 
 /**
  * Sets a custom image as the folder thumbnail. `sourcePath` may be any image
- * file (or any file that already has a `.whale/thumbs/<name>.jpg`).
+ * the user picked; only the destination folder's `.whale/wst.jpg` is written.
  */
 export async function setFolderThumbnail(
   dirPath: string,
@@ -408,15 +411,24 @@ export async function setFolderThumbnail(
 ): Promise<void> {
   const targetPath = folderThumbPathFor(dirPath);
   const fileThumb = thumbPathFor(sourcePath);
-  if (!existsSync(fileThumb)) {
-    await generateThumbnail(sourcePath);
-  }
   if (existsSync(fileThumb)) {
-    await fsp.mkdir(path.dirname(targetPath), { recursive: true });
-    await fsp.copyFile(fileThumb, targetPath);
-    return;
+    try {
+      const [sourceStat, cacheStat] = await Promise.all([
+        fsp.stat(sourcePath),
+        fsp.stat(fileThumb),
+      ]);
+      if (cacheStat.mtimeMs >= sourceStat.mtimeMs) {
+        await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+        await fsp.copyFile(fileThumb, targetPath);
+        return;
+      }
+    } catch {
+      // A stale/unreadable cache is not a reason to write back to the source;
+      // fall through and encode directly into the destination instead.
+    }
   }
-  // No generated thumbnail available — try to read the source as an image.
+  // No fresh reusable thumbnail: encode directly into the destination, never
+  // into the source directory (Desktop, a USB drive, or another root).
   await writeFolderThumbImage(sourcePath, targetPath);
 }
 

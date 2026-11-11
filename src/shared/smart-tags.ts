@@ -431,7 +431,7 @@ export function isSmartDateTag(tag: string, now: Date = new Date()): boolean {
  * Predicates: `isAnyDateShapeTag` is the *broader* predicate also used by
  * the Phase-4 migration's互斥 path, so behavior here matches.
  */
-export function withSingleDateTag(tags: string[], now: Date = new Date()): string[] {
+export function withSingleDateTag(tags: string[]): string[] {
   return withSingleFrom(tags, isAnyDateShapeTag);
 }
 

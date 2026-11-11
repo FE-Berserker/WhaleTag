@@ -6,6 +6,7 @@ import type { SidecarMeta } from '../../shared/whale-meta';
 import {
   MAX_RECURSIVE_ENTRIES,
   aggregateRecursiveEntries,
+  filterRecursiveEntries,
 } from './recursive-entries';
 
 /** Build a DirEntry fixture without spelling out every field each time. */
@@ -144,6 +145,45 @@ describe('shared recursive-entries aggregateRecursiveEntries', () => {
     assert.ok(
       MAX_RECURSIVE_ENTRIES > 0 && Number.isFinite(MAX_RECURSIVE_ENTRIES),
       `unexpected cap ${MAX_RECURSIVE_ENTRIES}`
+    );
+  });
+});
+
+describe('filterRecursiveEntries', () => {
+  it('prunes descendants of hidden directories, not only their own row', () => {
+    const entries = [
+      dir('/root/.hidden', '.hidden'),
+      file('/root/.hidden/a.txt', 'a.txt'),
+      dir('/root/visible', 'visible'),
+      file('/root/visible/b.txt', 'b.txt'),
+      file('/root/.secret.txt', '.secret.txt'),
+    ];
+
+    assert.deepEqual(
+      filterRecursiveEntries(entries, '/root', false).map((entry) => entry.path),
+      ['/root/visible', '/root/visible/b.txt']
+    );
+    assert.equal(filterRecursiveEntries(entries, '/root', true).length, 5);
+  });
+
+  it('uses path segments relative to root on both POSIX and Windows', () => {
+    const entries = [
+      file('C:\\root\\visible\\ok.txt', 'ok.txt'),
+      file('C:\\root\\visible\\.git\\config', 'config'),
+      file('C:\\elsewhere\\outside.txt', 'outside.txt'),
+    ];
+    assert.deepEqual(
+      filterRecursiveEntries(entries, 'C:\\root', false).map((entry) => entry.path),
+      ['C:\\root\\visible\\ok.txt']
+    );
+    // A hidden name on the root itself must not hide every descendant.
+    assert.deepEqual(
+      filterRecursiveEntries(
+        [file('/root/.location/visible.txt', 'visible.txt')],
+        '/root/.location',
+        false
+      ).map((entry) => entry.path),
+      ['/root/.location/visible.txt']
     );
   });
 });

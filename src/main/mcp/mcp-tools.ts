@@ -6,6 +6,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { request } from '../index-worker-host';
 import {
   assertWithinAllowedRoot,
+  isConfiguredRoot,
   onAllowedRootsChanged,
 } from '../allowed-roots';
 import { readSidecardsForPaths, updateFileTags, mutateSidecar } from '../sidecar';
@@ -54,6 +55,35 @@ function assertBothEndsInside(source: string, dest: string): void {
   assertWithinAllowedRoot(dest);
 }
 
+/**
+ * A location root is a container, not an entry. The renderer never offers one
+ * as a file row; an external client could otherwise tag/describe it (the
+ * sidecar lands one directory ABOVE the boundary) or delete/move the whole
+ * workspace behind a single approval dialog.
+ */
+function assertNotLocationRoot(target: string): void {
+  if (isConfiguredRoot(target)) {
+    throw new Error(
+      'Refusing to operate on a configured location root itself; operate on entries inside it'
+    );
+  }
+}
+
+/** whale_read_text decodes the whole file, so refuse absurd sizes up front. */
+const MAX_TEXT_READ_BYTES = 16 * 1024 * 1024;
+
+/** A batch where every item failed must not be reported as a successful call. */
+function batchResult<T extends { errors: { path: string; error: string }[] }>(
+  data: T,
+  total: number
+): TextResult & { isError?: true } {
+  const res = ok(data);
+  if (data.errors.length > 0 && data.errors.length >= total) {
+    return { ...res, isError: true };
+  }
+  return res;
+}
+
 function fail(tool: string, e: unknown): { content: { type: 'text'; text: string }[]; isError: true } {
   const message = e instanceof Error ? e.message : String(e);
   return {
@@ -76,6 +106,10 @@ function ensureWritable(): void {
 /**
  * Mutating file ops gate: read-only check first, then the user approval
  * dialog. Resolves true only when the user explicitly allowed it.
+ *
+ * The read-only state is re-checked AFTER the (up to 60 s) wait: turning
+ * read-only on while a dialog is pending must stop the write, not be
+ * overridden by an approval the user gave before the policy change.
  */
 async function approve(tool: string, summary: string, details: string[]): Promise<void> {
   ensureWritable();
@@ -83,6 +117,7 @@ async function approve(tool: string, summary: string, details: string[]): Promis
   if (!allowed) {
     throw new Error('the user denied this operation');
   }
+  ensureWritable();
 }
 
 /** Approval-dialog details: FULL paths (basenames hide too much from the
@@ -118,8 +153,16 @@ export function registerMcpTools(server: McpServer): void {
                 fulltext = false;
               }
               return { rootPath, ...status, fulltextIndexed: fulltext };
-            } catch {
-              return { rootPath, count: 0, ready: false, fulltextIndexed: false };
+            } catch (e) {
+              // Surface the failure: an index worker that is down must not look
+              // like a location that happens to contain zero files.
+              return {
+                rootPath,
+                count: 0,
+                ready: false,
+                fulltextIndexed: false,
+                error: e instanceof Error ? e.message : String(e),
+              };
             }
           })
         );
@@ -238,6 +281,9 @@ export function registerMcpTools(server: McpServer): void {
     },
     async ({ rootPath }) => {
       try {
+        // Writes the fulltext DB — a mutating tool, so read-only mode applies
+        // (docs/21 §4: read-only refuses every mutating tool).
+        ensureWritable();
         assertWithinAllowedRoot(rootPath);
         const res = await request('fulltext:build', { rootPath });
         return ok({ indexed: res.count });
@@ -308,7 +354,8 @@ export function registerMcpTools(server: McpServer): void {
       title: 'Read a text file',
       description:
         'Read a text file as UTF-8 (legacy encodings like GBK auto-detected). Returns ' +
-        'a character window via offset/limit plus totalLength for paging.',
+        'a character window via offset/limit plus totalLength for paging. Refuses files ' +
+        'above 16 MiB — use whale_extract_text (capped) for very large documents.',
       inputSchema: {
         path: z.string(),
         offset: z.number().int().min(0).default(0).describe('Character offset to start at'),
@@ -318,6 +365,18 @@ export function registerMcpTools(server: McpServer): void {
     async ({ path: filePath, offset, limit }) => {
       try {
         assertWithinAllowedRoot(filePath);
+        // The whole file is decoded before slicing, so a multi-GB log would
+        // OOM the main process even though the client asked for 20k chars.
+        const info = await stat(filePath);
+        if (!info.isFile()) {
+          throw new Error(`Not a file: ${filePath}`);
+        }
+        if (info.size > MAX_TEXT_READ_BYTES) {
+          throw new Error(
+            `File is ${info.size} bytes; whale_read_text caps at ${MAX_TEXT_READ_BYTES}. ` +
+              'Use whale_extract_text for a capped extract.'
+          );
+        }
         const text = await readTextFile(filePath);
         const totalLength = text.length;
         const slice = text.slice(offset, offset + limit);
@@ -416,6 +475,7 @@ export function registerMcpTools(server: McpServer): void {
         const errors: { path: string; error: string }[] = [];
         for (const p of paths) {
           try {
+            assertNotLocationRoot(p);
             assertWithinAllowedRoot(p);
             const res = await updateFileTags(p, (current) => {
               const kept = current.filter((t) => !removeSet.has(t));
@@ -429,7 +489,7 @@ export function registerMcpTools(server: McpServer): void {
             errors.push({ path: p, error: e instanceof Error ? e.message : String(e) });
           }
         }
-        return ok({ updated: results.length, results, errors });
+        return batchResult({ updated: results.length, results, errors }, paths.length);
       } catch (e) {
         return fail('whale_apply_tags', e);
       }
@@ -452,6 +512,7 @@ export function registerMcpTools(server: McpServer): void {
     async ({ path: filePath, description }) => {
       try {
         ensureWritable();
+        assertNotLocationRoot(filePath);
         assertWithinAllowedRoot(filePath);
         // Locked read-modify-write so a concurrent tag edit to the same file
         // can't be clobbered by a stale snapshot (merge-over-wipe).
@@ -486,6 +547,7 @@ export function registerMcpTools(server: McpServer): void {
         // Validate BEFORE asking the user — never spend a 60s approval
         // window on a request that can't run anyway.
         for (const p of paths) {
+          assertNotLocationRoot(p);
           assertBothEndsInside(p, path.join(destDir, path.basename(p)));
         }
         await approve(
@@ -503,7 +565,7 @@ export function registerMcpTools(server: McpServer): void {
             errors.push({ path: p, error: e instanceof Error ? e.message : String(e) });
           }
         }
-        return ok({ moved, errors });
+        return batchResult({ moved, errors }, paths.length);
       } catch (e) {
         return fail('whale_move_files', e);
       }
@@ -525,6 +587,7 @@ export function registerMcpTools(server: McpServer): void {
     async ({ paths, destDir }) => {
       try {
         for (const p of paths) {
+          assertNotLocationRoot(p);
           assertBothEndsInside(p, path.join(destDir, path.basename(p)));
         }
         await approve(
@@ -542,7 +605,7 @@ export function registerMcpTools(server: McpServer): void {
             errors.push({ path: p, error: e instanceof Error ? e.message : String(e) });
           }
         }
-        return ok({ copied, errors });
+        return batchResult({ copied, errors }, paths.length);
       } catch (e) {
         return fail('whale_copy_files', e);
       }
@@ -579,7 +642,10 @@ export function registerMcpTools(server: McpServer): void {
     },
     async ({ paths }) => {
       try {
-        for (const p of paths) assertWithinAllowedRoot(p);
+        for (const p of paths) {
+          assertNotLocationRoot(p);
+          assertWithinAllowedRoot(p);
+        }
         await approve(
           'whale_delete_files',
           `Delete ${paths.length} item${paths.length === 1 ? '' : 's'} (to recycle bin)`,
@@ -595,7 +661,7 @@ export function registerMcpTools(server: McpServer): void {
             errors.push({ path: p, error: e instanceof Error ? e.message : String(e) });
           }
         }
-        return ok({ deleted, errors });
+        return batchResult({ deleted, errors }, paths.length);
       } catch (e) {
         return fail('whale_delete_files', e);
       }
@@ -648,11 +714,11 @@ export function registerMcpTools(server: McpServer): void {
         assertWithinAllowedRoot(filePath);
         await approve(
           'whale_create_text_file',
-          `Create file ${filePath} (${content.length} chars)`,
+          `Create file ${filePath} (${Buffer.byteLength(content, 'utf8')} bytes)`,
           [filePath]
         );
         await createTextFile(filePath, content);
-        return ok({ created: filePath, bytes: content.length });
+        return ok({ created: filePath, bytes: Buffer.byteLength(content, 'utf8') });
       } catch (e) {
         return fail('whale_create_text_file', e);
       }

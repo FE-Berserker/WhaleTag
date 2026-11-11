@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useDispatch, useSelector } from 'react-redux';
+import { useDispatch } from 'react-redux';
 import { useShallowEqualSelector } from '-/hooks/useShallowEqualSelector';
 import {
   Alert,
@@ -21,7 +21,7 @@ import { useDrop } from 'react-dnd';
 import { NativeTypes } from 'react-dnd-html5-backend';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 
-import type { DirEntry } from '../../shared/ipc-types';
+import type { DirEntry, SidecarIssue } from '../../shared/ipc-types';
 import type { ViewMode, SidecarMeta } from '../../shared/whale-meta';
 import { COMMAND_PATH_BLOCKED } from '../../shared/shell-types';
 import { RootState } from '-/reducers';
@@ -82,10 +82,14 @@ const PerspectiveFallback = (
   </Box>
 );
 import PropertiesTray from '-/components/PropertiesTray';
-import FileListHeader, { RowColumnLabels } from '-/components/FileListHeader';
+import FileListHeader, {
+  LIST_COLUMN_BOUNDS,
+  RowColumnLabels,
+} from '-/components/FileListHeader';
 import EntryContextMenu, { TagChipContextMenu } from '-/components/EntryContextMenu';
 import { isImageFile } from '../../shared/whale-meta';
 import { isMediaEntry, mediaPlaylist } from '../domain/gallery';
+import { filterEntriesByTag } from '../domain/file-list-filter';
 import { tagsAfterMove } from '../domain/kanban';
 import { formatGeoTag, withoutGeoTags, isGeoTag } from '../domain/geo-tag';
 import { isDateTypedTag } from '../domain/calendar';
@@ -98,19 +102,16 @@ import { useNewDrawio } from '-/hooks/useNewDrawio';
 import { useListCommands } from '-/hooks/useListCommands';
 import { ipcApi } from '-/services/ipc-api';
 import {
-  smartFunctionalityOfTag,
   withSingleRating,
   withSingleQuadrant,
   withSingleFromValues,
   withSingleDateTag,
   withSinglePeriodTag,
   normalizeSmartTags,
-  isPeriodTag,
-  isStaleDateTag,
   resolveInputTag,
-  type SmartFunctionality,
 } from '../../shared/smart-tags';
 import { useNow } from '-/hooks/useNow';
+import { useConfirm } from '-/components/ConfirmDialogProvider';
 
 const SORT_KEYS: SortKey[] = ['name', 'size', 'modified', 'extension'];
 
@@ -134,22 +135,6 @@ const rowHeightFromDensity = (
   d: 'compact' | 'normal' | 'comfortable'
 ): number => (d === 'compact' ? 32 : d === 'comfortable' ? 72 : 56);
 
-/**
- * H.23 P1-5: per-column resize bounds (px). Bounds are applied at the call
- * site (FileList's `setColumnWidth` wrapper) so the header component
- * doesn't have to know the per-column limits. Keep generous on `name` (left
- * column absorbs mass renaming) and tight on `size` (max 128 px prevents the
- * column from eating screen real estate).
- */
-const LIST_COLUMN_BOUNDS: Record<
-  'name' | 'size' | 'modified',
-  { min: number; max: number }
-> = {
-  name: { min: 120, max: 600 },
-  size: { min: 48, max: 128 },
-  modified: { min: 64, max: 200 },
-};
-
 /** Edge length of a list row's thumbnail / icon area (px). Mirrored by
  *  `Row.ROW_THUMB_SIZE`; keep in sync. The list column header reserves
  *  `ROW_THUMB_SIZE + 8` px to align with the row's icon slot. */
@@ -159,6 +144,77 @@ const ROW_THUMB_SIZE = 40;
 const MIN_ENTRY_SIZE = 96;
 const MAX_ENTRY_SIZE = 280;
 const ENTRY_SIZE_STEP = 32;
+
+type CorruptSidecarIssue = Extract<SidecarIssue, { kind: 'corrupt' }>;
+
+/** Persistent sidecar health warning, exported for focused component tests. */
+export function SidecarIssuesAlert({
+  issues,
+  readOnly,
+  onNavigate,
+  onRecover,
+}: {
+  issues: SidecarIssue[];
+  readOnly: boolean;
+  onNavigate: (dirPath: string) => void;
+  onRecover: (issue: CorruptSidecarIssue) => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const confirm = useConfirm();
+  const [pendingDir, setPendingDir] = useState<string | null>(null);
+  if (issues.length === 0) return null;
+  return (
+    <Alert severity="warning" sx={{ borderRadius: 0 }} data-testid="sidecar-issues-warning">
+      <Typography variant="body2">
+        {t('sidecarIssuesWarning', { count: issues.length })}
+      </Typography>
+      <Stack spacing={0.5} sx={{ mt: 1 }}>
+        {issues.map((issue) => (
+          <Stack
+            key={`${issue.dirPath}:${issue.kind}`}
+            direction={{ xs: 'column', sm: 'row' }}
+            spacing={1}
+            sx={{ alignItems: { xs: 'stretch', sm: 'center' } }}
+          >
+            <Button
+              size="small"
+              color="inherit"
+              onClick={() => onNavigate(issue.dirPath)}
+              sx={{ justifyContent: 'flex-start', overflowWrap: 'anywhere' }}
+            >
+              {issue.dirPath}
+            </Button>
+            {issue.kind === 'corrupt' && !readOnly ? (
+              <Button
+                size="small"
+                color="inherit"
+                disabled={pendingDir !== null}
+                onClick={async () => {
+                  if (pendingDir !== null) return;
+                  const approved = await confirm({
+                    title: t('sidecarRecoverTitle'),
+                    message: t('sidecarRecoverMessage', { dirPath: issue.dirPath }),
+                    confirmLabel: t('sidecarRecoverAction'),
+                    danger: true,
+                  });
+                  if (!approved) return;
+                  setPendingDir(issue.dirPath);
+                  try {
+                    await onRecover(issue);
+                  } finally {
+                    setPendingDir(null);
+                  }
+                }}
+              >
+                {t('sidecarRecoverAction')}
+              </Button>
+            ) : null}
+          </Stack>
+        ))}
+      </Stack>
+    </Alert>
+  );
+}
 
 /**
  * The file/folder list. Features:
@@ -177,6 +233,7 @@ export default function FileList() {
     loading,
     error,
     recursiveTruncated,
+    sidecarIssues = [],
     sort,
     setSort,
     refresh,
@@ -353,19 +410,18 @@ export default function FileList() {
   // Enforce the per-file smart-tag invariants with the CURRENT (customizable)
   // workflow set — at most one rating, one workflow status, one quadrant,
   // one date tag, one period tag. Replaces the static normalizeSmartTags so
-  // user-defined stage tokens are deduped too; `withSingleDateTag` consumes
-  // `now` from closure so互斥 is fresh against today's date stamp.
+  // user-defined stage tokens are deduped too. Date-shape exclusivity is
+  // time-independent, so this memo does not need to track the wall clock.
   const normalize = useCallback(
     (tags: string[]) =>
       withSinglePeriodTag(
         withSingleDateTag(
           withSingleQuadrant(
             withSingleFromValues(withSingleRating(tags), workflowValues)
-          ),
-          now
+          )
         )
       ),
-    [workflowValues, now]
+    [workflowValues]
   );
 
   // P0-3: H.23 P0-3 — selected selection is `useRef<Set>` instead of
@@ -431,6 +487,8 @@ export default function FileList() {
     severity: 'success' | 'info' | 'warning' | 'error';
     /** Show the "open trash" action button. */
     openTrash?: boolean;
+    /** Show a revealed corrupt-sidecar backup. */
+    backupPath?: string;
   } | null>(null);
   // Reporter for success/warning/info + every error path (`showNotice(msg)`
   // defaults to error). `setNotice` itself stays for the close handlers.
@@ -438,9 +496,35 @@ export default function FileList() {
     (
       text: string,
       severity: 'success' | 'info' | 'warning' | 'error' = 'error',
-      opts?: { openTrash?: boolean }
+      opts?: { openTrash?: boolean; backupPath?: string }
     ) => setNotice({ text, severity, ...opts }),
     []
+  );
+  const handleRecoverSidecar = useCallback(
+    async (issue: CorruptSidecarIssue) => {
+      try {
+        const result = await ipcApi.recoverCorruptSidecar({
+          dirPath: issue.dirPath,
+          expectedSha256: issue.sha256,
+        });
+        if (result.status === 'recovered') {
+          showNotice(t('sidecarRecovered'), 'success', {
+            backupPath: result.backupPath,
+          });
+        } else if (result.status === 'conflict') {
+          showNotice(t('sidecarRecoverConflict'), 'warning');
+        } else {
+          showNotice(t('sidecarRecoverNotCorrupt'), 'info');
+        }
+        // Success, conflict, and not-corrupt all re-read the authoritative state.
+        await refresh();
+      } catch (e) {
+        // Do not clear or refresh away the persistent warning on a failed write.
+        const detail = e instanceof Error ? e.message : String(e);
+        showNotice(`${t('sidecarRecoverFailed')} ${detail}`, 'error');
+      }
+    },
+    [refresh, showNotice, t]
   );
   // Context menu: entry === null means a right-click on blank space.
   const [ctxMenu, setCtxMenu] = useState<{
@@ -506,44 +590,10 @@ export default function FileList() {
   const freshnessFilter = activeTag === 'date:' || (activeTag?.startsWith('smart:') ?? false);
   const nowTick = freshnessFilter ? now : FROZEN_NOW;
 
-  const visible = useMemo(() => {
-    if (!activeTag) return entries;
-    // Folded geo filter ("geo:") matches every file carrying a coordinate tag.
-    if (activeTag === 'geo:') {
-      return entries.filter((e) =>
-        (tagsByName.get(e.path) ?? []).some(isGeoTag)
-      );
-    }
-    // Folded period filter ("period:") matches every file carrying a
-    // YYYYMMDD-YYYYMMDD period tag (the fold key 'period:' itself is never
-    // stored on a file — see docs/03-tagging.md §5 / §8).
-    if (activeTag === 'period:') {
-      return entries.filter((e) =>
-        (tagsByName.get(e.path) ?? []).some(isPeriodTag)
-      );
-    }
-    // Folded stale-date filter ("date:") matches every file carrying a date-
-    // shaped tag that is currently stale (out of any of the 7 freshness
-    // windows). Wrapped in useNow-derived `now` so day / month / year
-    // boundaries correctly re-classify at click time.
-    if (activeTag === 'date:') {
-      return entries.filter((e) =>
-        (tagsByName.get(e.path) ?? []).some((tg) => isStaleDateTag(tg, nowTick))
-      );
-    }
-    // Folded smart-tag filter ("smart:today") matches every variant of that fn.
-    if (activeTag.startsWith('smart:')) {
-      const fn = activeTag.slice(6) as SmartFunctionality;
-      return entries.filter((e) =>
-        (tagsByName.get(e.path) ?? []).some(
-          (tg) => smartFunctionalityOfTag(tg, nowTick) === fn
-        )
-      );
-    }
-    return entries.filter((e) =>
-      (tagsByName.get(e.path) ?? []).includes(activeTag)
-    );
-  }, [entries, activeTag, tagsByName, nowTick]);
+  const visible = useMemo(
+    () => filterEntriesByTag(entries, tagsByName, activeTag, nowTick),
+    [entries, activeTag, tagsByName, nowTick]
+  );
 
   const selectedEntries = useMemo(
     () => visible.filter((e) => selectedPathsRef.current.has(e.path)),
@@ -1473,6 +1523,12 @@ export default function FileList() {
           </Typography>
         </Box>
       ) : null}
+      <SidecarIssuesAlert
+        issues={sidecarIssues}
+        readOnly={!!currentLocation?.isReadOnly}
+        onNavigate={navigateTo}
+        onRecover={handleRecoverSidecar}
+      />
       {recursiveTruncated ? (
         <Alert severity="warning" sx={{ borderRadius: 0 }}>
           {t('recursiveEntriesTruncated')}
@@ -1786,7 +1842,17 @@ export default function FileList() {
           variant="filled"
           onClose={() => setNotice(null)}
           action={
-            notice?.openTrash ? (
+            notice?.backupPath ? (
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() => {
+                  void ipcApi.revealAndSelect(notice.backupPath!).catch(() => undefined);
+                }}
+              >
+                {t('sidecarRevealBackup')}
+              </Button>
+            ) : notice?.openTrash ? (
               <Button
                 color="inherit"
                 size="small"

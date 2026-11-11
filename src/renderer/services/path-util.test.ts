@@ -73,6 +73,12 @@ describe('renderer path-util', () => {
       assert.ok(!isSameOrDescendant('/foo/bar', '/foo/bartender'));
     });
 
+    it('handles filesystem roots and still enforces segment boundaries', () => {
+      assert.ok(isSameOrDescendant('/', '/foo/bar'));
+      assert.ok(isSameOrDescendant('C:\\', 'C:\\foo\\bar'));
+      assert.ok(!isSameOrDescendant('/foo/bar', '/foo/bartender'));
+    });
+
     it('handles mixed separators', () => {
       assert.ok(isSameOrDescendant('C:/foo/bar', 'C:\\foo\\bar\\baz'));
       assert.ok(isSameOrDescendant('/foo/bar', '\\foo\\bar\\baz'));

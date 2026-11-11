@@ -20,9 +20,11 @@
 - `fs.realpathSync` 解析目标(不存在递归父目录再拼尾部),防 symlink 逃逸
 - Windows 大小写归一(`isSameOrDescendant` 比较前 `toLowerCase`)
 
-**只读位置**:从不在 `setAllowedRoots` 注册 → 写 IPC 早 throw → UI 写按钮 disabled。
+**只读位置**:仍会注册进 `allowedRoots` 以允许读取；`allowedRoots` 只界定“哪些位置可访问”，不等同于只读权限。只读位置的写操作拦截在 renderer 的 IOActions / FileList / useListCommands 守卫，主进程写 IPC 不会仅凭 `isReadOnly` 拒绝。
 
-修订历史 IPC(`ext:backupRevision` / `ext:restoreRevision` / `ext:deleteRevision`)过同一闸;`deleteRevision` 额外把 revision 路径绑定到所属文件的 `<dir>/.whale/revisions/` 前缀(与 restore 相同)——`rm --force` 不进回收站,不做绑定就是任意路径强删。详见 [docs/07-extensions.md](./07-extensions.md)。
+修订历史 IPC(`ext:backupRevision` / `ext:listRevisions` / `ext:restoreRevision` / `ext:deleteRevision`)过同一闸;`deleteRevision` 额外把 revision 路径绑定到所属文件的 `<dir>/.whale/revisions/` 前缀(与 restore 相同)——`rm --force` 不进回收站,不做绑定就是任意路径强删。`ext:cleanupRevisions` 只接受有限、非负的 number，非法天数在删除前 reject。详见 [docs/07-extensions.md](./07-extensions.md)。
+
+读取入口也遵守同一位置边界：目录缩略图加载/背景加载会校验目录(缺图时可能自动生成并写 `.whale`)，设置目录缩略图/背景会校验目标目录；原生对话框自选的 source 图片可以位于位置外，但服务只读取源、只在目标目录 `.whale/` 写入。`index:query` / `index:advanced` / `index:tags` / `index:status` / `fulltext:search` / `fulltext:has` 均在访问索引前校验 root。
 
 详见 [docs/02-file-io.md §6](./02-file-io.md)。
 
@@ -92,7 +94,7 @@
 
 写操作 33 处过 `assertWithinAllowedRoot`(§2);读路径此前完全不受限、与威胁模型不一致,通道闸已修:
 
-- ✅ `fs:readFile` / `fs:readTextFile` handler 入口加 `assertWithinAllowedRoot`([fs-read.ts](../src/main/ipc/fs-read.ts))。渲染层调用方全部为用户动作驱动(打开文件 / 灯箱 / 搜索命中,均在位置内),fail-closed 不伤启动路径。
+- ✅ `fs:readFile` / `fs:readTextFile` / `fs:readFileBase64` handler 入口加 `assertWithinAllowedRoot`([fs-read.ts](../src/main/ipc/fs-read.ts))。渲染层调用方全部为用户动作驱动(打开文件 / 灯箱 / 搜索命中 / 扩展嵌图,均在位置内),fail-closed 不伤启动路径。
 - ✅ `fs:openNative` 同闸;扩展 `openLinkExternally`(http(s) 分流 `window.open` 后)与 `openNative` 消息汇到它,"任意路径启动 OS 程序"的面被封。
 - ✅ `exif:extractGps` / `exif:get-summary` 同闸([search-index.ts](../src/main/ipc/search-index.ts))——Mapique 只对位置内文件取 EXIF,与此节声明对齐。
 - ⏳ **遗留**:能力授予"全有或全无"——manifest 无 permissions / capabilities 字段,text-editor 与 image-viewer 拥有完全相同的宿主能力面。目前 8 个扩展全是内置自研,威胁面可控;引入第三方 / 用户扩展机制前须补"按 manifest 声明能力白名单放行 `request*` 消息类型"。

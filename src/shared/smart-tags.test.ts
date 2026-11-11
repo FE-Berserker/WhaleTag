@@ -70,7 +70,6 @@ describe('mondayOfWeek', () => {
 const TODAY = localDate(2026, 7, 4); // Saturday 2026-07-04 12:00 local
 const TOMORROW = localDate(2026, 7, 5); // Sunday
 const MON_AFTER = localDate(2026, 7, 6); // Monday 2026-07-06
-const NEXT_MON = localDate(2026, 7, 13); // Following Monday (nextWeek from Saturday)
 
 describe('resolveSmartTag returns bare compact values (post §1 migration)', () => {
   it('today returns YYYYMMDD', () => {
@@ -308,7 +307,7 @@ describe('withSingleDateTag — date family exclusivity (covers active + stale)'
   it('last wins when multiple active smart date tags exist', () => {
     // On 2026-07-04, `today-20260704` and `month-202607` are both active
     const tags = ['today-20260704', 'month-202607', 'idea'];
-    const out = withSingleDateTag(tags, TODAY);
+    const out = withSingleDateTag(tags);
     assert.deepEqual(out, ['month-202607', 'idea']);
   });
   it('互斥 across active + stale: an active today and a stale month collapse to one', () => {
@@ -318,14 +317,14 @@ describe('withSingleDateTag — date family exclusivity (covers active + stale)'
     // change: previously stale date tags passed through, leading to the
     // "active + stale coexist" UX bug.
     const tags = ['idea', 'today-20260704', 'month-202606'];
-    const out = withSingleDateTag(tags, TODAY);
+    const out = withSingleDateTag(tags);
     assert.deepEqual(out, ['idea', 'month-202606']);
   });
   it('互斥 across multiple stale date tags: keeps last', () => {
     // Two stale tags, both fail `isSmartDateTag`, but互斥 still applies
     // because `isAnyDateShapeTag` is broad.
     const tags = ['idea', 'today-20251223', 'month-202512'];
-    const out = withSingleDateTag(tags, TODAY);
+    const out = withSingleDateTag(tags);
     assert.deepEqual(out, ['idea', 'month-202512']);
   });
   it('does not affect period / rating / workflow / quadrant tags', () => {
@@ -336,7 +335,7 @@ describe('withSingleDateTag — date family exclusivity (covers active + stale)'
       'urgent-important', // quadrant
       'idea', // plain
     ];
-    const out = withSingleDateTag(tags, TODAY);
+    const out = withSingleDateTag(tags);
     assert.deepEqual(out, tags);
   });
 });
@@ -549,7 +548,7 @@ describe('addTag-style互斥 after resolveInputTag — full chain', () => {
       const resolved = resolveInputTag(input, TODAY);
       if (current.includes(resolved)) return current;
       if (isAnyDateShapeTag(resolved)) {
-        return withSingleDateTag([...current, resolved], TODAY);
+        return withSingleDateTag([...current, resolved]);
       }
       return [...current, resolved];
     };
@@ -564,7 +563,7 @@ describe('addTag-style互斥 after resolveInputTag — full chain', () => {
       const resolved = resolveInputTag(input, TODAY);
       if (current.includes(resolved)) return current;
       if (isAnyDateShapeTag(resolved)) {
-        return withSingleDateTag([...current, resolved], TODAY);
+        return withSingleDateTag([...current, resolved]);
       }
       return [...current, resolved];
     };
@@ -580,7 +579,7 @@ describe('addTag-style互斥 after resolveInputTag — full chain', () => {
     if (isAnyDateShapeTag(resolved)) {
       // would互斥 with date, but period is NOT a date shape — so they coexist.
     }
-    const next = withSingleDateTag([...tags, resolved], TODAY);
+    const next = withSingleDateTag([...tags, resolved]);
     // period stays, date互斥 applies within date family
     assert.deepEqual(next, ['20260701-20260703', '20260704']);
   });

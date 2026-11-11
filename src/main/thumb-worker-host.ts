@@ -168,9 +168,16 @@ export async function thumbRequest(
     }
   }
   await ensureSpawn();
-  if (!child) throw new Error('thumb worker not running');
+  const c = child;
+  if (!c) throw new Error('thumb worker not running');
   const { reqId, promise } = newRequest(pending);
-  child.postMessage({ reqId, op, arg });
+  try {
+    c.postMessage({ reqId, op, arg });
+  } catch (e) {
+    // The exit handler may already have rejected every request; failRequest
+    // then becomes a no-op. Otherwise it rejects and removes just this one.
+    failRequest(pending, reqId, e instanceof Error ? e : new Error(String(e)));
+  }
   // Structured clone turns the worker's Buffer into a plain Uint8Array on
   // this side; rewrap it so callers always get a real Buffer.
   const result = (await promise) as { buf: Uint8Array };

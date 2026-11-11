@@ -116,7 +116,7 @@ describe('tagCloudData', () => {
 
   it('applies limit AFTER exclude (top-N among remaining categories)', () => {
     // `in-progress` is the most frequent tag but is excluded; the limit:1 then
-    // applies to what survives, so the top *plain* tag wins â€?not the globally
+    // applies to what survives, so the top *plain* tag wins â€” not the globally
     // most frequent tag. Locks the P2-4 "exclude first, then limit" ordering.
     const data = tagCloudData(
       [
@@ -132,7 +132,7 @@ describe('tagCloudData', () => {
   it('categorizes each distinct tag once regardless of occurrence count', () => {
     // Regression for the P2-4 O(N) rewrite: a tag repeated across many files
     // must be classified by its distinct value, not re-filtered per occurrence.
-    // 100 files all carrying the same excluded workflow tag â†?empty result.
+    // 100 files all carrying the same excluded workflow tag â†’ empty result.
     const lists = Array.from({ length: 100 }, () => ['in-progress', 'keep']);
     const data = tagCloudData(lists, { exclude: ['workflow'] });
     assert.deepEqual(data, [{ name: 'keep', value: 10, count: 100 }]);

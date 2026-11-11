@@ -296,6 +296,15 @@ describe('isWithinRoot', () => {
     assert.equal(isWithinRoot(`C:${sep}ext`, `C:${sep}ext`), true);
   });
 
+  it('accepts descendants of a filesystem root without doubling its separator', () => {
+    const root = path.parse(process.cwd()).root;
+    assert.equal(isWithinRoot(path.join(root, 'ext', 'f.js'), root), true);
+    if (process.platform === 'win32') {
+      const otherRoot = root.toUpperCase() === 'C:\\' ? 'D:\\' : 'C:\\';
+      assert.equal(isWithinRoot(path.join(otherRoot, 'ext', 'f.js'), root), false);
+    }
+  });
+
   it('honors filesystem case-sensitivity (fold on win/mac, exact on linux)', () => {
     // Same path, different case. True on case-insensitive FS (same dir),
     // false on case-sensitive FS (different dir).

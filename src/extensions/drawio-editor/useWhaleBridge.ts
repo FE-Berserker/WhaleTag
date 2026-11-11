@@ -115,6 +115,10 @@ export function useWhaleBridge() {
 
   const onRequestSave = useCallback((fn: () => void) => {
     requestSaveRef.current = fn;
+    return () => {
+      // Do not let an older effect unregister a newer save handler.
+      if (requestSaveRef.current === fn) requestSaveRef.current = null;
+    };
   }, []);
 
   /** Ask the host for a thumbnail + metadata for `path` (called by the drop

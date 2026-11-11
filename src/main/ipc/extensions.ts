@@ -44,9 +44,10 @@ export function registerExtensionHandlers(): void {
       writeFileWithRevision(filePath, content)
   );
 
-  ipcMain.handle('ext:listRevisions', (_event, filePath: string) =>
-    listRevisions(filePath)
-  );
+  ipcMain.handle('ext:listRevisions', (_event, filePath: string) => {
+    assertWithinAllowedRoot(filePath);
+    return listRevisions(filePath);
+  });
 
   ipcMain.handle(
     'ext:restoreRevision',
@@ -57,6 +58,13 @@ export function registerExtensionHandlers(): void {
   );
 
   ipcMain.handle('ext:cleanupRevisions', (_event, maxAgeDays: number) => {
+    if (
+      typeof maxAgeDays !== 'number' ||
+      !Number.isFinite(maxAgeDays) ||
+      maxAgeDays < 0
+    ) {
+      throw new Error('Invalid maxAgeDays: expected a finite non-negative number');
+    }
     // The renderer passes the configured location roots; clean each one.
     const roots = getAllowedRoots();
     return Promise.all(

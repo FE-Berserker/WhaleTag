@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, MenuItemConstructorOptions } from 'electron';
+import { app, Menu, MenuItemConstructorOptions } from 'electron';
 
 /** Standard application + "Window" menu. Keep it minimal for the scaffold. */
 export function buildMenu(): Menu {
@@ -67,10 +67,4 @@ export function buildMenu(): Menu {
   ];
 
   return Menu.buildFromTemplate(template);
-}
-
-/** Convenience helper, not used yet — reserved for context menus later. */
-export function focusMainWindow(): void {
-  const [win] = BrowserWindow.getAllWindows();
-  if (win) win.focus();
 }

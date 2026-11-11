@@ -99,7 +99,6 @@ export default function ExtensionViewPanel({ theme }: ExtensionViewPanelProps) {
                 fileSize={tab.fileSize}
                 siblings={isActive ? siblings : undefined}
                 theme={theme}
-                onClose={() => void closeTab(tab.id)}
                 onRequestRevisionHistory={() => setHistoryOpen(true)}
                 onRequestFile={isActive ? handleRequestFile : undefined}
               />

@@ -224,6 +224,23 @@ export default function EntryContextMenu(props: EntryContextMenuProps) {
     userCommands,
     onRunCommand,
   } = props;
+  const runFolderImageAction = (
+    action: () => Promise<void> | void,
+    clearThumbCache = false
+  ): void => {
+    const report = (error: unknown): void =>
+      showError(error instanceof Error ? error.message : String(error));
+    try {
+      void Promise.resolve(action())
+        .then(() => {
+          if (clearThumbCache) thumbCacheClear();
+        })
+        .catch(report);
+    } catch (error) {
+      report(error);
+    }
+    onClose();
+  };
   // Tag-library state for the inline "Edit tags" editor embedded in the
   // single-entry branch. The parent already passes the directory's
   // `tagsByName` (used to render the row's chip strip), so we read color
@@ -598,11 +615,7 @@ export default function EntryContextMenu(props: EntryContextMenuProps) {
                   <MenuItem
                     disabled={readOnly}
                     onClick={() => {
-                      const p = setFolderThumbnail(entry);
-                      if (p && typeof (p as Promise<void>).then === 'function') {
-                        (p as Promise<void>).then(thumbCacheClear);
-                      }
-                      onClose();
+                      runFolderImageAction(() => setFolderThumbnail(entry), true);
                     }}
                   >
                     <ListItemIcon>
@@ -613,8 +626,7 @@ export default function EntryContextMenu(props: EntryContextMenuProps) {
                   <MenuItem
                     disabled={readOnly}
                     onClick={() => {
-                      void setFolderBackground(entry);
-                      onClose();
+                      runFolderImageAction(() => setFolderBackground(entry));
                     }}
                   >
                     <ListItemIcon>
@@ -625,11 +637,7 @@ export default function EntryContextMenu(props: EntryContextMenuProps) {
                   <MenuItem
                     disabled={readOnly}
                     onClick={() => {
-                      const p = clearFolderThumbnail(entry);
-                      if (p && typeof (p as Promise<void>).then === 'function') {
-                        (p as Promise<void>).then(thumbCacheClear);
-                      }
-                      onClose();
+                      runFolderImageAction(() => clearFolderThumbnail(entry), true);
                     }}
                   >
                     <ListItemIcon>
@@ -640,8 +648,7 @@ export default function EntryContextMenu(props: EntryContextMenuProps) {
                   <MenuItem
                     disabled={readOnly}
                     onClick={() => {
-                      void clearFolderBackground(entry);
-                      onClose();
+                      runFolderImageAction(() => clearFolderBackground(entry));
                     }}
                   >
                     <ListItemIcon>
@@ -850,7 +857,7 @@ export function TagChipContextMenu(props: TagChipContextMenuProps) {
   // Edit-period flow needs to read the current tags + write a new meta —
   // both go through the shared tag / directory contexts, not through
   // the parent callbacks.
-  const { save, saveMany } = useTagMetaContext();
+  const { save } = useTagMetaContext();
   const { tagsByName, descByName, geoByName } = useDirectoryContent();
   const {
     ctx,

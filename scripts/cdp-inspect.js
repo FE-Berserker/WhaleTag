@@ -14,7 +14,6 @@ function getPages() {
 
 (async () => {
   const pages = await getPages();
-  const main = pages.find((p) => p.type === 'page');
   const drawioPage = pages.find((p) => p.type === 'iframe');
   if (!drawioPage) { console.log('no iframe target'); process.exit(1); }
   console.log('[iframe]', drawioPage.url, 'wsUrl:', drawioPage.webSocketDebuggerUrl);
@@ -30,7 +29,6 @@ function getPages() {
       ws.send(JSON.stringify({ id: reqId, method, params }));
     });
   }
-  const networkLog = [];
   ws.on('message', (data) => {
     let msg;
     try { msg = JSON.parse(data.toString()); } catch { return; }

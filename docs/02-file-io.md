@@ -31,7 +31,7 @@
 | 删除 | 默认走 **`shell.trashItem`**(系统回收站);设置 `deleteToTrash: false` 走 `fs.rm` 永久删除;toast 附"打开回收站"按钮 |
 
 > **Toast 严重度(2026-07-22)**:FileList 的 notice 是结构化 `{ text, severity, openTrash? }`,严重度由产生处显式携带(`showNotice(msg, severity?)`,默认 error)——**不再**从本地化文本前缀匹配推断(旧实现在 ja/ko 下前缀为空串恒真 → 错误全显示绿色成功;en/zh 下 moved/packaged 成功反显示红色)。成功:movedToTrash / deletedPermanently(warning) / tagsApplied / movedItems / packaged / importedItems / folderThumbnail·Background Set·Cleared。
-| 新建 | `createTextFile` / `createDirectory` —— **不覆盖已有**(不可变偏好) |
+| 新建 | `createTextFile` / `createDirectory` —— **不覆盖已有**(不可变偏好);文本创建用 `writeFile(..., { flag: 'wx' })` 原子拒绝已存在目标,不靠 `existsSync` 预检查 |
 | 打开 | 优先内置扩展(dispatch 选 `selectExtension`);无匹配走 `shell.openPath` |
 
 **写路径必须经过 `assertWithinAllowedRoot`**(见 §6),保证只能修改已注册位置。
@@ -39,6 +39,7 @@
 **主进程 IO 性能**(防 UI 冻结):
 
 - `readTextFile`:chardet 只采样前 256KB(不扫整个 buffer);替换字符计数用 `indexOf` 循环(不建百万级 `match` 数组)。多 MB 老编码文件不再冻 UI 数百 ms
+- `readFileBase64`:Main 用 `Buffer.toString('base64')` 一次编码,供扩展嵌图;避免 Renderer 对大 `Uint8Array` 逐字节转字符串。入口同样过 `assertWithinAllowedRoot`
 
 ## 4. 右键菜单
 
@@ -87,12 +88,23 @@ writeFileAtomic(path, write):
   rename(tmp, path)      # atomic on same fs
 ```
 
-- 写文件前先清理目标目录下 `<basename>.*.tmp` 残留(崩溃遗留)
+- 写文件前先清理目标目录下 `<basename>.<pid>.<counter>.tmp` 残留(崩溃遗留;每个 target 每进程只 sweep 一次);只接受精确数字后缀,不会把 `foo.jpg.<pid>.<counter>.tmp` 误当成目标 `foo` 的临时文件
+- 临时文件名带 `pid + 单调计数器` 后缀,同一 target 的并发写各有自己的 tmp,不会互相 rename 掉对方的文件
+- **同一 target 的写串行排队,不同 target 并行**(模块级 `Map<string, Promise>`):既避免 sweep 删掉在途临时文件,也避免 Windows 上两个 rename 抢同一目标时的 `EPERM`;前一个写失败不会污染队列里的下一个
+- 递归缓存 `loadRecursiveScan` 在入口重新校验 IPC depth:非有限值回退 3,其余取整并限制在 1–5,避免异常 depth 影响缓存路径或扫描工作量
 - 用于 sidecar、索引迁移标志、redux-persist 写盘
+
+**读语义:`ENOENT` 与空白文件视为"没有已保存数据"**。`wsd.json` 的读取入口 `loadWsd(dirPath)` 在文件缺失或内容为空白时返回 `null`(空白文件可由后续写入重建);非空的 JSON 解析失败、结构不合法(`Invalid aggregated sidecar format: <path>`)、以及非 ENOENT 的 IO 错误(权限 / EIO / 共享冲突)一律上抛,绝不会被当成"空数据"覆盖。这条约束防止把读失败误判为不存在 → 迁移或覆盖写回时抹掉真实元数据。
+
+**写入失败保护与读取降级是两条不同路径**:sidecar 写入 / 修改遇到损坏或 IO 错误仍直接向调用者报错并保留原件;索引器 `readSidecars` 对坏目录记录 warning、以无 stored tags 继续索引文件;批量展示 `readSidecardsForPaths` 用 `Promise.allSettled` 跳过失败目录并返回其余健康结果,不让一个坏目录拖垮整个 location 或视图。
+
+**损坏可见、恢复需确认**:UI 使用 detailed read,在健康数据正常展示的同时报告 `corrupt`(非法 JSON/结构,含 SHA-256)或 `unreadable`(IO)并保留持久 warning。只有用户对 corrupt 项确认后才调用恢复:Main 在 allowedRoots 与目录锁内重读并核对指纹,以 `wx` 排他写入 `wsd.json.corrupt-<时间>-<指纹>.bak` 保存捕获的原字节,再把可读取的 legacy 标签合并进新的有效聚合(legacy 文件本身不删除/不改动);指纹变化、已合法/空白/缺失均零写。失败保留原件和备份;成功后 UI 可定位备份并刷新。恢复保留 legacy 原文件时,删除最后一个标签会保留空聚合作为屏障,避免下次读取重新导入 legacy;无 legacy 的空目录仍删除空聚合。**legacy 迁移只删"确实解析成功"的文件**:[sidecar.ts](../src/main/sidecar.ts) 的 `readLegacySidecars` 把非法 JSON / 非对象文档归入 `corrupt`,迁移时只 `rm` 已解析路径,并把坏文件重命名为 `<name>.json.corrupt-<时间戳>`(字节原样保留,改名后不再匹配 `.json` 扫描,迁移不会反复重跑);重命名失败则留在原地并记录 warning,下次读取再试,绝不删除。
+
+**读-改-写路径:损坏 ≠ 空**。`wsm.json`(folder-meta)与 `wtaglib.json`(per-location 标签库)的展示读取仍是宽松策略:缺失 / 非法都返回空(`folder-meta.ts` / `tag-library.ts`),因为它们只是视图偏好与描述文本。但**写入路径不再复用宽松读取**:`writeFolderMeta` / `setTagLibraryDescription` / `clearTagLibraryDescription` 经 [merge-read.ts](../src/main/merge-read.ts) 的 `readJsonForMerge` 取合并基底 —— 文件缺失返回 `null`(从空开始);JSON 损坏或外形不符时把原文件**隔离**为同目录 `<name>.corrupt-<ISO 时间戳>`(字节原样保留,永不删除),记录 warning 后从空开始,因此一次单字段修改不会把其余 tags / color / description / perspective 一起抹掉;非 ENOENT 的 IO 错误(权限 / EIO / 共享冲突)直接**上抛**,绝不当"空"覆盖。`wsd.json` 承载文件级标签,沿用更严格的 §7 策略(损坏上抛 + UI 确认恢复),不容许任何降级。
 
 ## 8. redux-persist(主进程 IO)
 
-**位置**:`%APPDATA%/WhaleTag/persist/whale-root.json`。redux-persist 的 root key = `whale-root`(在 `src/renderer/store/configureStore.ts:33`),文件名由 `persistDir() + sanitize(key) + '.json'` 拼出(`persist-storage.ts`),特殊字符替换为 `_`,本 key 无需替换。
+**位置**:`%APPDATA%/WhaleTag/persist/whale-root.json`。redux-persist 的 root key = `whale-root`(在 `src/renderer/store/configureStore.ts:32`),文件名由 `persistDir() + sanitize(key) + '.json'` 拼出(`persist-storage.ts`),特殊字符替换为 `_`,本 key 无需替换。
 
 **为什么不走 localStorage**:Chromium 异步 flush;OS 强杀 / 3s close-fallback 会丢最后几毫秒的写。主进程 IO(`fsp.writeFile(.tmp)` + `fsp.rename`)保证 `setItem` resolve 时字节已落盘。
 
@@ -113,7 +125,7 @@ main
        └─ console.error on failure
 ```
 
-**日志策略**(`persist-storage.ts`):每次 read/write **不**打 `console.log`(每次 state 变更 + 关机 flush 都跑,会显著拖慢主进程同步 IO);真实 IO 失败的 catch 分支保留 `console.error`(`eslint:recommended` 默认允许,且符合 plan.md §A「错误必须上抛」)。详见 [docs/15-perf-audit.md](./15-perf-audit.md) P1-2。
+**日志策略**(`persist-storage.ts`):每次 read/write **不**打 `console.log`(每次 state 变更 + 关机 flush 都跑,会显著拖慢主进程同步 IO);真实 IO 失败的 catch 分支保留 `console.error`(`eslint:recommended` 默认允许,且符合 plan.md §A「错误必须上抛」)。**删除(purge)失败必须上抛**:`persistDelete` 只把 `ENOENT` 当"已不存在"并正常返回,其余错误(EPERM / EBUSY / EIO)记录后**重新抛出** —— 否则 redux-persist 会以为 purge 成功,旧状态在下次启动时复活。详见 [docs/15-perf-audit.md](./15-perf-audit.md) P1-2。
 
 **白名单**(`configureStore.ts`):`locations` / `settings` / `taglibrary` / `workflow` / `recent` / `savedsearches` / `extensions`。`extensions` 走 `createTransform` 只持久化 `userDefaults` + `enabledOverrides`,运行时 `registry` 重新加载。
 
@@ -135,4 +147,4 @@ main
 
 - ~~persist 全链路同步阻塞~~ **已修(2026-07-18)**,细节见 §8。**未加 debounce/throttle**:写量与改前相同(每变更整包重写),只是不再阻塞双线程 —— "每写必落盘"优先于写放大优化。
 - **`fs:readTextFile` 主线程解码**:整文件 jschardet + iconv + 两遍 U+FFFD 计数都在主事件循环,大 legacy 编码文件长占。
-- `dir-lock.ts` `chains` Map 只增不清,长会话按目录数无界增长(值为已解决 Promise,低危)。
+- `dir-lock.ts` 路径别名可能绕开同目录锁 → key 统一 `path.resolve` + `foldPath`;已 settled 的链尾会自删,Map 只保留仍有活跃任务的 key。

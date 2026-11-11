@@ -329,6 +329,10 @@ describe('Folder thumbnails (.whale/wst.jpg)', () => {
           await import('./thumbnail');
         await setFolderThumbnail(dir, srcImg);
         assert.ok(
+          !existsSync(thumbPathFor(srcImg)),
+          'manual folder picks never write a source-side thumbnail'
+        );
+        assert.ok(
           existsSync(folderThumbPathFor(dir)),
           'wst.jpg created from custom image'
         );
@@ -338,6 +342,57 @@ describe('Folder thumbnails (.whale/wst.jpg)', () => {
         await fsp.rm(srcDir, { recursive: true, force: true });
       }
     } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('sets a custom folder thumbnail from a PDF without writing beside the source', async () => {
+    const dir = await tmpDir();
+    const srcDir = await tmpDir();
+    try {
+      const src = path.join(srcDir, 'cover.pdf');
+      await makePdf(src);
+      const { setFolderThumbnail, loadFolderThumbnail, folderThumbPathFor } =
+        await import('./thumbnail');
+      await setFolderThumbnail(dir, src);
+      assert.ok(!existsSync(thumbPathFor(src)), 'PDF source directory stays untouched');
+      assert.ok(existsSync(folderThumbPathFor(dir)), 'PDF cover uses the worker encoder');
+      assert.ok((await loadFolderThumbnail(dir))?.startsWith('data:image/jpeg;base64,'));
+    } finally {
+      await fsp.rm(srcDir, { recursive: true, force: true });
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('re-encodes a stale cached source without modifying the source cache', async () => {
+    const dir = await tmpDir();
+    const srcDir = await tmpDir();
+    try {
+      const src = path.join(srcDir, 'cover.png');
+      await makePng(src);
+      await generateThumbnail(src);
+      const cachedPath = thumbPathFor(src);
+      const oldCache = await fsp.readFile(cachedPath);
+      await sharp({
+        create: {
+          width: 24,
+          height: 24,
+          channels: 3,
+          background: { r: 255, g: 0, b: 0 },
+        },
+      })
+        .png()
+        .toFile(src);
+      const old = new Date('2000-01-01T00:00:00Z');
+      await fsp.utimes(cachedPath, old, old);
+
+      const { setFolderThumbnail, folderThumbPathFor } = await import('./thumbnail');
+      await setFolderThumbnail(dir, src);
+      const target = await fsp.readFile(folderThumbPathFor(dir));
+      assert.notDeepEqual(target, oldCache, 'stale source thumb is not copied');
+      assert.deepEqual(await fsp.readFile(cachedPath), oldCache, 'source cache stays untouched');
+    } finally {
+      await fsp.rm(srcDir, { recursive: true, force: true });
       await fsp.rm(dir, { recursive: true, force: true });
     }
   });

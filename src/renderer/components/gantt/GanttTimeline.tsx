@@ -22,7 +22,6 @@ import {
   useMemo,
   useState,
 } from 'react';
-import type { RefObject } from 'react';
 import type { TFunction } from 'i18next';
 import { useDrop } from 'react-dnd';
 import { NativeTypes } from 'react-dnd-html5-backend';
@@ -302,6 +301,16 @@ export default function GanttTimeline({
     return out;
   }, [stages, tagColors, groups]);
 
+  // Index once for both lane passes. Keep the first row per path, matching
+  // the previous Array.find semantics even if duplicate paths are supplied.
+  const scheduledByPath = useMemo(() => {
+    const index = new Map<string, GanttChartRow>();
+    for (const row of scheduled) {
+      if (!index.has(row.entry.path)) index.set(row.entry.path, row);
+    }
+    return index;
+  }, [scheduled]);
+
   /** Flatten lanes into a single ordered list of `{ chartRow, laneIndex }`
    *  for the windowing slice. Lanes whose `visibleCount === 0` are
    *  skipped here — they get a single placeholder row appended below. */
@@ -316,7 +325,7 @@ export default function GanttTimeline({
       // `tags` / `thumbDataUrl` when calling `groupRowsByWorkflow`).
       const tasksWithRow: DisplayRow[] = [];
       for (const t of lane.tasks) {
-        const cr = scheduled.find((r) => r.entry.path === t.entry.path);
+        const cr = scheduledByPath.get(t.entry.path);
         if (!cr) continue;
         if (isRowFilteredOut && isRowFilteredOut(cr.tags)) continue;
         tasksWithRow.push({ chartRow: cr, laneIndex: idx });
@@ -327,19 +336,7 @@ export default function GanttTimeline({
     return out;
     // Re-derive when scheduled / lanes / filter change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [swimLanes, scheduled, isRowFilteredOut]);
-
-  /** Indices in `displayRows` where a new lane begins (i.e. a divider
-   *  should be drawn immediately above that row). Excludes index 0. */
-  const laneBoundaryIndices = useMemo(() => {
-    const set = new Set<number>();
-    let prevLane = -1;
-    displayRows.forEach((r, i) => {
-      if (r.laneIndex !== prevLane && prevLane !== -1) set.add(i);
-      prevLane = r.laneIndex;
-    });
-    return set;
-  }, [displayRows]);
+  }, [swimLanes, scheduledByPath, isRowFilteredOut]);
 
   /** Number of lanes that have rows but ALL of those rows are filtered
    *  out. Used to render the "N stages hidden" collapsed placeholder.
@@ -352,13 +349,13 @@ export default function GanttTimeline({
     for (const lane of swimLanes) {
       if (lane.tasks.length === 0) continue; // truly empty (no rows ever)
       const allHidden = lane.tasks.every((t) => {
-        const cr = scheduled.find((r) => r.entry.path === t.entry.path);
+        const cr = scheduledByPath.get(t.entry.path);
         return cr ? isRowFilteredOut(cr.tags) : false;
       });
       if (allHidden) n++;
     }
     return n;
-  }, [swimLanes, scheduled, isRowFilteredOut]);
+  }, [swimLanes, scheduledByPath, isRowFilteredOut]);
 
   // Slice of `displayRows` that's actually rendered (the windowing
   // math uses `displayRows.length` instead of `scheduled.length`).

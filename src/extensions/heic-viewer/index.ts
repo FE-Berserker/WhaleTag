@@ -109,7 +109,6 @@ let currentObjectUrl: string | null = null;
 
 // --- Viewport controller (shared with image-viewer) ---
 const controller: ViewportController = createViewportController({
- imageEl,
  stageEl: containerEl,
  getNaturalSize: () => {
  if (!imageEl.naturalWidth || !imageEl.naturalHeight) return null;

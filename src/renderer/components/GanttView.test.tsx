@@ -23,6 +23,7 @@
  * global-jsdom + @testing-library/react + the full provider stack).
  */
 
+import type { ComponentProps } from 'react';
 import globalJsdom from 'global-jsdom';
 
 import { afterEach, before, describe, it } from 'node:test';
@@ -36,6 +37,7 @@ import { HTML5Backend } from 'react-dnd-html5-backend';
 import i18next from 'i18next';
 
 import GanttView from './GanttView';
+import GanttTimeline from './gantt/GanttTimeline';
 import type { FileCellData } from './file-cell';
 import { CurrentLocationContext } from '../hooks/CurrentLocationContextProvider';
 import { DirectoryContentContext, DirectoryUIContext } from '../hooks/DirectoryContentContextProvider';
@@ -44,6 +46,7 @@ import { IOActionsContextProvider } from '../hooks/IOActionsContextProvider';
 import { PeriodTagDialogProvider } from './PeriodTagDialog';
 import type { DirEntry } from '../../shared/ipc-types';
 import type { WorkflowStage } from '../domain/workflow';
+import type { GanttChartRow } from '../domain/gantt';
 
 function makeT(): FileCellData['t'] {
   return ((key: string): string => key) as FileCellData['t'];
@@ -1315,15 +1318,91 @@ describe('GanttView #18: swim lanes (P0 #1)', () => {
     assert.equal(dividers.length, 1);
   });
 
-  // The hidden-lane placeholder (when a filter narrows a lane to 0
-  // visible rows) is exercised end-to-end in a hand-rendered scenario
-  // rather than via the MUI Select dropdown here, because MUI's
-  // Select component relies on Popper + focus-management that's
-  // flaky under jsdom. The filter predicate that drives
-  // "lane → empty" is already covered exhaustively by
-  // [useGanttTagFilter.test.tsx]; the wiring in GanttTimeline
-  // (the `hiddenLaneCount` memo + placeholder Box) is small enough
-  // that visual verification on dev (`npm run dev`) covers the gap.
+  it('collapses fully filtered lanes and reports the exact hidden count', () => {
+    const entries = [entry('a.txt'), entry('b.txt'), entry('c.txt')];
+    const tags = new Map<string, string[]>([
+      ['/root/a.txt', ['in-progress', '20260701-20260705']],
+      ['/root/b.txt', ['not-started', '20260706-20260710']],
+      ['/root/c.txt', ['20260711-20260715']],
+    ]);
+    const scheduled: GanttChartRow[] = entries.map((item, index) => ({
+      entry: item,
+      period: { startKey: `2026-07-0${index + 1}`, endKey: `2026-07-0${index + 1}` },
+      thumbDataUrl: null,
+      stageValue: index === 0 ? 'in-progress' : index === 1 ? 'not-started' : null,
+      tags: tags.get(item.path) ?? [],
+    }));
+    const t = ((key: string, options?: { count?: number }) =>
+      key === 'ganttLaneHidden' ? `${options?.count} lanes hidden` : key
+    ) as FileCellData['t'];
+    const props: ComponentProps<typeof GanttTimeline> = {
+      scrollerRef: { current: null },
+      scheduled,
+      scale: {
+        zoom: 'day',
+        startKey: '2026-07-01',
+        endKey: '2026-07-31',
+        totalDays: 31,
+        widthPx: 620,
+      },
+      pxPerDay: 20,
+      readOnly: false,
+      t,
+      onOpen: () => {},
+      onClick: () => {},
+      onCommit: () => {},
+      onContextMenu: () => {},
+      colorFor: () => '#000000',
+      thumbCache: new Map(),
+      tagColors: {},
+      tagsByName: tags,
+      groups: [],
+      activeTag: null,
+      stages: DEFAULT_STAGES,
+      isRowFilteredOut: (rowTags) => !rowTags.includes('in-progress'),
+      onClickTag: () => {},
+      onTagContextMenu: () => {},
+      onDropEntry: () => {},
+      resolveEntry: (path) => entries.find((item) => item.path === path),
+      entries,
+      onJumpToToday: () => {},
+    };
+    const { container, getByTestId, queryByTestId } = render(
+      <I18nextProvider i18n={i18next} defaultNS="common">
+        <Provider store={STUB_STORE}>
+          <DndProvider backend={HTML5Backend}>
+            <CurrentLocationContext.Provider value={LOCATION_CTX_STUB}>
+              <DirectoryContentContext.Provider value={DIR_CONTENT_STUB}>
+                <DirectoryUIContext.Provider value={DIR_CONTENT_STUB}>
+                  <DirectoryTreeRefreshContextProvider>
+                    <IOActionsContextProvider>
+                      <GanttTimeline {...props} />
+                    </IOActionsContextProvider>
+                  </DirectoryTreeRefreshContextProvider>
+                </DirectoryUIContext.Provider>
+              </DirectoryContentContext.Provider>
+            </CurrentLocationContext.Provider>
+          </DndProvider>
+        </Provider>
+      </I18nextProvider>
+    );
+
+    assert.ok(queryByTestId('gantt-row-/root/a.txt'));
+    assert.equal(queryByTestId('gantt-row-/root/b.txt'), null);
+    assert.equal(queryByTestId('gantt-row-/root/c.txt'), null);
+    assert.equal(
+      container.querySelectorAll('[data-testid^="gantt-row-"]').length,
+      1
+    );
+    // not-started + no-stage are hidden; the truly empty completed lane
+    // must not inflate the count.
+    assert.ok(
+      getByTestId('gantt-hidden-lane-placeholder').textContent?.endsWith(
+        '2 lanes hidden'
+      )
+    );
+  });
+
 });
 
 // ─── P1 #9: PNG export cluster ─────────────────────────────────────────

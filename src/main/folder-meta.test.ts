@@ -81,6 +81,30 @@ describe('folder metadata store (wsm.json)', () => {
     }
   });
 
+  it('quarantines a corrupt wsm.json instead of wiping it with one field', async () => {
+    const dir = await tmpDir();
+    try {
+      await fsp.mkdir(path.join(dir, META_DIR), { recursive: true });
+      await fsp.writeFile(wsm(dir), '{ "color": ');
+      // The lenient reader is display-only and hides the corruption…
+      assert.deepEqual(await readFolderMeta(dir), {});
+      // …the write path must preserve the bytes and start clean.
+      await writeFolderMeta(dir, { perspective: 'grid' });
+      const meta = await readFolderMeta(dir);
+      assert.equal(meta.perspective, 'grid');
+      const backups = (await fsp.readdir(path.join(dir, META_DIR))).filter((n) =>
+        n.startsWith(`${FOLDER_META_FILE}.corrupt-`)
+      );
+      assert.equal(backups.length, 1);
+      assert.equal(
+        await fsp.readFile(path.join(dir, META_DIR, backups[0]), 'utf8'),
+        '{ "color": '
+      );
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('serializes concurrent writes to the same directory (no lost updates)', async () => {
     const dir = await tmpDir();
     try {

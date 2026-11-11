@@ -23,7 +23,7 @@ function tagsMap(obj: Record<string, string[]>): Map<string, string[]> {
 }
 
 describe('buildGraph', () => {
-  it('builds a bipartite tag/file graph with edges file→tag', () => {
+  it('builds a bipartite tag/file graph with edges file→ tag', () => {
     const g = buildGraph(
       [file('a.txt'), file('b.txt')],
       tagsMap({ 'a.txt': ['work', 'idea'], 'b.txt': ['work'] })
@@ -70,7 +70,7 @@ describe('buildGraph', () => {
       { exclude: ['workflow'] }
     );
     const files = g.nodes.filter((n) => n.kind === 'file');
-    // a.txt has no tags; b.txt has only an excluded workflow tag �?both omitted.
+    // a.txt has no tags; b.txt has only an excluded workflow tag → both omitted.
     assert.deepEqual(files.map((f) => f.kind === 'file' && f.name), ['c.txt']);
     assert.deepEqual(
       g.nodes.filter((n) => n.kind === 'tag').map((t) => t.kind === 'tag' && t.tag),
@@ -124,7 +124,7 @@ describe('layoutGraph', () => {
     // it's bounded by the 80px floor in `seedPositions` (the canvas
     // isn't big enough for the natural `tagGap`-derived radius to
     // dominate). Recentering translates the ring but preserves its
-    // shape �?we test the *shape* by computing the tag centroid and
+    // shape — we test the *shape* by computing the tag centroid and
     // checking every tag is equidistant from it.
     const pos = layoutGraph(graph, {
       width: 1000,
@@ -151,7 +151,7 @@ describe('layoutGraph', () => {
       radii.add(Math.hypot(p.x - cx, p.y - cy));
     }
     assert.equal(radii.size, 1, `tags not on a single ring: ${[...radii]}`);
-    // Should be at least 80px (the seedPositions floor) and �?canvas.
+    // Should be at least 80px (the seedPositions floor) and ≥ canvas.
     const r = radii.values().next().value!;
     assert.ok(r >= 80 && r <= 1000, `ring radius ${r} out of bounds`);
   });
@@ -192,7 +192,7 @@ describe('layoutGraph', () => {
     assert.equal(radii.size, 1, `tags not on a single ring: ${[...radii]}`);
   });
 
-  it('is deterministic (same graph �?same positions)', () => {
+  it('is deterministic (same graph → same positions)', () => {
     const a = layoutGraph(graph);
     const b = layoutGraph(graph);
     for (const n of graph.nodes) {
@@ -201,7 +201,7 @@ describe('layoutGraph', () => {
   });
 
   it('separates overlapping nodes (no AABB overlap after layout)', () => {
-    // Five files all sharing one tag �?they stack at the same centroid before
+    // Five files all sharing one tag → they stack at the same centroid before
     // the collision pass. After layout, no two boxes should overlap.
     const dense = buildGraph(
       [file('a'), file('b'), file('c'), file('d'), file('e')],
@@ -253,7 +253,7 @@ describe('layoutGraph', () => {
   });
 
   it('centers the node centroid at the canvas center when previousPos is absent', () => {
-    // Asymmetric tag distribution �?two tags, three files, one tag carries two
+    // Asymmetric tag distribution — two tags, three files, one tag carries two
     // files and the other carries one. Without the recenter step the radial
     // seed leaves the node centroid visibly off-center because the heavier
     // tag's outward push is unbalanced.
@@ -313,7 +313,7 @@ describe('layoutGraph', () => {
     }
     assert.ok(second.has('tag:z'), 'new tag z should be present');
     const zPos = second.get('tag:z')!;
-    // File IDs are `file:${path}` (path-based, not name-based) �?find the
+    // File IDs are `file:${path}` (path-based, not name-based) — find the
     // file 'a' entry by scanning the keys rather than hard-coding the path.
     const aId = [...first.keys()].find((k) => k.startsWith('file:') && k.endsWith('/a'))!;
     const aPos = second.get(aId)!;
@@ -343,8 +343,8 @@ describe('layoutGraph', () => {
       }
       return maxR;
     };
-    // 50 nodes �?canvas �?800 + �?0×50 �?1153 �?inner ring �?1153×0.28 �?323
-    // 2 nodes �?canvas floor 800 �?inner ring �?800×0.28 �?224
+    // 50 nodes → canvas ≈ 800 + √50 × 50 ≈ 1153 → inner ring ≈ 1153 × 0.28 ≈ 323
+    // 2 nodes → canvas floor 800 → inner ring ≈ 800 × 0.28 ≈ 224
     // Expect large ring span to be meaningfully larger than small.
     assert.ok(
       tagRingSpan(largePos) > tagRingSpan(smallPos) * 1.2,
@@ -353,7 +353,7 @@ describe('layoutGraph', () => {
   });
 
   it('keeps all nodes within canvas bounds after the force pass', () => {
-    // A moderately dense graph �?30 files across 2 tags. The FR pass can fling
+    // A moderately dense graph — 30 files across 2 tags. The FR pass can fling
     // nodes outward if `k` is mis-scaled; with `k = span × 0.04` they should
     // stay roughly inside the canvas. The final `clampToCanvas` pass enforces
     // a 30px margin so even a non-converged high-tension layout can't strand
@@ -384,7 +384,7 @@ describe('layoutGraph', () => {
 
   it('clamps nodes back into the canvas at high tension', () => {
     // Regression for the "张力大时节点飞出画布且回不来" bug: at the slider's
-    // Regression for the "张力大时节点飞出画布且回不来" bug �?now obsolete
+    // Regression for the "张力大时节点飞出画布且回不来" bug — now obsolete
     // since the tension slider was removed and the FR pass no longer uses
     // tension. The clamp remains as a safety net against any other code
     // path that could put a node off-canvas.
@@ -406,12 +406,12 @@ describe('layoutGraph', () => {
     }
   });
 
-  it('estimates file node width from ext text (long exts �?wider boxes)', () => {
+  it('estimates file node width from ext text (long exts → wider boxes)', () => {
     // Regression for the "节点互相遮挡" report: the old `nodeSize` used a
     // fixed 30px for the ext chip, which silently under-counted formats
     // like `drawio`, `markdown`, `webp`, `config` (4+ char extensions). The
     // FileNode style in the view actually grows the chip with text, so the
-    // collision estimate must too �?otherwise files with those extensions
+    // collision estimate must too — otherwise files with those extensions
     // overlap visually even after the collision pass.
     const short = nodeSize({
       id: 'file:/x.txt',
@@ -427,9 +427,9 @@ describe('layoutGraph', () => {
       path: '/x.drawio',
       ext: 'drawio',
     });
-    // `drawio` is 6 chars at fontSize 9 with padding 8 �?at least 40px chip
+    // `drawio` is 6 chars at fontSize 9 with padding 8 → at least 40px chip
     // alone, vs. the 22px minWidth `txt` uses. The collision estimate must
-    // reflect that �?at minimum 10px more for the 6-char ext.
+    // reflect that — at minimum 10px more for the 6-char ext.
     assert.ok(
       long.w > short.w + 10,
       `long-ext box (${long.w}) should be at least 10px wider than short-ext (${short.w})`
@@ -438,7 +438,7 @@ describe('layoutGraph', () => {
 
   it('caps file node width at the view\'s maxWidth (200)', () => {
     // Mirrors the view's `maxWidth: 200` style. A pathologically long
-    // filename + 4-char ext must NOT push the estimate past 200 �?the view
+    // filename + 4-char ext must NOT push the estimate past 200 — the view
     // ellipsizes, so the rendered box stays at the cap.
     const wide = nodeSize({
       id: 'file:/x.txt',

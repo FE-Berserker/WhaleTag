@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import Module from 'node:module';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { setAllowedRoots } from '../allowed-roots';
 import { createMcpHttpCore, type McpHttpCore } from './mcp-http';
 
 /**
@@ -182,6 +183,243 @@ describe('mcp http core (official client SDK)', () => {
     // error result instead of creating anything.
     assert.equal(res.isError, true);
     assert.equal(fs.existsSync(path.join(TMP_USER_DATA, 'should-not-exist')), false);
+    await client.close();
+  });
+});
+
+describe('mcp http core — hardening', () => {
+  it('only answers /mcp, not arbitrary prefixes', async () => {
+    for (const p of ['/mcpfoo', '/mcpx', '/']) {
+      const res = await fetch(`http://127.0.0.1:${port}${p}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${TOKEN}`,
+          'content-type': 'application/json',
+        },
+        body: '{}',
+      });
+      assert.equal(res.status, 404, `${p} should not be the MCP endpoint`);
+    }
+  });
+
+  it('rejects an unknown mcp-session-id with 404 (client must re-initialize)', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${TOKEN}`,
+        'content-type': 'application/json',
+        'mcp-session-id': 'does-not-exist',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/list' }),
+    });
+    assert.equal(res.status, 404);
+  });
+
+  it('treats DELETE for an unknown session as idempotent', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${TOKEN}`,
+        'mcp-session-id': 'already-gone',
+      },
+    });
+    assert.equal(res.status, 204);
+  });
+
+  it('answers an oversized body with 413 instead of dropping the socket', async () => {
+    // 4 MiB + 1 byte of padding — over the core's limit, well under what the
+    // process can allocate for one test.
+    const body = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {},
+      pad: 'x'.repeat(4 * 1024 * 1024 + 1),
+    });
+    const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
+      const req = http.request(
+        {
+          host: '127.0.0.1',
+          port,
+          path: '/mcp',
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${TOKEN}`,
+            'content-type': 'application/json',
+            'content-length': Buffer.byteLength(body),
+          },
+        },
+        resolve
+      );
+      req.on('error', reject);
+      req.end(body);
+    });
+    assert.equal(res.statusCode, 413);
+    for await (const _chunk of res) {
+      /* drain */
+    }
+  });
+
+  it('reaps a session that has been idle past the configured TTL', async () => {
+    const idleCore = createMcpHttpCore({
+      token: () => TOKEN,
+      registerTools: () => undefined,
+      serverInfo: { name: 'whaletag-idle', version: '0.0.0' },
+      sessionIdleMs: 20,
+    });
+    const idleServer = http.createServer((req, res) => idleCore.handler(req, res));
+    const idlePort = await new Promise<number>((resolve) => {
+      idleServer.listen(0, '127.0.0.1', () =>
+        resolve((idleServer.address() as { port: number }).port)
+      );
+    });
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`http://127.0.0.1:${idlePort}/mcp`),
+      { requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } } }
+    );
+    const client = new Client({ name: 'idle-client', version: '0.0.1' });
+    await client.connect(transport);
+    assert.equal(idleCore.sessionCount(), 1);
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(idleCore.reapIdleSessions(), 1);
+    assert.equal(idleCore.sessionCount(), 0);
+    // A second sweep is a no-op, not a double-close.
+    assert.equal(idleCore.reapIdleSessions(), 0);
+    await client.close().catch(() => undefined);
+    await idleCore.close();
+    await new Promise<void>((resolve) => idleServer.close(() => resolve()));
+  });
+
+  it('does not reap fresh sessions when the idle TTL is disabled', async () => {
+    const coreNoIdle = createMcpHttpCore({
+      token: () => TOKEN,
+      registerTools: () => undefined,
+      serverInfo: { name: 'whaletag-noidle', version: '0.0.0' },
+      sessionIdleMs: 0,
+      sessionSweepMs: 10,
+    });
+    const srv = http.createServer((req, res) => coreNoIdle.handler(req, res));
+    const p = await new Promise<number>((resolve) => {
+      srv.listen(0, '127.0.0.1', () =>
+        resolve((srv.address() as { port: number }).port)
+      );
+    });
+    const t = new StreamableHTTPClientTransport(
+      new URL(`http://127.0.0.1:${p}/mcp`),
+      { requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } } }
+    );
+    const c = new Client({ name: 'keep-client', version: '0.0.1' });
+    await c.connect(t);
+    await new Promise((r) => setTimeout(r, 40));
+    assert.equal(coreNoIdle.reapIdleSessions(), 0);
+    assert.equal(coreNoIdle.sessionCount(), 1);
+    await c.close().catch(() => undefined);
+    await coreNoIdle.close();
+    await new Promise<void>((resolve) => srv.close(() => resolve()));
+  });
+});
+
+/**
+ * The guards that stand between an MCP client and real data: read-only mode,
+ * the "a location root is a container, not an entry" rule, and the read cap.
+ * These run against a real configured root — unlike the deny-path test above,
+ * which never registers one (and therefore exercises assertWithinAllowedRoot
+ * rather than the specific guard under test).
+ */
+describe('mcp tool guards (location roots, read-only, read caps)', () => {
+  let ROOT = '';
+  let FILE = '';
+  let DIR = '';
+  let config: typeof import('./mcp-config');
+
+  function textOf(res: unknown): string {
+    const content = (res as { content?: unknown }).content;
+    return ((content as { type: string; text?: string }[]) ?? [])
+      .filter((c) => c.type === 'text')
+      .map((c) => c.text ?? '')
+      .join('');
+  }
+
+  before(async () => {
+    ROOT = await fs.promises.realpath(
+      await fs.promises.mkdtemp(path.join(os.tmpdir(), 'whale-mcp-guards-'))
+    );
+    FILE = path.join(ROOT, 'note.txt');
+    DIR = path.join(ROOT, 'sub');
+    await fs.promises.writeFile(FILE, 'hello', 'utf8');
+    await fs.promises.mkdir(DIR);
+    setAllowedRoots([ROOT]);
+    config = await import('./mcp-config');
+  });
+
+  after(async () => {
+    setAllowedRoots([]);
+    await config.setMcpReadOnly(true);
+    await fs.promises.rm(ROOT, { recursive: true, force: true });
+  });
+
+  it('refuses whale_apply_tags in read-only mode', async () => {
+    await config.setMcpReadOnly(true);
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'whale_apply_tags',
+      arguments: { paths: [FILE], add: ['mcp-guard-test'] },
+    });
+    assert.equal(res.isError, true);
+    assert.match(textOf(res), /read-only/);
+    await client.close();
+  });
+
+  it('refuses whale_build_fulltext in read-only mode', async () => {
+    await config.setMcpReadOnly(true);
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'whale_build_fulltext',
+      arguments: { rootPath: ROOT },
+    });
+    assert.equal(res.isError, true);
+    assert.match(textOf(res), /read-only/);
+    await client.close();
+  });
+
+  it('refuses to tag the configured location root itself', async () => {
+    await config.setMcpReadOnly(false);
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'whale_apply_tags',
+      arguments: { paths: [ROOT], add: ['should-not-land'] },
+    });
+    assert.equal(res.isError, true);
+    assert.match(textOf(res), /configured location root/);
+    // Nothing may be written above the boundary (a root's sidecar would land
+    // in the root's PARENT directory).
+    const parentSidecar = path.join(path.dirname(ROOT), '.whale');
+    assert.equal(fs.existsSync(parentSidecar), false);
+    await client.close();
+  });
+
+  it('tags a normal file inside the root without approval (sidecar-level write)', async () => {
+    await config.setMcpReadOnly(false);
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'whale_apply_tags',
+      arguments: { paths: [FILE], add: ['mcp-guard-test'] },
+    });
+    assert.notEqual(res.isError, true);
+    const parsed = JSON.parse(textOf(res)) as { updated: number; errors: unknown[] };
+    assert.equal(parsed.updated, 1);
+    assert.deepEqual(parsed.errors, []);
+    await client.close();
+  });
+
+  it('refuses to read a directory as text', async () => {
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'whale_read_text',
+      arguments: { path: DIR },
+    });
+    assert.equal(res.isError, true);
+    assert.match(textOf(res), /Not a file/);
     await client.close();
   });
 });

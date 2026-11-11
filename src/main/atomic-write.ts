@@ -1,5 +1,6 @@
 import path from 'path';
 import { promises as fsp } from 'fs';
+import { foldPath } from './path-fold';
 
 /**
  * Monotonic counter making each temp filename unique within this process. Two
@@ -26,24 +27,38 @@ function tmpPathFor(filePath: string): string {
  */
 const sweptTargets = new Set<string>();
 
+/** Serialize writes per canonical target; unrelated targets still run in parallel. */
+const pendingWrites = new Map<string, Promise<void>>();
+
+/** Normalize aliases (`.`, mixed separators, Windows/macOS case) to one key. */
+function targetKey(filePath: string): string {
+  return foldPath(path.resolve(filePath));
+}
+
 /**
  * Removes stale temp files left by previous crashed writes of the same target.
- * Whale is a single-instance desktop app, so there is no legitimate concurrent
- * atomic write to the same target; any matching `*.tmp` sibling is therefore
- * debris from an earlier crash and can be safely deleted.
+ * The caller serializes same-target writes, so every matching temp here is from
+ * an earlier crash rather than another in-flight write in this process.
  */
 async function removeStaleTempsFor(filePath: string): Promise<void> {
-  if (sweptTargets.has(filePath)) return;
+  const key = targetKey(filePath);
+  if (sweptTargets.has(key)) return;
   const dir = path.dirname(filePath);
   const base = path.basename(filePath);
   try {
     const entries = await fsp.readdir(dir);
     await Promise.all(
       entries
-        .filter((entry) => entry.startsWith(`${base}.`) && entry.endsWith('.tmp'))
+        .filter((entry) => {
+          if (!entry.startsWith(`${base}.`)) return false;
+          // Match only `${target}.${pid}.${counter}.tmp`. A plain prefix +
+          // suffix check would also treat `foo.jpg.123.1.tmp` as a stale temp
+          // for target `foo` and could delete that other target's live write.
+          return /^\d+\.\d+\.tmp$/.test(entry.slice(base.length + 1));
+        })
         .map((entry) => fsp.rm(path.join(dir, entry), { force: true }))
     );
-    sweptTargets.add(filePath);
+    sweptTargets.add(key);
   } catch {
     // Directory may not exist or be unreadable; ignore. The actual write will
     // surface any real permission problem.
@@ -62,7 +77,7 @@ async function removeStaleTempsFor(filePath: string): Promise<void> {
  * `tmp` lives next to the target (same volume), so the final rename never hits
  * a cross-device (EXDEV) error.
  */
-async function atomicWrite(
+async function atomicWriteNow(
   filePath: string,
   write: (fd: fsp.FileHandle) => Promise<void>
 ): Promise<void> {
@@ -82,6 +97,28 @@ async function atomicWrite(
     }
     await fsp.rm(tmp, { force: true }).catch(() => undefined);
     throw e;
+  }
+}
+
+/**
+ * Queue writes to the same target. Besides keeping the stale-temp sweep away
+ * from live temp files, this avoids Windows EPERM when two renames race to
+ * replace one destination. A failed write does not poison the next queued one.
+ */
+async function atomicWrite(
+  filePath: string,
+  write: (fd: fsp.FileHandle) => Promise<void>
+): Promise<void> {
+  const key = targetKey(filePath);
+  const previous = pendingWrites.get(key) ?? Promise.resolve();
+  const run = previous
+    .catch(() => undefined)
+    .then(() => atomicWriteNow(filePath, write));
+  pendingWrites.set(key, run);
+  try {
+    await run;
+  } finally {
+    if (pendingWrites.get(key) === run) pendingWrites.delete(key);
   }
 }
 

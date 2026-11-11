@@ -231,9 +231,8 @@ function dispatchWindowKey(key: string) {
 // ── Tests ──────────────────────────────────────────────────────────────
 
 describe('useBarDrag state machine', () => {
-  let cleanupJsdom: (() => void) | undefined;
   before(() => {
-    cleanupJsdom = globalJsdom();
+    globalJsdom();
   });
   afterEach(() => {
     cleanup();

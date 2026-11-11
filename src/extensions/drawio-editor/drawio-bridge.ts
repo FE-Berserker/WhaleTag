@@ -40,7 +40,17 @@ type QueueItem = {
   id: string;
   resolve: (value: string) => void;
   reject: (err: Error) => void;
+  timeoutId: number | null;
 };
+
+const DRAWIO_DESTROYED_ERROR = 'draw.io bridge destroyed';
+
+function clearRequestTimer(request: QueueItem): void {
+  if (request.timeoutId !== null) {
+    window.clearTimeout(request.timeoutId);
+    request.timeoutId = null;
+  }
+}
 
 /**
  * Pure dispatcher for `message` events from the drawio embed. Extracted from
@@ -114,8 +124,10 @@ export function useDrawioBridge(
   const pendingXmlRef = useRef<string | null>(null);
   const pendingThemeRef = useRef<DrawioTheme | null>(null);
   const requestQueueRef = useRef<QueueItem[]>([]);
+  const disposedRef = useRef(false);
 
   const postToDrawio = useCallback((msg: DrawioMessage) => {
+    if (disposedRef.current) return;
     const iframe = iframeRef.current;
     if (!iframe?.contentWindow) return;
     iframe.contentWindow.postMessage(JSON.stringify(msg), '*');
@@ -133,17 +145,22 @@ export function useDrawioBridge(
   );
 
   const getXml = useCallback((): Promise<string> => {
+    if (disposedRef.current) {
+      return Promise.reject(new Error(DRAWIO_DESTROYED_ERROR));
+    }
     return new Promise((resolve, reject) => {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      requestQueueRef.current.push({ id, resolve, reject });
+      const request: QueueItem = { id, resolve, reject, timeoutId: null };
+      requestQueueRef.current.push(request);
       // Draw.io autosave returns the current XML via event 'autosave' or 'save'.
       // We trigger a save/export to force it to emit XML back.
       postToDrawio({ action: 'export', format: 'xml', spin: 'Updating' });
       // Fallback: reject after timeout so callers don't hang.
-      window.setTimeout(() => {
+      request.timeoutId = window.setTimeout(() => {
         const idx = requestQueueRef.current.findIndex((r) => r.id === id);
         if (idx >= 0) {
           requestQueueRef.current.splice(idx, 1);
+          request.timeoutId = null;
           reject(new Error('draw.io save timeout'));
         }
       }, 5000);
@@ -192,42 +209,44 @@ export function useDrawioBridge(
   const insertInflightRef = useRef(false);
   const insertLinkedThumbnail = useCallback(
     async (opts: FileDropSnippetOptions): Promise<void> => {
-      if (insertInflightRef.current) {
-        // A previous insert is still resolving. Skip to avoid a parallel
-        // loadXml that would clobber the just-inserted cell.
+      if (disposedRef.current || insertInflightRef.current) {
+        // A previous insert is still resolving, or this bridge has been
+        // destroyed. Skip to avoid a parallel/stale loadXml clobbering state.
         return;
       }
       insertInflightRef.current = true;
-      const snippet =
-        opts.cellKind === 'labeled'
-          ? buildLabeledDropSnippet(opts)
-          : buildFileDropSnippet(opts);
-
-      // Preferred path: read the user's current diagram, decode drawio's
-      // compressed wire format, splice the new cell into <root>, re-load
-      // the raw uncompressed XML. Preserves the user's existing content.
-      let targetXml: string | null = null;
       try {
-        const compressed = await getXml();
-        const decoded = decodeDrawioDiagram(compressed);
-        if (decoded) {
-          const appended = appendSnippetToDiagram(decoded, snippet);
-          if (appended) targetXml = appended;
+        const snippet =
+          opts.cellKind === 'labeled'
+            ? buildLabeledDropSnippet(opts)
+            : buildFileDropSnippet(opts);
+
+        // Preferred path: read the user's current diagram, decode drawio's
+        // compressed wire format, splice the new cell into <root>, re-load
+        // the raw uncompressed XML. Preserves the user's existing content.
+        let targetXml: string | null = null;
+        try {
+          const compressed = await getXml();
+          if (disposedRef.current) return;
+          const decoded = decodeDrawioDiagram(compressed);
+          if (decoded) {
+            const appended = appendSnippetToDiagram(decoded, snippet);
+            if (appended) targetXml = appended;
+          }
+        } catch (err) {
+          if (disposedRef.current) return;
+          // eslint-disable-next-line no-console
+          console.warn('[drawio] decode/append failed, falling back:', err);
         }
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn('[drawio] decode/append failed, falling back:', err);
-      }
 
-      // Fallback: a fresh single-cell document with the full set of
-      // mxGraphModel attributes drawio's UI needs to initialize cleanly.
-      // Wipes the user's existing diagram but at least leaves drawio in a
-      // good state instead of frozen on a malformed half-edit.
-      if (targetXml === null) {
-        targetXml = buildSafeSingleCellDocument(snippet);
-      }
+        // Fallback: a fresh single-cell document with the full set of
+        // mxGraphModel attributes drawio's UI needs to initialize cleanly.
+        // Wipes the user's existing diagram but at least leaves drawio in a
+        // good state instead of frozen on a malformed half-edit.
+        if (targetXml === null) {
+          targetXml = buildSafeSingleCellDocument(snippet);
+        }
 
-      try {
         loadXml(targetXml);
       } finally {
         insertInflightRef.current = false;
@@ -235,6 +254,26 @@ export function useDrawioBridge(
     },
     [getXml, loadXml]
   );
+
+  // Own the whole bridge lifecycle independently of the message-listener
+  // effect below: callback identity changes must not cancel in-flight saves.
+  useEffect(() => {
+    disposedRef.current = false;
+    return () => {
+      disposedRef.current = true;
+      readyRef.current = false;
+      pendingXmlRef.current = null;
+      pendingThemeRef.current = null;
+      insertInflightRef.current = false;
+
+      const queue = requestQueueRef.current;
+      requestQueueRef.current = [];
+      queue.forEach((request) => {
+        clearRequestTimer(request);
+        request.reject(new Error(DRAWIO_DESTROYED_ERROR));
+      });
+    };
+  }, []);
 
   useEffect(() => {
     const handler = (event: MessageEvent) => {
@@ -281,7 +320,10 @@ export function useDrawioBridge(
         // resolves and the 5-second timeout fires with "draw.io save timeout".
         const queue = requestQueueRef.current;
         requestQueueRef.current = [];
-        queue.forEach((r) => r.resolve(result.xml));
+        queue.forEach((request) => {
+          clearRequestTimer(request);
+          request.resolve(result.xml);
+        });
         onChange();
         return;
       }

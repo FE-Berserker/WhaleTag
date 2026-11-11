@@ -49,7 +49,7 @@ export interface AppearanceFields {
    * The `tags` column is intentionally absent here — it's `flex: 1` filling
    * the remaining space. Persistence is via redux-persist; the keyboard /
    * mouse drag handle in `RowColumnLabels` writes here. Bounds per column
-   * live in `LIST_COLUMN_BOUNDS` (P1-5 keeps them inline at the call site).
+   * live in `LIST_COLUMN_BOUNDS` and are shared by drag preview and commit.
    */
   listColumnWidths: Record<string, number>;
   /**

@@ -68,7 +68,11 @@ interface RootWatch {
   flushTimer: NodeJS.Timeout | null;
   /** True when a reindex for this root is in flight (skip re-trigger). */
   reindexing: boolean;
+  /** A debounced rebuild fired while another rebuild was still running. */
+  reindexDirty: boolean;
   reindexTimer: NodeJS.Timeout | null;
+  /** Consecutive failed rebuilds — drives the retry backoff. */
+  reindexFailures: number;
 }
 
 const watches = new Map<string, RootWatch>();
@@ -90,29 +94,65 @@ function flush(rootPath: string, w: RootWatch): void {
   scheduleFulltextReindex(rootPath, paths);
 }
 
-function scheduleReindex(rootPath: string, w: RootWatch): void {
+/** Debounce before a retry; doubles per consecutive failure, capped at 60 s. */
+const MAX_RETRY_DELAY_MS = 60_000;
+
+function retryDelay(failures: number): number {
+  return Math.min(
+    REINDEX_DEBOUNCE_MS * 2 ** Math.min(failures, 5),
+    MAX_RETRY_DELAY_MS
+  );
+}
+
+function scheduleReindex(
+  rootPath: string,
+  w: RootWatch,
+  delayMs: number = REINDEX_DEBOUNCE_MS
+): void {
   if (w.reindexTimer) clearTimeout(w.reindexTimer);
   w.reindexTimer = setTimeout(() => {
     w.reindexTimer = null;
     void reindexIfBuilt(rootPath, w);
-  }, REINDEX_DEBOUNCE_MS);
+  }, delayMs);
   w.reindexTimer.unref?.();
 }
 
 async function reindexIfBuilt(rootPath: string, w: RootWatch): Promise<void> {
-  if (w.reindexing) return;
+  if (w.reindexing) {
+    // The timer represented real changes. Remember them instead of dropping
+    // the only rebuild that could incorporate those changes.
+    w.reindexDirty = true;
+    return;
+  }
   w.reindexing = true;
   try {
     // Only roots with an EXISTING index get incremental rebuilds — never
     // create `.whale/index.db` for a root the user never indexed (this is
     // also what keeps read-only locations write-free).
     const status = await request('index:status', { rootPath });
-    if (!status.ready) return;
+    if (!status.ready) {
+      w.reindexFailures = 0;
+      return;
+    }
     await request('index:build', { rootPath });
-  } catch {
-    // Best effort: worker down / root unreadable — the next change retries.
+    w.reindexFailures = 0;
+  } catch (error) {
+    // A failed rebuild used to be dropped with "the next change retries" — but
+    // nothing retries on a quiet root, leaving the index stale indefinitely.
+    // Arm the dirty flag and back off (1.5 s doubling, capped at 60 s) so a
+    // transient worker failure heals itself without hot-looping a dead one.
+    w.reindexFailures += 1;
+    w.reindexDirty = true;
+    console.warn(
+      `[dir-watcher] index rebuild failed for ${rootPath} (attempt ${w.reindexFailures}); retrying in ${retryDelay(w.reindexFailures)} ms`,
+      error
+    );
   } finally {
     w.reindexing = false;
+    if (w.reindexDirty) {
+      w.reindexDirty = false;
+      scheduleReindex(rootPath, w, retryDelay(w.reindexFailures));
+    }
   }
 }
 
@@ -128,18 +168,38 @@ async function reindexIfBuilt(rootPath: string, w: RootWatch): Promise<void> {
 const fulltextRoots = new Set<string>();
 const fulltextTimers = new Map<string, NodeJS.Timeout>();
 const fulltextInflight = new Set<string>();
+const fulltextDirty = new Set<string>();
+/** Consecutive failed full-text rebuilds per root (backoff + reset on success). */
+const fulltextFailures = new Map<string, number>();
 
 /** Sync the renderer's `settings.fulltextPaths` (pushed on change/startup). */
 export function setFulltextRoots(paths: string[]): void {
   fulltextRoots.clear();
   for (const p of paths) fulltextRoots.add(p);
-  // Drop pending timers for roots that were removed mid-debounce.
+  // Drop pending timers and remembered rebuilds for roots removed mid-flight.
   for (const [fp, timer] of [...fulltextTimers.entries()]) {
     if (!fulltextRoots.has(fp)) {
       clearTimeout(timer);
       fulltextTimers.delete(fp);
     }
   }
+  for (const fp of [...fulltextDirty]) {
+    if (!fulltextRoots.has(fp)) fulltextDirty.delete(fp);
+  }
+}
+
+function scheduleFulltextRootReindex(
+  fp: string,
+  delayMs: number = REINDEX_DEBOUNCE_MS
+): void {
+  const prev = fulltextTimers.get(fp);
+  if (prev) clearTimeout(prev);
+  const timer = setTimeout(() => {
+    fulltextTimers.delete(fp);
+    void reindexFulltextIfBuilt(fp);
+  }, delayMs);
+  timer.unref?.();
+  fulltextTimers.set(fp, timer);
 }
 
 function scheduleFulltextReindex(rootPath: string, flushPaths: string[]): void {
@@ -151,28 +211,40 @@ function scheduleFulltextReindex(rootPath: string, flushPaths: string[]): void {
         isSameOrDescendantPath(fp, `${rootPath}/${rel}`)
       );
     if (!touched) continue;
-    const prev = fulltextTimers.get(fp);
-    if (prev) clearTimeout(prev);
-    const timer = setTimeout(() => {
-      fulltextTimers.delete(fp);
-      void reindexFulltextIfBuilt(fp);
-    }, REINDEX_DEBOUNCE_MS);
-    timer.unref?.();
-    fulltextTimers.set(fp, timer);
+    scheduleFulltextRootReindex(fp);
   }
 }
 
 async function reindexFulltextIfBuilt(fp: string): Promise<void> {
-  if (fulltextInflight.has(fp)) return;
+  if (fulltextInflight.has(fp)) {
+    fulltextDirty.add(fp);
+    return;
+  }
   fulltextInflight.add(fp);
   try {
     const has = await request('fulltext:has', { rootPath: fp });
-    if (!has) return;
+    if (!has) {
+      fulltextFailures.delete(fp);
+      return;
+    }
     await request('fulltext:build', { rootPath: fp });
-  } catch {
-    // Best effort — the next change retries.
+    fulltextFailures.delete(fp);
+  } catch (error) {
+    // Same rule as the files index: a quiet root must still recover, so keep
+    // the dirty flag armed and retry with backoff instead of waiting for an
+    // unrelated filesystem event.
+    const failures = (fulltextFailures.get(fp) ?? 0) + 1;
+    fulltextFailures.set(fp, failures);
+    fulltextDirty.add(fp);
+    console.warn(
+      `[dir-watcher] full-text rebuild failed for ${fp} (attempt ${failures}); retrying in ${retryDelay(failures)} ms`,
+      error
+    );
   } finally {
     fulltextInflight.delete(fp);
+    if (fulltextDirty.delete(fp)) {
+      scheduleFulltextRootReindex(fp, retryDelay(fulltextFailures.get(fp) ?? 0));
+    }
   }
 }
 
@@ -193,7 +265,9 @@ function startWatch(rootPath: string): RootWatch | null {
     pending: new Set(),
     flushTimer: null,
     reindexing: false,
+    reindexDirty: false,
     reindexTimer: null,
+    reindexFailures: 0,
   };
   try {
     w.watcher = fs.watch(rootPath, { recursive: true }, (_event, filename) =>
@@ -216,6 +290,7 @@ function stopWatch(rootPath: string): void {
   if (!w) return;
   if (w.flushTimer) clearTimeout(w.flushTimer);
   if (w.reindexTimer) clearTimeout(w.reindexTimer);
+  w.reindexDirty = false;
   try {
     w.watcher.close();
   } catch {
@@ -245,6 +320,7 @@ export function closeAllWatchers(): void {
   for (const key of [...watches.keys()]) stopWatch(key);
   for (const timer of fulltextTimers.values()) clearTimeout(timer);
   fulltextTimers.clear();
+  fulltextDirty.clear();
 }
 
 /** Test hooks: current watch count + whether a root is watched. */
@@ -254,4 +330,7 @@ export function _watchCountForTest(): number {
 export function _pendingForTest(rootPath: string): string[] | null {
   const w = watches.get(rootPath);
   return w ? [...w.pending] : null;
+}
+export function _reindexDirtyForTest(rootPath: string): boolean | null {
+  return watches.get(rootPath)?.reindexDirty ?? null;
 }

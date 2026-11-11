@@ -1,5 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'path';
+import os from 'os';
 
 import { withLock } from './dir-lock';
 
@@ -29,6 +31,21 @@ describe('withLock — per-key async mutex', () => {
     ]);
     assert.equal(maxActive, 1, 'same-key tasks overlapped');
     assert.deepEqual(results, ['a', 'b', 'c']);
+  });
+
+  it('normalizes path aliases before selecting the lock queue', async () => {
+    const key = path.join(os.tmpdir(), 'whale-lock-alias');
+    const alias = `${key}${path.sep}child${path.sep}..`;
+    let active = 0;
+    let maxActive = 0;
+    const task = async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+    };
+    await Promise.all([withLock(key, task), withLock(alias, task)]);
+    assert.equal(maxActive, 1, 'path aliases bypassed the same-directory lock');
   });
 
   it('runs different keys in parallel', async () => {

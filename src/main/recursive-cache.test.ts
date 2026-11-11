@@ -166,4 +166,31 @@ describe('recursive-cache (P1-3)', () => {
       await fsp.rm(root, { recursive: true, force: true });
     }
   });
+
+  it('normalizes untrusted depth before scanning and constructing cache paths', async () => {
+    const root = await tmpRoot();
+    try {
+      await setup(root);
+      const seenDepths: number[] = [];
+      const scan = async (_dir: string, depth: number) => {
+        seenDepths.push(depth);
+        return [];
+      };
+      await loadRecursiveScan(root, '../../../../escaped' as unknown as number, scan);
+      await loadRecursiveScan(root, 99, scan);
+      await loadRecursiveScan(root, 0, scan);
+      // NaN also falls back to 3; force a miss so the scanner observes it.
+      const later = Date.now() / 1000 + 120;
+      await fsp.utimes(root, later, later);
+      await loadRecursiveScan(root, Number.NaN, scan);
+
+      assert.deepEqual(seenDepths, [3, 5, 1, 3]);
+      const cacheFiles = await fsp.readdir(
+        path.join(root, META_DIR, INDEX_RECURSIVE_DIR)
+      );
+      assert.deepEqual(cacheFiles.sort(), ['d1.json', 'd3.json', 'd5.json']);
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
 });

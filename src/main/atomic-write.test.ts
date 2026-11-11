@@ -81,6 +81,29 @@ describe('atomic write helpers', () => {
     }
   });
 
+  it('serializes same-target writes across path aliases and the stale-temp sweep', async () => {
+    const dir = await tmpDir();
+    try {
+      const file = path.join(dir, 'concurrent.txt');
+      // Keep a raw `child/..` alias instead of letting path.join normalize it.
+      // Both spellings must share one queue or Windows can still race renames.
+      await fsp.mkdir(path.join(dir, 'child'));
+      const alias = `${dir}${path.sep}child${path.sep}..${path.sep}concurrent.txt`;
+      const payloads = Array.from(
+        { length: 24 },
+        (_, i) => `payload-${i}-${'x'.repeat(4096)}`
+      );
+      await Promise.all(
+        payloads.map((data, i) => atomicWriteText(i % 2 ? alias : file, data))
+      );
+      assert.ok(payloads.includes(await fsp.readFile(file, 'utf8')));
+      const tmpFiles = (await fsp.readdir(dir)).filter((f) => f.endsWith('.tmp'));
+      assert.deepEqual(tmpFiles, [], 'no abandoned or deleted in-flight temps');
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('does not remove temp files belonging to other targets', async () => {
     const dir = await tmpDir();
     try {
@@ -91,6 +114,25 @@ describe('atomic write helpers', () => {
       const tmpFiles = (await fsp.readdir(dir)).filter((f) => f.endsWith('.tmp'));
       assert.equal(tmpFiles.length, 1, 'other target temp kept');
       assert.ok(tmpFiles[0].startsWith('other.txt.'), 'kept the right temp');
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not mistake a prefixed target temp for this target', async () => {
+    const dir = await tmpDir();
+    try {
+      const file = path.join(dir, 'foo');
+      const otherTargetTemp = path.join(dir, 'foo.jpg.12345.1.tmp');
+      const unrelatedTemp = path.join(dir, 'foo.backup.tmp');
+      await fsp.writeFile(otherTargetTemp, 'other target data');
+      await fsp.writeFile(unrelatedTemp, 'not an atomic-write temp');
+
+      await atomicWriteText(file, 'fresh');
+
+      assert.equal(await fsp.readFile(file, 'utf8'), 'fresh');
+      assert.equal(await fsp.readFile(otherTargetTemp, 'utf8'), 'other target data');
+      assert.equal(await fsp.readFile(unrelatedTemp, 'utf8'), 'not an atomic-write temp');
     } finally {
       await fsp.rm(dir, { recursive: true, force: true });
     }

@@ -62,7 +62,6 @@ interface ExtensionHostProps {
    *  with the new file's content. Omit for extensions that don't navigate. */
   siblings?: string[];
   theme: 'light' | 'dark';
-  onClose: () => void;
   onRequestRevisionHistory: () => void;
   /** Re-open the extension view with a different file path (used to fulfill
    *  the extension's `requestFile` message). The host (view panel) is
@@ -89,11 +88,25 @@ function mimeFromName(name: string): string {
       return 'image/webp';
     case 'bmp':
       return 'image/bmp';
+    case 'avif':
+      return 'image/avif';
+    case 'tiff':
+    case 'tif':
+      return 'image/tiff';
+    case 'ico':
+      return 'image/x-icon';
     case 'svg':
       return 'image/svg+xml';
     default:
       return 'application/octet-stream';
   }
+}
+
+/** Read an original image for embedding without shipping a byte array to the
+ *  renderer or rebuilding its base64 representation one character at a time. */
+export async function readImageFileAsDataUrl(filePath: string): Promise<string> {
+  const base64 = await ipcApi.readFileBase64(filePath);
+  return `data:${mimeFromName(basename(filePath))};base64,${base64}`;
 }
 
 /** SVG data-URL "document" icon with the file extension, used when a dropped
@@ -120,7 +133,6 @@ export default function ExtensionHost({
   fileSize,
   siblings,
   theme,
-  onClose,
   onRequestRevisionHistory,
   onRequestFile,
 }: ExtensionHostProps) {
@@ -363,19 +375,9 @@ export default function ExtensionHost({
           imageDataUrl = await ipcApi.loadFolderThumbnail(p);
         } else if (isImage) {
           // Image: embed the original file bytes (base64) instead of a
-          // thumbnail. We trust the extension's underlying mimeType from
-          // the filename's extension — mime-types detection via the main
-          // process is not exposed for arbitrary files. drawio doesn't care
-          // about the exact bytes; it just renders the image. The cell
-          // stays small (data URL inside an `image=data:image/...` style).
-          const buf = await ipcApi.readFile(p);
-          const bytes = new Uint8Array(buf);
-          let bin = '';
-          for (let i = 0; i < bytes.length; i += 1) {
-            bin += String.fromCharCode(bytes[i]);
-          }
-          const mime = isImage ? mimeFromName(name) : 'application/octet-stream';
-          imageDataUrl = `data:${mime};base64,${btoa(bin)}`;
+          // thumbnail. Main reads and encodes the file so the IPC payload is
+          // one string. The MIME type still comes from the filename extension.
+          imageDataUrl = await readImageFileAsDataUrl(p);
         } else {
           await ipcApi.generateThumbnail(p);
           imageDataUrl = await ipcApi.loadThumbnail(p);

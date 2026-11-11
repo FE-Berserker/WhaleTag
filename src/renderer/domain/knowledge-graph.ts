@@ -6,7 +6,7 @@
  * the nodes/edges and handles dragging, panning and zooming.
  *
  * React/Electron-free so the graph building and layout can be unit-tested in
- * isolation (knowledge-graph.test.ts). No `Math.random` ‚Ä?layout is a pure
+ * isolation (knowledge-graph.test.ts). No `Math.random` ‚Äî layout is a pure
  * function of its input so the same graph always lays out identically.
  *
  * Previously named `mindmap.ts`; renamed in plan ¬ßH.19 to reflect that the
@@ -81,7 +81,7 @@ function extOf(entry: MindMapEntry): string {
 /**
  * Build a bipartite tag‚Üîfile graph from per-file tags.
  *
- * - Files are looked up in `tagsByName` (by `entry.path` ‚Ä?H.24 R1 made the
+ * - Files are looked up in `tagsByName` (by `entry.path` ‚Äî H.24 R1 made the
  *   projections path-keyed so two same-named files in different subdirs keep
  *   independent tags); directories and files with no remaining tags are
  *   omitted (no isolated nodes).
@@ -145,7 +145,7 @@ export function buildGraph(
 /**
  * Halton low-discrepancy sequence. Returns a value in [0, 1) for the
  * given index `i` and prime `base`. Used to spread file nodes evenly
- * across the canvas without clustering ‚Ä?see `seedPositions`.
+ * across the canvas without clustering ‚Äî see `seedPositions`.
  */
 function halton(i: number, base: number): number {
   let result = 0;
@@ -159,7 +159,7 @@ function halton(i: number, base: number): number {
   return result;
 }
 
-/** Rough rendered text width (px): CJK/full-width glyphs ‚â?font size, latin ‚â?0.58√ó. */
+/** Rough rendered text width (px): CJK/full-width glyphs ‚âà font size, latin ‚âà 0.58√ó. */
 function textWidth(s: string, fontPx: number): number {
   let w = 0;
   for (const ch of s) {
@@ -173,20 +173,20 @@ function textWidth(s: string, fontPx: number): number {
 /**
  * Estimated rendered box (px) of a node, used for collision separation.
  * Must match the actual styles in `KnowledgeGraphView.tsx`'s `TagNode` /
- * `FileNode` components ‚Ä?if the estimate is too small, nodes will overlap
+ * `FileNode` components ‚Äî if the estimate is too small, nodes will overlap
  * visually even though `resolveCollisions` thinks they're separated. Three
  * things the estimate has to get right:
  *
  *   1. **Tag pill width**: `padding: 4*scale 10*scale` + text + `boxShadow`.
  *      Capped at the view's `maxWidth: 220` (long tags ellipsize). Height
  *      includes the shadow's downward 4px bleed.
- *   2. **File chip ext span**: NOT a fixed 30px ‚Ä?it grows with the ext
+ *   2. **File chip ext span**: NOT a fixed 30px ‚Äî it grows with the ext
  *      string. The view renders `minWidth: 22; padding: 0 4` so for ext
  *      strings longer than 3 chars (e.g. `DRAWIO`, `MARKDOWN`, `WEBP`),
  *      the chip is `textWidth(ext, 9px) + 8` which can hit 40+ px. The
  *      original 30px estimate silently failed for those formats.
  *   3. **CJK width coefficient**: real fonts render CJK at ~1.0√ó em,
- *      Latin at ~0.58√ó. The `textWidth` helper handles that ‚Ä?but we
+ *      Latin at ~0.58√ó. The `textWidth` helper handles that ‚Äî but we
  *      add a 12% safety margin (`* 1.12`) so font-metric drift between
  *      systems doesn't let nodes graze each other.
  *
@@ -198,8 +198,8 @@ export function nodeSize(node: MindMapNode): { w: number; h: number } {
   if (node.kind === 'tag') {
     const scale = Math.min(1.6, 1 + Math.log10(node.degree + 1) * 0.5);
     const fontPx = 12 * scale;
-    // Actual style: padding `${4*scale}px ${10*scale}px` ‚Ü?horizontal 20*scale.
-    // boxShadow: `0 1px 4px rgba(0,0,0,0.3)` extends ~4px below ‚Ä?already
+    // Actual style: padding `${4*scale}px ${10*scale}px` ‚Üí horizontal 20*scale.
+    // boxShadow: `0 1px 4px rgba(0,0,0,0.3)` extends ~4px below ‚Äî already
     // included in the height buffer.
     const w = textWidth(node.tag, fontPx) * SAFETY + 20 * scale + 4; // +4 shadow buffer
     return {
@@ -217,7 +217,7 @@ export function nodeSize(node: MindMapNode): { w: number; h: number } {
   }
   const fontPx = 11;
   // Ext chip: view style is `minWidth: 22; padding: '0 4'` with fontSize: 9.
-  // For long ext strings (DRAWIO, MARKDOWN, ‚Ä? the chip grows; using the
+  // For long ext strings (DRAWIO, MARKDOWN, ‚Ä¶ the chip grows; using the
   // actual text width avoids the original estimate's silent under-count.
   const extFontPx = 9;
   const chipW = Math.max(22, textWidth(node.ext, extFontPx) * SAFETY + 8);
@@ -232,7 +232,7 @@ export function nodeSize(node: MindMapNode): { w: number; h: number } {
  * Push apart any pair of overlapping node boxes along their shallowest axis,
  * iterating until stable (or `iterations` is hit). Mutates `pos`. Deterministic:
  * fixed traversal order and no randomness, so the same input always settles the
- * same way. O(n¬≤¬∑iterations) ‚Ä?fine for a directory's worth of nodes.
+ * same way. O(n¬≤¬∑iterations) ‚Äî fine for a directory's worth of nodes.
  */
 export function resolveCollisions(
   pos: Map<string, XY>,
@@ -276,11 +276,11 @@ export function resolveCollisions(
 
 /**
  * Adaptive canvas size. The old `max(1000, ‚àöN √ó 260)` rule grew the canvas
- * geometrically with node count ‚Ä?at N=100 the canvas hit 2600px while the
+ * geometrically with node count ‚Äî at N=100 the canvas hit 2600px while the
  * FR ideal-edge-length (`k=90`) stayed fixed, so the force pass squeezed all
  * 100 nodes into a ~200px cluster around the center, leaving most of the
  * canvas empty. Now we tie canvas size to a target per-node spacing of ~50px
- * (so `k = span √ó 0.04` lands around 32‚Ä?6px depending on graph size), with
+ * (so `k = span √ó 0.04` lands around 32‚Äì46px depending on graph size), with
  * an 800px floor for tiny graphs and a 2400px cap to keep the force pass
  * cost predictable. `span` is `min(width, height)`; it's the dimension the
  * radial seed and force pass scale against.
@@ -318,7 +318,7 @@ function computeCanvasSize(
  * sharing a tag don't stack.
  *
  * If `previousPos` is provided, nodes with an existing position keep it
- * verbatim ‚Ä?only *new* nodes are seeded. This is how the view preserves
+ * verbatim ‚Äî only *new* nodes are seeded. This is how the view preserves
  * layout across filter toggles / depth changes without making the graph
  * visibly jump. Existing nodes retain the exact pixel; the force pass then
  * drags any newly-seeded neighbors toward them.
@@ -333,7 +333,7 @@ function seedPositions(
   // Tangential breathing room between adjacent tag pills on the inner ring.
   // Fixed at 50px: small enough that the inner ring fits a few dozen
   // tags on the canvas, large enough that two adjacent 44px-min pills
-  // never collide (chord ‚â?88px vs required 84px). The old `tension`
+  // never collide (chord ‚âà 88px vs required 84px). The old `tension`
   // multiplier was removed with the slider (H.19 retro).
   const tagGap = 50;
 
@@ -359,7 +359,7 @@ function seedPositions(
   const requiredRadius = tags.length > 0 ? (totalWidth * 1.12) / (2 * Math.PI) : 0;
   // Floor the ring at the smaller of `span*0.18` or a fixed 80px.
   // Earlier the floor was `span*0.28` which dominated small graphs and
-  // made the `tension` slider invisible ‚Ä?raising requiredRadius
+  // made the `tension` slider invisible ‚Äî raising requiredRadius
   // couldn't change tagR. The 80px minimum keeps the ring readable
   // for very few tags (so 1-2 tags aren't pinned to the center).
   const tagR = Math.max(Math.min(span * 0.18, 220), requiredRadius, 80);
@@ -418,7 +418,7 @@ function seedPositions(
     const len = Math.hypot(dx, dy) || 1;
     dx /= len;
     dy /= len;
-    // Halton 2D sequence ‚Ä?places each file at a unique, uniformly-spread
+    // Halton 2D sequence ‚Äî places each file at a unique, uniformly-spread
     // 2D position on the canvas. Replaces the previous tag-centroid grid
     // and sunflower distributions, both of which collapsed dense
     // clusters (6+ files sharing a tag pair) into overlapping positions
@@ -428,12 +428,12 @@ function seedPositions(
     // form an outer halo.
     //
     // The `margin` is sized to land files just outside the tag ring
-    // (with a small buffer) rather than a fraction of the canvas ‚Ä?the
+    // (with a small buffer) rather than a fraction of the canvas ‚Äî the
     // earlier `span * 0.4` formula was overkill on large canvases and
     // crowded files into the middle on small ones. Now `margin =
     // tagR + 60px buffer`, so the Halton region scales with the actual
     // ring size and 30 files in a 1500√ó1500 canvas get the full area.
-    // Deterministic (no Math.random) ‚Ä?`idx + 1` because Halton(0) is
+    // Deterministic (no Math.random) ‚Äî `idx + 1` because Halton(0) is
     // degenerate.
     const tagRingRadius = Math.max(Math.min(canvas.span * 0.18, 220), 80);
     const margin = tagRingRadius + 60;
@@ -451,9 +451,9 @@ function seedPositions(
 
 /**
  * Translate every node by the same offset so the centroid sits at the canvas
- * center. Skipped when `previousPos` is in play ‚Ä?that would defeat the whole
+ * center. Skipped when `previousPos` is in play ‚Äî that would defeat the whole
  * point of position memory. When the seed runs cold (no previousPos) and the
- * radial layout drifts off-center (common with `width ‚â?height` or sparse
+ * radial layout drifts off-center (common with `width ‚â† height` or sparse
  * graph shapes), this restores the visual "node cluster in the middle of the
  * viewport" expectation. ~5 lines, fixes the "ËøõÂú∫ËäÇÁÇπ‰∏çÂú®ÂõæÂÉè‰∏≠Èó¥" complaint.
  */
@@ -501,7 +501,7 @@ function clampToCanvas(pos: Map<string, XY>, canvas: CanvasSize): void {
  * degree), each file is pushed outward from the centroid of the tags it links
  * to, with an index-based perpendicular jitter so files sharing a tag don't
  * stack. A collision-separation pass (`collide`, on by default) then spreads
- * any remaining overlaps. Returns a map of node id ‚Ü?{x, y}. Pure: same graph ‚Ü? * same positions.
+ * any remaining overlaps. Returns a map of node id ‚Üí {x, y}. Pure: same graph ‚Üí * same positions.
  *
  * `previousPos` (optional) preserves positions of nodes that already had a
  * layout. New nodes seed normally and the FR pass settles them relative to
@@ -524,7 +524,7 @@ export function layoutGraph(
   const canvas = computeCanvasSize(graph.nodes, options);
 
   // 1. Seed: use previousPos for existing nodes, radial/centroid for new.
-  //    No `tension` parameter anymore ‚Ä?the previous slider was removed
+  //    No `tension` parameter anymore ‚Äî the previous slider was removed
   //    because in dense graphs it often failed to converge within the
   //    FR iteration budget, leaving the cluster off-canvas (H.19 retro).
   //    Tag spread is now a fixed `tagGap = 50px`, wide enough for
@@ -537,8 +537,8 @@ export function layoutGraph(
   //    adds chaos. In dense graphs the cumulative file‚Üîfile repulsion
   //    pushed files to the canvas edge, then the final clamp locked them
   //    there with no way for the collision pass to recover (tested:
-  //    `physics:true, collide:true` puts f1 and f7 at x=30 ‚Ä?the left
-  //    margin ‚Ä?overlapping in y). `physics` is kept as an option so
+  //    `physics:true, collide:true` puts f1 and f7 at x=30 ‚Äî the left
+  //    margin ‚Äî overlapping in y). `physics` is kept as an option so
   //    future callers can experiment, but it's off by default.
   // `false &&` keeps the FR pass compiled-in but unreachable (H.19 disabled
   // it because it pushed files to the canvas edge); the eslint disable is for
@@ -548,7 +548,7 @@ export function layoutGraph(
     runForcePass(pos, graph, canvas.span * 0.04, canvas.span);
   }
 
-  // 3. Optional collision separation. 200 + 80 iterations at gap=20 ‚Ä?  //    earlier 100 + 40 starved on dense many-to-many graphs where the
+  // 3. Optional collision separation. 200 + 80 iterations at gap=20 ‚Äî  //    earlier 100 + 40 starved on dense many-to-many graphs where the
   //    Halton seed places two files close together; the iteration budget
   //    is the actual separation work now that FR is off.
   if (collide) resolveCollisions(pos, graph.nodes, { gap: 20, iterations: 200 });
@@ -561,11 +561,11 @@ export function layoutGraph(
   // 5. Centroid recentering (skip when previousPos is in play so retained
   //    positions don't visibly drift). Recentering shifts every node by
   //    the same offset, so a previously-clamped node may end up off-canvas
-  //    if the cluster was strongly off-center ‚Ä?we re-clamp *after*
+  //    if the cluster was strongly off-center ‚Äî we re-clamp *after*
   //    recenter so the final positions are guaranteed inside the canvas.
   recenter(pos, canvas, hasMemory);
 
-  // 6. Final clamp ‚Ä?guarantees every node is inside the canvas with a
+  // 6. Final clamp ‚Äî guarantees every node is inside the canvas with a
   //    30px margin regardless of where the seed, FR, collision, or
   //    recenter steps landed. Runs unconditionally (cheap, O(n)).
   clampToCanvas(pos, canvas);
@@ -576,7 +576,7 @@ export function layoutGraph(
 /**
  * Weak file‚Üîfile repulsion pass. Mutates `pos` in place from its Halton
  * seed to push apart pairs of files that happen to land too close after
- * the 2D quasi-random seed. Skips tag‚Üîtag pairs entirely ‚Ä?those would
+ * the 2D quasi-random seed. Skips tag‚Üîtag pairs entirely ‚Äî those would
  * destroy the carefully-proportioned inner ring (see `separates many
  * tags on the inner ring` test). No edge attraction (was removed because
  * it collapsed dense file clusters back onto their tag centroid, and
@@ -599,7 +599,7 @@ function runForcePass(
   const cool = temp / (iterations + 1);
   const disp = new Map<string, XY>(nodes.map((n) => [n.id, { x: 0, y: 0 }]));
 
-  // Identify file and directory nodes for the repulsion below ‚Ä?tags get a
+  // Identify file and directory nodes for the repulsion below ‚Äî tags get a
   // pass so the inner ring stays put.
   const fileIds = new Set<string>();
   for (const n of graph.nodes) {

@@ -40,15 +40,23 @@
 2. **Bearer token**:每次请求必带 `Authorization: Bearer <token>`,`timingSafeEqual` 比较;token 本地生成,设置页可显隐 / 复制 / 再生成。
 3. **allowedRoots 硬约束**:所有工具的路径先过 `assertWithinAllowedRoot`;且 MCP 比渲染层 IPC **更严**——move/copy 的**目的地也必须在 roots 内**(`assertBothEndsInside`,渲染层的拖拽豁免不适用于外部客户端)。
 4. **写分级**:sidecar 级(标签/描述)免审批;文件级(move/copy/delete/zip/create)推 `mcp:approvalRequest` 到窗口,用户明确点"允许"才执行;无窗口 / 60s 超时 / 拒绝一律 fail-closed。
-5. **只读模式**(默认开):所有变更工具(含打标)直接拒绝,搜索与读取不受影响。
-6. **数据神圣**:删除仅回收站;所有批量操作逐条收集错误、绝不静默吞;createTextFile 拒绝覆盖已存在文件。
-7. **Host 校验**:仅接受 `127.0.0.1` / `localhost` / `[::1]` 的 Host 头(先于 token 检查返回 403)——浏览器里的恶意页无法经 DNS rebinding 以同源方式探测端点。
+5. **只读模式**(默认开):所有变更工具直接拒绝(含打标、描述、以及会写索引的 `whale_build_fulltext`),搜索与读取不受影响。闸门是两道:调用开始前查一次,审批等待(最长 60s)返回后**再查一次**——等待期间用户打开只读,已点过的"允许"也不能放行;切换只读为开时立即 `denyAllPending()`,不让无效对话框继续挂在屏幕上。
+6. **数据神圣**:删除仅回收站;所有批量操作逐条收集错误、绝不静默吞,且**整批全失败时结果标 `isError`**(成功外壳 + errors 数组会让客户端误判);createTextFile 拒绝覆盖已存在文件。
+7. **位置 root 是容器,不是条目**:`assertNotLocationRoot` 拒绝把配置的 root 本身作为打标 / 写描述 / move / copy / delete 的目标——root 的 sidecar 会落在边界**上一层目录**,而整根删除只值一个泛化对话框。root 内的普通条目不受影响。
+8. **读上限 16 MiB**:`whale_read_text` 先 `stat()` 再整文件解码,非文件或超限直接报错并指向有 2 MB 读 / 200 KB 出上限的 `whale_extract_text`——避免客户端读一个多 GB 日志把主进程打爆。
+9. **Host 校验**:仅接受 `127.0.0.1` / `localhost` / `[::1]` 的 Host 头(先于 token 检查返回 403)——浏览器里的恶意页无法经 DNS rebinding 以同源方式探测端点。
 
 ## 5. 会话与生命周期
 
-- 有状态 Streamable HTTP:`POST /mcp` initialize 建会话,后续请求带 `mcp-session-id` 复用 transport;`DELETE /mcp` 终结会话;`GET` 405(无服务端主动流)。
+- 有状态 Streamable HTTP:端点**精确匹配** `/mcp`(与 `/mcp/`),其余路径 404——不再用 `startsWith('/mcp')` 放行 `/mcpfoo` 之类前缀。`POST /mcp` initialize 建会话,后续请求带 `mcp-session-id` 复用 transport;`DELETE /mcp` 终结会话;`GET` 405(无服务端主动流)。
+- **会话闲置回收**:每个会话记录 `lastSeen`(initialize 与每次复用请求都会刷新),后台 sweeper 每 60s 清一次,默认闲置 **30 分钟**回收(选项 `sessionIdleMs`,设 0 关闭;`sessionSweepMs` 控制扫描周期,定时器 `unref()`,不拖住进程退出)。回收/未知的 `mcp-session-id` 返回 **404**(协议语义:客户端应重新 initialize),不是 400。
+- **请求体上限 4 MiB**:按 UTF-8 字节数统计,超限返回 **413** 并在响应后 drain 剩余字节;不在读到一半时 `req.destroy()`(那会让客户端只看到连接重置)。
 - `initMcpServer()` 在 bootstrap 注册(配置 enabled 才监听);`before-quit` 时 `shutdownMcpServer()` 拒绝未决审批并释放端口。启动失败只打日志,绝不阻塞应用启动。
+- **关闭不挂在 keep-alive 上**:停止服务时先 `server.close()`,同一 Promise 内再 `closeAllConnections()`——外部客户端保持长连接也不会让设置页开关或退出卡住;监听成功后内部状态才发布,绑定失败不会泄漏半个 core(重试也不会留下孤儿实例)。
 - 端口默认 7433,被占则回退随机端口;设置页显示真实 endpoint。
+- **并发写不互相覆盖**:move/copy 的「目标不存在」检查与真正写入在目标目录的 `withLock` 临界区内完成(跨调用也串行;MCP 客户端会并行发请求),`cp` 用 `force:false + errorOnExist`——两个并发操作抢同一个目标名时只有一个成功,另一个明确报错,绝不会静默替换;EXDEV 跨盘回退的 copy-then-delete 同样带 `errorOnExist`。
+- **索引状态不伪装**:`whale_roots` 对每个位置单独 try/catch,索引 worker 失败时返回该位置的 `error` 字段,而不是把它伪装成"文件数为 0 的空位置"。
+- **配置容错**:`mcp-config.json` 读入后经 `normalizeMcpConfig()` 归一——非对象 JSON(`null` / 数组 / 标量)回退默认值并告警(此前会在 bootstrap 抛 TypeError),端口限定 1..65535 整数,token 过短/含空白则重新生成;损坏文件会带错误日志回退,不再静默换 token。写入走串行队列(`schedulePersist`/`persistNow`),后写的设置不会被先发起的落盘覆盖;落盘失败时 `persistNow` **重新抛错**,`mcp:*` 调用 reject 而不是返回一个只存在于内存的状态(旧行为只记日志:UI 显示已切换,重启后回退)。
 
 ## 6. 外部客户端接入示例
 
@@ -71,5 +79,5 @@ ZCode / Claude Desktop 等 Streamable HTTP 客户端配置:
 - **office 文档抽取不支持**(docx/xlsx/pptx),`whale_extract_text` 会明确报错;后续可在 worker 里加转换管线。
 - 有状态会话存在内存里,应用重启后客户端需重连(重新 initialize)。
 - `whale_build_fulltext` 是长操作,大位置可能跑数分钟;客户端超时策略由客户端自己决定。
-- 测试:`mcp-approval.test.ts` 覆盖审批闸全部 fail-closed 路径;`mcp-http.test.ts` 用**官方客户端 SDK** 走通 401 / initialize / tools 列表 / 只读工具调用 / 未审批变更拒绝的端到端链路(electron 模块在测试中以 stub 注入)。
+- 测试:`mcp-approval.test.ts` 覆盖审批闸全部 fail-closed 路径;`mcp-http.test.ts` 用**官方客户端 SDK** 走通 401 / initialize / tools 列表 / 只读工具调用 / 未审批变更拒绝的端到端链路,并覆盖前缀/未知会话 404、4 MiB+1 → 413、闲置回收与关闭 sweeper(electron 模块在测试中以 stub 注入);`mcp-config.test.ts` 覆盖归一化矩阵(非对象 JSON、越界端口、坏 token、只读默认值)与读写往返;`mcp-server.test.ts` 覆盖启停、端口回退、只读开关、keep-alive 连接下的快速停止与并发开关串行化。工具面守卫在 `mcp-http.test.ts` 的 "tool guards" 组里用真实配置的 root 走端到端:只读拒绝打标 / 建索引、root 本身拒绝打标(且父目录不落 `.whale`)、root 内普通文件可打标、目录拒绝当文本读;`allowed-roots.test.ts` 覆盖 `isConfiguredRoot` 的归一化匹配;`fs-write.test.ts` 用两个并发 copy/move 抢同一目标名验证只有一个成功且既有目标字节不变。
 - token 明文落盘 `<userData>/mcp-config.json`(设置页可一键再生成)——任何能读该文件的本地进程可完全冒充客户端;换取设置页直接展示 / 复制,属本地工具的通行取舍。MCP 配置变更在生命周期队列内**先原子落盘再生效**,切换后立即崩溃不丢状态。

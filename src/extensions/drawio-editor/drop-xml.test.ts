@@ -1,6 +1,5 @@
 import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
-import globalJsdom from 'global-jsdom';
 import {
   appendSnippetToDiagram,
   buildFileDropDocument,

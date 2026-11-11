@@ -65,7 +65,7 @@ function normPath(p: string): string {
 function ancestorChain(root: string, target: string): string[] {
   const nr = normPath(root);
   const nt = normPath(target);
-  if (!nt.startsWith(nr)) return [root];
+  if (!isSameOrDescendant(root, target)) return [root];
   const rel = nt.slice(nr.length).replace(/^\/+/, '');
   const chain = [root];
   let cur = root;

@@ -88,8 +88,3 @@ export function resolveApproval(reqId: string, allowed: boolean): void {
 export function denyAllPending(): void {
   for (const p of pending.values()) p.resolve(false);
 }
-
-/** Convenience for tests / status reporting. */
-export function approvalCount(): number {
-  return pending.size;
-}

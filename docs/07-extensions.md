@@ -11,12 +11,12 @@
 ```
 src/extensions/
   shared/                       # 公共共享
-    extension-api.ts            # i18n / onLocale / postMessage 桥
-    extension-types.ts          # 注意:协议类型在 src/shared/extension-types.ts
+    extension-api.js            # i18n / onLocale / postMessage 桥
     zoom.ts                     # 共享缩放逻辑
     keymap.ts                   # 共享按键映射
+    relpath.ts                  # 相对路径工具(嵌入链接跨文件移动时重算)
+    viewer-prefs.ts             # font/html 共享的带前缀偏好读写
     whale-ext.d.ts              # 扩展端全局类型
-    registers.ts                # 共享注册
   json-viewer/ html-viewer/
   text-editor/
   image-viewer/
@@ -24,6 +24,8 @@ src/extensions/
   excalidraw-editor/ drawio-editor/
   font-viewer/
 ```
+
+> 协议类型(`ExtensionManifest` / `HostMessage` / `ExtensionMessage` 等)统一在 [src/shared/extension-types.ts](../src/shared/extension-types.ts),不在 `shared/` 目录内。
 
 构建产物 = `release/app/dist/extensions/<id>/`,生成 `registry.json`(主进程读,renderer 经 `ext:getRegistry` 取)。
 
@@ -42,7 +44,7 @@ src/extensions/
 }
 ```
 
-**发现与注册**:`scripts/build-extensions.ts` 扫描 `src/extensions/*/manifest.json`,Webpack 打包,生成 `registry.json`。
+**发现与注册**:[scripts/build-extensions.js](../scripts/build-extensions.js) 扫描 `src/extensions/*/manifest.json`,Webpack 打包,生成 `registry.json`。
 
 **Host ↔ Extension 协议**:统一 envelope `ExtensionEnvelope<T> { protocolVersion: 1, source: 'host' | 'extension', message }`,走 `window.postMessage`。
 
@@ -64,6 +66,8 @@ src/extensions/
 资产请求:`requestHeicWasm`(heic-viewer wasm 经 host IPC 读取)
 
 图片编辑:`requestFileEmbed` / `requestFile` / `thumbnailGenerated` / `openLinkExternally` / `error`
+
+宿主把拖入图片转为 data URL 时走 `fs:readFileBase64`:Main 先过 allowedRoots,再用 `Buffer.toString('base64')`;Renderer 不再逐字节拼十六进制或调用 `btoa`。
 
 **安全**:iframe sandbox = `allow-same-origin allow-scripts allow-modals allow-downloads`;Host 只接受 `event.source === iframe.contentWindow`;每个扩展 HTML 自带严格 CSP meta。
 
@@ -101,7 +105,7 @@ src/extensions/
 - `ExtensionHost.tsx` iframe 宿主,管理加载 / 消息桥 / 保存流程 / 工具栏;**启动看门狗**(2026-07-22):iframe 12s 内未 post `ready` → 显示可重试失败态(此前崩溃/CSP 拦截 = 永久白屏),ready 前显示加载遮罩,重试经 `retryKey` 重挂 iframe
 - 编辑器脏状态经 `contentChangedInEditor` 上报;Save 触发 `parentSaveDocument` → `writeFileWithRevision`
 - 编辑器保存前**自动备份**到 `.whale/revisions/<basename>/<timestamp>.<ext>`
-- 启动清理 30 天前的旧 revision(`Root.tsx` 调 `cleanupRevisions(30)`)
+- 启动清理 30 天前的旧 revision(`Root.tsx` 调 `cleanupRevisions(30)`)；IPC 只接受有限、非负的 number，非法或负天数会在任何删除发生前 reject
 
 **修订历史**:
 
@@ -150,6 +154,7 @@ src/extensions/
 - `EMPTY_DRAWIO` 单行占位符(`<diagram>` 紧跟 `<mxGraphModel>`,零空白),避免 `parseDiagramNode` children 分支失败
 - Drawio 保存实测走 `export` action event(不是 `autosave`/`save`);bridge `dispatchDrawioMessage` 必须识别 3 种 event 统一映射到 `{kind: 'xml', xml}`
 - drawio `editor.modified` 默认 false(画了 shape + 1.5s autosave timer 后才翻 true),工具栏 Save 不依赖 dirty 直接允许(未修改 = no-op 写盘)
+- unmount 会注销 save/message handler、清 XML timer 并 reject pending requests；销毁后不再 postMessage，异步保存与图片插入也不得继续更新已卸载组件。`fileContent` 刷新只重绑 handler，不取消已经开始的保存或图片插入；若切换到另一文档，尚未完成的图片插入会在写 XML 前中止，避免把旧文档的拖入内容写进新文档
 
 ## 7. 扩展 i18n
 
@@ -172,6 +177,5 @@ src/extensions/
 
 ## 9. 架构审阅遗留(2026-07-18)
 
-- ~~`ExtensionHost.tsx` god-switch~~ ✅ 已拆(2026-07-18):16 个 `request* → reply` RPC case 下沉到 [extension-host/rpc-cases.ts](../src/renderer/components/extension-host/rpc-cases.ts) —— 通用 `forwardRpc` 关联 helper(ipcApi 调用 → 成功回包 / 错误回包,各 case 只给 reply 构造器),`createRpcHandler` 返回判别委托,非 RPC 消息回落组件内 switch;宿主文件 1076 → 761 行,消息 effect 的依赖数组从 9 项收到 6 项。测试:[rpc-cases.test.ts](../src/renderer/components/extension-host/rpc-cases.test.ts)(7 例:reply 形状 / 错误兜底 / sofficePath 透传 / 非 RPC 回落)。
+- ✅ **god-switch 已拆**(2026-07-18):`request* → reply` 类 RPC 消息下沉到 [extension-host/rpc-cases.ts](../src/renderer/components/extension-host/rpc-cases.ts) —— 通用 `forwardRpc` helper 负责 ipcApi 调用 → 成功回包 / 错误回包,各 case 只给 reply 构造器;`createRpcHandler` 返回"是否处理"判别,非 RPC 消息回落组件内 switch。当前唯一走该通道的是 `requestHeicWasm`(HEIC wasm 读取),测试见 [rpc-cases.test.ts](../src/renderer/components/extension-host/rpc-cases.test.ts)(reply 形状 / 错误兜底 / 非 RPC 回落)。
 - **postMessage `targetOrigin: '*'`**(ExtensionHost / extension-api.js 双向):接收端有 `event.source === iframe.contentWindow` 校验所以不算漏洞,但 `whale-extension://` 是特权 scheme,发往 iframe 的消息对同窗口任何 message 监听者可见,应收窄为具体 origin。
-- ~~`archive.ts` `execFileSync('7za', timeout:3000)` 探测残留~~ ✅ 实为已修(2026-07-18 复核):7za PATH 探测与 list/extract 全走异步 `execFile` + `_sevenZipInflight` 首调去重(P1-1 同批),主进程无同步残留;本条是过时记录。

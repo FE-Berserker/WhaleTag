@@ -1,5 +1,10 @@
 import type { DirEntry } from '../../shared/ipc-types';
-import type { SidecarMeta } from '../../shared/whale-meta';
+import {
+  META_DIR,
+  isHiddenName,
+  type SidecarMeta,
+} from '../../shared/whale-meta';
+import { isSameOrDescendant, pathSegments } from '-/services/path-util';
 import { extractTags } from '-/services/tags';
 import { geoPointFromTags } from './geo-tag';
 
@@ -27,6 +32,24 @@ import { geoPointFromTags } from './geo-tag';
  * regardless, so 10k is a safe upper bound for one scan.
  */
 export const MAX_RECURSIVE_ENTRIES = 10000;
+
+/** Apply hidden-file semantics to the complete relative path, not just the
+ * basename. Otherwise a hidden directory is removed while its descendants
+ * survive as orphan rows / synthetic chart nodes. */
+export function filterRecursiveEntries(
+  entries: readonly DirEntry[],
+  rootPath: string,
+  showHiddenFiles: boolean
+): DirEntry[] {
+  if (showHiddenFiles) return entries.slice();
+  const rootSegmentCount = pathSegments(rootPath).length;
+  return entries.filter((entry) => {
+    if (!isSameOrDescendant(rootPath, entry.path)) return false;
+    return pathSegments(entry.path)
+      .slice(rootSegmentCount)
+      .every((segment) => segment !== META_DIR && !isHiddenName(segment));
+  });
+}
 
 export interface AggregatedRecursiveEntries {
   /** Files AND directories from the recursive scan, in scan order. */

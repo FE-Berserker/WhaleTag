@@ -57,11 +57,28 @@ export function assertWithinAllowedRoot(target: string): void {
   // see path-fold.ts. Folding on ext4 would let /photos slip under /Photos.
   const norm = foldPath(resolveGuardPath(target));
   for (const root of allowedRoots) {
-    if (norm === root || norm.startsWith(root + path.sep)) return;
+    const rootPrefix = root.endsWith(path.sep) ? root : root + path.sep;
+    if (norm === root || norm.startsWith(rootPrefix)) return;
   }
   throw new Error(
     `Refused: path is outside any configured location (${target})`
   );
+}
+
+/**
+ * True when `target` resolves to one of the configured location roots itself
+ * (not merely inside one). Callers use it to refuse whole-workspace actions —
+ * a root is a container the user opened, not an entry to delete/move/tag.
+ */
+export function isConfiguredRoot(target: string): boolean {
+  if (allowedRoots.size === 0) return false;
+  let norm: string;
+  try {
+    norm = foldPath(resolveGuardPath(target));
+  } catch {
+    norm = foldPath(path.resolve(target));
+  }
+  return allowedRoots.has(norm);
 }
 
 /** Replace the configured location roots with a new list. */

@@ -83,20 +83,28 @@ function ThumbIconBase({
     const doLoad = async (): Promise<void> => {
       if (!observed) return;
       let url: string | null = null;
-      if (entry.isDirectory) {
-        url = await ipcApi.loadFolderThumbnail(entry.path);
-      } else {
-        url = await ipcApi.loadThumbnail(entry.path);
-        if (!url) {
-          // Not generated yet — generate (mtime-shortcircuited in main), re-read.
-          await ipcApi.generateThumbnail(entry.path);
+      try {
+        if (entry.isDirectory) {
+          url = await ipcApi.loadFolderThumbnail(entry.path);
+        } else {
           url = await ipcApi.loadThumbnail(entry.path);
+          if (!url) {
+            // Not generated yet — generate (mtime-shortcircuited in main), re-read.
+            await ipcApi.generateThumbnail(entry.path);
+            url = await ipcApi.loadThumbnail(entry.path);
+          }
         }
+        if (!observed) return; // scrolled away / unmounted mid-load
+        if (url) thumbCache.set(cacheKey, url);
+        setDataUrl(url ?? null);
+      } catch {
+        // A removed root, junction target, or decode/IO failure must not become
+        // an unhandled rejection. Fall back to the type/folder icon; do not
+        // cache the failure so a later visible mount can retry.
+        if (observed) setDataUrl(null);
+      } finally {
+        if (observed) setLoaded(true);
       }
-      if (!observed) return; // scrolled away / unmounted mid-load
-      if (url) thumbCache.set(cacheKey, url);
-      setDataUrl(url ?? null);
-      setLoaded(true);
     };
 
     // IntersectionObserver — only run `doLoad` when the cell scrolls into view

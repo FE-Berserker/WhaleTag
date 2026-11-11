@@ -28,7 +28,7 @@
 
 - **侧栏标签库**([src/renderer/components/TagLibrary.tsx](../src/renderer/components/TagLibrary.tsx)):可拖、可点击筛选
 - **标签组**([src/renderer/components/TagGroups.tsx](../src/renderer/components/TagGroups.tsx)):组有自己的颜色,组内 tag 自动继承
-- **per-location 标签库描述**:`.whale/wtaglib.json` —— 每 tag 一条描述文字
+- **per-location 标签库描述**:`.whale/wtaglib.json` —— 每 tag 一条描述文字;写入是读-改-写(只改目标 tag),基底经 [merge-read.ts](../src/main/merge-read.ts) 读取:文件损坏时先隔离为 `wtaglib.json.corrupt-<时间戳>` 再从空开始,一次编辑不会丢掉其余 tag 的描述;IO 错误上抛而不是当空覆盖
 - **批量打标**保留各文件原 `description`
 
 ## 4. 互斥家族(同源规则)
@@ -44,10 +44,10 @@
 
 **实现位置**:`[src/shared/smart-tags.ts](../src/shared/smart-tags.ts)` 暴露:
 
-- `withSingleRating(tags)` / `withSingleWorkflow(tags)` / `withSingleQuadrant(tags)` / `withSingleDateTag(tags, now?)` / `withSinglePeriodTag(tags)`
-- `isStaleDateTag(tag, now?)`(`smart-tags.ts:403-407`)
-- `isAnyDateShapeTag(tag)`(`smart-tags.ts:421-424`,主进程迁移 + 渲染层 PropertiesTray 用)
-- 所有写路径统一走 `normalizeSmartTags(tags, now?)` 收敛 —— 同族"last wins",跨族不动
+- `withSingleRating(tags)` / `withSingleWorkflow(tags)` / `withSingleQuadrant(tags)` / `withSingleDateTag(tags)` / `withSinglePeriodTag(tags)`
+- `isStaleDateTag(tag, now?)`
+- `isAnyDateShapeTag(tag)`(主进程迁移 + 渲染层 PropertiesTray 用)
+- 所有写路径统一走 `normalizeSmartTags(tags)` 收敛 —— 同族"last wins",跨族不动
 
 **smartFunctions 验鲜**:`smartFunctionalityOfTag(tag, now)` 对过期日期(`now` 视角下不再鲜)返回 null,降级为 `日期` chip 折叠(见 §6)。
 
@@ -82,7 +82,7 @@
 
 **鲜度谓词**内联在 `smartFunctionalityOfTag` 内(`smart-tags.ts:688` 用 `resolveSmartTag(fn, now)` 直接比较)。
 
-`useNow()` hook([src/renderer/hooks/useNow.ts](../src/renderer/hooks/useNow.ts))每分钟 tick 提供 `now`(共享单定时器 + `useSyncExternalStore`;`subscribeNow` / `getNowSnapshot` 导出给条件订阅者)。直挂 `useNow()` 的调用点:`FileList.tsx` ×1(且经 `FROZEN_NOW` 门控,仅 `date:`/`smart:*` 过滤才消费 tick)、`PropertiesTray.tsx` ×2、`TagMetaContextProvider.tsx` ×1。
+`useNow()` hook([src/renderer/hooks/useNow.ts](../src/renderer/hooks/useNow.ts))每分钟 tick 提供 `now`(共享单定时器 + `useSyncExternalStore`)。唯一直挂调用点是 `FileList.tsx`(经 `FROZEN_NOW` 门控,仅 `date:`/`smart:*` 过滤消费 tick);`TagMetaContextProvider` 仅在存在日期族标签时用 `subscribeNow` / `getNowSnapshot` 条件订阅,`PropertiesTray` 只在 addTag 动作时取 `new Date()`。
 
 **chip 标签鲜度已统一(2026-07-18)**:[useTagDisplayLabels](../src/renderer/hooks/useTagDisplayLabels.ts) 批量包 `tagDisplayLabel` —— **仅当所展示标签含日期形 tag(`isAnyDateShapeTag`)才订阅**每分钟 tick,无日期 tag 的 chip 组件零订阅零重渲;label 数组按 index 对齐。已接入:InlineTagInput、EntryTagChips(含 overflow popover)、PropertiesTray 标签 chip、GanttRow 悬浮 tooltip、GalleryCell 角标 + tooltip。TaskReminder 未接(其分组 tag 是 workflow 家族,label 与 `now` 无关);菜单/对话框类(EntryMenu 系列、TagGroups、Settings 等)开启时即最新,不接。
 

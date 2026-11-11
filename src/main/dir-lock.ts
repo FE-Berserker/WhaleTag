@@ -1,3 +1,6 @@
+import path from 'path';
+import { foldPath } from './path-fold';
+
 /**
  * Per-key async mutex. Used by the aggregated sidecar store (`sidecar.ts`) to
  * serialize read-modify-write on a single directory's `wsd.json`: concurrent
@@ -29,7 +32,10 @@ export function withLock<T>(
   key: string,
   task: () => Promise<T>
 ): Promise<T> {
-  const prev = chains.get(key) ?? Promise.resolve();
+  // All production keys are filesystem directories. Canonicalizing prevents
+  // path aliases from opening parallel queues for the same wsd.json.
+  const lockKey = foldPath(path.resolve(key));
+  const prev = chains.get(lockKey) ?? Promise.resolve();
   // Chain off a never-rejecting view of `prev`. `run` carries `task`'s own
   // outcome (handed back to the caller); the swallowed version is what we store
   // so the next task always starts from a settled, fulfilled predecessor.
@@ -38,14 +44,14 @@ export function withLock<T>(
     () => undefined,
     () => undefined
   );
-  chains.set(key, tail);
+  chains.set(lockKey, tail);
   // Drop the entry once we know no successor replaced us. The check fires on
   // the tail's microtask — by then any immediately-chained withLock has
   // already installed its own entry into `chains`, so a stale delete would
   // break the chain. Comparing against `tail` lets us only delete when the
   // entry that's still there is *our* tail.
   void tail.then(() => {
-    if (chains.get(key) === tail) chains.delete(key);
+    if (chains.get(lockKey) === tail) chains.delete(lockKey);
   });
   return run;
 }

@@ -175,9 +175,16 @@ export async function request<O extends IndexWorkerOp>(
   arg: Extract<IndexWorkerArg, { op: O }>['arg']
 ): Promise<ResultFor<O>> {
   await ensureSpawn();
-  if (!child) throw new Error('index worker not running');
+  const c = child;
+  if (!c) throw new Error('index worker not running');
   const { reqId, promise } = newRequest(pending);
-  child!.postMessage({ reqId, op, arg });
+  try {
+    c.postMessage({ reqId, op, arg });
+  } catch (e) {
+    // postMessage can fail after a concurrent exit. failRequest is
+    // idempotent with rejectAllPending and removes this request either way.
+    failRequest(pending, reqId, e instanceof Error ? e : new Error(String(e)));
+  }
   // `promise` is typed as `Promise<unknown>` so the per-op generic on
   // `request<O>` can narrow the return type at the call site. The precise
   // shape is enforced by the signature above.

@@ -89,7 +89,15 @@ export async function buildIndex(
     }
 
     if (files.length) {
-      const sidecars = await readSidecars(dir, files.map((f) => f.name));
+      let sidecars: Awaited<ReturnType<typeof readSidecars>> = {};
+      try {
+        sidecars = await readSidecars(dir, files.map((f) => f.name));
+      } catch (error) {
+        // A corrupt/unreadable wsd.json must not abort the whole location scan.
+        // Keep the error visible and index this directory without stored tags;
+        // write APIs still reject so the damaged metadata is never overwritten.
+        console.warn('[indexer] Sidecar read failed; indexing without stored tags:', dir, error);
+      }
       for (const { name, full, stat } of files) {
         const tags = mergeTags(name, sidecars[name]?.tags ?? []);
         entries.push(

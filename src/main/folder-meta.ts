@@ -7,6 +7,7 @@ import {
 } from '../shared/whale-meta';
 import { atomicWriteJson } from './atomic-write';
 import { withLock } from './dir-lock';
+import { readJsonForMerge } from './merge-read';
 
 /**
  * Per-folder metadata store (`.whale/wsm.json`). Holds a single folder's
@@ -40,7 +41,18 @@ function isFolderMetaEmpty(meta: FolderMeta): boolean {
   );
 }
 
-/** Reads a directory's wsm.json; returns `{}` if absent or invalid. Lock-free. */
+/** True when a FolderMeta-shaped value (a plain JSON object) is safe to merge. */
+function isFolderMetaShape(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Reads a directory's wsm.json; returns `{}` if absent or invalid. Lock-free.
+ *
+ * Display-oriented: a corrupt file reads as "no metadata". NEVER use this as
+ * the base of a read-modify-write — use `readJsonForMerge` in the write path
+ * (see `writeFolderMeta`), because `{}` there would wipe the other fields.
+ */
 export async function readFolderMeta(dirPath: string): Promise<FolderMeta> {
   try {
     const data = await fsp.readFile(wsmPath(dirPath), 'utf8');
@@ -63,7 +75,13 @@ export async function writeFolderMeta(
   patch: Partial<FolderMeta>
 ): Promise<void> {
   await withLock(dirPath, async () => {
-    const current = await readFolderMeta(dirPath);
+    // Merge-safe read: an unreadable wsm.json must not be treated as "empty",
+    // or the next single-field patch would rewrite the file with just that one
+    // field (corrupt files are quarantined, not overwritten — see merge-read).
+    const current = ((await readJsonForMerge(
+      wsmPath(dirPath),
+      isFolderMetaShape
+    )) ?? {}) as FolderMeta;
     const merged: FolderMeta = { ...current, ...patch };
     // Drop keys explicitly cleared to undefined so they don't linger in JSON.
     (Object.keys(patch) as (keyof FolderMeta)[]).forEach((k) => {

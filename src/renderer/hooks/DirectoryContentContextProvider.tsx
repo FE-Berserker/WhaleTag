@@ -10,7 +10,7 @@ import {
 } from 'react';
 import { useSelector } from 'react-redux';
 
-import type { DirEntry } from '../../shared/ipc-types';
+import type { DirEntry, SidecarIssue } from '../../shared/ipc-types';
 import {
   META_DIR,
   isHiddenName,
@@ -20,7 +20,10 @@ import {
 import type { SidecarMeta } from '../../shared/whale-meta';
 import { extractTags } from '-/services/tags';
 import { geoPointFromTags } from '../domain/geo-tag';
-import { MAX_RECURSIVE_ENTRIES } from '../domain/recursive-entries';
+import {
+  MAX_RECURSIVE_ENTRIES,
+  filterRecursiveEntries,
+} from '../domain/recursive-entries';
 import type { RootState } from '-/reducers';
 import { ipcApi } from '-/services/ipc-api';
 import { isSameOrDescendant } from '-/services/path-util';
@@ -48,6 +51,9 @@ export interface DirectoryContentMetaValue {
   geoByName: Map<string, { lat: number; lng: number } | null>;
   /** True when the last recursive scan was truncated by `MAX_RECURSIVE_ENTRIES`. */
   recursiveTruncated: boolean;
+  /** Corrupt/unreadable wsd.json files from the latest load. Optional only so
+   * existing lightweight context stubs remain source-compatible. */
+  sidecarIssues?: SidecarIssue[];
 }
 
 /** UI / control slice: changes on loading lifecycle + user actions (sort /
@@ -184,6 +190,7 @@ export function DirectoryContentContextProvider({
     ReadonlyMap<string, SidecarMeta | undefined>
   >(new Map());
   const [recursiveTruncated, setRecursiveTruncated] = useState(false);
+  const [sidecarIssues, setSidecarIssues] = useState<SidecarIssue[]>([]);
   // Per-folder view overrides from `.whale/wsm.json`; undefined → use the global
   // default. Reloaded on every directory change.
   const [folderView, setFolderView] = useState<ViewMode | undefined>(undefined);
@@ -193,6 +200,9 @@ export function DirectoryContentContextProvider({
 
   const load = useCallback(
     async (dirPath: string) => {
+      // A load/navigation/refresh starts a new health snapshot; never carry a
+      // previous directory's persistent warning into this one.
+      setSidecarIssues([]);
       if (!dirPath) {
         setRawFiles([]);
         setRawDirs([]);
@@ -220,9 +230,12 @@ export function DirectoryContentContextProvider({
           const names = visible.map((e) => e.name);
           let sidecarMap: Record<string, SidecarMeta> = {};
           try {
-            sidecarMap = await ipcApi.readSidecars(dirPath, names);
+            const detailed = await ipcApi.readSidecarsDetailed(dirPath, names);
+            sidecarMap = detailed.sidecars;
+            setSidecarIssues(detailed.issues);
           } catch {
-            // Best-effort: missing/unreadable wsd.json → empty sidecar map.
+            // Best-effort: an unexpected IPC failure yields no health snapshot.
+            setSidecarIssues([]);
           }
           const byPath = new Map<string, SidecarMeta | undefined>();
           for (const e of visible) {
@@ -247,33 +260,33 @@ export function DirectoryContentContextProvider({
             return;
           }
           setRecursiveTruncated(scan.length >= MAX_RECURSIVE_ENTRIES);
-          const files = scan.filter(
-            (e) =>
-              !e.isDirectory &&
-              (showHiddenFiles ||
-                (!isHiddenName(e.name) && e.name !== META_DIR))
-          );
-          const dirs = scan.filter(
-            (e) =>
-              e.isDirectory &&
-              (showHiddenFiles ||
-                (!isHiddenName(e.name) && e.name !== META_DIR))
-          );
+          const visibleScan = filterRecursiveEntries(scan, dirPath, showHiddenFiles);
+          const files = visibleScan.filter((e) => !e.isDirectory);
+          const dirs = visibleScan.filter((e) => e.isDirectory);
           setRawFiles(files);
           setRawDirs(dirs);
 
-          // Batch read sidecars for ALL entries in one IPC. Result is
-          // already keyed by full path (R1 / PR2), so no remapping needed.
-          const allPaths = scan.map((e) => e.path);
+          // Batch read sidecars for visible entries in one IPC. Hidden
+          // descendants are excluded together with their hidden ancestors.
+          const allPaths = visibleScan.map((e) => e.path);
           const byPath = new Map<string, SidecarMeta | undefined>();
           try {
-            const map = await ipcApi.readSidecardsForPaths(allPaths);
-            // Filter to existing definitions only (skip undefined).
-            for (const [k, v] of Object.entries(map)) {
-              if (v) byPath.set(k, v);
+            if (allPaths.length === 0) {
+              // An empty recursive scan has no file whose dirname can select the
+              // bulk reader. Still inspect the root's own wsd.json for health.
+              const root = await ipcApi.readSidecarsDetailed(dirPath, []);
+              setSidecarIssues(root.issues);
+            } else {
+              const detailed = await ipcApi.readSidecardsForPathsDetailed(allPaths);
+              setSidecarIssues(detailed.issues);
+              // Filter to existing definitions only (skip undefined).
+              for (const [k, v] of Object.entries(detailed.sidecars)) {
+                if (v) byPath.set(k, v);
+              }
             }
           } catch {
-            // Best-effort: empty sidecar map.
+            // Best-effort: an unexpected IPC failure yields no health snapshot.
+            setSidecarIssues([]);
           }
           setSidecarsByPath(byPath);
         }
@@ -445,8 +458,17 @@ export function DirectoryContentContextProvider({
       descByName,
       geoByName,
       recursiveTruncated,
+      sidecarIssues,
     }),
-    [entries, dirs, tagsByName, descByName, geoByName, recursiveTruncated]
+    [
+      entries,
+      dirs,
+      tagsByName,
+      descByName,
+      geoByName,
+      recursiveTruncated,
+      sidecarIssues,
+    ]
   );
   const uiValue = useMemo<DirectoryUIValue>(
     () => ({

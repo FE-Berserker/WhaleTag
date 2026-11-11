@@ -1,104 +1,116 @@
-
 ← 返回 [plan.md](../plan.md)
 
 # 19 · 代码质量审计与改进清单
 
 > **2026-07-28** 的代码质量审计追踪清单(plan.md §F「不做未来计划」的**经确认例外**,同 [docs/15](./15-perf-audit.md) / [docs/16](./16-cross-platform.md))。每项完成后压成 1–2 行 ✅(保留「做了什么 + 关键坑」);评估**不做**的移到文末「已接受的取舍」。
 >
-> **审计方法**:6 维度并行静态扫描 —— ① 已知问题汇总(避免重复 docs/09/15/16)② 代码异味 ③ 类型安全 ④ 测试覆盖缺口 ⑤ 错误处理/异步 ⑥ 当前 working tree diff 审查。代码内生产路径几乎无 `TODO/FIXME/HACK` 标记。
+> **审计方法**:6 维度并行静态扫描 —— ① 已知问题汇总(避免重复 docs/09/15/16)② 代码异味 ③ 类型安全 ④ 测试覆盖缺口 ⑤ 错误处理/异步 ⑥ working tree diff 审查。生产路径几乎无 `TODO/FIXME/HACK` 标记。
 >
-> **范围与边界**:本篇聚焦**正确性 bug + 测试缺口 + 类型/可维护性**;**不重复** [docs/09](./09-known-issues.md)(已知坑主档)、[docs/13](./13-security.md)(安全模型/不在范围)、[docs/15](./15-perf-audit.md)(性能)、[docs/16](./16-cross-platform.md)(跨平台)。审计基线为 2026-07-28 的 working tree(含未提交的 md-editor 改动),相关项已标注。
+> **范围与边界**:本篇聚焦**正确性 bug + 测试缺口 + 类型/可维护性**;**不重复** [docs/09](./09-known-issues.md)(已知坑主档)、[docs/13](./13-security.md)(安全模型/不在范围)、[docs/15](./15-perf-audit.md)(性能)、[docs/16](./16-cross-platform.md)(跨平台)。
+>
+> **归档**:0.4.9 瘦身移除的 md-editor / AI 助手 / archive 模块,其专属审计项(路径大小写归一、`maxTurns` clamp、`secretStore` 加密往返、Zip Slip 防线)已随代码删除,仅在本节保留一句结论。
 
 ---
 
-## 🔴 P0 — 真实正确性 bug(建议优先修)
+## 🔴 P0 — 真实正确性 bug
 
 ### P0-1. redux-persist 落盘跳过 `datasync` ✅
-[persist-storage.ts:80-81](../src/main/persist-storage.ts#L80-L81) 用 `fsp.writeFile(tmp) + fsp.rename`,**未 `fd.datasync()`**,也没用 [atomic-write.ts](../src/main/atomic-write.ts) 的 `pid+counter` 唯一 tmp 名(atomic-write.ts:57-60 注释自警「crash after rename could expose a partially-flushed temp」,[docs/02 §redux-persist](./02-file-io.md) 与 plan.md §E.6 反复强调此故障类)。同仓 sidecar/index/thumbnail 都走 `atomicWriteJson/Bytes`,唯独这条**最敏感的 settings 写**手写半成品。**✅ 已修(2026-07-28)**:[persist-storage.ts](../src/main/persist-storage.ts) `persistWrite` 改调共享 `atomicWriteText`(同款 `datasync` + pid+counter 唯一 tmp);顺手删 dead `tmpPathForKey`、文件头注释更新为 atomic+durable。
+[persist-storage.ts](../src/main/persist-storage.ts) 的 `persistWrite` 曾手写 `fsp.writeFile(tmp) + fsp.rename`,既无 `fd.datasync()` 也无 [atomic-write.ts](../src/main/atomic-write.ts) 的 `pid+counter` 唯一 tmp 名 —— 同仓 sidecar/index/thumbnail 都走 `atomicWriteJson/Bytes`,唯独这条最敏感的 settings 写是半成品。**已修**:改调共享 `atomicWriteText`(同款 datasync + 唯一 tmp),顺手删 dead `tmpPathForKey`。故障类背景见 [docs/02 §8](./02-file-io.md)。
 
-### P0-2. `computeOrphanImages` 路径未做大小写归一 → Windows/macOS 误删已引用图片 ✅
-**✅ 已修(2026-07-28)**(根因与修法见 git 历史)。md-editor 已随 0.4.9 瘦身移除,本条目随模块删除归档。
-
-### P0-3. AI `maxTurns` clamp 错位 + 两处 `buildSnapshot` 重复 ✅
-**✅ 已修(2026-07-28)**(根因与修法见 git 历史)。AI 助手模块已整体移除(2026-09),本条目随模块删除归档。
+> ✅ md-editor `computeOrphanImages` 路径大小写归一(Windows/macOS 误删已引用图片)、AI `maxTurns` clamp 错位 + 两处 `buildSnapshot` 重复 —— 均已于 2026-07-28 修复,随后**随模块删除归档**。
 
 ---
 
 ## 🟠 P1 — 安全 / 数据模块零测试(回归保险)
 
-审计时整个 `src/main/ipc`(11 个源文件)**仅 1 个**有测试;下列各项现已补齐测试或确认已有覆盖。
+审计时整个 `src/main/ipc` 仅 1 个源文件有测试;下列各项现已补齐测试或确认已有覆盖。
 
 ### P1-1. `fs-write.ts` — 数据丢失 + 路径遍历 ✅
-[fs-write.ts](../src/main/ipc/fs-write.ts)(439 行)。文件头声明「失败必 reject,绝不让 renderer 把失败的 IO 当成功」—— 现用 [ipc.test.ts](../src/main/ipc.test.ts) 的 IPC rig 覆盖**写侧**:fs:rename 的源/目标越界拒绝、目标已存在不静默覆盖、源缺失时 IO 失败必 reject(不假成功)、fs:mkdir 越界+正常、fs:delete 越界。读侧越界早已在同文件 `read-side allowedRoots guards` 覆盖;`assertWithinAllowedRoot` 本身在 [allowed-roots.test.ts](../src/main/allowed-roots.test.ts)。
+[fs-write.ts](../src/main/ipc/fs-write.ts) 文件头契约「失败必 reject,绝不让 renderer 把失败的 IO 当成功」。现用 [ipc.test.ts](../src/main/ipc.test.ts) 的 IPC rig 覆盖写侧:rename 的源/目标越界拒绝、目标已存在不静默覆盖、源缺失时必 reject(不假成功)、mkdir 越界+正常;读侧越界在同文件 `read-side allowedRoots guards`,`assertWithinAllowedRoot` 本身在 [allowed-roots.test.ts](../src/main/allowed-roots.test.ts)。
 
-### P1-2. `ipc/extensions.ts` — 归档 Zip Slip + 转换器 spawn ✅(已有覆盖)
-[extensions.ts](../src/main/ipc/extensions.ts)(439 行)只是 `ipcMain.handle` 薄转发到 [archive.ts](../src/main/archive.ts) 的 `listArchive/readArchiveEntry/extractArchive`,而 **Zip Slip 防线(`isSafeEntryPath` 含 `..` 深度检查)已在 [archive.test.ts](../src/main/archive.test.ts) 覆盖**:`../evil.txt`(ZIP)、`../../escape.txt`(TAR)均断言被 skip 且不落盘到 dest 之外。转换器 spawn 路径经 `assertWithinAllowedRoot`(已覆盖)。
+### P1-2. `migrate-date-tags.ts` — 一次性全库迁移 ✅
+[migrate-date-tags.ts](../src/main/migrate-date-tags.ts) + [migrate-date-tags.test.ts](../src/main/migrate-date-tags.test.ts) 覆盖纯函数变换、备份/幂等、wsm、损坏 JSON 不覆写与 startup once-guard；`migrateIfPresent` 只把 ENOENT 视为不存在，其它 access 错误进入 `errors` 与 `totalErrors`，两个 migrator 继续各自捕获并上报 IO/JSON 错误，不再被外层 `.catch(() => null)` 静默吞掉。
 
-### P1-3. `migrate-date-tags.ts` — 一次性全库迁移 ✅(已有覆盖)
-[migrate-date-tags.ts](../src/main/migrate-date-tags.ts)(368 行)已有 [migrate-date-tags.test.ts](../src/main/migrate-date-tags.test.ts) 充分覆盖:纯函数变换(7 prefix 全集 / 互斥折叠 / period / 跨家族 / null 防御)、`runMigration` 集成(`.bak-dateprefix` 备份创建、二次运行幂等不重写不重备份、wsm.json 同形、损坏 JSON 优雅报 error 不覆写、空 roots)、`triggerStartupMigration` once-guard。**遗留(低优先级)**:`.catch(()=>null)`([:294-303](../src/main/migrate-date-tags.ts#L294-L303))外层吞非内层-catch 的抛出 —— 现有 corrupt-JSON 用例覆盖了主路径,但「外层吞 withLock/atomicWrite 抛出致 totalErrors 不增」的 edge 仍未直接断言。
+### P1-3. `dir-lock.ts` — 并发互斥锁 ✅
+[dir-lock.ts](../src/main/dir-lock.ts) + [dir-lock.test.ts](../src/main/dir-lock.test.ts):同 key 串行(并发高水位 = 1)、不同 key 并行、**拒绝隔离**(reject 任务不污染后续队列)、返回值/拒绝传播、长链保序、drain 后再 lock 仍工作。`chains` Map 的有界性是内部不变性(未 export),靠行为测试兜底。
 
-### P1-4. `dir-lock.ts` — 并发互斥锁 ✅
-[dir-lock.ts](../src/main/dir-lock.ts)(51 行)。新建 [dir-lock.test.ts](../src/main/dir-lock.test.ts) 覆盖:同 key 串行(并发高水位 = 1)、不同 key 并行、**拒绝隔离**(reject 任务不污染后续队列 —— 核心不变性)、返回值/拒绝传播、50 任务长链保序、drain 后再 lock 仍工作。chains Map 的内存有界是内部不变性(未 export,行为测试覆盖不到,功能正确性已覆盖)。
+### P1-4. `shell-quote.test.ts` — 注入唯一防线 ✅
+[shell-quote.test.ts](../src/main/shell-quote.test.ts) 的「adversarial inputs」describe:POSIX 下分号/与号/管道/$/反引号/圆括号/重定向等元字符在单引号内原样、CJK 路径、换行与控制符、NUL、单引号 close-reopen(中和 `';echo pwned`);Windows 下 `%VAR%` 加引号但 `%` 原样(锁定「真正的 % 防护在上游」契约)、各元字符触发引号、CJK+空格、换行。
 
-### P1-5. `shell-quote.test.ts` — 注入唯一防线 ✅
-[shell-quote.test.ts](../src/main/shell-quote.test.ts) 已扩展「adversarial inputs」describe:POSIX 下分号/与号/管道/$/反引号/圆括号/重定向等元字符在单引号内原样、CJK 路径、换行与控制符、NUL 字节、单引号 close-reopen(中和 `';echo pwned` 注入);Windows 下 `%VAR%`(加引号但 `%` 原样,锁定「真正的 % 防护在上游 runUserCommand」契约)、各元字符触发引号、CJK+空格、换行。
+> ✅ `ipc/extensions.ts` 的归档 Zip Slip 防线(`isSafeEntryPath` 的 `..` 深度检查)与 `secretStore` 加密往返测试 —— 均随 archive.ts / AI 助手模块于 0.4.9 删除归档。
 
-### P1-6. `secretStore.ts` — 加密往返 + 明文不泄露 ✅
-**✅ 已随 AI 助手模块整体移除(2026-09)归档**:`secretStore` 与那份 require.cache 注入 cipher stub 的往返测试一并删除,本条目不再适用。
+### P1-5. 2026-11 可靠性批次 ✅
+- 缩略图目录入口、六个索引/全文读入口与 `ext:listRevisions` 均补 allowedRoots 校验；修订清理拒绝非有限或负天数。原生选择器的外部 source 仍可读取，但目录封面/背景只写目标 `.whale/`，并复用图片、SVG、视频、PDF、字体现有编码后端；菜单失败统一提示且不清缓存。`ipc/boundary-guards.test.ts` 22 用例验证越界/非法输入在底层调用前拒绝，合法参数照常透传。
+- 原子写 stale tmp 只匹配精确 `<pid>.<counter>.tmp` 后缀，不再误扫同名前缀目标；`createTextFile` 用 `flag:'wx'` 消除 TOCTOU。文件/全文索引重建期间的新变化以 dirty 标记再 debounce 一次；两个 worker host 捕获 child 并在 postMessage 失败时 reject + 清 pending。相关并发、watcher 与 worker race 回归全过。
+
+### P1-6. sidecar 损坏显式恢复 ✅
+detailed read 保留健康目录数据并报告 corrupt/unreadable；非法 JSON 与结构均可恢复，IO 错误不可恢复。仅在用户确认后按 SHA-256 指纹、allowedRoots 与目录锁执行：排他备份原字节、合并可读 legacy 标签后原子写有效聚合；冲突/非损坏/失败均不覆盖原件，legacy 文件不动。lat/lng 迁移使用锁内最新 map，空聚合删除失败上抛。Provider、FileList 持久 warning、确认/取消、只读限制、备份定位及五语言已接线并各有回归测试。
+
+### P1-7. MCP 传输/配置/生命周期与自动更新零测试 ✅
+本轮补的是 0.5.0 时代两块"新、无回归网、且直接决定安全与可用性"的代码：
+- [mcp-http.ts](../src/main/mcp/mcp-http.ts)：端点由 `startsWith('/mcp')` 改为**精确** `/mcp`、`/mcp/`（前缀路径 404）；未知/过期会话从 400 改为 404（协议语义为重新 initialize）；请求体按 UTF-8 字节数限 4 MiB，超限回 413 并在响应后 drain，不再中途 `req.destroy()` 让客户端只看到连接重置；会话增加 `lastSeen` 与 `unref()` 的 idle sweeper（默认 30 min 回收，`sessionIdleMs=0` 关闭），initialize 失败清理刚注册的半成品，`close()` 统一关 transport+server。
+- [mcp-server.ts](../src/main/mcp/mcp-server.ts)：监听成功后才发布 `core`/`httpServer`/`boundPort`，绑定失败不再泄漏半个 core；停止时先 `server.close()` 再在同一 Promise 内 `closeAllConnections()`，keep-alive 客户端无法再吊住设置开关或 `before-quit`；启动/停止异常只记日志，不 reject IPC。
+- [mcp-config.ts](../src/main/mcp/mcp-config.ts)：`normalizeMcpConfig()` 对非对象 JSON（`null`/数组/标量，此前会在 bootstrap 抛 TypeError）、越界端口、坏 token 做归一；损坏文件带日志回退而非静默换 token；写入串行化，避免后发的设置被先发起的落盘覆盖。
+- [auto-update.ts](../src/main/auto-update.ts)：`downloadUpdate()` 增加 in-flight 共享 Promise（双击不再把 electron-updater 的 "download already in progress" 冒成错误提示），`quitAndInstall()` 加 try/catch（下载未完成时该调用是**同步抛**，未捕获会逃出 IPC listener——主进程没有 `uncaughtException` 兜底）。
+- 回归网：新增 [mcp-config.test.ts](../src/main/mcp/mcp-config.test.ts)（12 用例：归一化矩阵 + 读写往返 + 无 `.tmp` 残留）、[mcp-server.test.ts](../src/main/mcp/mcp-server.test.ts)（6 用例：启停、端口回退、只读开关、keep-alive 下 <3s 停止、并发开关串行化）、[auto-update.test.ts](../src/main/auto-update.test.ts)（18 用例：feed 接线、release notes 归一、并发 check/download 去重、事件隔离、quit 守卫、dev-mode 短路、启动探测）；[mcp-http.test.ts](../src/main/mcp/mcp-http.test.ts) 扩到 22 用例（前缀/未知会话 404、413、闲置回收）。
+
+### P1-8. MCP 工具面守卫与并发写原子性 ✅
+传输/生命周期就位后，审计转向工具面本身——这里每一条都直接落在用户数据上：
+- **静默覆盖（真 bug）**：[fs-write.ts](../src/main/ipc/fs-write.ts) 的 `renameEntry`/`moveEntry`/`copyEntry` 原本是 `existsSync(dest)` 通过后再 `rename`/`cp`；MCP 只在**单次调用内**串行 items，跨调用（客户端并行发 `whale_move_files`）两个请求都能通过检查，落败者被静默替换——与工具描述"Never overwrites"矛盾。现以目标目录为键 `withLock` 包住「检查 + 写入」，并把 `cp` 改成 `force:false + errorOnExist`（`force` 默认 true 时 Node 会忽略 `errorOnExist`，EXDEV 回退此前正因此失效）；sidecar/缩略图同步留在锁外，避免嵌套锁。
+- **root 不是条目**：[allowed-roots.ts](../src/main/allowed-roots.ts) 新增 `isConfiguredRoot()`；[mcp-tools.ts](../src/main/mcp/mcp-tools.ts) 用 `assertNotLocationRoot()` 拒绝把配置的 root 本身作为打标 / 写描述 / move / copy / delete 目标。审计确认：对 root 打标会让 `.whale/` 落到边界**上一层目录**（`updateFileTags`/`mutateSidecar` 用 `dirname(filePath)`），而对 root 删除只值一个泛化审批对话框。
+- **只读是两道闸**：`whale_build_fulltext` 会写正文索引，补 `ensureWritable()`；`approve()` 在最长 60s 的审批等待返回后**再查一次**只读（等待期间打开只读，已点过的"允许"不能放行）；`applyMcpConfigChange('readOnly', true)` 立即 `denyAllPending()`，无效对话框不再挂 60s。
+- **不骗客户端**：`whale_read_text` 先 `stat()`，非文件或 >16 MiB 直接报错并指向有 2 MB/200 KB 上限的 `whale_extract_text`（原本整文件 `readFile` 再切片，多 GB 日志可打爆主进程）；批量工具整批全失败时结果带 `isError`（`batchResult`），不再"成功外壳 + errors 数组"；`whale_roots` 的索引 worker 失败改为返回 `error` 字段而非伪造成空位置；`whale_create_text_file` 的 `bytes` 改用 `Buffer.byteLength(..., 'utf8')`（`content.length` 数的是 UTF-16 码元）。
+- 回归网：[mcp-http.test.ts](../src/main/mcp/mcp-http.test.ts) 新增 "tool guards" 组，用**真实配置的 root** 端到端覆盖只读拒绝、root 守卫（含父目录无 `.whale` 断言）、root 内正常打标、目录拒绝读；[allowed-roots.test.ts](../src/main/allowed-roots.test.ts) 补 `isConfiguredRoot` 的归一化匹配；[fs-write.test.ts](../src/main/ipc/fs-write.test.ts) 用两个并发 copy/move 抢同一目标名，证明只有一个成功且既有目标字节不变。
+
+### P1-9. 读-改-写把「读失败」当空 → 静默清空元数据 ✅
+第三轮针对错误处理的审计发现：最危险的数据丢失不在删除路径，而在**读-改-写**——宽松读取把损坏/不可读当成"空"，下一次单字段合并就把整份文件重写成只剩那一个字段。
+- **folder-meta / tag-library（真 bug，最高风险）**：[folder-meta.ts](../src/main/folder-meta.ts) 的 `writeFolderMeta` 与 [tag-library.ts](../src/main/tag-library.ts) 的两个 setter 原本用 `readFolderMeta` / `readTagLibrary` 取合并基底；这两个函数对缺失、损坏、IO 错误一律返回 `{}`。于是一次改颜色会把该目录的 tags / description / perspective / entrySize 全部抹掉，一次改 tag 描述会丢掉其余所有 tag 描述。现写入路径改用 [merge-read.ts](../src/main/merge-read.ts) 的 `readJsonForMerge`：缺失 → `null` 从空开始；损坏或外形不符 → 把原文件**隔离**为同目录 `<name>.corrupt-<时间戳>`（字节原样保留、日志 warning）后再从空开始；非 ENOENT 的 IO 错误直接上抛。展示读取保持宽松（只读不写）。
+- **legacy 迁移（真 bug，一次性不可逆）**：[sidecar.ts](../src/main/sidecar.ts) 的 `readLegacySidecars` 原本对非法 JSON `continue` 跳过，`migrateLegacySidecars` 却 `rm` 掉**所有** `legacy.paths`——坏文件里的标签永久丢失且源文件被删。现快照拆成 `{files, paths, corrupt}`：只删确实解析成功的路径，坏文件重命名为 `<name>.json.corrupt-<时间戳>`（改名后不再匹配 `.json` 扫描，迁移不会重跑），重命名失败则保留原地并告警。
+- **purge 不能假成功**：[persist-storage.ts](../src/main/persist-storage.ts) 的 `persistDelete` 原先把非 ENOENT 错误记录后 resolve，redux-persist 以为清除成功，旧状态下次启动复活。现只把 `ENOENT` 当正常，其余记录后**重新抛出**。
+- **索引失败要自愈**：[dir-watcher.ts](../src/main/dir-watcher.ts) 的 `reindexIfBuilt` / `reindexFulltextIfBuilt` 原本 catch 后丢弃，注释称"下次变更重试"，但 dirty 只在重建期间来事件时才置位——空闲目录一次失败后索引会一直陈旧。现失败时置 dirty，并按 1.5s 起、逐次翻倍、上限 60s 退避自动重试；成功或索引不存在时清零计数（fulltext 同规则，per-root 计数）。
+- 回归网：新增 [merge-read.test.ts](../src/main/merge-read.test.ts)（5 例：缺失/正常/坏 JSON/外形不符/IO 错误上抛与字节保留）、[tag-library.test.ts](../src/main/tag-library.test.ts)（3 例：往返/合并不丢/损坏隔离）、[persist-storage.test.ts](../src/main/persist-storage.test.ts)（2 例：往返与 ENOENT、不可删除时 reject）；[folder-meta.test.ts](../src/main/folder-meta.test.ts) 补损坏隔离用例；[sidecar.test.ts](../src/main/sidecar.test.ts) 补"坏 legacy 永不删除"用例；[dir-watcher.test.ts](../src/main/dir-watcher.test.ts) 补"静默 root 失败后退避重试一次"用例。
+- **本轮未做（记录在案）**：渲染层仍有 15 处失败不可见（PropertiesTray 的 `void tagActions.*` 无 catch、AdvancedSearchDialog `runQuery` 失败保留上一查询行、SearchBar 全文结果无 `.catch`、McpSection `apply()` 吞错、DirectoryTree 加载失败显示为空目录等），以及 `mcp-config` 的持久化失败此前只记录不报（本轮已改为向 IPC 调用方上抛）；这些属于"错误展示"问题而非数据丢失，留待下一轮。
 
 ---
 
-## 🟡 P2 — 一次性消除 ~30 处生产 `any`(低成本高收益)
-
-类型逃逸高度集中在**渲染层 ECharts 回调**(`params: any` / `node: any`):
+## 🟡 P2 — 类型逃逸
 
 ### P2-1. ECharts 回调集群 ✅
-- [FolderVizView.tsx](../src/renderer/components/FolderVizView.tsx)(11 处:`:259,296,316,321,334,336,348,437,465,514,549`)
-- [TagCloudView.tsx](../src/renderer/components/TagCloudView.tsx)(7 处:`:317,336,366,470,474,493,498`)
-- [folderviz.ts](../src/renderer/domain/folderviz.ts)(6 处:3 个 `): any` 返回 + 3 个 `result: any`,三函数 `toEChartsTree/Treemap/Sunburst` 结构相同 → 抽一个 `EChartsTreeNode` 接口)
-- [CalendarView.tsx](../src/renderer/components/CalendarView.tsx)(2 处:`:1487,1514`,`(echarts as any).graphic` 应改 `echarts/core` 静态导入)
-
-**✅ 已修(2026-07-28)**:[folderviz.ts](../src/renderer/domain/folderviz.ts) 定义 `EChartsFolderVizNode`(path/isDirectory/fileCount/itemStyle/label/collapsed/children),三个 `toECharts*` 返回它 + 透传 fileCount;[FolderVizView.tsx](../src/renderer/components/FolderVizView.tsx) node/data 走该类型、formatter/handler 走本地 `FolderVizChartParam`,顺带修 `echartsData.size`→`value`(类型化暴露的原 bug:rootSize 在 any 下拿不到值);[TagCloudView.tsx](../src/renderer/components/TagCloudView.tsx) wordCloud + heatmap 两套 param 类型;[CalendarView.tsx](../src/renderer/components/CalendarView.tsx) formatter union + `echarts.graphic.LinearGradient`(echarts/core 已注册 GraphicComponent,去 `as any`)。共 ~26 处生产 `any` 消除,type-check 通过。
+[folderviz.ts](../src/renderer/domain/folderviz.ts) 定义 `EChartsFolderVizNode`,三个 `toECharts*` 返回它并透传 fileCount;[FolderVizView.tsx](../src/renderer/components/FolderVizView.tsx) 走该类型 + 本地 `FolderVizChartParam`,顺带修 `echartsData.size`→`value`(类型化暴露的真 bug:rootSize 在 `any` 下拿不到值);[TagCloudView.tsx](../src/renderer/components/TagCloudView.tsx) wordCloud + heatmap 两套 param 类型;[CalendarView.tsx](../src/renderer/components/CalendarView.tsx) formatter union + `echarts.graphic.LinearGradient`(echarts/core 已注册 GraphicComponent,去 `as any`)。共 ~26 处生产 `any` 消除。
 
 ### P2-2. `DirectoryTree.tsx` 节点类型逃逸 ✅
-[DirectoryTree.tsx:101-106](../src/renderer/components/DirectoryTree.tsx#L101-L106) `nodes: any` / `renderFolder: (n: any)` / `renderFile: (n: any)`(带 3 个 eslint-disable)。**✅ 已修(2026-07-28)**:定义 `TreeFolderNode`/`TreeFileNode`/`TreeNode` 判别联合(原注「已有 DirectoryTreeNode 类型」不准),TreeRow 的 nodes/renderFolder/renderFile 全类型化、去 3 个 eslint-disable,`node.kind` discriminant 自动 narrow。`:679` 的 `as any` **保留**(react-window v2 的 `rowProps` 类型 `ExcludeForbiddenKeys` 反向要求 index/style,是库类型限制,加注释标注)。
+定义 `TreeFolderNode`/`TreeFileNode`/`TreeNode` 判别联合,TreeRow 的 `nodes`/`renderFolder`/`renderFile` 全类型化、去 3 个 eslint-disable,`node.kind` discriminant 自动 narrow。react-window v2 的 `rowProps` 处保留一处 `as any`(库类型 `ExcludeForbiddenKeys` 反向要求 index/style)。
 
-### P2-3. 主进程复制粘贴的 `as unknown as` ⏸️(评估后保留)
-[archive.ts:459](../src/main/archive.ts#L459) 与 [thumbnail.ts:174](../src/main/thumbnail.ts#L174) 的 `stdout as unknown as Buffer`;[index-worker-host.ts:133](../src/main/index-worker-host.ts#L133) 与 [thumb-worker-host.ts:126](../src/main/thumb-worker-host.ts#L126) 的 `.on('error')` 断言。**评估(2026-07-28)后保留**:抽 `execFileBuffer` helper 会牵连 thumbnail 的 ffmpeg ~1s/0 fallback 重试路径,风险 > 收益(archive 单独抽不消除复制粘贴);`onUtilityProcessError` helper 需新建文件 + 2 处 import 仅消除 2 处 cast,ROI 低。src/main 生产代码零 `: any`,保留现状可接受。
-
-> **无需动**:`src/shared`(零逃逸)、`src/main/ipc`、`src/main/allowed-roots.ts`、`src/main/shell-quote.ts` 类型均严密;`src/main` 8 处 `as unknown as` 全有注释、范围窄、不暴露不可信输入。全仓零 `@ts-ignore` / `@ts-nocheck`。
+> **类型现状**:`src/shared`、`src/main/ipc`、`allowed-roots.ts`、`shell-quote.ts` 严密;主进程生产代码零 `: any`;现存 `as unknown as` 只出现在 worker 消息 / canvas 互操作边界([thumbnail.ts](../src/main/thumbnail.ts) 的 `stdout as unknown as Buffer`、两个 worker host 的 `.on('error')`、[thumb-render.ts](../src/main/thumb-render.ts) 的 canvas context),范围窄且不暴露不可信输入。全仓零 `@ts-ignore` / `@ts-nocheck`。
 
 ---
 
 ## 🟡 P3 — 重复模板 & 超大组件(可维护性)
 
-### P3-1. localStorage 读写模板各写一份
-[perspective-prefs.ts:70-90](../src/renderer/domain/perspective-prefs.ts#L70-L90) 已有 `readPrefs/writePrefs`(try/catch、永不抛),但 [FolderVizView.tsx:80-115](../src/renderer/components/FolderVizView.tsx#L80-L115)、3 个 gantt hooks(`useGanttRange:58` / `useGanttZoom:26` / `useGanttTagFilter:73`)、[TaskView.tsx:25](../src/renderer/components/TaskView.tsx#L25)、[BackgroundPlayerContextProvider.tsx:77,108](../src/renderer/hooks/BackgroundPlayerContextProvider.tsx#L77-L108) 都各写一份等价 `try{JSON.parse(localStorage.getItem(k))}catch{}`。迁移到现成 helper。
+### P3-1. localStorage 读写模板 ✅
+[FolderVizView.tsx](../src/renderer/components/FolderVizView.tsx) 已复用 [perspective-prefs.ts](../src/renderer/domain/perspective-prefs.ts) 的 `readPrefs/writePrefs`；key、四种视图白名单、默认值与永不抛出的读写语义不变，未新增第二套 helper。
 
-### P3-2. `clampFontSize` 双胞胎 ✅ 随 md-editor 移除而解
-md-editor 的 `md-context.ts` 副本已随 0.4.9 瘦身删除,仅剩 [text-editor/editor-stats.ts](../src/extensions/text-editor/editor-stats.ts) 一份,不再需要抽共享模块。
+### P3-2. `clampFontSize` 双胞胎 ✅
+md-editor 的副本已随 0.4.9 删除,仅剩 [text-editor/editor-stats.ts](../src/extensions/text-editor/editor-stats.ts) 一份,不需要抽共享模块。
 
-### P3-3. 超大组件拆分
-- [FileList.tsx:170](../src/renderer/components/FileList.tsx#L170) —— **单文件 1800 行单组件**,优先级最高。
-- [SettingsDialog.tsx](../src/renderer/components/SettingsDialog.tsx) 已有天然 section 边界(`GeneralSection` / `ViewSection` / `FulltextSection` 等),机械拆分成本低。
+### P3-3. 超大组件低风险拆分 ✅
+[FileList.tsx](../src/renderer/components/FileList.tsx) 的 visible 标签过滤已抽为 [file-list-filter.ts](../src/renderer/domain/file-list-filter.ts) 纯函数并补 6 条共置测试；[SettingsDialog.tsx](../src/renderer/components/SettingsDialog.tsx) 的 `ExtensionsSection` 已机械移至 [ExtensionsSection.tsx](../src/renderer/components/ExtensionsSection.tsx)。本轮不牵连 selection/commands、其它 section 或 UI 结构。
 
-### P3-4. extension viewer `getPref/setPref` 拷贝
-[font-viewer/index.ts:387-399](../src/extensions/font-viewer/index.ts#L387-L399) 与 [html-viewer/index.ts:224-236](../src/extensions/html-viewer/index.ts#L224-L236) 的 `STORAGE_PREFIX` getPref/setPref 逐字相同 → 抽 `extensions/shared/viewer-prefs.ts`。
+### P3-4. extension viewer `getPref/setPref` 拷贝 ✅
+[viewer-prefs.ts](../src/extensions/shared/viewer-prefs.ts) 的 `createViewerPrefs(prefix)` 统一 [font-viewer](../src/extensions/font-viewer/index.ts) / [html-viewer](../src/extensions/html-viewer/index.ts) 偏好读写；prefix、key、默认值及读失败返 null/写失败静默的语义不变。
 
-### P3-5. `drawio-editor` iframe 销毁 TODO
-[drawio-editor/app.tsx:107](../src/extensions/drawio-editor/app.tsx#L107) 是全仓**唯一**真正标记的未完成功能(`TODO: figure out a cleaner teardown`)。生产代码其余无 FIXME/HACK。
+### P3-5. `drawio-editor` iframe 销毁 TODO ✅
+[drawio-bridge.ts](../src/extensions/drawio-editor/drawio-bridge.ts) 统一清理 XML timer/pending requests/theme 与内部状态，销毁后拒绝新请求；[useWhaleBridge.ts](../src/extensions/drawio-editor/useWhaleBridge.ts) 提供独立幂等的 save-handler 注销，[app.tsx](../src/extensions/drawio-editor/app.tsx) 区分 effect 重跑与真实卸载：刷新不取消已开始的保存/图片插入，卸载后不再继续更新；文件切换时会中止旧文档尚未完成的图片插入。共置生命周期测试覆盖 listener、timer、pending reject、handler 身份、保存/插入中途刷新、文件切换及 export 与卸载同 tick 的竞态。
 
 ---
 
 ## ✅ 已记录在 docs、不在本篇重复
 
-以下团队**已知并跟踪**,避免在此重复报告:
-
 | 项 | 出处 |
 |---|---|
 | 位置级 AES-256-GCM 加密 / 安全审计日志未做;扩展能力「全有或全无」;postMessage `targetOrigin:'*'` 收窄 | [docs/13](./13-security.md) §1/§9/§10、[docs/07 §10](./07-extensions.md) |
 | mac 代码签名硬阻塞;Linux DE fallback 链 / 图标 / 递归监听 | [docs/16](./16-cross-platform.md) B-1 / C-2~C-5 |
-| `strictNullChecks` 未开;`dir-lock.ts chains` Map 无界增长;`readSidecars` 每目录重读;`extractPdfText` 整 PDF 读内存;`loadFolderThumbnail` 无 LRU | [docs/09 §28](./09-known-issues.md)、[docs/02 §10](./02-file-io.md)、[docs/15](./15-perf-audit.md) P2-1/P3-5 |
+| `strictNullChecks` 未开;`readSidecars` 每目录重读;`extractPdfText` 整 PDF 读内存;`loadFolderThumbnail` 无 LRU | [docs/09 §28](./09-known-issues.md)、[docs/15](./15-perf-audit.md) P2-1/P3-1 |
 | macOS notarization 阻塞自动更新 | [docs/18](./18-auto-update.md) |
 | Mapique 地名搜索已尝试并回退(勿照原样重试) | [docs/05 §10](./05-perspectives.md) |
 
@@ -106,4 +118,6 @@ md-editor 的 `md-context.ts` 副本已随 0.4.9 瘦身删除,仅剩 [text-edito
 
 ## 已接受的取舍
 
-(暂无。若后续评估某项**不做**,在此登记理由 + 指向相关 docs,而非留在主体。)
+| 项 | 出处 | 理由 |
+|---|---|---|
+| 抽 `execFileBuffer` / `onUtilityProcessError` 消除主进程 `as unknown as` | 本篇 P2-3(2026-07-28 评估) | 会牵连 ffmpeg 的 ~1s 超时 fallback 重试路径,风险 > 收益;helper 只能消 2 处 cast,ROI 低 |

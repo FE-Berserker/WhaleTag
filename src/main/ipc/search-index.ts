@@ -75,22 +75,26 @@ export function registerSearchIndexHandlers(): void {
 
   // Filename/path/tags fuzzy search (FTS5 trigram) — replaces the old in-memory
   // Fuse load+search. Returns IndexEntry[]; the renderer highlights client-side.
-  ipcMain.handle('index:query', (_event, rootPath: string, q: string) =>
-    request('index:query', { rootPath, q })
-  );
+  ipcMain.handle('index:query', (_event, rootPath: string, q: string) => {
+    assertWithinAllowedRoot(rootPath);
+    return request('index:query', { rootPath, q });
+  });
 
   // Structured (advanced) search — the SearchQuery compiled to a SQL WHERE.
-  ipcMain.handle('index:advanced', (_event, rootPath: string, q: SearchQuery) =>
-    request('index:advanced', { rootPath, q })
-  );
+  ipcMain.handle('index:advanced', (_event, rootPath: string, q: SearchQuery) => {
+    assertWithinAllowedRoot(rootPath);
+    return request('index:advanced', { rootPath, q });
+  });
 
-  ipcMain.handle('index:tags', (_event, rootPath: string) =>
-    request('index:tags', { rootPath })
-  );
+  ipcMain.handle('index:tags', (_event, rootPath: string) => {
+    assertWithinAllowedRoot(rootPath);
+    return request('index:tags', { rootPath });
+  });
 
-  ipcMain.handle('index:status', (_event, rootPath: string) =>
-    request('index:status', { rootPath })
-  );
+  ipcMain.handle('index:status', (_event, rootPath: string) => {
+    assertWithinAllowedRoot(rootPath);
+    return request('index:status', { rootPath });
+  });
 
   // ---- Full-text index (SQLite FTS5, plan §6.6 P2) ----
   // buildFulltextIndex applies an incremental delta (insert changed/new, delete
@@ -101,13 +105,15 @@ export function registerSearchIndexHandlers(): void {
     return request('fulltext:build', { rootPath });
   });
 
-  ipcMain.handle('fulltext:search', (_event, rootPath: string, query: string) =>
-    request('fulltext:search', { rootPath, q: query })
-  );
+  ipcMain.handle('fulltext:search', (_event, rootPath: string, query: string) => {
+    assertWithinAllowedRoot(rootPath);
+    return request('fulltext:search', { rootPath, q: query });
+  });
 
-  ipcMain.handle('fulltext:has', (_event, rootPath: string) =>
-    request('fulltext:has', { rootPath })
-  );
+  ipcMain.handle('fulltext:has', (_event, rootPath: string) => {
+    assertWithinAllowedRoot(rootPath);
+    return request('fulltext:has', { rootPath });
+  });
 
   // docs/04 §10: the renderer pushes `settings.fulltextPaths` here so the
   // dir-watcher can schedule incremental `fulltext:build`s when the location

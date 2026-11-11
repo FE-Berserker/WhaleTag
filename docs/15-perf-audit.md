@@ -1,104 +1,110 @@
-
 ← 返回 [plan.md](../plan.md)
 
 # 15 · 性能审计与待办清单
 
 > 2026-07-12 全量性能审计的追踪清单(plan.md §F「不做未来计划」的**例外**)。每项完成后压成 1–2 行 ✅(保留「做了什么 + 关键坑」,细节在 git/code);评估不做的移到文末「已接受的取舍」。
 
-**审计方法**:`src/main` + `src/renderer` 代码扫描 + docs(09/01/04/06/08)遗留提取。代码内无 TODO/FIXME 标记——发现均来自代码本身。
+**审计方法**:`src/main` + `src/renderer` 代码扫描 + docs(01/04/06/08/09)遗留提取。代码内无 TODO/FIXME 标记——发现均来自代码本身。
+
+> **归档**:0.4.9 瘦身移除的 office / CAD / 电子书 / 压缩包 / pdf-viewer / md-editor / AI 助手模块,其专属性能项(soffice·ebook·dwg2dxf 异步探测、office→PDF 字节桥、office-viewer 冷转码占位与滚动同步、LibreOffice UNO 常驻进程、pdf-viewer 字节桥、AI 流式去重)已随代码一并删除,不再追踪,通用教训保留在文末「可复用范式」。
 
 ---
 
 ## 🔴 Tier 0 — 最大收益
 
 ### P0-1. files 索引增量 ✅
-[index-db.ts](../src/main/index-db.ts) `ingestFiles` 改签名增量:`filesPrior(rootPath)` + `filesSignature = mtime|size|tags`,签名匹配行跳过 upsert(不碰 `files_au` FTS 触发器),删除走 `prior.keys 不在 seen` 逐条删。**tags 强制进签名**(sidecar 改标签不改 mtime,漏了标签编辑就不重索引)。
+[index-db.ts](../src/main/index-db.ts) `ingestFiles` 增量:`filesPrior(rootPath)` + 签名 `mtime|size|tags` 命中即跳过 upsert(不碰 `files_au` FTS 触发器),删除 = `prior` 里不在 `seen` 的逐条删。**tags 必须进签名**——sidecar 改标签不改 mtime,漏了标签编辑就不重索引。
 
 ### P0-2. 索引进 utilityProcess 沙箱 ✅
-[index-worker.ts](../src/main/index-worker.ts)(utilityProcess)+ [host](../src/main/index-worker-host.ts)(惰性 spawn / 崩溃重 spawn / before-quit kill)+ [protocol](../src/main/index-protocol.ts)(11 op 判别联合)+ spawn(锚 `__dirname`)。`ipc.ts` 11 handler 转 `request()` 转发,`assertWithinAllowedRoot` 留主进程;`index-db.ts` 加 `!process.parentPort` 守卫防管线回主进程。**打包坑**:`utilityProcess.fork` 是 asar 原生(别做 asar→unpacked 重写,否则 ENOENT);worker 用 `process.parentPort` 不是 `import {parentPort}`(Electron 42 后者 undefined);entry 锚 `__dirname`(dev getAppPath 是项目根)。详见 [docs/04 §9](./04-search-index.md) / [docs/09 §23](./09-known-issues.md)。
+[index-worker.ts](../src/main/index-worker.ts) + [index-worker-host.ts](../src/main/index-worker-host.ts)(惰性 spawn / 崩溃重 spawn / before-quit kill)+ [index-protocol.ts](../src/main/index-protocol.ts)(op 判别联合);`ipc.ts` handler 转 `request()` 转发,`assertWithinAllowedRoot` 留主进程。**打包三坑**:`utilityProcess.fork` 是 asar 原生(别做 asar→unpacked 重写);worker 用 `process.parentPort`(不是 `import { parentPort }`);entry 锚 `__dirname`(dev 的 `getAppPath` 是项目根)。详见 [docs/04 §9](./04-search-index.md) / [docs/09 §23](./09-known-issues.md)。
 
 ### P0-3. Mapique marker 不重建 ✅
-[MapiqueView.tsx](../src/renderer/components/MapiqueView.tsx) 抽 `React.memo <GeoMarker>`,传原始 `state` 字面量(非整 `selected` Set)→ 仅状态真变的 marker 重渲;icon/position/eventHandlers 各 `useMemo`。**关键 spoiler**:`selectRow` 原闭包捕获 `visibleTrayEntries`,`distance` 排序下 `moveend` 每次平移让它换身份 → 废掉所有 marker memo;改 ref(`visibleTrayEntriesRef` + `trayIndexByPathRef`,顺带 O(n) findIndex→O(1))。
+[MapiqueView.tsx](../src/renderer/components/MapiqueView.tsx) 抽 `React.memo <GeoMarker>`,传原始 `state` 字面量(非整 `selected` Set)。**真 spoiler**:`selectRow` 闭包捕获 `visibleTrayEntries`,`distance` 排序下每次 `moveend` 都换身份 → 废掉所有 marker memo;改 ref(`visibleTrayEntriesRef` + `trayIndexByPathRef`,顺带 O(n) `findIndex`→O(1))。
 
 ### P0-4. Kanban/Matrix/Gantt 卡片 memo + 虚拟化 ✅
-① `EntryCard = memo(EntryCardBase)`,3 prop 全 ref-stable;`renderContextMenu` 各视图 `useCallback`(选择仍生效——`isSelected` 挂 `selectedTick`、是 `cellData` dep)。② 新增 [EntryCardStack.tsx](../src/renderer/components/EntryCardStack.tsx):react-window v2 `List` + `useDynamicRowHeight`,接 Kanban 列体 + Matrix 象限体。**坑**:row 不能 `memo`(react-window v2 要函数);row 包 flex-column 让卡 `mb:1` 算进测量高;横向 tray(UntaggedTray/Gantt Triage)不虚拟化。DnD 不受影响(drop target 是包裹 Box)。
+① `EntryCard = memo(EntryCardBase)`,3 个 prop 全 ref-stable;`renderContextMenu` 各视图 `useCallback`(选择仍生效:`isSelected` 挂 `selectedTick`)。② 新增 [EntryCardStack.tsx](../src/renderer/components/EntryCardStack.tsx):react-window v2 `List` + `useDynamicRowHeight`,接 Kanban 列体 + Matrix 象限体。**坑**:row 不能 `memo`(v2 要函数);row 包 flex-column 让卡片 `mb:1` 算进测量高;横向 tray 不虚拟化。DnD 不受影响(drop target 是包裹 Box)。
 
 ---
 
 ## 🟠 Tier 1 — 高收益小改
 
 ### P1-1. 异步二进制探测 ✅
-`sofficeBinary`/`ebookConvertBinary`/`dwg2dxfBinary` 改异步 `execFile`(callback)+ `_inflight` 去重,返 `Promise<string|null>`;所有 caller `await`。
+外部转换二进制探测改异步 `execFile` + `_inflight` 去重、返 `Promise<string|null>` 的历史改造已随 office/CAD/电子书转换栈删除;同一模式现在只剩 HEIC wasm 读取(`requestHeicWasm` → `forwardRpc`)与主进程内联能力,`execFile` 的 callback 化原则仍适用于任何新增外部二进制。
 
 ### P1-2. persist 删 console.log ✅
-[persist-storage.ts](../src/main/persist-storage.ts) 删 3 条 debug `console.log` + 多余 eslint-disable;保留 catch 分支 `console.error`(真 IO 失败诊断)。见 [docs/02 §8](./02-file-io.md)。
+[persist-storage.ts](../src/main/persist-storage.ts) 删 3 条 debug `console.log` + 多余 eslint-disable,保留 catch 分支的 `console.error`(真 IO 失败诊断)。见 [docs/02 §8](./02-file-io.md)。
 
 ### P1-3. viewDepth>1 递归聚合缓存 ✅
-[recursive-cache.ts](../src/main/recursive-cache.ts)(镜像 office-cache):缓存 `<dir>/.whale/index-recursive/d<depth>.json` 的 scan(`DirEntry[]`);**双守卫失效**(`dirPath` 挡文件夹移动 + `folderMtime` 挡子项增删);`invalidateRecursiveScan` 清祖先 ≤5 层,挂 6 个 fs-op 钩(含原先无钩的 mkdir)。sidecar 读更便宜且耦合 `wsd.json`,留后续。
+[recursive-cache.ts](../src/main/recursive-cache.ts):按 `<dir>/.whale/index-recursive/d<depth>.json` 缓存 scan 结果;**双守卫失效**(`dirPath` 挡文件夹移动 + `folderMtime` 挡子项增删),`invalidateRecursiveScan` 清祖先 ≤5 层,挂 6 个 fs-op 钩(含原先无钩的 mkdir)。sidecar 读更便宜,故未纳入。
 
-### P1-4. office→PDF bytes IPC 双拷贝 ✅
-端到端改 `Uint8Array`:[extensions.ts](../src/main/ipc/extensions.ts) `ext:convertOfficeToPdf` 直返 Buffer 删拷贝;types + viewer 直传。净省 1 次 memcpy/文档。**同类已照改(2026-07-18)**:`convertDwgToDxf` / `convertEbookToEpub` 两 handler 同形改完(handler 直返 Buffer;ipc-types / extension-types / ipc-api 链 `ArrayBuffer`→`Uint8Array`;cad-viewer 去 `new Uint8Array` 包裹、ebook-viewer `loadEpub(data)` 直传)。**`convertAudio` 不适用**:走 `whale-audio://` 协议流式(无 IPC bytes 往返),其 stdout chunk 的 `ArrayBuffer.slice` 是 load-bearing(Node 池化 buffer 防 `'data'` 覆盖),不能删。
+### P1-4. GanttRow memo 解锁 ✅
+GanttView→GanttTimeline 的 6 个内联闭包稳定为纯转发 / `useCallback`。**真 spoiler**:GanttTimeline 的 per-row `onCommit` adapter 每行新函数 → 把 entry-binding 下沉进 GanttRow(同 `onClick` 模式),Timeline 直传。
 
-### P1-5. GanttRow memo 解锁 ✅
-GanttView→GanttTimeline 6 个内联闭包稳定(纯转发直传 `data.*`,其余 `useCallback`);**真正 spoiler**:GanttTimeline per-row `onCommit` adapter 每行新函数——把 entry-binding 下沉到 GanttRow 内部(同 `onClick` 模式),GanttTimeline 直传。
-
-### P1-6. 文件夹缩略图并发上限 ✅
-[concurrency.ts](../src/main/concurrency.ts) 加 `thumbnailSemaphore = Semaphore(4)`;`doGenerateThumbnail` 把 encode+write 包进 `run`(便宜 kind/stat/reuse 短路留 permit 外)。所有调用方(file IPC / folder thumb / setFolder)自动覆盖。
-
-### P1-7. pdf-viewer 大文件字节桥(去 base64 整文件)✅
-已随 0.4.9 瘦身与 pdf-viewer 扩展一并移除(2026-09);`requestFileBytes`/`fileBytes` 桥与 `shared/pdfjs-in-iframe.ts` 随之删除。通用教训仍有效:Chromium 自定义协议被 CORS 硬限「跨源 fetch 仅限 http/https/data/chrome」,pdfjs `getDocument({url})` 走不通 `whale-file://`,只有 media 管线(`<video>`)例外。
+### P1-5. 文件夹缩略图并发上限 ✅
+[concurrency.ts](../src/main/concurrency.ts) 加 `thumbnailSemaphore = Semaphore(4)`,`doGenerateThumbnail` 只把 encode+write 包进 `run`(便宜的 kind/stat/reuse 短路留 permit 外)。所有调用方自动覆盖。
 
 ---
 
 ## 🟡 Tier 2 — 中等收益
 
 ### P2-1. 缩略图内存缓存 ✅
-[thumbnail.ts](../src/main/thumbnail.ts) `loadThumbnail` 加进程内 LRU(`Map<path,{mtimeMs,dataUrl}>`,cap 500),失效信号 = thumb 文件 mtimeMs(重生成必换 mtime → 自动 miss);`fsp.stat` 兼存在检查 + 失效。**未做**:`loadFolderThumbnail` 同形但频率低;`whale-file://` 直传是更彻底退路。
+[thumbnail.ts](../src/main/thumbnail.ts) `loadThumbnail` 加进程内 LRU(`Map<path,{mtimeMs,dataUrl}>`,cap 500);失效信号 = thumb 文件 `mtimeMs`(重生成必换 mtime → 自动 miss),`fsp.stat` 兼存在检查。**未做**:`loadFolderThumbnail` 同形但频率低;`whale-file://` 直传是更彻底退路。
 
 ### P2-2. count(*) 轮询 → O(1) ✅
-[index-db.ts](../src/main/index-db.ts) 加 `meta(key,value)` 表,`files_count` 每次 ingest 末尾写 `seen.size`(自愈);老库回退一次 `count(*)` 并缓存;`hasFulltext` 改 `SELECT 1 ... LIMIT 1`。
+[index-db.ts](../src/main/index-db.ts) 加 `meta(key,value)` 表,`files_count` 每次 ingest 末尾写 `seen.size`(自愈);老库回退一次 `count(*)`;`hasFulltext` 改 `SELECT 1 ... LIMIT 1`。
 
 ### P2-3. prepared statement 缓存 ✅
-`prepareCached(db, sql)` + `WeakMap<DB, Map<sql, Statement>>`(按 DB 实例 key,关连接自动回收)。只缓存查询热路径(queryFiles/advancedQuery/distinctTags/queryFulltext)。
+`prepareCached(db, sql)` + `WeakMap<DB, Map<sql, Statement>>`(按 DB 实例 key,关连接自动回收),只缓存热路径(文件查询 / 高级查询 / distinctTags / 全文查询)。
 
 ### P2-4. selector 稳定化 ✅
-[Sidebar.tsx](../src/renderer/components/Sidebar.tsx) `s.locations`/`s.settings` 整 slice → 窄字段(`s.locations.items`/`s.settings.defaultLocationId`)。新建 [constants.ts](../src/renderer/constants.ts) 的 `EMPTY_OBJ`/`EMPTY_ARR`(`never` 通配),harden TagGroups/TagLibrary/TaskReminder/AdvancedSearchDialog 的 `?? {}`/`?? []`——其实 reducer 早初始化了这些字段,`??` 永不命中,这是 defense-in-depth。
+[Sidebar.tsx](../src/renderer/components/Sidebar.tsx) 整 slice → 窄字段。新建 [constants.ts](../src/renderer/constants.ts) 的 `EMPTY_OBJ`/`EMPTY_ARR`(`never` 通配),harden TagGroups/TagLibrary/TaskReminder/AdvancedSearchDialog 的 `?? {}`/`?? []` —— reducer 其实早已初始化这些字段,属 defense-in-depth。
 
 ### P2-5. EntryTagChips/ThumbIcon memo ✅
-各包 `memo(Base)`。调用点 hoist 内联 `containerSx` 成模块常量 + tagless `?? []` → `EMPTY_ARR`(否则 memo 永不命中)。ThumbIcon props 全 primitive/稳定 Map,所有调用点直接生效。
+各包 `memo(Base)`;调用点把内联 `containerSx` hoist 成模块常量、tagless `?? []` → `EMPTY_ARR`(否则 memo 永不命中)。ThumbIcon 的 props 全 primitive/稳定 Map,调用点直接生效。
 
 ### P2-6. KanbanView bucketEntries memo ✅
-`stageValues`/`buckets`/`columnKeys` 全 `useMemo`(`stageValues` 来自 `stages.map`,必须先 memo 否则 buckets memo 不命中)。
+`stageValues`/`buckets`/`columnKeys` 全 `useMemo`;`stageValues` 来自 `stages.map`,必须先 memo 否则 buckets 永不命中。
 
 ### P2-7. 重型原生依赖惰性加载 ✅
-[lazy-native.ts](../src/main/lazy-native.ts):`getSharp`/`getCanvas`/`getExifr`/`getChardet`/`getIconv`(`createRequire(__filename)` + 缓存)。改 thumbnail/exif/ipc/font-thumb 去静态 import;webpack externals 加 exifr/jschardet/iconv-lite。**sharp 类型坑**:`typeof import('sharp')['default']`(namespace 不可调用)。冒烟:4 模块不再在 bundle 依赖图。
+[lazy-native.ts](../src/main/lazy-native.ts):`getSharp`/`getCanvas`/`getExifr`/`getChardet`/`getIconv`(`createRequire(__filename)` + 缓存),thumbnail/exif/ipc/font-thumb 去静态 import,webpack externals 加 exifr/jschardet/iconv-lite。**sharp 类型坑**:`typeof import('sharp')['default']`(namespace 不可调用)。冒烟:4 个模块不再进 bundle 依赖图。
 
-> `drawio-thumb.ts` / `excalidraw-thumb.ts` 原列本项,后核实为**未接入主流程**的死代码(thumbnail.ts 没有 drawio/excalidraw kind 分支,缩略图走品牌图标),已于 2026-07 删除,详见 [docs/06-thumbnails.md §3](./06-thumbnails.md) 与 `docs/01-architecture.md` 死代码条目。
+> `drawio-thumb.ts` / `excalidraw-thumb.ts` 原列本项,后核实为**未接入主流程**的死代码(缩略图走品牌图标,没有 drawio/excalidraw kind 分支),已于 2026-07 删除,详见 [docs/06 §3](./06-thumbnails.md)。
+
+### P2-8. 文件协议真实背压 ✅
+[protocol-range.ts](../src/main/protocol-range.ts) 用 Web Stream `pull()` 驱动暂停/恢复 Node stream;每 chunk 入队即 pause,cancel/error/destroy 均清理。保留 Range/headers,慢消费者下仅 Node highWaterMark + 单 chunk 的有界预读。
+
+### P2-9. 扩展嵌图 base64 移到 Main ✅
+`fs:readFileBase64` 过 allowedRoots 后用 `Buffer.toString('base64')`;ExtensionHost 删除逐字节十六进制拼装/btoa,保留 MIME 与失败回退。
+
+### P2-10. 拖动设置不再逐 mousemove 持久化 ✅
+FileListHeader 列宽、PropertiesTray 宽度改本地预览 + pointer capture,pointerup 只提交一次最终值;cancel/lost capture/unmount 清理,不改 redux-persist flush/原子写。
+
+### P2-11. FolderViz 消除重复递归扫描 ✅
+FolderVizView 复用 DirectoryContentProvider 的 `entries/loading/error/refresh`,以 `useMemo` 建树;filterMode 只改纯前端投影,不再重复 `listDirectoryRecursive`。
+
+### P2-12. 日期标签按需订阅分钟 ticker ✅
+TagMetaProvider 仅在存在日期族标签时订阅共享 now store;普通/评分/period 标签不再每分钟重算 allTags/自动配色/context,日期进入/退出会正确订阅/退订。
+
+### P2-13. Gantt 泳道查找预索引 ✅
+GanttTimeline 预计算 `scheduledByPath`(保留每 path 首项,等同 Array.find),displayRows 与 hiddenLaneCount 两处查找由 O(N·T) 降为 O(N+T);chooseLane 与折叠语义不变。
+
+### P2-14. PropertiesTray 移除闲置订阅/重复投影 ✅
+日期输入仅在 addTag 动作时取 `new Date()`,不再为输入框常驻订阅分钟 ticker;workflow `stageValues` 改 useMemo,避免每次 render 新建数组。
+
+### P2-15. 递归隐藏路径按祖先剪枝 ✅
+`filterRecursiveEntries` 过滤隐藏目录的全部后代,Provider 的 entries 与 sidecar 读取使用同一可见集;修复 FolderViz 幽灵节点和 FileList 深度>1的隐藏子项泄漏。列宽拖动预览与提交共享 LIST_COLUMN_BOUNDS;嵌图补齐 avif/tiff/ico MIME。
 
 ---
 
 ## 🟢 Tier 3 — 较小 / 长期
 
-### P3-1. office-viewer 冷转码缩略图占位 ✅
-office-viewer `openOfficeFile` 并行 fire `requestThumbnail` + `requestOfficeConvert`,缩略图到达即 `showThumbnailPlaceholder`,`renderPdf` 清占位。新增 `requestThumbnail`/`thumbnailContent` 消息对 + host 桥。**未做 crossfade**(直接清占位,可后续加 CSS transition)。
-
-### P3-2. office-viewer scroll-sync ✅
-给 session 加 `onAfterPageRender` 盖 `data-page-num` + rAF scroll handler(「top ≤ 视口 25% 且最接近」),`pageInfoEl` 从静态 `N/N` 改 `cur/total`。**resize 半边 N/A**:office 画布固定 px 宽,无 fit-mode,resize 不重栅格化。
-
-### P3-3. UNO/soffice 常驻后台进程 ✅
-保活一个 LibreOffice UNO listener,后续 office→PDF 转换复用已初始化进程(~200–500ms),冷启动只一次。Node 无原生 UNO 客户端,故 bundle 一个 Python worker(借用 LO 自带 `python`+`pythonuno`)做桥接,worker 起不来时带 cooldown 自动回退现有 `execFile`(**零 regression**)。详见 [docs/17](./17-office-worker.md)。顺带把 `convertOfficeToPdf` 与 `encodeOfficeThumb` 两处重复的 spawn body 合并成共享 `convertOfficeToPdfVia`(worker 优先 + execFile 兜底,`sofficeSemaphore` 包两路)。
-
-### P3-4. AI 流式 boolean 兜底 ✅
-✅ 已随 AI 助手模块整体移除(2026-09);`transformSdkMessage` 的 per-scope 去重状态机与 wire-shape 回归测试随代码删除。通用教训仍有效:流式协议 partial/complete 去重必须实测验证,去重键要用有内容语义的字段(块文本 / 工具 id),别把对端协议的 id 语义当契约。
-
-### P3-5. 零碎项
+### P3-1. 零碎项
 - ~~`firstThumbnailableFile`~~ — **评估不做**:find-first + 早返回,首候选即中(1 stat),并发反而过度取数。
-- ~~`distinctTags`~~ — **评估不做**:非热点(advanced-search 开一次);trigger 维护多对多计数复杂易漂移。
+- ~~`distinctTags` 计数表~~ — **评估不做**:非热点(高级搜索才开一次),多对多 trigger 复杂易漂移。
 - ✅ `importExternal` 串行 cp → `mapWithConcurrency(4)`(name dedup 无竞态:同步在首 await 前)。
-- ✅ `atomicWrite` 每写扫残留 temp → per-target `sweptTargets: Set`。
-- ✅ `odaConverterBinary` 加 memo。
-- ✅ `getPdfAsset`/`readCadWasm`/`readHeicWasm` 缓存源 Buffer(仍返新拷贝)。
-- ⬜ `extractPdfText` 整 PDF 读内存 — 罕见,可接受(见取舍表)。
+- ✅ [atomic-write.ts](../src/main/atomic-write.ts) 每写扫残留 temp → per-target `sweptTargets: Set`;同 target 串行、跨 target 并行,失败写不毒化队列(详见 [docs/02 §7](./02-file-io.md))。
+- ✅ `readHeicWasm` 缓存源 Buffer(仍返新拷贝)。
+- ⬜ `extractPdfText` 整 PDF 读内存 —— 罕见,按取舍表接受。
 - ✅ renderer:[FileToolbar](../src/renderer/components/FileToolbar.tsx) `recents` memo + RO 守卫;[GanttTimeline](../src/renderer/components/gantt/GanttTimeline.tsx) 删 no-op RO;[GalleryView](../src/renderer/components/GalleryView.tsx) RO 守卫。
 
 ---
@@ -107,28 +113,28 @@ office-viewer `openOfficeFile` 并行 fire `requestThumbnail` + `requestOfficeCo
 
 | 项 | 出处 | 理由 |
 |---|---|---|
-| soffice 串行 cap 1 | [docs/06](./06-thumbnails.md) §3 | 并发争 profile-lock 损坏;P3-3 UNO 才是真解 |
-| mediaConvertSemaphore cap 2 | [docs/06](./06-thumbnails.md) §3 | 用户发起的一次性转换 |
-| depth-5 node_modules 200-500ms | [docs/08](./08-data-depth.md) §9 | 有截断 + loading 反馈;P1-3 缓存是退路 |
-| PDF 缩略图 CJK `notdef` | [docs/06](./06-thumbnails.md) §7 | canvas 缺 CJK 字表;viewer 在 Chromium 内绕过 |
+| depth-5 node_modules 200–500ms | [docs/08](./08-data-depth.md) §9 | 有截断 + loading 反馈;P1-3 缓存是退路 |
+| PDF 缩略图 CJK `notdef` | [docs/06](./06-thumbnails.md) §7 | canvas 缺 CJK 字表,内嵌字体代价过高;读者可用系统阅读器 |
 | 缩略图无大文件保护 | [docs/06](./06-thumbnails.md) §7 | 仅 video 有首帧捷径;非 video 大文件全解码 |
 | per-folder depth override | [docs/08](./08-data-depth.md) §11 | 「不做,真需要再补」 |
-| 首次索引大语料慢 | [docs/04](./04-search-index.md) §9 | loading spinner 缓解;P0-2 已移主进程阻塞 |
+| 首次索引大语料慢 | [docs/04](./04-search-index.md) §9 | loading spinner 缓解;P0-2 已消除主进程阻塞 |
 | index.db 无单事务原子性 | [docs/04](./04-search-index.md) §9 | 缓存可重建,correctness 取舍 |
-| `whale-file://` handler `statSync` | 代码审计 | `<video>` range 热路径,异步加延迟伤 seek |
-| readSidecars buildIndex 每目录重读 wsd.json | [indexer.ts](../src/main/indexer.ts) | 标签不改 mtime,mtime 缓存会错 |
-| `extractPdfText` 整读内存 | 本文件 P3-5 | 病态大 PDF 罕见,可接受 |
+| `whale-file://` handler 走 `statSync` | [protocol-range.ts](../src/main/protocol-range.ts) | `<video>` range 热路径,异步化会伤 seek |
+| buildIndex 每目录重读 wsd.json | [sidecar.ts](../src/main/sidecar.ts) `readSidecars` | 标签不改 mtime,mtime 缓存会错 |
+| `extractPdfText` 整读内存 | 本文件 P3-1 | 病态大 PDF 罕见,可接受 |
 
 ---
 
 ## 🔧 可复用范式
 
-- **缓存形状**:`transcode-cache` / `office-cache` = mtime 失效 + 原子 `.tmp`+rename + `inflight: Map<key,Promise>` 去重 + fs-op 钩。
-- **惰性原生 require**:`createRequire(__filename)`(`getPdfjs`/`getSharp`/...);注意 [docs/09](./09-known-issues.md) §19 CommonJS 硬约束。
+- **缓存形状**:mtime 失效 + 原子 `.tmp`+rename + `inflight: Map<key,Promise>` 去重 + fs-op 钩([recursive-cache.ts](../src/main/recursive-cache.ts) 是现存范本)。
+- **惰性原生 require**:`createRequire(__filename)`(`getSharp`/`getPdfjs`/...);注意 [docs/09 §19](./09-known-issues.md) CommonJS 硬约束。
 - **批量让步**:`INGEST_BATCH=1000` + `setImmediate`、`mapWithConcurrency(8)`。
+- **长任务不占主线程**:重 CPU/重 IO 一律进 utilityProcess 或 worker,主进程只留路由与校验(P0-2 的教训)。
+- **memo 先修 spoiler**:先查闭包/内联对象身份,再谈 `memo` —— P0-3 / P1-4 都是 spoiler 先死、memo 才生效。
 
 ---
 
 ## 剩余
 
-无。Tier 0–3 全部完成(2026-07-12 ~ 07-18)。
+无 Tier 0–3 未完成项(2026-07-12 ~ 07-18 全部闭环);唯一遗留是 P3-1 的 `extractPdfText` 整读内存,已列入「已接受的取舍」。

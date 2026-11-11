@@ -50,6 +50,24 @@ import type { ViewMode } from '../../shared/whale-meta';
 import type { SortState, SortKey } from '-/hooks/DirectoryContentContextProvider';
 import type { ListRowDensity } from '-/reducers/settings';
 
+/** Shared preview/commit bounds; generous name column, tight size column. */
+export const LIST_COLUMN_BOUNDS: Record<
+  'name' | 'size' | 'modified',
+  { min: number; max: number }
+> = {
+  name: { min: 120, max: 600 },
+  size: { min: 48, max: 128 },
+  modified: { min: 64, max: 200 },
+};
+
+function clampColumnWidth(
+  columnKey: keyof typeof LIST_COLUMN_BOUNDS,
+  width: number
+): number {
+  const bounds = LIST_COLUMN_BOUNDS[columnKey];
+  return Math.max(bounds.min, Math.min(bounds.max, Math.round(width)));
+}
+
 export interface FileListHeaderProps {
   // —— Sort ——
   sort: SortState;
@@ -559,16 +577,27 @@ export function RowColumnLabels(props: {
     toggleColumn,
   } = props;
 
-  // H.23 P1-5: drag-state for in-place column resize. Tracks which column
-  // is being dragged + the initial mouse x + the initial column width so
-  // mousemove can compute a delta and call setColumnWidth with a new px.
-  // `cursor: col-resize` is applied to the document body during drag for
-  // visual feedback; reset on mouseup.
+  // Column resizing is a local visual gesture until pointerup. The persisted
+  // callback retains its original contract (including the caller's clamp), but
+  // runs once with the final value instead of on every pointermove.
   const dragStateRef = useRef<{
     columnKey: 'name' | 'size' | 'modified';
+    element: HTMLElement;
+    pointerId: number;
     startX: number;
     startWidth: number;
+    fallbackListeners?: {
+      pointerUp: (event: PointerEvent) => void;
+      pointerCancel: (event: PointerEvent) => void;
+    };
   } | null>(null);
+  const [columnWidthPreview, setColumnWidthPreview] = useState<{
+    columnKey: 'name' | 'size' | 'modified';
+    width: number;
+  } | null>(null);
+  const renderedColumnWidths = columnWidthPreview
+    ? { ...columnWidths, [columnWidthPreview.columnKey]: columnWidthPreview.width }
+    : columnWidths;
   // Right-click menu anchor (column-visibility toggle menu). null = closed.
   const [menuAnchor, setMenuAnchor] = useState<{
     x: number;
@@ -624,49 +653,122 @@ export function RowColumnLabels(props: {
       </Button>
     );
   };
-  // H.23 P1-5: column resize handle. 6px wide invisible-by-default strip on
-  // the right edge of a sortable column header. On mousedown, capture the
-  // initial x + initial width + column id into `dragStateRef`, attach
-  // document-level mousemove + mouseup, and on every mousemove call
-  // `setColumnWidth(columnId, startWidth + dxPx)`. Bounds (min/max) are
-  // applied at the call site (FileList's wrapper), not here.
-  const onResizeMouseDown =
+  // Capture keeps the gesture on this handle even when the pointer leaves it.
+  // Only a failed capture needs temporary window up/cancel listeners; those
+  // are removed by every finish/cancel/unmount path below.
+  const onResizePointerDown =
     (columnKey: 'name' | 'size' | 'modified') =>
-    (e: React.MouseEvent) => {
+    (e: React.PointerEvent<HTMLElement>) => {
+      if (dragStateRef.current) return;
       e.preventDefault();
       e.stopPropagation();
-      dragStateRef.current = {
+      const element = e.currentTarget;
+      const drag: NonNullable<typeof dragStateRef.current> = {
         columnKey,
+        element,
+        pointerId: e.pointerId,
         startX: e.clientX,
         startWidth: columnWidths[columnKey],
       };
-      const onMove = (ev: MouseEvent) => {
-        const s = dragStateRef.current;
-        if (!s) return;
-        setColumnWidth(s.columnKey, s.startWidth + (ev.clientX - s.startX));
-      };
-      const onUp = () => {
-        dragStateRef.current = null;
-        document.body.style.cursor = '';
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-      };
+      dragStateRef.current = drag;
+      try {
+        element.setPointerCapture(e.pointerId);
+      } catch {
+        const pointerUp = (event: PointerEvent) => finishResize(event, true);
+        const pointerCancel = (event: PointerEvent) =>
+          finishResize(event, false);
+        drag.fallbackListeners = { pointerUp, pointerCancel };
+        window.addEventListener('pointerup', pointerUp);
+        window.addEventListener('pointercancel', pointerCancel);
+      }
       document.body.style.cursor = 'col-resize';
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
     };
 
-  // H.23 P1-5: render one resize strip on the right of each sortable
-  // column. Hot zone is `position: absolute; right: 0; width: 6px; height: 100%`
-  // inside a `position: relative` parent (the column Box). On hover we set
-  // cursor: col-resize for visual feedback.
-  const ResizeHandle = ({
-    columnKey,
-  }: {
-    columnKey: 'name' | 'size' | 'modified';
-  }) => (
+  const onResizePointerMove = (e: React.PointerEvent<HTMLElement>) => {
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    setColumnWidthPreview({
+      columnKey: drag.columnKey,
+      width: clampColumnWidth(
+        drag.columnKey,
+        drag.startWidth + (e.clientX - drag.startX)
+      ),
+    });
+  };
+
+  const finishResize = (
+    e: Pick<PointerEvent, 'pointerId' | 'clientX'>,
+    commit: boolean,
+    releaseCapture = true
+  ) => {
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    const finalWidth = clampColumnWidth(
+      drag.columnKey,
+      drag.startWidth + (e.clientX - drag.startX)
+    );
+    if (drag.fallbackListeners) {
+      window.removeEventListener('pointerup', drag.fallbackListeners.pointerUp);
+      window.removeEventListener(
+        'pointercancel',
+        drag.fallbackListeners.pointerCancel
+      );
+      drag.fallbackListeners = undefined;
+    }
+    dragStateRef.current = null;
+    setColumnWidthPreview(null);
+    document.body.style.cursor = '';
+    if (releaseCapture) {
+      try {
+        drag.element.releasePointerCapture(drag.pointerId);
+      } catch {
+        // Capture may already have been released by the browser.
+      }
+    }
+    // A down/up click or a drag that returns to its origin has no new setting
+    // to persist. Cancellation and lost capture restore the controlled value.
+    if (commit && finalWidth !== drag.startWidth) {
+      setColumnWidth(drag.columnKey, finalWidth);
+    }
+  };
+
+  useEffect(
+    () => () => {
+      const drag = dragStateRef.current;
+      dragStateRef.current = null;
+      document.body.style.cursor = '';
+      if (drag) {
+        if (drag.fallbackListeners) {
+          window.removeEventListener(
+            'pointerup',
+            drag.fallbackListeners.pointerUp
+          );
+          window.removeEventListener(
+            'pointercancel',
+            drag.fallbackListeners.pointerCancel
+          );
+          drag.fallbackListeners = undefined;
+        }
+        try {
+          drag.element.releasePointerCapture(drag.pointerId);
+        } catch {
+          // The element may already have lost capture during unmount.
+        }
+      }
+    },
+    []
+  );
+
+  // Render the handle inline rather than as a nested component type: local
+  // preview updates must not remount the captured element mid-drag.
+  const renderResizeHandle = (columnKey: 'name' | 'size' | 'modified') => (
     <Box
-      onMouseDown={onResizeMouseDown(columnKey)}
+      data-testid={`column-resize-${columnKey}`}
+      onPointerDown={onResizePointerDown(columnKey)}
+      onPointerMove={onResizePointerMove}
+      onPointerUp={(e) => finishResize(e, true)}
+      onPointerCancel={(e) => finishResize(e, false)}
+      onLostPointerCapture={(e) => finishResize(e, false, false)}
       sx={{
         position: 'absolute',
         right: 0,
@@ -674,6 +776,7 @@ export function RowColumnLabels(props: {
         bottom: 0,
         width: 6,
         cursor: 'col-resize',
+        touchAction: 'none',
         zIndex: 1,
         // Tiny invisible hit zone for the resize gesture; visible only on hover.
         '&:hover': { backgroundColor: 'action.hover' },
@@ -722,7 +825,7 @@ export function RowColumnLabels(props: {
         sx={{
           position: 'relative',
           flex: '0 1 30%',
-          flexBasis: columnWidths.name,
+          flexBasis: renderedColumnWidths.name,
           flexShrink: 0,
           minWidth: 0,
         }}
@@ -732,7 +835,7 @@ export function RowColumnLabels(props: {
           label={labels.name}
           sx={{ flex: 1, minWidth: 0, pl: 0.5 }}
         />
-        <ResizeHandle columnKey="name" />
+        {renderResizeHandle('name')}
       </Box>
       <Typography
         role="columnheader"
@@ -747,7 +850,7 @@ export function RowColumnLabels(props: {
           sx={{
             position: 'relative',
             flex: '0 0 auto',
-            width: columnWidths.size,
+            width: renderedColumnWidths.size,
             minWidth: 0,
             flexShrink: 0,
           }}
@@ -757,7 +860,7 @@ export function RowColumnLabels(props: {
             label={labels.size}
             sx={{ flex: 1, minWidth: 0, justifyContent: 'flex-end' }}
           />
-          <ResizeHandle columnKey="size" />
+          {renderResizeHandle('size')}
         </Box>
       ) : null}
       {!hiddenColumns.includes('modified') ? (
@@ -766,7 +869,7 @@ export function RowColumnLabels(props: {
           sx={{
             position: 'relative',
             flex: '0 0 auto',
-            width: columnWidths.modified,
+            width: renderedColumnWidths.modified,
             minWidth: 0,
             flexShrink: 0,
           }}
@@ -776,7 +879,7 @@ export function RowColumnLabels(props: {
             label={labels.modified}
             sx={{ flex: 1, minWidth: 0, justifyContent: 'flex-end' }}
           />
-          <ResizeHandle columnKey="modified" />
+          {renderResizeHandle('modified')}
         </Box>
       ) : null}
       {/* H.23 P1-5: column-visibility menu (right-click anywhere on the

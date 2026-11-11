@@ -146,6 +146,33 @@ interface FileMigrationReport {
   errors: { path: string; message: string }[];
 }
 
+function migrationErrorReport(filePath: string, err: unknown): FileMigrationReport {
+  return {
+    scanned: 0,
+    migrated: 0,
+    backups: 0,
+    errors: [
+      { path: filePath, message: err instanceof Error ? err.message : String(err) },
+    ],
+  };
+}
+
+/** Skip only a genuinely absent sidecar; preserve every other failure in the summary. */
+async function migrateIfPresent(
+  filePath: string,
+  migrate: () => Promise<FileMigrationReport>
+): Promise<FileMigrationReport | null> {
+  try {
+    await fsp.access(filePath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    return migrationErrorReport(filePath, err);
+  }
+  // Both migrators catch and report their own per-file failures. Only the
+  // access probe needs this helper's ENOENT-vs-error distinction.
+  return migrate();
+}
+
 /** Migrate a single sidecar file. Returns counts for the summary. */
 async function migrateSidecarFile(
   filePath: string,
@@ -292,14 +319,8 @@ export async function runMigration(
       const wsdPath = path.join(dir, META_DIR, FOLDER_SIDECAR_FILE);
       const wsmPath = path.join(dir, META_DIR, FOLDER_META_FILE);
       const [wsd, wsm] = await Promise.all([
-        fsp
-          .access(wsdPath)
-          .then(() => migrateSidecarFile(wsdPath, flag))
-          .catch(() => null),
-        fsp
-          .access(wsmPath)
-          .then(() => migrateFolderMetaFile(wsmPath, flag))
-          .catch(() => null),
+        migrateIfPresent(wsdPath, () => migrateSidecarFile(wsdPath, flag)),
+        migrateIfPresent(wsmPath, () => migrateFolderMetaFile(wsmPath, flag)),
       ]);
       for (const rep of [wsd, wsm].filter(Boolean) as FileMigrationReport[]) {
         result.totalScanned += rep.scanned;

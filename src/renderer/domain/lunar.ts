@@ -8,12 +8,12 @@ import { Lunar } from 'lunar-typescript';
 
 /**
  * Compact lunar label for a day, in the traditional calendar style:
- * - On the first day of a lunar month (初一) �?the lunar month name ("五月",
- *   "腊月"�? so the user can see where the lunar month breaks.
- * - Any other day �?just the lunar day ("十七", "廿三"�?.
+ * - On the first day of a lunar month (初一) → the lunar month name ("五月",
+ *   "腊月") so the user can see where the lunar month breaks.
+ * - Any other day → just the lunar day ("十七", "廿三").
  *
  * Returns '' if `lunar-typescript` can't resolve the date (it throws on some
- * far-past/far-future inputs) �?callers render nothing rather than crash.
+ * far-past/far-future inputs) — callers render nothing rather than crash.
  */
 export function lunarDayLabel(date: Date): string {
   try {

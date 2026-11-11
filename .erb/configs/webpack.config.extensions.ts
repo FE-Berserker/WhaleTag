@@ -59,11 +59,6 @@ function discoverExtensions(): {
 
 const { manifests, entries, htmlPlugins } = discoverExtensions();
 
-// Persist the discovered manifest list so build-extensions.js can write registry.json
-// without re-scanning. We write to a temp JSON next to the webpack config.
-const manifestDumpPath = path.join(__dirname, '.extension-manifests.json');
-fs.writeFileSync(manifestDumpPath, JSON.stringify(manifests, null, 2));
-
 export { manifests };
 
 export default merge(createBase(), {

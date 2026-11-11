@@ -205,6 +205,14 @@ export function registerFsReadHandlers(): void {
     return fsp.readFile(filePath);
   });
 
+  // Encode in Main so binary embeds cross IPC as one string rather than a
+  // large numeric byte array that the renderer must convert one byte at a time.
+  ipcMain.handle('fs:readFileBase64', async (_event, filePath: string) => {
+    assertWithinAllowedRoot(filePath);
+    const buf = await fsp.readFile(filePath);
+    return buf.toString('base64');
+  });
+
   ipcMain.handle('fs:pathExists', (_event, targetPath: string) =>
     existsSync(targetPath)
   );

@@ -75,11 +75,3 @@ export function selectExtension(
 
   return candidates[0];
 }
-
-/** Returns whether any enabled extension can handle the file. */
-export function hasExtensionHandler(
-  entry: DirEntry,
-  context: DispatchContext
-): boolean {
-  return selectExtension(entry, context) !== null;
-}

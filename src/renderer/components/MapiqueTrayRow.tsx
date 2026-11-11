@@ -34,7 +34,6 @@ export default function MapiqueTrayRow({
   style,
   entries,
   selected,
-  activeEntry,
   locatedPaths,
   geoColorMap,
   thumbCache,
@@ -58,7 +57,6 @@ export default function MapiqueTrayRow({
   }
 
   const isSel = selected.has(entry.path);
-  const isActive = activeEntry?.path === entry.path;
   const hasGeo = locatedPaths.has(entry.path);
   const geoColor = geoColorMap.get(entry.path);
   const isFocused = focusIndex === index;

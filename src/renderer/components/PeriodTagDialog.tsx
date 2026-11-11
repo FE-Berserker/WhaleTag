@@ -109,12 +109,6 @@ function compactFromIso(iso: IsoDate): string {
   return iso.replace(/-/g, '');
 }
 
-function isoFromCompact(compact: string): string {
-  // compact is YYYYMMDD (8 chars) — re-insert dashes.
-  if (compact.length !== 8) return compact;
-  return `${compact.slice(0, 4)}-${compact.slice(4, 6)}-${compact.slice(6, 8)}`;
-}
-
 function todayIso(): IsoDate {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;

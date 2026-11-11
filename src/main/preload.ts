@@ -6,6 +6,7 @@ import type {
   AppUpdateInfoPayload,
   IndexProgressEvent,
   DirChangedEvent,
+  RecoverCorruptSidecarRequest,
 } from '../shared/ipc-types';
 
 /** Payloads the main process pushes per update channel — mirrors the
@@ -44,6 +45,8 @@ const whaleApi: WhaleApi = {
   readTextFile: (filePath: string) =>
     ipcRenderer.invoke('fs:readTextFile', filePath),
   readFile: (filePath: string) => ipcRenderer.invoke('fs:readFile', filePath),
+  readFileBase64: (filePath: string) =>
+    ipcRenderer.invoke('fs:readFileBase64', filePath),
   pathExists: (targetPath: string) => ipcRenderer.invoke('fs:pathExists', targetPath),
   openDirectoryDialog: () => ipcRenderer.invoke('dialog:openDirectory'),
   openImageFileDialog: () => ipcRenderer.invoke('dialog:openImageFile'),
@@ -138,6 +141,12 @@ const whaleApi: WhaleApi = {
     ipcRenderer.invoke('sidecar:readMany', dirPath, names),
   readSidecardsForPaths: (filePaths: string[]) =>
     ipcRenderer.invoke('sidecar:readForPaths', filePaths),
+  readSidecarsDetailed: (dirPath: string, names: string[]) =>
+    ipcRenderer.invoke('sidecar:readManyDetailed', dirPath, names),
+  readSidecardsForPathsDetailed: (filePaths: string[]) =>
+    ipcRenderer.invoke('sidecar:readForPathsDetailed', filePaths),
+  recoverCorruptSidecar: (request: RecoverCorruptSidecarRequest) =>
+    ipcRenderer.invoke('sidecar:recoverCorrupt', request),
   writeSidecar: (filePath: string, meta: SidecarMeta) =>
     ipcRenderer.invoke('sidecar:write', filePath, meta),
 

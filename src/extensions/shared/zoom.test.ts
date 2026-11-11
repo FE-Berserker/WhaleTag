@@ -19,7 +19,6 @@ import {
   buildTransform,
   MIN_ZOOM_FACTOR_OF_FIT,
   MAX_ZOOM,
-  WHEEL_FACTOR,
   STEP_FACTOR,
   DEFAULT_PAN_MARGIN,
   type Rotation,
@@ -256,9 +255,6 @@ describe('zoom constants', () => {
   });
   it('MAX_ZOOM is 16', () => {
     assert.equal(MAX_ZOOM, 16);
-  });
-  it('WHEEL_FACTOR default is 1.1', () => {
-    assert.equal(WHEEL_FACTOR, 1.1);
   });
   it('STEP_FACTOR default is 1.25', () => {
     assert.equal(STEP_FACTOR, 1.25);

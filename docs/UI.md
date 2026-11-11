@@ -7,7 +7,7 @@
 
 ## 1. Design Direction
 
-WhaleTag has **nine visual themes** that can be selected from Settings → Appearance:
+WhaleTag has **eleven visual themes** that can be selected from Settings → Appearance:
 
 | Theme | Chinese Name | Mode | Personality | Best For |
 |-------|--------------|------|-------------|----------|
@@ -20,12 +20,14 @@ WhaleTag has **nine visual themes** that can be selected from Settings → Appea
 | **Deep Ocean** | 深海蓝 | Dark | Deep, immersive, blue-toned | Focused deep work, night usage |
 | **Dawn Blush** | 晨曦粉 | Light | Soft, warm, rosy | Gentle daytime use, creative writing |
 | **Forest Ink** | 森林墨 | Dark | Rich, natural, green-toned | Calm night work, reading |
+| **Soft Amber** | 柔光琥珀 | Light | Muted olive-amber, low glare | Long editing sessions, dim rooms |
+| **High Contrast** | 高对比 | Light | Pure black on white, maximal legibility | Accessibility, bright environments |
 
-The first three are the classic appearance modes (light / dark / system). The remaining six are curated full-theme presets that bind a fixed color palette to a fixed effective mode (`warm-paper`, `frosted-mint`, and `dawn-blush` always render as light; `midnight-plum`, `deep-ocean`, and `forest-ink` always render as dark).
+The first three are the classic appearance modes (light / dark / system). The remaining eight are curated full-theme presets that bind a fixed color palette to a fixed effective mode (`warm-paper`, `frosted-mint`, `dawn-blush`, `soft-amber`, and `high-contrast` always render as light; `midnight-plum`, `deep-ocean`, and `forest-ink` always render as dark).
 
 All themes share the **same layout structure** and **component sizes**; only colors change.
 
-> The nine theme modes are persisted in `settings.themeMode`. The curated themes are implemented via `THEME_MODE_PRESET_MAP` in `src/renderer/theme/presets.ts` and rendered in `Whale_UI.pen` frames `HV6Ci`, `fkv8b`, and `n50SC2`.
+> The eleven theme modes are persisted in `settings.themeMode`. The curated themes are implemented via `THEME_MODE_PRESET_MAP` in `src/renderer/theme/presets.ts` and rendered in `Whale_UI.pen` frames `HV6Ci`, `fkv8b`, and `n50SC2`.
 
 ---
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import path from 'path';
 import os from 'os';
 import { promises as fsp } from 'fs';
-import { assertWithinAllowedRoot, setAllowedRoots } from './allowed-roots';
+import { assertWithinAllowedRoot, isConfiguredRoot, setAllowedRoots } from './allowed-roots';
 import { CASE_INSENSITIVE_FS } from './path-fold';
 
 /** Per-test scratch directory under the OS temp root. */
@@ -48,6 +48,18 @@ describe('allowed roots guard', () => {
       );
     } finally {
       await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('allows descendants when the configured root is a filesystem root', () => {
+    const root = path.parse(process.cwd()).root;
+    try {
+      setAllowedRoots([root]);
+      assert.doesNotThrow(() =>
+        assertWithinAllowedRoot(path.join(root, 'whale-root-guard', 'child.txt'))
+      );
+    } finally {
+      setAllowedRoots([]);
     }
   });
 
@@ -167,6 +179,51 @@ describe('allowed roots guard', () => {
     } finally {
       await fsp.rm(dir, { recursive: true, force: true });
       await fsp.rm(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('isConfiguredRoot', () => {
+  it('is false when no roots are configured (refuse-all default)', () => {
+    setAllowedRoots([]);
+    assert.equal(isConfiguredRoot('/some/path'), false);
+  });
+
+  it('matches the root itself but not entries inside it', async () => {
+    const dir = await tmpDir();
+    try {
+      setAllowedRoots([dir]);
+      assert.equal(isConfiguredRoot(dir), true);
+      assert.equal(isConfiguredRoot(path.join(dir, 'file.txt')), false);
+      assert.equal(isConfiguredRoot(path.join(dir, 'nested', 'deep.txt')), false);
+    } finally {
+      setAllowedRoots([]);
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('normalizes trailing separators and relative segments', async () => {
+    const dir = await tmpDir();
+    try {
+      setAllowedRoots([dir]);
+      assert.equal(isConfiguredRoot(`${dir}${path.sep}`), true);
+      assert.equal(isConfiguredRoot(path.join(dir, '.', '')), true);
+    } finally {
+      setAllowedRoots([]);
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a path outside every root as not a root', async () => {
+    const dir = await tmpDir();
+    const other = await tmpDir();
+    try {
+      setAllowedRoots([dir]);
+      assert.equal(isConfiguredRoot(other), false);
+    } finally {
+      setAllowedRoots([]);
+      await fsp.rm(dir, { recursive: true, force: true });
+      await fsp.rm(other, { recursive: true, force: true });
     }
   });
 });

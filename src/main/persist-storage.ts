@@ -97,8 +97,11 @@ export async function persistDelete(key: string): Promise<void> {
   try {
     await fsp.unlink(filePathForKey(key));
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.error('[persist-storage] delete failed for', key, e);
-    }
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return;
+    console.error('[persist-storage] delete failed for', key, e);
+    // Re-throw: a purge that leaves the blob on disk "succeeds" in the renderer
+    // but the old state resurrects on the next launch. The caller (redux-persist
+    // adapter) must see the failure instead.
+    throw e;
   }
 }

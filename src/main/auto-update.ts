@@ -67,6 +67,14 @@ const _listeners: AppUpdateListener = {
 // `AppUpdateCheckResult` for the originating promise, so the wrapper
 // helper dispatches once.
 let _checkInFlight: Promise<AppUpdateCheckResult> | null = null;
+// `downloadUpdate()` is also user-triggered (Settings button). Double-clicking
+// it used to start two downloads; `electron-updater` rejects the second with
+// "download already in progress", which the renderer surfaced as an error
+// toast while the first download was still running fine.
+let _downloadInFlight: Promise<{
+  kind: 'downloading' | 'error';
+  error?: string;
+}> | null = null;
 
 /** Wire `electron-updater` events into our local subscriber Set. Idempotent. */
 function wireAutoUpdaterEvents(): void {
@@ -214,14 +222,23 @@ export async function downloadUpdate(): Promise<{
   if (!app.isPackaged) {
     return { kind: 'error', error: 'unsupported' };
   }
+  if (_downloadInFlight) return _downloadInFlight;
+
+  _downloadInFlight = (async () => {
+    try {
+      await autoUpdater.downloadUpdate();
+      return { kind: 'downloading' as const };
+    } catch (e) {
+      return {
+        kind: 'error' as const,
+        error: e instanceof Error ? e.message : String(e),
+      };
+    }
+  })();
   try {
-    await autoUpdater.downloadUpdate();
-    return { kind: 'downloading' };
-  } catch (e) {
-    return {
-      kind: 'error',
-      error: e instanceof Error ? e.message : String(e),
-    };
+    return await _downloadInFlight;
+  } finally {
+    _downloadInFlight = null;
   }
 }
 
@@ -231,10 +248,18 @@ export async function downloadUpdate(): Promise<{
  */
 export function quitAndInstall(): void {
   if (!app.isPackaged) return;
-  // `isSilent` defaults to `false` so the user sees the OS-level
-  // installer progress (e.g. NSIS dialog). Renderer can override
-  // later by re-exporting with `{ isSilent: true }` if needed.
-  autoUpdater.quitAndInstall();
+  try {
+    // `isSilent` defaults to `false` so the user sees the OS-level
+    // installer progress (e.g. NSIS dialog). Renderer can override
+    // later by re-exporting with `{ isSilent: true }` if needed.
+    autoUpdater.quitAndInstall();
+  } catch (e) {
+    // Reached when the renderer asks to install before a download completed
+    // (double click / stale state). Electron throws synchronously; without
+    // this guard it would escape the IPC listener as an uncaught exception.
+    // eslint-disable-next-line no-console
+    console.error('[auto-update] quitAndInstall failed:', e);
+  }
 }
 
 /** Render-side subscription. Returns the unsubscribe function. */

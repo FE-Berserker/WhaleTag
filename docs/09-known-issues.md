@@ -35,7 +35,7 @@ npm run dev
 
 改了 settings 关闭重启后全部回到 `themeMode: 'light'` / `viewDepth: 1` / `language: 'en'` 等默认。真实根因是 **`autoMergeLevel1` reconciler 跳过整个 settings slice 的 rehydration**(不是写盘丢失),叠加三层 bug:
 
-1. **rehydration 核心**:`src/renderer/reducers/settings.ts` keybindings 迁移 `base = { ...base, keybindings: sanitizeKeybindings(base.keybindings) }` —— `sanitizeKeybindings` 总返回**新对象**;`autoMergeLevel1` 见 `originalState[key] !== reducedState[key]` 跳过整个 slice 合并
+1. **rehydration 核心**:[`src/renderer/reducers/settings/system.ts`](../src/renderer/reducers/settings/system.ts) 的 keybindings 迁移 `base = { ...base, keybindings: sanitizeKeybindings(base.keybindings) }` —— `sanitizeKeybindings` 总返回**新对象**;`autoMergeLevel1` 见 `originalState[key] !== reducedState[key]` 跳过整个 slice 合并
 2. **userData 路径分裂**:开发期直接 `electron.exe main.js` 启动时,`app.getName()` 退化为 `"Electron"`,userData 落到 `%APPDATA%/Electron/`,与打包应用两套入口互不感知
 3. **写盘非原子 + 错误静默**:`persistWrite` 用 `writeFileSync` 直写主文件,部分写入 + `JSON.parse` 抛错被吞
 
@@ -180,7 +180,7 @@ Task reminder check failed: Error: Error invoking remote method 'index:build':
 4. `setAllowedRoots` 接着到,把 `<Test>` 注册进 allowedRoots,但 `TaskReminder` 的 deps `[enabled, location, pendingTags]` 没变,**不会重跑**。
 5. `TaskReminder.tsx:131` 的 `console.warn` 把错误吞掉,UI 不报。
 
-[LocationIndexContextProvider.tsx:99](src/renderer/hooks/LocationIndexContextProvider.tsx#L99) 的 `build` 回调有同样的依赖,但只在用户点击"重建索引"时触发,通常晚于 Root 的 effect,所以表现不明显 —— 不修也不会出问题。
+[LocationIndexContextProvider.tsx](../src/renderer/hooks/LocationIndexContextProvider.tsx) 的 `build` 回调有同样的依赖,但只在用户点击"重建索引"时触发,通常晚于 Root 的 effect,所以表现不明显 —— 不修也不会出问题。
 
 **修复**(`src/renderer/services/allowed-roots.ts`,新文件):
 
@@ -209,7 +209,7 @@ Task reminder check failed: Error: Error invoking remote method 'index:build':
 
 ## 17. pdf-viewer 已知坑与已修复(Phase 1/2, 2026-07-06/07)
 
-✅ **pdf-viewer 已随 0.4.9 瘦身移除**(2026-09,连同 `shared/pdfjs-in-iframe.ts` 会话工厂与其测试、AI 框选提问管线、`requestFileBytes`/`fs:readFileRange` 字节桥、`requestPdfAsset` 资产服务),本节 4 项历史坑随模块删除归档。通用教训仍然有效:①多页内容容器的高度管理走"溢出 + 滚动"路径,不要走"flex 平均压缩"路径 —— 用户报"每页/每项被挤成 1/N"几乎一定是 flex 子项默认 `flex-shrink: 1` 被压扁,dump 父子 `offsetHeight` + computed `flex-shrink` 再动手;②pdfjs 的 API 名同型异(`PDFDocumentProxy.cleanup(): Promise` vs `PDFPageProxy.cleanup(): boolean`)照 `.d.ts` 抄,别凭记忆。PDF 文件支持未丢:主进程缩略图(`thumb-render.ts`)+ 全文索引(`fulltext.ts`)仍用 pdfjs-dist,详见 [docs/06](./06-thumbnails.md) / [docs/04](./04-file-io.md)。
+✅ **pdf-viewer 已随 0.4.9 瘦身移除**(2026-09,连同 `shared/pdfjs-in-iframe.ts` 会话工厂与其测试、AI 框选提问管线、`requestFileBytes`/`fs:readFileRange` 字节桥、`requestPdfAsset` 资产服务),本节 4 项历史坑随模块删除归档。通用教训仍然有效:①多页内容容器的高度管理走"溢出 + 滚动"路径,不要走"flex 平均压缩"路径 —— 用户报"每页/每项被挤成 1/N"几乎一定是 flex 子项默认 `flex-shrink: 1` 被压扁,dump 父子 `offsetHeight` + computed `flex-shrink` 再动手;②pdfjs 的 API 名同型异(`PDFDocumentProxy.cleanup(): Promise` vs `PDFPageProxy.cleanup(): boolean`)照 `.d.ts` 抄,别凭记忆。PDF 文件支持未丢:主进程缩略图(`thumb-render.ts`)+ 全文索引(`fulltext.ts`)仍用 pdfjs-dist,详见 [docs/06](./06-thumbnails.md) / [docs/04](./04-search-index.md)。
 
 ## 18. md-editor 已知坑
 
@@ -246,9 +246,9 @@ const nodeRequire = /* createRequire() */ undefined;
 
 ## 20. 工具链硬化:测试自动发现 + pretest 类型闸门 (2026-07-09)
 
-**问题 A — 测试脚本漏跑**:`package.json` 的 `test` 曾是硬编码 91 个文件的手维护列表。实测磁盘 98 个 `.test.ts(x)`,**8 个从未跑过**(含 [EntryContextMenu.test.tsx](../src/renderer/components/EntryContextMenu.test.tsx) / [PeriodTagDialog.test.tsx](../src/renderer/components/PeriodTagDialog.test.tsx) / gantt hooks / [locations.test.ts](../src/renderer/reducers/locations.test.ts) / [migrate-date-tags.test.ts](../src/main/migrate-date-tags.test.ts) / 2 个 drawio 脚本测试),外加 1 个幽灵条目指向不存在的 `text-viewer/text-stats.test.ts`。[TaskView.test.tsx](../src/renderer/components/TaskView.test.tsx) 虽在列表里但 12 个 case 全失败(缺 `IOActionsContextProvider` 包裹),`npm test` 一直是红的 —— 只是没被当硬闸门。
+**问题 A — 测试脚本漏跑**(2026-07 历史快照,文件数为当时口径):`package.json` 的 `test` 曾是硬编码 91 个文件的手维护列表。当时实测磁盘 98 个 `.test.ts(x)`,**8 个从未跑过**(含 [EntryContextMenu.test.tsx](../src/renderer/components/EntryContextMenu.test.tsx) / [PeriodTagDialog.test.tsx](../src/renderer/components/PeriodTagDialog.test.tsx) / gantt hooks / [locations.test.ts](../src/renderer/reducers/locations.test.ts) / [migrate-date-tags.test.ts](../src/main/migrate-date-tags.test.ts) / 2 个 drawio 脚本测试),外加 1 个幽灵条目指向不存在的 `text-viewer/text-stats.test.ts`。[TaskView.test.tsx](../src/renderer/components/TaskView.test.tsx) 虽在列表里但 12 个 case 全失败(缺 `IOActionsContextProvider` 包裹),`npm test` 一直是红的 —— 只是没被当硬闸门。
 
-**修复**:[scripts/run-tests.cjs](../scripts/run-tests.cjs) 用 glob 自动发现 `src` + `scripts` 下全部测试交给 `electron --test`,新增测试无需改 package.json。补全 2 个测试文件的 provider 包裹(对照一直绿着的 [KanbanView.test.tsx](../src/renderer/components/KanbanView.test.tsx))。全套从"红"修到 **1702 绿**(每批加测试递增)。
+**修复**:[scripts/run-tests.cjs](../scripts/run-tests.cjs) 用 glob 自动发现 `src` + `scripts` 下全部测试交给 `electron --test`,新增测试无需改 package.json。补全 2 个测试文件的 provider 包裹(对照一直绿着的 [KanbanView.test.tsx](../src/renderer/components/KanbanView.test.tsx))。全套从"红"修到 1702 绿(当时口径;当前规模见 [docs/01 §10](./01-architecture.md))。
 
 **问题 B — 构建全链路不做类型检查**:所有 `build:*` 带 `TS_NODE_TRANSPILE_ONLY` + ts-loader `transpileOnly`,无 CI、无 pretest 钩子。`src/main` 里有个类型导入路径错(`../../../shared/whale-meta`,多一层 `../`),运行时是 type-position 被擦除所以不崩,但 `tsc` 报错 —— 被 transpileOnly 掩盖已久。
 

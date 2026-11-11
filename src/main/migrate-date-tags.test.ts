@@ -265,6 +265,26 @@ describe('runMigration — integration over a tmp directory', () => {
     assert.equal(content, '{ this is not json');
   });
 
+  it('reports non-ENOENT access failures instead of silently skipping them', async (t) => {
+    const subRoot = path.join(root, 'access-error');
+    await fsp.mkdir(path.join(subRoot, META_DIR), { recursive: true });
+    const originalAccess = fsp.access.bind(fsp);
+    t.mock.method(fsp, 'access', async (target: Parameters<typeof fsp.access>[0]) => {
+      if (typeof target === 'string' && target.includes('access-error')) {
+        const err = new Error('simulated access denial') as NodeJS.ErrnoException;
+        err.code = 'EACCES';
+        throw err;
+      }
+      return originalAccess(target);
+    });
+
+    const r = await runMigration([root]);
+    const reported = r.errors.filter((entry) => entry.path.includes('access-error'));
+    assert.equal(reported.length, 2);
+    assert.ok(r.totalErrors >= 2);
+    assert.ok(reported.every((entry) => entry.message.includes('simulated access denial')));
+  });
+
   it('handles empty allowedRoots', async () => {
     const r = await runMigration([]);
     assert.equal(r.totalScanned, 0);

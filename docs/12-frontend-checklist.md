@@ -153,7 +153,7 @@
 
 ### 通用
 
-- [ ] 双击文本/代码/图片/PDF/媒体/Office/电子书/图表/压缩包/CAD 文件,在 Whale 面板内打开对应扩展
+- [ ] 双击文本/代码/图片/HEIC/HTML/JSON/字体/图表文件,在 Whale 面板内打开对应扩展
 - [ ] 双击无匹配扩展的文件回退 `shell.openPath`
 - [ ] 右键「Open With...」子菜单
 - [ ] Settings → Extensions 可设置用户默认扩展
@@ -259,7 +259,7 @@ image-viewer 11 种格式,jpg/jpeg/png/gif/webp/bmp/avif/tiff/tif/ico/svg;Lightb
 - [ ] `PeriodTagDialog`:`end >= start` 校验(允许单日);`onConfirm(period, start, end)`
 - [ ] 拖 `period:` chip 到文件行 / 多选 selection 弹对话框;不应用到日历 DayCell
 
-> `useNow()` hook 当前仅 3 个调用点(FileList / PropertiesTray ×2 / TagMetaContextProvider)。其他 `tagDisplayLabel` 走默认 `now = new Date()`。
+> `useNow()` 仅 FileList 直挂且有过滤门控;TagMetaProvider 按日期族条件订阅,PropertiesTray 在 addTag 时取当前时间。其他 `tagDisplayLabel` 走默认 `now = new Date()`。
 
 ---
 
@@ -278,13 +278,13 @@ image-viewer 11 种格式,jpg/jpeg/png/gif/webp/bmp/avif/tiff/tif/ico/svg;Lightb
 
 ## 六、缩略图管线
 
-### T1–T5 + T8
+### 按 ThumbKind
 
-- [ ] 视频首帧(ffmpeg `-ss 1`)
-- [ ] PDF 首页(pdfjs + napi canvas + sharp)
-- [ ] Office 首页(经 LibreOffice 转 PDF + 复用 pdf)
-- [ ] 电子书封面(EPUB/CBZ/FB2/MOBI/AZW/AZW3)
-- [ ] 字体预览(Aa + pangram + 数字)
+- [ ] 图片缩略图(`image`:jpg/png/gif/webp/bmp/avif/tiff/tif/ico 等)
+- [ ] SVG 缩略图(`svg`)
+- [ ] 视频首帧(`video`,ffmpeg `-ss 1`)
+- [ ] PDF 首页(`pdf`,pdfjs + napi canvas + sharp)
+- [ ] 字体预览(`font`,Aa + pangram + 数字)
 - [ ] 文件夹缩略图 / 背景(wst.jpg + wsb.jpg)
 - [ ] 失败静默回退 FileTypeIcon
 
@@ -297,7 +297,7 @@ image-viewer 11 种格式,jpg/jpeg/png/gif/webp/bmp/avif/tiff/tif/ico/svg;Lightb
 
 ### FileTypeIcon(39 类)
 
-- [ ] 常见 19 个主类(见 [docs/06-thumbnails.md §5](./06-thumbnails.md))
+- [ ] 39 个主类全覆盖(见 [docs/06-thumbnails.md §5](./06-thumbnails.md))
 - [ ] 3D 品牌色细分(`ma/mb/max/skp/c4d/3dm/ztl/zpr/sldprt/sldasm/slddrw` 等)
 - [ ] 多段名(`archive.tar.gz`)取最后一段
 - [ ] 文件夹图标不被 FileTypeIcon 接管

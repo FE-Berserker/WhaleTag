@@ -51,7 +51,6 @@ import {
   isAnyDateShapeTag,
   resolveInputTag,
 } from '../../shared/smart-tags';
-import { useNow } from '-/hooks/useNow';
 
 interface PropertiesTrayProps {
   entries: DirEntry[];
@@ -91,10 +90,6 @@ function useTagActions({
   saveMany: (updates: { entry: DirEntry; meta: SidecarMeta }[]) => Promise<void>;
 }) {
   const dispatch = useDispatch();
-  // Phase 3 / freshness: needed by `resolveInputTag` so `today` /
-  // `tomorrow` / etc. typed in the chip input resolve to the right
-  // concrete value at apply time. Same hook as the tag library uses.
-  const now = useNow();
   const tagColors = useSelector(
     (s: RootState) => s.settings?.tagColors ?? {}
   );
@@ -140,6 +135,9 @@ function useTagActions({
 
   return {
     addTag: (tag: string) => {
+      // Resolve relative date input at action time; no minute subscription is
+      // needed while the tray is idle.
+      const now = new Date();
       ensureColored(tag);
       return applyToTargets((current) => {
         // Resolve user input through `resolveInputTag`:
@@ -213,17 +211,13 @@ export default function PropertiesTray({
   // (path-keyed, single source of truth across depth=1 and depth>1).
   const { tagsByName, descByName } = useDirectoryContent();
   const { save, saveMany } = useTagMetaContext();
-  // Phase 3 / freshness: `now` is needed by `resolveInputTag` so that
-  // `today` / `tomorrow` / etc. resolve to the right concrete value.
-  // The hook ticks once a minute; same source as the tag library uses.
-  const now = useNow();
   const { renameEntry } = useIOActionsContext();
   const tagColors = useSelector(
     (s: RootState) => s.settings?.tagColors ?? {}
   );
   const tagGroups = useSelector((s: RootState) => s.taglibrary?.groups ?? []);
   const stages = useSelector((s: RootState) => s.workflow?.stages ?? []);
-  const stageValues = stages.map((s) => s.value);
+  const stageValues = useMemo(() => stages.map((s) => s.value), [stages]);
   const tagShape = useSelector(
     (s: RootState) => s.settings?.tagShape ?? 'rounded'
   );
@@ -236,13 +230,22 @@ export default function PropertiesTray({
   // there's one dialog surface for both entry points.
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const resizingRef = useRef<{
+    element: HTMLElement;
+    pointerId: number;
     startX: number;
     startWidth: number;
+    fallbackListeners?: {
+      pointerUp: (event: PointerEvent) => void;
+      pointerCancel: (event: PointerEvent) => void;
+    };
   } | null>(null);
+  const [previewWidth, setPreviewWidth] = useState<number | null>(null);
 
   // Guard against persisted widths from before MIN_WIDTH/MAX_WIDTH existed or
-  // any out-of-band state.
+  // any out-of-band state. During a drag only the local preview changes; the
+  // caller's persisted setting is committed once on pointerup.
   const effectiveWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, width));
+  const displayedWidth = previewWidth ?? effectiveWidth;
 
   const single = entries.length === 1 ? entries[0] : null;
 
@@ -339,34 +342,107 @@ export default function PropertiesTray({
     }
   }, [single, readOnly, newName, renameEntry]);
 
+  const previewResize = useCallback((e: React.PointerEvent<HTMLElement>) => {
+    const drag = resizingRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    const delta = drag.startX - e.clientX;
+    setPreviewWidth(
+      Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, drag.startWidth + delta))
+    );
+  }, []);
+
+  const finishResize = useCallback(
+    (
+      e: Pick<PointerEvent, 'pointerId' | 'clientX'>,
+      commit: boolean,
+      releaseCapture = true
+    ) => {
+      const drag = resizingRef.current;
+      if (!drag || drag.pointerId !== e.pointerId) return;
+      const delta = drag.startX - e.clientX;
+      const finalWidth = Math.max(
+        MIN_WIDTH,
+        Math.min(MAX_WIDTH, drag.startWidth + delta)
+      );
+      if (drag.fallbackListeners) {
+        window.removeEventListener(
+          'pointerup',
+          drag.fallbackListeners.pointerUp
+        );
+        window.removeEventListener(
+          'pointercancel',
+          drag.fallbackListeners.pointerCancel
+        );
+        drag.fallbackListeners = undefined;
+      }
+      resizingRef.current = null;
+      setPreviewWidth(null);
+      if (releaseCapture) {
+        try {
+          drag.element.releasePointerCapture(drag.pointerId);
+        } catch {
+          // Capture may already have been released by the browser.
+        }
+      }
+      if (commit && finalWidth !== drag.startWidth) {
+        onWidthChange(finalWidth);
+      }
+    },
+    [onWidthChange]
+  );
+
   const startResize = useCallback(
-    (e: React.MouseEvent) => {
+    (e: React.PointerEvent<HTMLElement>) => {
+      if (resizingRef.current) return;
       e.preventDefault();
-      resizingRef.current = {
+      const element = e.currentTarget;
+      const drag: NonNullable<typeof resizingRef.current> = {
+        element,
+        pointerId: e.pointerId,
         startX: e.clientX,
         startWidth: effectiveWidth,
       };
-
-      const onMove = (ev: MouseEvent) => {
-        if (!resizingRef.current) return;
-        const delta = resizingRef.current.startX - ev.clientX;
-        const next = Math.max(
-          MIN_WIDTH,
-          Math.min(MAX_WIDTH, resizingRef.current.startWidth + delta)
-        );
-        onWidthChange(next);
-      };
-
-      const onUp = () => {
-        resizingRef.current = null;
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-      };
-
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
+      resizingRef.current = drag;
+      try {
+        element.setPointerCapture(e.pointerId);
+      } catch {
+        // Without capture, only this gesture's up/cancel needs a window
+        // fallback. Moves still preview locally through the handle.
+        const pointerUp = (event: PointerEvent) => finishResize(event, true);
+        const pointerCancel = (event: PointerEvent) =>
+          finishResize(event, false);
+        drag.fallbackListeners = { pointerUp, pointerCancel };
+        window.addEventListener('pointerup', pointerUp);
+        window.addEventListener('pointercancel', pointerCancel);
+      }
     },
-    [effectiveWidth, onWidthChange]
+    [effectiveWidth, finishResize]
+  );
+
+  useEffect(
+    () => () => {
+      const drag = resizingRef.current;
+      resizingRef.current = null;
+      if (drag) {
+        if (drag.fallbackListeners) {
+          window.removeEventListener(
+            'pointerup',
+            drag.fallbackListeners.pointerUp
+          );
+          window.removeEventListener(
+            'pointercancel',
+            drag.fallbackListeners.pointerCancel
+          );
+          drag.fallbackListeners = undefined;
+        }
+        try {
+          drag.element.releasePointerCapture(drag.pointerId);
+        } catch {
+          // The element may already have lost capture during unmount.
+        }
+      }
+    },
+    []
   );
 
   if (entries.length === 0) return null;
@@ -374,7 +450,7 @@ export default function PropertiesTray({
   return (
     <Box
       sx={{
-        width: effectiveWidth,
+        width: displayedWidth,
         maxWidth: '100%',
         minWidth: 0,
         flexShrink: 0,
@@ -390,7 +466,12 @@ export default function PropertiesTray({
     >
       {/* Resize handle */}
       <Box
-        onMouseDown={startResize}
+        data-testid="properties-tray-resize-handle"
+        onPointerDown={startResize}
+        onPointerMove={previewResize}
+        onPointerUp={(e) => finishResize(e, true)}
+        onPointerCancel={(e) => finishResize(e, false)}
+        onLostPointerCapture={(e) => finishResize(e, false, false)}
         sx={{
           position: 'absolute',
           left: 0,
@@ -398,6 +479,7 @@ export default function PropertiesTray({
           bottom: 0,
           width: 4,
           cursor: 'col-resize',
+          touchAction: 'none',
           zIndex: 1,
           '&:hover': { bgcolor: 'primary.main', opacity: 0.3 },
         }}

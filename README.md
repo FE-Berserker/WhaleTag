@@ -65,9 +65,9 @@ whole library stays movable.
 | Perspectives | list / grid / gallery / **task** (Kanban + Matrix + **Gantt**) / calendar (5 levels) / mapique / folderviz / tagcloud / knowledge-graph |
 | Tagging | `wsd.json` aggregate sidecar; mutex families (rating 1–5 / workflow / quadrant / smart date ×7 / period); inline editor; 3-tier color fallback |
 | Search | SQLite FTS5 over filenames + tags (trigram) + fulltext; advanced `SearchQuery` (10 fields); saved searches |
-| Thumbnails | image / svg / video / pdf / office / ebook / font (7 kinds) + folder thumbnails; 39 fallback icons |
+| Thumbnails | image / svg / video / pdf / font (5 kinds) + folder thumbnails; 39 fallback icons |
 | Themes | **11 themes** (3 classic + 8 curated); `'system'` is always resolved before reaching MUI |
-| Extensions | **15 built-in** viewers/editors; revision history; Open With; archive-viewer decodes 9 formats; cad-viewer 4 tiers |
+| Extensions | **8 built-in** viewers/editors (drawio, excalidraw, font, heic, html, image, json, text); revision history; Open With |
 
 ### Tech stack
 
@@ -77,7 +77,7 @@ whole library stays movable.
 | UI framework | **React** 18 |
 | Language | **TypeScript** 5.9 (`jsx: react-jsx`, `module: CommonJS`) |
 | UI components | **MUI** 9 + Emotion |
-| State | **Redux** + react-redux + redux-thunk (plain reducers, no Toolkit) |
+| State | **Redux** + react-redux (plain reducers, no Toolkit) |
 | Persistence | **redux-persist** (synced through main-process IPC) |
 | i18n | **i18next** + react-i18next (`common` namespace, en / zh / zh-TW / ja / ko) |
 | Search index | **SQLite FTS5** (per-location `index.db`) |
@@ -137,7 +137,7 @@ server. The renderer reloads on every save; main-process changes restart Electro
 ### Build for production
 
 ```bash
-npm run build      # build main + renderer into release/app/dist
+npm run build      # build main + extensions + renderer into release/app/dist
 npm start          # run the production build
 ```
 
@@ -152,19 +152,15 @@ npm run package:linux  # Linux (AppImage)
 
 Output lands in `release/build/`.
 
-> **Optional runtime tooling** (for office / CAD thumbnails): LibreOffice and
-> ODAFileConverter are needed at runtime. They are **not** committed — download them
-> yourself and place the installers in `tools/`. See
-> [docs/14-packaging.md](docs/14-packaging.md).
-
 ### Scripts
 
 | Script | What it does |
 |--------|--------------|
 | `npm run dev` | Dev mode (main watch + renderer dev server + Electron) |
-| `npm run build` | Production build (main + renderer) |
+| `npm run build` | Production build (main + extensions + renderer) |
 | `npm start` | Run the production build |
 | `npm run package` | Build + electron-builder installer |
+| `npm test` | Full test suite (`pretest` runs `type-check` first) |
 | `npm run lint` | ESLint |
 | `npm run type-check` | `tsc --noEmit` |
 | `npm run clean` | Remove build output |
@@ -172,7 +168,8 @@ Output lands in `release/build/`.
 ### Documentation
 
 The `docs/` folder describes **current code behavior** per module (not changelogs).
-Start at [plan.md](plan.md) — it is the entry index into `docs/01-*.md` … `docs/14-*.md`.
+Start at [plan.md](plan.md) — it is the entry index into `docs/01-*.md` … `docs/21-*.md`
+plus [docs/UI.md](docs/UI.md).
 
 ### License
 
@@ -198,9 +195,9 @@ MIT. Third-party notices (e.g. bundled FFmpeg under GPL-3.0) live in [LICENSES/]
 | 视角 | list / grid / gallery / **task**(Kanban + Matrix + **Gantt**)/ calendar(5 档)/ mapique / folderviz / tagcloud / knowledge-graph |
 | 标签 | `wsd.json` 聚合 sidecar;互斥家族(评分 1–5 / workflow / quadrant / smart date 7 种 / period);InlineTagInput 编辑;颜色三级回退 |
 | 搜索 | SQLite FTS5 文件名 + 标签(trigram)+ 全文;高级查询 `SearchQuery` 10 字段;保存搜索 |
-| 缩略图 | image / svg / video / pdf / office / ebook / font(7 种)+ 文件夹缩略图;39 类回退图标 |
+| 缩略图 | image / svg / video / pdf / font(5 种)+ 文件夹缩略图;39 类回退图标 |
 | 主题 | **11 种**(3 经典 + 8 策划);`'system'` 必须先解析再流入 MUI |
-| 扩展 | **15 个内置**(viewer / editor);修订历史;右键 Open With;archive-viewer 解码 9 种;cad-viewer 4 tier |
+| 扩展 | **8 个内置**(drawio / excalidraw / font / heic / html / image / json / text 查看器与编辑器);修订历史;右键 Open With |
 
 ### 技术栈
 
@@ -210,7 +207,7 @@ MIT. Third-party notices (e.g. bundled FFmpeg under GPL-3.0) live in [LICENSES/]
 | UI 框架 | **React** 18 |
 | 语言 | **TypeScript** 5.9(`jsx: react-jsx`、`module: CommonJS`)|
 | UI 组件 | **MUI** 9 + Emotion |
-| 状态 | **Redux** + react-redux + redux-thunk(纯 reducer,无 Toolkit)|
+| 状态 | **Redux** + react-redux(纯 reducer,无 Toolkit)|
 | 持久化 | **redux-persist**(走主进程同步 IPC)|
 | 国际化 | **i18next** + react-i18next(`common` namespace,en / zh / zh-TW / ja / ko)|
 | 搜索索引 | **SQLite FTS5**(每个位置一个 `index.db`)|
@@ -253,7 +250,7 @@ npm run dev
 ### 生产构建
 
 ```bash
-npm run build      # 构建主进程 + 渲染层到 release/app/dist
+npm run build      # 构建主进程 + 扩展 + 渲染层到 release/app/dist
 npm start          # 运行生产构建
 ```
 
@@ -268,14 +265,10 @@ npm run package:linux  # Linux (AppImage)
 
 输出在 `release/build/`。
 
-> **可选运行时工具**(office / CAD 缩略图需要):运行时需要 LibreOffice 和
-> ODAFileConverter。它们**不进 git**——请自行下载并放到 `tools/` 目录。详见
-> [docs/14-packaging.md](docs/14-packaging.md)。
-
 ### 文档
 
 `docs/` 下按模块描述**当前代码行为**(不是变更记录)。入口是 [plan.md](plan.md),
-它索引了 `docs/01-*.md` … `docs/14-*.md` 各模块文档。
+它索引了 `docs/01-*.md` … `docs/21-*.md` 各模块文档以及 [docs/UI.md](docs/UI.md)。
 
 ### 许可证
 

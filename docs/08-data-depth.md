@@ -44,7 +44,7 @@ type DirectoryContentContextValue = DirectoryContentMetaValue & DirectoryUIValue
 
 ## 2. 全局递归深度 `viewDepth`
 
-[src/renderer/reducers/settings.ts](../src/renderer/reducers/settings.ts):
+[src/renderer/reducers/settings/browser.ts](../src/renderer/reducers/settings/browser.ts)(`settings` 已按域拆分:接口在 [settings/types.ts](../src/renderer/reducers/settings/types.ts),拆分说明见 [docs/01 §13](./01-architecture.md)):
 
 - `viewDepth: number`,clamp `[1, 5]`,默认 `1`(`DEFAULT_VIEW_DEPTH = 1`)(等同"只看当前目录",向后兼容)
 - `SET_VIEW_DEPTH` + `setViewDepth(n)` action
@@ -59,6 +59,7 @@ type DirectoryContentContextValue = DirectoryContentMetaValue & DirectoryUIValue
 **性能护栏**:
 
 - `MAX_RECURSIVE_ENTRIES = 10000` —— 主进程 `listDirectoryRecursive` 切片截断(剩余配额递归)
+- `filterRecursiveEntries` 按相对 root 的完整路径剪枝:`showHiddenFiles=false` 时,隐藏目录及其所有后代、`.whale` 都不进入 entries 或 sidecar 批量读取,避免出现无父行的文件/幽灵图节点
 - `DirectoryContentContextProvider` 内 `useEffect` 200ms 防抖(`setTimeout` + `debouncedDepth` 守卫),拖动 1→5 只触发 1 次递归 IPC
 - `recursiveTruncated: boolean` 在 context 中暴露,由各消费者决定是否展示
 
@@ -94,9 +95,8 @@ type DirectoryContentContextValue = DirectoryContentMetaValue & DirectoryUIValue
 context 暴露:
 
 - `entries`:深度内**所有可见条目**(文件 + 目录)—— List/Grid/Gallery/Kanban/Calendar/Matrix/Mapique/TagCloud/KnowledgeGraph 用
-- `dirs`:仅目录 —— FolderViz 重建嵌套树用
-
-FolderViz 例外拿 `dirs + entries` 重建嵌套树(context 的 flat 列表直接给 FolderViz 重建树性能差且语义不清)。
+- `dirs`:仅目录的辅助投影
+- FolderViz 直接复用 context 的 `entries`,以 `useMemo` 重建嵌套树;filter 变化不重扫文件系统。
 
 ## 7. loading / error / 截断 UI
 

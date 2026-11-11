@@ -44,22 +44,6 @@ export async function backupRevision(filePath: string): Promise<void> {
   await atomicWriteText(revPath, content);
 }
 
-/**
- * Backs up `filePath` by copying its raw bytes (binary-safe; used for images
- * and other non-text files). No-op when the file does not exist.
- */
-export async function backupRevisionBinary(filePath: string): Promise<void> {
-  if (!existsSync(filePath)) return;
-
-  const ext = path.extname(filePath);
-  const timestamp = encodeTimestamp(new Date().toISOString());
-  const revDir = revisionsDirFor(filePath);
-  const revPath = path.join(revDir, `${timestamp}${ext}`);
-
-  await fsp.mkdir(revDir, { recursive: true });
-  await fsp.copyFile(filePath, revPath);
-}
-
 /** Lists all revisions for a file, newest first. */
 export async function listRevisions(filePath: string): Promise<RevisionInfo[]> {
   const revDir = revisionsDirFor(filePath);

@@ -116,24 +116,9 @@ export function isVideoFile(name: string): boolean {
   return VIDEO_EXT.has(extOf(name));
 }
 
-/** True if `name`'s extension is a thumbnailable PDF format. */
-export function isPdfFile(name: string): boolean {
-  return PDF_EXT.has(extOf(name));
-}
-
 /** True if `name`'s extension is a drawio (diagrams.net) file. */
 export function isDrawioFile(name: string): boolean {
   return DRAWIO_EXT.has(extOf(name));
-}
-
-/** True if `name`'s extension is a HEIC/HEIF image the viewer can decode. */
-export function isHeicFile(name: string): boolean {
-  return HEIC_EXT.has(extOf(name));
-}
-
-/** True if `name`'s extension is a font the viewer can render. */
-export function isFontFile(name: string): boolean {
-  return FONT_EXT.has(extOf(name));
 }
 
 /** The kind of thumbnail Whale can produce for `name`, or null if none. */

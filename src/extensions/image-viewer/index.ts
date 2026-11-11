@@ -132,7 +132,6 @@ const state: LocalState = {
 
 // ── Viewport controller (owns zoom/pan/fit/dragging) ───────────────────
 const controller: ViewportController = createViewportController({
-  imageEl,
   stageEl,
   getNaturalSize: () => {
     if (!imageEl.naturalWidth || !imageEl.naturalHeight) return null;

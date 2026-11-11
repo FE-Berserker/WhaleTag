@@ -194,7 +194,6 @@ export default function MatrixEntryMenu({
   // entry actually carrying a period — if there's none the button does
   // nothing useful.
   const hasPeriod = currentPeriod !== null;
-  const hasStage = currentStage !== null;
 
   // When the menu is dismissed externally (backdrop click / Escape) the
   // anchor states must reset so the submenus don't linger if it re-opens

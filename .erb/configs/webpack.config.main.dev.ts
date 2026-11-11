@@ -37,7 +37,6 @@ export default merge(createBase(), {
       sharp: 'commonjs sharp',
       'better-sqlite3': 'commonjs better-sqlite3',
       'ffmpeg-static': 'commonjs ffmpeg-static',
-      '7zip-bin': 'commonjs 7zip-bin',
       '@napi-rs/canvas': 'commonjs @napi-rs/canvas',
       '@napi-rs/canvas-win32-x64-msvc': 'commonjs @napi-rs/canvas-win32-x64-msvc',
       // P2-7: lazy-loaded via createRequire in lazy-native.ts. See prod config.

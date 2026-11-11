@@ -13,7 +13,7 @@ import {
   copySidecar,
   updateFileTags,
 } from './sidecar';
-import { META_DIR } from '../shared/whale-meta';
+import { META_DIR, SIDECAR_VERSION } from '../shared/whale-meta';
 
 /** Per-test scratch directory under the OS temp root. */
 async function tmpDir(): Promise<string> {
@@ -31,6 +31,58 @@ describe('aggregated sidecar store (wsd.json)', () => {
       const meta = await readSidecar(filePath(dir, 'a.txt'));
       assert.deepEqual(meta?.tags, ['x', 'y']);
       assert.ok(existsSync(wsd(dir)), 'wsd.json created');
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects malformed wsd.json without overwriting existing metadata', async () => {
+    const dir = await tmpDir();
+    try {
+      await fsp.mkdir(path.dirname(wsd(dir)), { recursive: true });
+      const malformed = '{"version":1,"files":{"keep.txt":{"tags":["keep"]}}';
+      await fsp.writeFile(wsd(dir), malformed, 'utf8');
+      await assert.rejects(readSidecar(filePath(dir, 'keep.txt')), SyntaxError);
+      await assert.rejects(writeSidecar(filePath(dir, 'other.txt'), { tags: ['new'] }));
+      assert.equal(await fsp.readFile(wsd(dir), 'utf8'), malformed);
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a structurally invalid wsd.json instead of treating it as empty', async () => {
+    const dir = await tmpDir();
+    try {
+      await fsp.mkdir(path.dirname(wsd(dir)), { recursive: true });
+      await fsp.writeFile(wsd(dir), '{"version":1,"files":null}', 'utf8');
+      await assert.rejects(
+        readSidecar(filePath(dir, 'a.txt')),
+        /Invalid aggregated sidecar format/
+      );
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('surfaces non-ENOENT wsd.json read failures', async () => {
+    const dir = await tmpDir();
+    try {
+      await fsp.mkdir(wsd(dir), { recursive: true });
+      await assert.rejects(readSidecar(filePath(dir, 'a.txt')));
+      await assert.rejects(writeSidecar(filePath(dir, 'a.txt'), { tags: ['new'] }));
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rebuilds a blank wsd.json left by a truncated write', async () => {
+    const dir = await tmpDir();
+    try {
+      await fsp.mkdir(path.dirname(wsd(dir)), { recursive: true });
+      await fsp.writeFile(wsd(dir), '  \n', 'utf8');
+      const file = filePath(dir, 'fresh.txt');
+      await writeSidecar(file, { tags: ['fresh'] });
+      assert.deepEqual((await readSidecar(file))?.tags, ['fresh']);
     } finally {
       await fsp.rm(dir, { recursive: true, force: true });
     }
@@ -163,6 +215,49 @@ describe('aggregated sidecar store (wsd.json)', () => {
     }
   });
 
+  it('never deletes a malformed legacy sidecar during migration', async () => {
+    const dir = await tmpDir();
+    try {
+      const metaDir = path.join(dir, META_DIR);
+      await fsp.mkdir(metaDir, { recursive: true });
+      await fsp.writeFile(
+        path.join(metaDir, 'good.txt.json'),
+        JSON.stringify({ tags: ['kept'] }),
+        'utf8'
+      );
+      const broken = path.join(metaDir, 'broken.txt.json');
+      await fsp.writeFile(broken, '{ "tags": [', 'utf8');
+
+      const meta = await readSidecar(filePath(dir, 'good.txt'));
+      assert.deepEqual(meta?.tags, ['kept'], 'parsed legacy migrated');
+
+      assert.ok(
+        !existsSync(path.join(metaDir, 'good.txt.json')),
+        'parsed legacy removed'
+      );
+      const quarantined = (await fsp.readdir(metaDir)).filter((n) =>
+        n.startsWith('broken.txt.json.corrupt-')
+      );
+      assert.equal(quarantined.length, 1, 'malformed legacy preserved');
+      assert.equal(
+        await fsp.readFile(path.join(metaDir, quarantined[0]), 'utf8'),
+        '{ "tags": [',
+        'malformed bytes preserved verbatim'
+      );
+
+      // The renamed file no longer matches the `.json` legacy scan, so a
+      // second load must not try to migrate it again.
+      const again = await readSidecar(filePath(dir, 'broken.txt'));
+      assert.equal(again, null);
+      const stillThere = (await fsp.readdir(metaDir)).filter((n) =>
+        n.startsWith('broken.txt.json.corrupt-')
+      );
+      assert.equal(stillThere.length, 1);
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('does not re-migrate once wsd.json exists (idempotent)', async () => {
     const dir = await tmpDir();
     try {
@@ -217,6 +312,56 @@ describe('aggregated sidecar store (wsd.json)', () => {
   });
 });
 
+
+describe('readSidecar lat/lng migration concurrency', () => {
+  it('migrates and returns the current map read inside the directory lock', async (t) => {
+    const dir = await tmpDir();
+    try {
+      const target = wsd(dir);
+      await fsp.mkdir(path.dirname(target), { recursive: true });
+      await fsp.writeFile(
+        target,
+        JSON.stringify({
+          version: SIDECAR_VERSION,
+          files: {
+            'a.txt': { lat: 1, lng: 2 },
+            'b.txt': { tags: ['stale'] },
+          },
+        }),
+        'utf8'
+      );
+      const originalRead = fsp.readFile;
+      let aggregateReads = 0;
+      t.mock.method(fsp, 'readFile', async (file, options) => {
+        if (path.resolve(String(file)) === target) {
+          aggregateReads += 1;
+          if (aggregateReads === 2) {
+            // A concurrent writer won before the migration lock: a.txt vanished
+            // and b.txt changed. The old stale-key loop dereferenced undefined.
+            await fsp.writeFile(
+              target,
+              JSON.stringify({
+                version: SIDECAR_VERSION,
+                files: { 'b.txt': { tags: ['current'] } },
+              }),
+              'utf8'
+            );
+          }
+        }
+        return originalRead(file, options);
+      });
+
+      const result = await readSidecars(dir, ['a.txt', 'b.txt']);
+      assert.equal(aggregateReads, 2);
+      assert.deepEqual(result, { 'b.txt': { tags: ['current'] } });
+      assert.deepEqual(JSON.parse(await fsp.readFile(target, 'utf8')).files, {
+        'b.txt': { tags: ['current'] },
+      });
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('readSidecardsForPaths (H.24 R7: cross-dir batch read)', () => {
   it('returns an empty map for an empty input list', async () => {
@@ -281,6 +426,27 @@ describe('readSidecardsForPaths (H.24 R7: cross-dir batch read)', () => {
       assert.ok(!result[filePath(dir, 'untagged.txt')]);
     } finally {
       await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps healthy directory results when another directory is malformed', async () => {
+    const goodDir = await tmpDir();
+    const badDir = await tmpDir();
+    const originalWarn = console.warn;
+    console.warn = () => undefined;
+    try {
+      const goodFile = filePath(goodDir, 'same.txt');
+      const badFile = filePath(badDir, 'same.txt');
+      await writeSidecar(goodFile, { tags: ['healthy'] });
+      await fsp.mkdir(path.dirname(wsd(badDir)), { recursive: true });
+      await fsp.writeFile(wsd(badDir), '{malformed', 'utf8');
+      const result = await readSidecardsForPaths([goodFile, badFile]);
+      assert.deepEqual(result[goodFile]?.tags, ['healthy']);
+      assert.equal(result[badFile], undefined);
+    } finally {
+      console.warn = originalWarn;
+      await fsp.rm(goodDir, { recursive: true, force: true });
+      await fsp.rm(badDir, { recursive: true, force: true });
     }
   });
 

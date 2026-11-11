@@ -25,6 +25,7 @@
 import './viewer.css';
 import type { Font as OpentypeFont } from 'opentype.js';
 import type { HostMessage } from '../../shared/extension-types';
+import { createViewerPrefs } from '../shared/viewer-prefs';
 
 import {
  formatBytes,
@@ -384,70 +385,55 @@ const state: State = {
 
 // --- Persistence ---------------------------------------------------------
 
-const STORAGE_PREFIX = 'font-viewer.';
-
-function lsGet(key: string): string | null {
- try {
- return window.localStorage.getItem(STORAGE_PREFIX + key);
- } catch {
- return null;
- }
-}
-function lsSet(key: string, value: string): void {
- try {
- window.localStorage.setItem(STORAGE_PREFIX + key, value);
- } catch {
- /* sandbox may disable localStorage; silently degrade. */
- }
-}
+const prefs = createViewerPrefs('font-viewer.');
 
 function loadPersistedState() {
- const size = lsGet('size');
+ const size = prefs.getPref('size');
  if (size !== null) {
  const n = parseFloat(size);
  if (Number.isFinite(n)) state.sizeValue = clampSize(n);
  }
- const tr = lsGet('tracking');
+ const tr = prefs.getPref('tracking');
  if (tr !== null) {
  const n = parseFloat(tr);
  if (Number.isFinite(n)) state.tracking = clampTracking(n);
  }
- const ld = lsGet('leading');
+ const ld = prefs.getPref('leading');
  if (ld !== null) {
  const n = parseFloat(ld);
  if (Number.isFinite(n)) state.leading = clampLeading(n);
  }
- const w = lsGet('weight');
+ const w = prefs.getPref('weight');
  if (w !== null) {
  const n = parseFloat(w);
  if (Number.isFinite(n)) state.weight = clampWeight(n);
  }
- const wd = lsGet('width');
+ const wd = prefs.getPref('width');
  if (wd !== null) {
  const n = parseFloat(wd);
  if (Number.isFinite(n)) state.width = clampWidth(n);
  }
- const custom = lsGet('customText');
+ const custom = prefs.getPref('customText');
  if (custom !== null) state.customText = custom;
 }
 
 function persistSize() {
- lsSet('size', String(state.sizeValue));
+ prefs.setPref('size', String(state.sizeValue));
 }
 function persistTracking() {
- lsSet('tracking', String(state.tracking));
+ prefs.setPref('tracking', String(state.tracking));
 }
 function persistLeading() {
- lsSet('leading', String(state.leading));
+ prefs.setPref('leading', String(state.leading));
 }
 function persistWeight() {
- lsSet('weight', String(state.weight));
+ prefs.setPref('weight', String(state.weight));
 }
 function persistWidth() {
- lsSet('width', String(state.width));
+ prefs.setPref('width', String(state.width));
 }
 function persistCustom() {
- lsSet('customText', state.customText);
+ prefs.setPref('customText', state.customText);
 }
 
 // --- DOM sync from state -------------------------------------------------

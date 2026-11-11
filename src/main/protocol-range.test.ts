@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseRange, createFileRangeResponse } from './protocol-range';
+import { Readable } from 'node:stream';
+import {
+  parseRange,
+  createFileRangeResponse,
+  createBackpressuredWebStream,
+} from './protocol-range';
 
 const enc = new TextEncoder();
 const bytes = enc.encode('0123456789ABCDEFGHIJ'); // 20 bytes
@@ -137,6 +142,119 @@ describe('createFileRangeResponse', () => {
     );
     assert.equal(res.status, 200);
     assert.deepEqual(await readBody(res), bytes);
+  });
+
+  it('preserves MIME/CSP headers and serves an exact one-byte offset', async () => {
+    const req = new Request('whale-file:///x', {
+      headers: { Range: 'bytes=10-10' },
+    });
+    const res = createFileRangeResponse(
+      file,
+      req,
+      new Headers({
+        'Content-Type': 'video/mp4',
+        'Content-Security-Policy': "default-src 'none'",
+      })
+    );
+    assert.equal(res.status, 206);
+    assert.equal(res.headers.get('Content-Type'), 'video/mp4');
+    assert.equal(res.headers.get('Content-Security-Policy'), "default-src 'none'");
+    assert.equal(res.headers.get('Content-Range'), 'bytes 10-10/20');
+    assert.deepEqual(await readBody(res), enc.encode('A'));
+  });
+});
+
+const nextTurn = (): Promise<void> =>
+  new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+
+describe('createBackpressuredWebStream', () => {
+  it('does not drain the producer while the consumer is stalled', async () => {
+    const chunkCount = 32;
+    const produced: number[] = [];
+    const source = new Readable({
+      // Keep Node's own permitted read-ahead tiny so the assertion isolates
+      // the adapter's backpressure rather than the producer's buffer size.
+      highWaterMark: 1,
+      read() {
+        const next = produced.length;
+        if (next === chunkCount) {
+          this.push(null);
+          return;
+        }
+        produced.push(next);
+        this.push(Buffer.from([next]));
+      },
+    });
+
+    const body = createBackpressuredWebStream(source);
+    // Construction may fill the web queue once. After that initial pull, the
+    // producer must stay bounded and then quiescent while nobody reads.
+    await nextTurn();
+    await nextTurn();
+    assert.ok(produced.length > 0, 'the initial queue pull should read');
+    assert.ok(
+      produced.length < chunkCount,
+      `stalled consumer caused ${produced.length}/${chunkCount} producer reads`
+    );
+    const stalledAt = produced.length;
+    await nextTurn();
+    assert.equal(produced.length, stalledAt);
+
+    const reader = body.getReader();
+    const first = await reader.read();
+    assert.equal(first.done, false);
+    assert.deepEqual(first.value, new Uint8Array([0]));
+    await nextTurn();
+    assert.ok(
+      produced.length > stalledAt,
+      'a consumer read should permit another producer pull'
+    );
+    assert.ok(produced.length < chunkCount);
+
+    await reader.cancel();
+    assert.equal(source.destroyed, true);
+  });
+
+  it('destroys the producer when the consumer cancels a pending read', async () => {
+    const source = new Readable({ read() {} });
+    const reader = createBackpressuredWebStream(source).getReader();
+    const pending = reader.read();
+    await nextTurn();
+
+    await reader.cancel();
+    const result = await pending;
+    assert.equal(result.done, true);
+    assert.equal(source.destroyed, true);
+  });
+
+  it('propagates producer errors and tears down the stream', async () => {
+    const expected = new Error('producer failed');
+    const source = new Readable({
+      read() {
+        queueMicrotask(() => this.destroy(expected));
+      },
+    });
+    const reader = createBackpressuredWebStream(source).getReader();
+
+    await assert.rejects(reader.read(), (err) => {
+      assert.equal(err, expected);
+      return true;
+    });
+    assert.equal(source.destroyed, true);
+  });
+
+  it('finishes a pending read when the producer is destroyed', async () => {
+    const source = new Readable({ read() {} });
+    const reader = createBackpressuredWebStream(source).getReader();
+    const pending = reader.read();
+    await nextTurn();
+
+    source.destroy();
+    const result = await pending;
+    assert.equal(result.done, true);
+    assert.equal(source.destroyed, true);
   });
 });
 

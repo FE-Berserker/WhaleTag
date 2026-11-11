@@ -25,6 +25,38 @@ export interface DirEntry {
   extension: string;
 }
 
+/** A directory wsd.json that could not be returned as healthy metadata. */
+export type SidecarIssue =
+  | {
+      kind: 'corrupt';
+      reason: 'invalid-json' | 'invalid-shape';
+      dirPath: string;
+      sidecarPath: string;
+      sha256: string;
+      size: number;
+    }
+  | {
+      kind: 'unreadable';
+      reason: 'io';
+      dirPath: string;
+      sidecarPath: string;
+    };
+
+export interface SidecarReadResult {
+  sidecars: Record<string, SidecarMeta>;
+  issues: SidecarIssue[];
+}
+
+export interface RecoverCorruptSidecarRequest {
+  dirPath: string;
+  expectedSha256: string;
+}
+
+export type RecoverCorruptSidecarResult =
+  | { status: 'recovered'; backupPath: string }
+  | { status: 'not-corrupt' }
+  | { status: 'conflict' };
+
 /** A flattened entry in a location's search index (`.whale/wsi.json`). */
 export interface IndexEntry {
   name: string;
@@ -138,6 +170,8 @@ export interface WhaleApi {
   readTextFile: (filePath: string) => Promise<string>;
   /** Reads an arbitrary file as an ArrayBuffer (for creating blob URLs in the renderer). */
   readFile: (filePath: string) => Promise<ArrayBuffer>;
+  /** Reads an arbitrary file as base64, encoded in Main to avoid a byte-array IPC payload. */
+  readFileBase64: (filePath: string) => Promise<string>;
   pathExists: (targetPath: string) => Promise<boolean>;
   openDirectoryDialog: () => Promise<string | null>;
   /** Shows the native file picker restricted to images. Returns null if cancelled. */
@@ -251,6 +285,10 @@ export interface WhaleApi {
     dirPath: string,
     names: string[]
   ) => Promise<Record<string, SidecarMeta>>;
+  readSidecarsDetailed: (
+    dirPath: string,
+    names: string[]
+  ) => Promise<SidecarReadResult>;
   // H.24 R7: read sidecars for an arbitrary set of file paths in a single
   // round trip. The renderer (DirectoryContentContextProvider) groups the
   // recursive scan's flat entry list by parent directory, but the key in the
@@ -259,6 +297,12 @@ export interface WhaleApi {
   readSidecardsForPaths: (
     filePaths: string[]
   ) => Promise<Record<string, SidecarMeta>>;
+  readSidecardsForPathsDetailed: (
+    filePaths: string[]
+  ) => Promise<SidecarReadResult>;
+  recoverCorruptSidecar: (
+    request: RecoverCorruptSidecarRequest
+  ) => Promise<RecoverCorruptSidecarResult>;
   writeSidecar: (filePath: string, meta: SidecarMeta) => Promise<void>;
 
   // Folder metadata (`.whale/wsm.json`) — read returns {} if absent; write

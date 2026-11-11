@@ -8,6 +8,7 @@ import { removeThumbnail, moveThumbnail, copyThumbnail } from '../thumbnail';
 import { invalidateRecursiveScan } from '../recursive-cache';
 import { atomicWriteBytes } from '../atomic-write';
 import { mapWithConcurrency } from '../concurrency';
+import { withLock } from '../dir-lock';
 import { assertWithinAllowedRoot } from '../allowed-roots';
 
 /**
@@ -36,10 +37,16 @@ export async function createDirectory(dirPath: string): Promise<void> {
  */
 export async function createTextFile(filePath: string, content: string): Promise<void> {
   assertWithinAllowedRoot(filePath);
-  if (existsSync(filePath)) {
-    throw new Error(`File already exists: ${filePath}`);
+  try {
+    // Atomic no-clobber create: an existsSync + writeFile pair would allow a
+    // second process to create the file in between and then get overwritten.
+    await fsp.writeFile(filePath, content, { encoding: 'utf8', flag: 'wx' });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+      throw new Error(`File already exists: ${filePath}`);
+    }
+    throw err;
   }
-  await fsp.writeFile(filePath, content, 'utf8');
 }
 
 /** Writes a base64-encoded file (e.g. exported chart image) to disk. */
@@ -187,11 +194,16 @@ export function zipEntries(paths: string[], zipPath: string): Promise<string> {
 export async function renameEntry(oldPath: string, newPath: string): Promise<void> {
   assertWithinAllowedRoot(oldPath);
   assertWithinAllowedRoot(newPath);
-  // Avoid silently overwriting an existing destination.
-  if (existsSync(newPath)) {
-    throw new Error(`A file already exists at: ${newPath}`);
-  }
-  await fsp.rename(oldPath, newPath);
+  // Serialize check+rename per destination folder: two concurrent renames into
+  // the same folder could both pass the exists check and the loser would be
+  // silently replaced (the renderer batches, and MCP clients parallelize calls).
+  await withLock(path.dirname(newPath), async () => {
+    // Avoid silently overwriting an existing destination.
+    if (existsSync(newPath)) {
+      throw new Error(`A file already exists at: ${newPath}`);
+    }
+    await fsp.rename(oldPath, newPath);
+  });
   // Keep the sidecar in sync with the rename/move (best-effort: never fails
   // the rename itself if the sidecar can't be moved).
   try {
@@ -212,22 +224,30 @@ export async function renameEntry(oldPath: string, newPath: string): Promise<voi
  */
 export async function moveEntry(oldPath: string, newPath: string): Promise<void> {
   assertWithinAllowedRoot(oldPath); // destination may be any folder the user picked
-  if (existsSync(newPath)) {
-    throw new Error(`A file already exists at: ${newPath}`);
-  }
-  try {
-    await fsp.rename(oldPath, newPath);
-  } catch (e) {
-    // rename fails with EXDEV across filesystems (e.g. C: -> D:, different
-    // mounts). Fall back to copy-then-delete so the source stays intact
-    // until the copy is durable (merge-over-wipe, never wipe-then-merge).
-    if ((e as NodeJS.ErrnoException).code !== 'EXDEV') throw e;
-    // `errorOnExist` keeps the merge-over-wipe guarantee: if a file appears
-    // at the destination between the pre-check above and now, fail loudly
-    // rather than silently overwriting it (matches importExternal / rename).
-    await fsp.cp(oldPath, newPath, { recursive: true, errorOnExist: true });
-    await fsp.rm(oldPath, { recursive: true, force: false });
-  }
+  // Check+move is serialized per destination folder — see renameEntry.
+  await withLock(path.dirname(newPath), async () => {
+    if (existsSync(newPath)) {
+      throw new Error(`A file already exists at: ${newPath}`);
+    }
+    try {
+      await fsp.rename(oldPath, newPath);
+    } catch (e) {
+      // rename fails with EXDEV across filesystems (e.g. C: -> D:, different
+      // mounts). Fall back to copy-then-delete so the source stays intact
+      // until the copy is durable (merge-over-wipe, never wipe-then-merge).
+      if ((e as NodeJS.ErrnoException).code !== 'EXDEV') throw e;
+      // `force: false` + `errorOnExist` keeps the merge-over-wipe guarantee:
+      // if a file appears at the destination between the pre-check and now,
+      // fail loudly rather than silently overwriting it. (`errorOnExist` is
+      // ignored while `force` is true — Node's default — so both are needed.)
+      await fsp.cp(oldPath, newPath, {
+        recursive: true,
+        force: false,
+        errorOnExist: true,
+      });
+      await fsp.rm(oldPath, { recursive: true, force: false });
+    }
+  });
   try {
     await Promise.all([
       moveSidecar(oldPath, newPath),
@@ -246,10 +266,19 @@ export async function moveEntry(oldPath: string, newPath: string): Promise<void>
  */
 export async function copyEntry(sourcePath: string, destPath: string): Promise<void> {
   assertWithinAllowedRoot(sourcePath); // destination may be any folder the user picked
-  if (existsSync(destPath)) {
-    throw new Error(`A file already exists at: ${destPath}`);
-  }
-  await fsp.cp(sourcePath, destPath, { recursive: true });
+  // Serialized check+copy per destination folder. `force: false` is what makes
+  // `errorOnExist` effective (Node defaults `force` to true and would silently
+  // replace a file that appeared after the pre-check).
+  await withLock(path.dirname(destPath), async () => {
+    if (existsSync(destPath)) {
+      throw new Error(`A file already exists at: ${destPath}`);
+    }
+    await fsp.cp(sourcePath, destPath, {
+      recursive: true,
+      force: false,
+      errorOnExist: true,
+    });
+  });
   try {
     await Promise.all([
       copySidecar(sourcePath, destPath),

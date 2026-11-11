@@ -1,5 +1,6 @@
 import path from 'path';
 import { promises as fsp } from 'fs';
+import { createHash } from 'crypto';
 import {
   META_DIR,
   FOLDER_SIDECAR_FILE,
@@ -12,6 +13,13 @@ import {
 } from '../shared/whale-meta';
 import { atomicWriteJson } from './atomic-write';
 import { withLock } from './dir-lock';
+import { assertWithinAllowedRoot } from './allowed-roots';
+import type {
+  RecoverCorruptSidecarRequest,
+  RecoverCorruptSidecarResult,
+  SidecarIssue,
+  SidecarReadResult,
+} from '../shared/ipc-types';
 
 /**
  * Aggregated per-file sidecar store. Instead of one `<file>.json` per file
@@ -59,26 +67,96 @@ function legacySidecarPath(filePath: string): string {
   return path.join(path.dirname(filePath), META_DIR, `${path.basename(filePath)}.json`);
 }
 
-/** Reads wsd.json; null if missing or invalid. Does NOT migrate. */
-async function loadWsd(dirPath: string): Promise<AggregatedSidecar | null> {
+type SidecarReadError = Error & { sidecarIssue?: SidecarIssue };
+
+function attachSidecarIssue<T extends Error>(error: T, issue: SidecarIssue): T {
+  (error as SidecarReadError).sidecarIssue = issue;
+  return error;
+}
+
+function sidecarIssueFromError(error: unknown): SidecarIssue | null {
+  return error instanceof Error
+    ? ((error as SidecarReadError).sidecarIssue ?? null)
+    : null;
+}
+
+function sha256(bytes: Buffer): string {
+  return createHash('sha256').update(bytes.toString('latin1'), 'latin1').digest('hex');
+}
+
+function corruptIssue(
+  dirPath: string,
+  bytes: Buffer,
+  reason: 'invalid-json' | 'invalid-shape'
+): SidecarIssue {
+  return {
+    kind: 'corrupt',
+    reason,
+    dirPath,
+    sidecarPath: wsdPath(dirPath),
+    sha256: sha256(bytes),
+    size: bytes.byteLength,
+  };
+}
+
+/** Parse one captured byte snapshot; all errors retain structured read details. */
+function parseWsdBytes(dirPath: string, bytes: Buffer | null): AggregatedSidecar | null {
+  // A crash/truncation can leave a zero-byte file. It contains no metadata to
+  // preserve, so allow the normal migration/write path to rebuild it.
+  if (!bytes || bytes.toString('utf8').trim() === '') return null;
+  let parsed: {
+    version?: unknown;
+    files?: unknown;
+  };
   try {
-    const data = await fsp.readFile(wsdPath(dirPath), 'utf8');
-    const parsed = JSON.parse(data);
-    if (
-      parsed &&
-      typeof parsed === 'object' &&
-      parsed.files &&
-      typeof parsed.files === 'object'
-    ) {
-      return {
-        version: typeof parsed.version === 'number' ? parsed.version : SIDECAR_VERSION,
-        files: parsed.files as Record<string, SidecarMeta>,
-      };
-    }
-    return null;
-  } catch {
-    return null;
+    parsed = JSON.parse(bytes.toString('utf8')) as {
+      version?: unknown;
+      files?: unknown;
+    };
+  } catch (error) {
+    throw attachSidecarIssue(
+      error as Error,
+      corruptIssue(dirPath, bytes, 'invalid-json')
+    );
   }
+  if (
+    parsed &&
+    typeof parsed === 'object' &&
+    !Array.isArray(parsed) &&
+    parsed.files &&
+    typeof parsed.files === 'object' &&
+    !Array.isArray(parsed.files)
+  ) {
+    return {
+      version: typeof parsed.version === 'number' ? parsed.version : SIDECAR_VERSION,
+      files: parsed.files as Record<string, SidecarMeta>,
+    };
+  }
+  throw attachSidecarIssue(
+    new Error(`Invalid aggregated sidecar format: ${wsdPath(dirPath)}`),
+    corruptIssue(dirPath, bytes, 'invalid-shape')
+  );
+}
+
+/** Read the exact on-disk bytes; ENOENT is the only non-error read failure. */
+async function readWsdBytes(dirPath: string): Promise<Buffer | null> {
+  const target = wsdPath(dirPath);
+  try {
+    return await fsp.readFile(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw attachSidecarIssue(error as Error, {
+      kind: 'unreadable',
+      reason: 'io',
+      dirPath,
+      sidecarPath: target,
+    });
+  }
+}
+
+/** Missing or blank wsd.json is empty; malformed or unreadable data throws. */
+async function loadWsd(dirPath: string): Promise<AggregatedSidecar | null> {
+  return parseWsdBytes(dirPath, await readWsdBytes(dirPath));
 }
 
 /**
@@ -145,18 +223,19 @@ async function migrateLatLngInPlace(
     if (c) changed = true;
   }
   if (!changed) return files;
-  await withLock(dirPath, async () => {
-    // Re-read inside the lock so we don't clobber a concurrent write.
+  return withLock(dirPath, async () => {
+    // Re-read inside the lock and migrate the current map, not the stale keys
+    // from the lock-free snapshot: a concurrent write may add/remove entries.
     const fresh = await loadWsd(dirPath);
-    if (!fresh?.files) return;
+    if (!fresh?.files) return {};
     const merged: Record<string, SidecarMeta> = { ...fresh.files };
-    for (const [name, meta] of Object.entries(next)) {
-      const { next: m2 } = migrateLatLngToTag(merged[name] as LegacySidecarMeta);
-      merged[name] = m2;
+    for (const name of Object.keys(merged)) {
+      const { next: migrated } = migrateLatLngToTag(merged[name] as LegacySidecarMeta);
+      merged[name] = migrated;
     }
     await persistWsd(dirPath, merged);
+    return merged;
   });
-  return next;
 }
 
 /** True when a sidecar carries no useful data (omit it to keep the store sparse). */
@@ -172,7 +251,9 @@ function isSidecarEmpty(meta: SidecarMeta): boolean {
 
 /**
  * Writes (or removes) a directory's wsd.json from a full files map. An empty
- * map deletes the file so an all-untagged directory leaves no trace behind.
+ * map normally deletes the file; a recovered directory with retained legacy
+ * sidecars keeps an empty aggregate so deleting its last tag cannot resurrect
+ * the legacy entries on the next read.
  */
 async function persistWsd(
   dirPath: string,
@@ -180,11 +261,73 @@ async function persistWsd(
 ): Promise<void> {
   const target = wsdPath(dirPath);
   if (Object.keys(files).length === 0) {
-    await fsp.rm(target, { force: true }).catch(() => undefined);
+    const legacy = await readLegacySidecars(dirPath);
+    if (legacy.paths.length === 0) {
+      await fsp.rm(target, { force: true });
+      return;
+    }
+    // Recovery deliberately preserves legacy files. Keep the empty aggregate
+    // as a tombstone instead of letting loadFilesOrMigrate import them again.
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    await atomicWriteJson(target, { version: SIDECAR_VERSION, files: {} });
     return;
   }
   await fsp.mkdir(path.dirname(target), { recursive: true });
   await atomicWriteJson(target, { version: SIDECAR_VERSION, files });
+}
+
+interface LegacySidecarSnapshot {
+  files: Record<string, SidecarMeta>;
+  /** Legacy files that parsed — safe to fold in and then remove. */
+  paths: string[];
+  /** Legacy files that are NOT valid JSON — preserved (renamed), never dropped. */
+  corrupt: string[];
+}
+
+/** Read legacy sidecars without changing them; IO errors abort the caller. */
+async function readLegacySidecars(dirPath: string): Promise<LegacySidecarSnapshot> {
+  const metaDir = path.join(dirPath, META_DIR);
+  let names: string[];
+  try {
+    names = await fsp.readdir(metaDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { files: {}, paths: [], corrupt: [] };
+    }
+    throw error;
+  }
+  // Old sidecars were `<basename>.json`; skip the reserved index/meta files and
+  // anything that isn't `.json` (e.g. wsft.jsonl, thumbnails).
+  const paths = names
+    .filter((n) => n.endsWith('.json') && !RESERVED_META_FILES.has(n))
+    .map((n) => path.join(metaDir, n));
+  const files: Record<string, SidecarMeta> = {};
+  const parsedPaths: string[] = [];
+  const corruptPaths: string[] = [];
+  for (const filePath of paths) {
+    // Read errors must abort a recovery/migration rather than hiding metadata
+    // behind a newly-written aggregate.
+    const raw = await fsp.readFile(filePath, 'utf8');
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      // Do NOT drop it: a malformed legacy sidecar still holds the only copy of
+      // that file's tags. The caller preserves these (renamed out of the way).
+      corruptPaths.push(filePath);
+      continue;
+    }
+    if (parsed && typeof parsed === 'object') {
+      const baseName = path.basename(filePath).slice(0, -'.json'.length);
+      const meta = parsed as SidecarMeta;
+      if (!isSidecarEmpty(meta)) files[baseName] = meta;
+      parsedPaths.push(filePath);
+    } else {
+      // Valid JSON but not an object: unusable, but keep the bytes anyway.
+      corruptPaths.push(filePath);
+    }
+  }
+  return { files, paths: parsedPaths, corrupt: corruptPaths };
 }
 
 /**
@@ -196,44 +339,39 @@ async function persistWsd(
 async function migrateLegacySidecars(
   dirPath: string
 ): Promise<Record<string, SidecarMeta>> {
-  const metaDir = path.join(dirPath, META_DIR);
-  let names: string[];
-  try {
-    names = await fsp.readdir(metaDir);
-  } catch {
-    return {}; // no .whale/ yet
-  }
-  // Old sidecars were `<basename>.json`; skip the reserved index/meta files and
-  // anything that isn't `.json` (e.g. wsft.jsonl, thumbnails).
-  const legacy = names.filter(
-    (n) => n.endsWith('.json') && !RESERVED_META_FILES.has(n)
-  );
-  if (legacy.length === 0) return {};
-
-  const files: Record<string, SidecarMeta> = {};
-  for (const n of legacy) {
-    try {
-      const parsed = JSON.parse(await fsp.readFile(path.join(metaDir, n), 'utf8'));
-      if (parsed && typeof parsed === 'object') {
-        // `<basename>.json` → strip the trailing `.json` to recover the file name.
-        const baseName = n.slice(0, -'.json'.length);
-        const meta = parsed as SidecarMeta;
-        if (!isSidecarEmpty(meta)) files[baseName] = meta;
-      }
-    } catch {
-      // corrupt legacy sidecar — skip it
-    }
+  const legacy = await readLegacySidecars(dirPath);
+  if (legacy.paths.length === 0 && legacy.corrupt.length === 0) {
+    return legacy.files;
   }
 
-  // Persist the merged map (if non-empty), then remove the legacy files either
-  // way so the migration doesn't re-run on the next access.
-  await persistWsd(dirPath, files);
+  // Persist the merged map (if non-empty), then remove ONLY the legacy files
+  // that actually parsed. A malformed legacy sidecar is the only copy of that
+  // file's tags: rename it out of the `.json` namespace so the migration never
+  // re-runs, but keep the bytes recoverable.
+  await persistWsd(dirPath, legacy.files);
   await Promise.all(
-    legacy.map((n) =>
-      fsp.rm(path.join(metaDir, n), { force: true }).catch(() => undefined)
+    legacy.paths.map((filePath) =>
+      fsp.rm(filePath, { force: true }).catch(() => undefined)
     )
   );
-  return files;
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  await Promise.all(
+    legacy.corrupt.map(async (filePath) => {
+      try {
+        await fsp.rename(filePath, `${filePath}.corrupt-${stamp}`);
+        console.warn(
+          `[sidecar] preserved malformed legacy sidecar as ${path.basename(filePath)}.corrupt-${stamp}`
+        );
+      } catch (error) {
+        // Leave it in place: the next load retries (and never deletes it).
+        console.warn(
+          `[sidecar] could not preserve malformed legacy sidecar ${filePath}:`,
+          error
+        );
+      }
+    })
+  );
+  return legacy.files;
 }
 
 /**
@@ -268,29 +406,54 @@ export async function readSidecar(
   return files[name] ?? null;
 }
 
-/** Reads sidecars for many files in one directory; returns name -> meta. */
+interface SidecarsCoreResult {
+  result: SidecarReadResult;
+  /** Original error retained solely for the legacy throwing wrapper. */
+  error?: unknown;
+}
+
+async function readSidecarsCore(
+  dirPath: string,
+  names: string[]
+): Promise<SidecarsCoreResult> {
+  try {
+    // Fast path: a single read, filter in memory.
+    const wsd = await loadWsd(dirPath);
+    let files = wsd?.files ?? null;
+    if (!files) {
+      // Slow path: migrate under lock (double-checks wsd.json inside).
+      files = await withLock(dirPath, () => loadFilesOrMigrate(dirPath));
+    }
+    files = await migrateLatLngInPlace(dirPath, files);
+    const sidecars: Record<string, SidecarMeta> = {};
+    for (const name of names) {
+      const meta = files[name];
+      if (meta) sidecars[name] = meta;
+    }
+    return { result: { sidecars, issues: [] } };
+  } catch (error) {
+    const issue = sidecarIssueFromError(error);
+    if (!issue) throw error;
+    return { result: { sidecars: {}, issues: [issue] }, error };
+  }
+}
+
+/** Detailed read: report corrupt/unreadable wsd.json without discarding healthy peers. */
+export async function readSidecarsDetailed(
+  dirPath: string,
+  names: string[]
+): Promise<SidecarReadResult> {
+  return (await readSidecarsCore(dirPath, names)).result;
+}
+
+/** Compatibility wrapper: retain the original throwing read contract. */
 export async function readSidecars(
   dirPath: string,
   names: string[]
 ): Promise<Record<string, SidecarMeta>> {
-  // Fast path: a single read, filter in memory.
-  const wsd = await loadWsd(dirPath);
-  let files = wsd?.files ?? null;
-  if (!files) {
-    // Slow path: migrate under lock (double-checks wsd.json inside).
-    files = await withLock(dirPath, () => loadFilesOrMigrate(dirPath));
-  }
-  // One-shot legacy lat/lng → geo:lat,lng tag migration. Idempotent: a
-  // re-read after migration is a no-op. Triggered here so any consumer of
-  // `readSidecars` (renderer, IPC, tests) automatically gets migrated data
-  // without needing to know about the old schema.
-  files = await migrateLatLngInPlace(dirPath, files);
-  const result: Record<string, SidecarMeta> = {};
-  for (const name of names) {
-    const meta = files[name];
-    if (meta) result[name] = meta;
-  }
-  return result;
+  const core = await readSidecarsCore(dirPath, names);
+  if (core.error !== undefined) throw core.error;
+  return core.result.sidecars;
 }
 
 /**
@@ -321,10 +484,10 @@ export async function readSidecars(
  * that no longer exist on disk between `listDirectoryRecursive` and the
  * sidecar read.
  */
-export async function readSidecardsForPaths(
+export async function readSidecardsForPathsDetailed(
   filePaths: readonly string[]
-): Promise<Record<string, SidecarMeta>> {
-  if (filePaths.length === 0) return {};
+): Promise<SidecarReadResult> {
+  if (filePaths.length === 0) return { sidecars: {}, issues: [] };
 
   // Pass 1: group by parent directory and bulk-read wsd.json.
   // Read each directory in parallel -- `readSidecars` is internally
@@ -344,9 +507,21 @@ export async function readSidecardsForPaths(
     bucket.push(name);
   }
   const dirEntries = Array.from(byDir.entries());
-  const perDir = await Promise.all(
-    dirEntries.map(([dir, names]) => readSidecars(dir, names))
+  const perDir = await Promise.allSettled(
+    dirEntries.map(([dir, names]) => readSidecarsDetailed(dir, names))
   );
+  const issues: SidecarIssue[] = [];
+  perDir.forEach((result, i) => {
+    if (result.status === 'rejected') {
+      console.error(
+        '[sidecar] Bulk read failed for one directory; preserving other results:',
+        dirEntries[i][0],
+        result.reason
+      );
+    } else {
+      issues.push(...result.value.issues);
+    }
+  });
 
   // Stitch back to the input paths by name -> result lookup. We can't
   // reuse `readSidecards`'s `name -> meta` shape directly because two
@@ -365,7 +540,12 @@ export async function readSidecardsForPaths(
     const name = path.basename(fp);
     const idx = dirIndex.get(dir);
     if (idx === undefined) continue;
-    const meta = perDir[idx][name];
+    const result = perDir[idx];
+    // A corrupt/unreadable directory is reported once and is not retried once
+    // per file; healthy directories still flow into the partial result.
+    if (result.status === 'rejected') continue;
+    if (result.value.issues.length > 0) continue;
+    const meta = result.value.sidecars[name];
     if (meta) out[fp] = meta;
     else missing.push(fp);
   }
@@ -374,14 +554,102 @@ export async function readSidecardsForPaths(
   // didn't cover. Mostly relevant for never-tagged subdirs whose only
   // sidecar format is the legacy per-file `.whale/<name>.json`.
   if (missing.length > 0) {
-    const perFile = await Promise.all(missing.map((fp) => readSidecar(fp)));
+    const perFile = await Promise.allSettled(missing.map((fp) => readSidecar(fp)));
     for (let i = 0; i < missing.length; i++) {
-      const meta = perFile[i];
-      if (meta) out[missing[i]] = meta;
+      const result = perFile[i];
+      if (result.status === 'fulfilled') {
+        if (result.value) out[missing[i]] = result.value;
+      } else {
+        console.error('[sidecar] Legacy sidecar read failed:', missing[i], result.reason);
+      }
     }
   }
 
-  return out;
+  return { sidecars: out, issues };
+}
+
+/** Compatibility wrapper: recursive callers keep the original path -> meta shape. */
+export async function readSidecardsForPaths(
+  filePaths: readonly string[]
+): Promise<Record<string, SidecarMeta>> {
+  return (await readSidecardsForPathsDetailed(filePaths)).sidecars;
+}
+
+/** Write the captured bytes to a new exclusive backup and flush them before recovery. */
+async function writeCorruptBackup(
+  target: string,
+  bytes: Buffer,
+  digest: string
+): Promise<string> {
+  const stem = `${target}.corrupt-${Date.now()}-${digest.slice(0, 12)}`;
+  for (let collision = 0; ; collision++) {
+    const backupPath = `${stem}${collision === 0 ? '' : `-${collision}`}.bak`;
+    assertWithinAllowedRoot(backupPath);
+    let handle;
+    try {
+      handle = await fsp.open(backupPath, 'wx');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') continue;
+      throw error;
+    }
+    try {
+      // Writing the captured snapshot (rather than copyFile) guarantees the
+      // backup is byte-identical even if an external process touches the original.
+      await handle.writeFile(bytes);
+      await handle.datasync();
+    } catch (error) {
+      await handle.close().catch(() => undefined);
+      await fsp.rm(backupPath, { force: true }).catch(() => undefined);
+      throw error;
+    }
+    try {
+      await handle.close();
+    } catch (error) {
+      await fsp.rm(backupPath, { force: true }).catch(() => undefined);
+      throw error;
+    }
+    return backupPath;
+  }
+}
+
+/**
+ * Explicit, user-confirmed recovery for one corrupt wsd.json. The original is
+ * re-read and fingerprint-checked under the directory lock, backed up with an
+ * exclusive create + datasync, then replaced atomically with a valid empty
+ * aggregate. Readable legacy entries are retained in that aggregate without
+ * modifying or deleting the legacy files, so recovery cannot hide old tags.
+ */
+export async function recoverCorruptSidecar({
+  dirPath,
+  expectedSha256,
+}: RecoverCorruptSidecarRequest): Promise<RecoverCorruptSidecarResult> {
+  const target = wsdPath(dirPath);
+  assertWithinAllowedRoot(dirPath);
+  assertWithinAllowedRoot(target);
+  return withLock(dirPath, async () => {
+    const bytes = await readWsdBytes(dirPath);
+    // Valid, blank, and missing sidecars need no recovery. In particular this
+    // makes a concurrent second confirmation a zero-write no-op.
+    let healthy = true;
+    try {
+      parseWsdBytes(dirPath, bytes);
+    } catch (error) {
+      if (sidecarIssueFromError(error)?.kind !== 'corrupt') throw error;
+      healthy = false;
+    }
+    if (healthy) return { status: 'not-corrupt' };
+    if (!bytes) throw new Error('Corrupt sidecar classification requires captured bytes');
+
+    const digest = sha256(bytes);
+    if (digest !== expectedSha256) return { status: 'conflict' };
+    const backupPath = await writeCorruptBackup(target, bytes, digest);
+    // Merge readable legacy metadata into the valid aggregate without deleting
+    // the legacy files. Leaving an empty aggregate here would otherwise hide
+    // those old tags forever because loadFilesOrMigrate prefers any wsd.json.
+    const legacy = await readLegacySidecars(dirPath);
+    await atomicWriteJson(target, { version: SIDECAR_VERSION, files: legacy.files });
+    return { status: 'recovered', backupPath };
+  });
 }
 
 /** Writes a file's sidecar (creates `.whale/` if needed). Empty meta removes the entry. */

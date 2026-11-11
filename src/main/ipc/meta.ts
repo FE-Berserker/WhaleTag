@@ -1,7 +1,10 @@
 import { ipcMain } from 'electron';
 import {
   readSidecars,
+  readSidecarsDetailed,
   readSidecardsForPaths,
+  readSidecardsForPathsDetailed,
+  recoverCorruptSidecar,
   writeSidecar,
 } from '../sidecar';
 import { readFolderMeta, writeFolderMeta } from '../folder-meta';
@@ -12,6 +15,7 @@ import {
 } from '../tag-library';
 import { assertWithinAllowedRoot } from '../allowed-roots';
 import type { SidecarMeta, FolderMeta } from '../../shared/whale-meta';
+import type { RecoverCorruptSidecarRequest } from '../../shared/ipc-types';
 
 /**
  * `.whale/` metadata handlers: sidecars, folder meta, per-location tag
@@ -31,6 +35,22 @@ export function registerMetaHandlers(): void {
   ipcMain.handle(
     'sidecar:readForPaths',
     (_event, filePaths: string[]) => readSidecardsForPaths(filePaths)
+  );
+  ipcMain.handle(
+    'sidecar:readManyDetailed',
+    (_event, dirPath: string, names: string[]) =>
+      readSidecarsDetailed(dirPath, names)
+  );
+  ipcMain.handle(
+    'sidecar:readForPathsDetailed',
+    (_event, filePaths: string[]) => readSidecardsForPathsDetailed(filePaths)
+  );
+  // Recovery is a separate explicit channel: only the renderer's confirmed
+  // corrupt-issue action calls it. The service repeats all root/hash checks.
+  ipcMain.handle(
+    'sidecar:recoverCorrupt',
+    (_event, request: RecoverCorruptSidecarRequest) =>
+      recoverCorruptSidecar(request)
   );
 
   ipcMain.handle(

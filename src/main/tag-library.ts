@@ -3,6 +3,7 @@ import { promises as fsp } from 'fs';
 import { META_DIR } from '../shared/whale-meta';
 import { atomicWriteJson } from './atomic-write';
 import { withLock } from './dir-lock';
+import { readJsonForMerge } from './merge-read';
 
 /**
  * Per-location tag library (`.whale/wtaglib.json`).
@@ -46,6 +47,35 @@ function isTagLibraryEmpty(lib: LocationTagLibrary): boolean {
   return Object.keys(lib.descriptions).length === 0;
 }
 
+/** True when a value is a wtaglib.json document safe to merge into. */
+function isTagLibraryShape(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const descriptions = (value as { descriptions?: unknown }).descriptions;
+  return (
+    typeof descriptions === 'object' &&
+    descriptions !== null &&
+    !Array.isArray(descriptions)
+  );
+}
+
+/**
+ * Merge-safe read for the setters: an unreadable/corrupt wtaglib.json is
+ * quarantined rather than read as "no descriptions" (see merge-read.ts).
+ */
+async function readDescriptionsForMerge(
+  locationRoot: string
+): Promise<Record<string, string>> {
+  const parsed = await readJsonForMerge(
+    wtaglibPath(locationRoot),
+    isTagLibraryShape
+  );
+  return parsed
+    ? { ...(parsed as LocationTagLibrary).descriptions }
+    : {};
+}
+
 /** Reads a location's `wtaglib.json`; returns `{}` when absent or invalid. */
 export async function readTagLibrary(
   locationRoot: string
@@ -82,7 +112,7 @@ export async function setTagLibraryDescription(
   description: string
 ): Promise<void> {
   await withLock(locationRoot, async () => {
-    const current = await readTagLibrary(locationRoot);
+    const current = await readDescriptionsForMerge(locationRoot);
     const next: Record<string, string> = { ...current };
     const trimmed = description.trim();
     if (trimmed) next[tag] = trimmed;
@@ -110,7 +140,7 @@ export async function clearTagLibraryDescription(
   tag: string
 ): Promise<void> {
   await withLock(locationRoot, async () => {
-    const current = await readTagLibrary(locationRoot);
+    const current = await readDescriptionsForMerge(locationRoot);
     if (!(tag in current)) return;
     const next: Record<string, string> = { ...current };
     delete next[tag];
@@ -124,10 +154,4 @@ export async function clearTagLibraryDescription(
       descriptions: next,
     });
   });
-}
-
-/** Internal helper for tests / IPC: returns the absolute file path of a
- *  location's tag library (or null when nothing's there yet). */
-export function tagLibraryFilePath(locationRoot: string): string {
-  return wtaglibPath(locationRoot);
 }

@@ -2,8 +2,8 @@ import { randomUUID } from 'crypto';
 
 /**
  * Request/response correlation primitives shared by `index-worker-host.ts`
- * (Electron `utilityProcess` worker) and `office-worker-host.ts` (external
- * python UNO bridge). Both packages spend ~30 lines each on the same
+ * and `thumb-worker-host.ts` (Electron `utilityProcess` workers). Both hosts
+ * spend ~30 lines each on the same
  * bookkeeping — a `pending: Map<reqId, Pending>` for in-flight requests,
  * `rejectAll()` on `'exit'` / `'error'` / shutdown kill, and a drop-on-
  * stale-reply idempotency check. Keeping the primitives here, stateless,
