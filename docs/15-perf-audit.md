@@ -104,7 +104,7 @@ GanttTimeline 预计算 `scheduledByPath`(保留每 path 首项,等同 Array.fin
 - ✅ `importExternal` 串行 cp → `mapWithConcurrency(4)`(name dedup 无竞态:同步在首 await 前)。
 - ✅ [atomic-write.ts](../src/main/atomic-write.ts) 每写扫残留 temp → per-target `sweptTargets: Set`;同 target 串行、跨 target 并行,失败写不毒化队列(详见 [docs/02 §7](./02-file-io.md))。
 - ✅ `readHeicWasm` 缓存源 Buffer(仍返新拷贝)。
-- ⬜ `extractPdfText` 整 PDF 读内存 —— 罕见,按取舍表接受。
+- ✅ `extractPdfText` 内存上限:单文件超过 `MAX_PDF_BYTES = 128 MiB` 直接跳过(保留既有索引行 + 警告),不再整文件读进 worker;N 个超大 PDF 并发也不会叠加成 OOM。
 - ✅ renderer:[FileToolbar](../src/renderer/components/FileToolbar.tsx) `recents` memo + RO 守卫;[GanttTimeline](../src/renderer/components/gantt/GanttTimeline.tsx) 删 no-op RO;[GalleryView](../src/renderer/components/GalleryView.tsx) RO 守卫。
 
 ---
@@ -121,7 +121,6 @@ GanttTimeline 预计算 `scheduledByPath`(保留每 path 首项,等同 Array.fin
 | index.db 无单事务原子性 | [docs/04](./04-search-index.md) §9 | 缓存可重建,correctness 取舍 |
 | `whale-file://` handler 走 `statSync` | [protocol-range.ts](../src/main/protocol-range.ts) | `<video>` range 热路径,异步化会伤 seek |
 | buildIndex 每目录重读 wsd.json | [sidecar.ts](../src/main/sidecar.ts) `readSidecars` | 标签不改 mtime,mtime 缓存会错 |
-| `extractPdfText` 整读内存 | 本文件 P3-1 | 病态大 PDF 罕见,可接受 |
 
 ---
 
@@ -137,4 +136,4 @@ GanttTimeline 预计算 `scheduledByPath`(保留每 path 首项,等同 Array.fin
 
 ## 剩余
 
-无 Tier 0–3 未完成项(2026-07-12 ~ 07-18 全部闭环);唯一遗留是 P3-1 的 `extractPdfText` 整读内存,已列入「已接受的取舍」。
+无 Tier 0–3 未完成项(2026-07-12 ~ 07-18 全部闭环)。P3-1 最后一项 `extractPdfText` 整读内存已于 2026-11 关闭:超过 `MAX_PDF_BYTES = 128 MiB` 的 PDF 在读取前跳过并保留旧索引行。

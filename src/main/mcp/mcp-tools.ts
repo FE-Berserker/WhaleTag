@@ -11,7 +11,7 @@ import {
 } from '../allowed-roots';
 import { readSidecardsForPaths, updateFileTags, mutateSidecar } from '../sidecar';
 import { readTagLibrary } from '../tag-library';
-import { extractText } from '../fulltext';
+import { extractText, MAX_PDF_BYTES } from '../fulltext';
 import { readTextFile, listDirectory } from '../ipc/fs-read';
 import {
   moveEntry,
@@ -409,6 +409,17 @@ export function registerMcpTools(server: McpServer): void {
         assertWithinAllowedRoot(filePath);
         const info = await stat(filePath);
         const ext = path.extname(filePath).slice(1).toLowerCase();
+        if (ext === 'pdf' && info.size > MAX_PDF_BYTES) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `whale_extract_text: PDF is ${info.size} bytes; the extraction cap is ${MAX_PDF_BYTES} (128 MiB). Use a PDF splitter for very large documents.`,
+              },
+            ],
+            isError: true,
+          };
+        }
         const text = await extractText(filePath, ext, info.size);
         if (text === null) {
           return {

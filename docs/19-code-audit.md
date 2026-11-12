@@ -88,6 +88,14 @@ detailed read 保留健康目录数据并报告 corrupt/unreadable；非法 JSON
 - **删除后的元数据清理与修订清理不再静默**：`deletePath` 的 sidecar / thumbnail / scan-cache 清理失败、[revisions.ts](../src/main/revisions.ts) 的目录不可读 / 删过期修订失败都改为带 tag 的 `console.warn`（删除本身已成功，不能因此回滚；但残留 sidecar 会让已删路径的标签在下次扫描时"复活"）。
 - 回归网：[mcp-approval.test.ts](../src/main/mcp/mcp-approval.test.ts) 扩到 9 例（新增只广播队首、队首结算后提升、排队不烧超时、队列满立即拒绝、退出不提升下一条）；[fs-write.test.ts](../src/main/ipc/fs-write.test.ts) 新增 `commonParentDir` 4 例（兄弟目录、跨目录、单源与相对路径、空选择）。
 
+### P1-12. 全文索引：读取失败不再删行 + PDF 内存上限 ✅
+第六轮补上最后一条零测试的 main 数据路径（[fulltext.ts](../src/main/fulltext.ts)，11.5KB，此前无测试）：
+- **瞬时读取失败不该清空搜索内容**：旧 `buildFulltextIndex` 把"这次没看到"一律当成"文件已删除"，遍历中打不开的目录、stat 失败的条目、读文件失败的文本都会让既有行进入 `removed` 并被 `deleteFulltextPaths` 删掉——一次权限抖动就把整棵子树的全文索引清空，直到下一次成功重建。现在遍历把不可读的目录 / 条目、超过 `MAX_PDF_BYTES` 的 PDF 记入 `skipped`，删除集合改由纯函数 `selectRemoved(prior, seen, skipped)` 计算：跳过路径按路径边界豁免（`a/b` 覆盖 `a/b/c`，不覆盖 `a/bc`；`''` = 根目录不可读 → 一条都不删），旧行保持"陈旧但可搜索"。
+- **读失败与空文件分离**：`readCapped` 曾把 stream error 也 resolve 成 `''`，无法区分"空文件"（确实无内容，应删行）与"读失败"（学到了零信息，应留行）。改为 `readCappedText(): { ok, text }` + `extractTextDetailed(): { text, unreadable }`，`extractText` 保留 `string|null` 公共签名（MCP 工具不受影响）。
+- **PDF 内存上限**：`extractPdfText` 用 `fsp.readFile` 整读，`docs/15` P3-1 把它列为"已接受的取舍"。现在 `MAX_PDF_BYTES = 128 MiB`，超限在读取前返回 `unreadable`（保留旧行 + 警告），`whale_extract_text` 对超限 PDF 返回明确错误而不是"no extractable text"；`docs/15` 的 Tier 3 由此全部闭环。
+- 回归网：新增 [fulltext.test.ts](../src/main/fulltext.test.ts) 10 例——文本/HTML 抽取（空白折叠、实体、标签剥离）、超限 PDF 在读之前被拒（1 字节文件 + 伪造的 size 证明没走 `readFile`）、缺失 PDF 报 `unreadable` 而不是抛出、空文件与读失败分离（`unreadable` 标志）、构建只索引支持的扩展名、改动/删除文件的增量 delta、无变化重建保留行，以及 `selectRemoved` 的前缀边界 / 根不可读 / 豁免三种情况。
+- 评估未做：把 `walk` 的"每目录 8 并发"改成全局信号量。当前实现每层最多 8 个并发任务，深/宽目录树的理论放大没有实测证据，改动会打乱进度语义且收益不明确，先记录不执行。
+
 ---
 
 ## 🟡 P2 — 类型逃逸

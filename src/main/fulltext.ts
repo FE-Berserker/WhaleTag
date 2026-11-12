@@ -68,6 +68,15 @@ const MAX_FULLTEXT_BYTES = 2 * 1024 * 1024;
 /** Per-file content stored uncapped here would bloat the index; cap the record. */
 const MAX_TEXT_PER_FILE = 200 * 1024;
 
+/**
+ * Refuse PDFs larger than this before `readFile` — pdfjs needs the whole file
+ * in memory (plus its own parse buffers), so an unbounded read can OOM the
+ * index worker. Text extraction from a 128 MiB PDF is already pathological and
+ * the 10 s per-file timeout would usually kill it. Files above the cap keep
+ * whatever row they already had instead of disappearing from the index.
+ */
+export const MAX_PDF_BYTES = 128 * 1024 * 1024;
+
 interface FulltextRecord {
   /** Path relative to the index root, '/'-separated (portable). */
   path: string;
@@ -100,10 +109,24 @@ function stripHtml(html: string): string {
     .replace(/&quot;/gi, '"');
 }
 
-/** Reads at most `cap` bytes from the start of a file as UTF-8. '' on error. */
-function readCapped(fullPath: string, cap: number): Promise<string> {
+/**
+ * Reads at most `cap` bytes from the start of a file as UTF-8.
+ * `ok: false` means the read itself failed (missing / permission / IO) — the
+ * caller must not confuse that with an empty file, because an empty text means
+ * "nothing to index" while a failed read means "we learned nothing".
+ */
+function readCappedText(
+  fullPath: string,
+  cap: number
+): Promise<{ ok: boolean; text: string }> {
   return new Promise((resolve) => {
     let data = '';
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      resolve({ ok, text: ok ? data : '' });
+    };
     const stream = createReadStream(fullPath, {
       start: 0,
       end: cap - 1,
@@ -112,8 +135,8 @@ function readCapped(fullPath: string, cap: number): Promise<string> {
     stream.on('data', (chunk) => {
       data += chunk;
     });
-    stream.on('end', () => resolve(data));
-    stream.on('error', () => resolve(''));
+    stream.on('end', () => finish(true));
+    stream.on('error', () => finish(false));
   });
 }
 
@@ -173,6 +196,18 @@ async function extractPdfText(filePath: string): Promise<string | null> {
   });
 }
 
+interface ExtractedText {
+  /** Extracted text, or null when the file has nothing text-like. */
+  text: string | null;
+  /**
+   * True when we could not examine the file at all (unreadable, above the PDF
+   * cap). The full-text indexer keeps any existing row for such files instead
+   * of deleting it — a transient permission error must not erase searchable
+   * content until a later build succeeds.
+   */
+  unreadable: boolean;
+}
+
 /**
  * Extract plain text from a single file (UTF-8 text formats + HTML tag
  * strip + PDF via pdfjs). Shared by the fulltext indexer and the MCP
@@ -185,31 +220,77 @@ export async function extractText(
   ext: string,
   size: number
 ): Promise<string | null> {
+  return (await extractTextDetailed(fullPath, ext, size)).text;
+}
+
+/** Exported for the indexer's row-preservation rules and their unit tests. */
+export async function extractTextDetailed(
+  fullPath: string,
+  ext: string,
+  size: number
+): Promise<ExtractedText> {
   // PDFs are binary — go through pdfjs, not the UTF-8 reader.
   if (ext === 'pdf') {
-    const text = await extractPdfText(fullPath);
-    if (!text) return null;
+    if (size > MAX_PDF_BYTES) {
+      console.warn(
+        `[fulltext] PDF is ${size} bytes (cap ${MAX_PDF_BYTES}); existing index row kept:`,
+        fullPath
+      );
+      return { text: null, unreadable: true };
+    }
+    let text: string | null;
+    try {
+      text = await extractPdfText(fullPath);
+    } catch (error) {
+      // ENOENT / EACCES / IO error: one bad file must not fail the whole build.
+      console.warn(
+        '[fulltext] could not read PDF (existing index row kept):',
+        fullPath,
+        (error as Error)?.message ?? error
+      );
+      return { text: null, unreadable: true };
+    }
+    if (!text) return { text: null, unreadable: false };
     const collapsed = text.replace(/\s+/g, ' ').trim();
-    return collapsed.length > MAX_TEXT_PER_FILE
-      ? collapsed.slice(0, MAX_TEXT_PER_FILE)
-      : collapsed;
+    return {
+      text:
+        collapsed.length > MAX_TEXT_PER_FILE
+          ? collapsed.slice(0, MAX_TEXT_PER_FILE)
+          : collapsed,
+      unreadable: false,
+    };
   }
   const cap = Math.min(size, MAX_FULLTEXT_BYTES);
-  if (cap <= 0) return null;
-  let text = await readCapped(fullPath, cap);
-  if (!text) return null;
+  if (cap <= 0) return { text: null, unreadable: false };
+  const read = await readCappedText(fullPath, cap);
+  if (!read.ok) {
+    console.warn(
+      '[fulltext] could not read file (existing index row kept):',
+      fullPath
+    );
+    return { text: null, unreadable: true };
+  }
+  let text = read.text;
+  if (!text) return { text: null, unreadable: false };
   if (ext === 'html' || ext === 'htm') text = stripHtml(text);
   text = text.replace(/\s+/g, ' ').trim();
-  if (!text) return null;
-  return text.length > MAX_TEXT_PER_FILE ? text.slice(0, MAX_TEXT_PER_FILE) : text;
+  if (!text) return { text: null, unreadable: false };
+  return {
+    text: text.length > MAX_TEXT_PER_FILE ? text.slice(0, MAX_TEXT_PER_FILE) : text,
+    unreadable: false,
+  };
 }
+
 
 /**
  * Incrementally (re)builds the fulltext index in SQLite. Files whose mtime is
  * unchanged since the last build reuse their extracted text (no re-read);
  * new/modified files are re-extracted; deleted files drop out (incremental:
  * changed/new rows are inserted, removed paths are deleted, unchanged rows are
- * left untouched). Returns how many files are indexed.
+ * left untouched). Paths that could not be examined this walk (unreadable
+ * directory/entry, PDF above MAX_PDF_BYTES) keep their existing rows instead of
+ * being deleted — a transient read failure must not erase searchable content.
+ * Returns how many files are indexed.
  */
 export async function buildFulltextIndex(
   rootPath: string,
@@ -223,14 +304,24 @@ export async function buildFulltextIndex(
   const upserts: FulltextRecord[] = []; // changed + new files (with content)
   const changedPaths: string[] = []; // existed in prior → delete stale row first
   const seen = new Set<string>(); // every path that should remain indexed
+  /** Relative paths (files or directories) we could not examine; rows survive. */
+  const skipped: string[] = [];
   let count = 0;
 
   async function walk(dir: string): Promise<void> {
     let names: string[];
     try {
       names = await fsp.readdir(dir);
-    } catch {
-      return; // unreadable subdir — skip silently
+    } catch (error) {
+      // Keep whatever this subtree had indexed: a permission error / transient
+      // IO failure says nothing about the files inside it.
+      skipped.push(toRel(rootPath, dir));
+      console.warn(
+        '[fulltext] unreadable directory (existing index rows kept):',
+        dir,
+        (error as Error)?.message ?? error
+      );
+      return;
     }
     // Process a directory's entries with bounded concurrency (was a serial
     // `for` loop), so subdir recursion AND text extraction overlap instead of
@@ -246,7 +337,13 @@ export async function buildFulltextIndex(
       let stat;
       try {
         stat = await fsp.stat(full);
-      } catch {
+      } catch (error) {
+        skipped.push(toRel(rootPath, full));
+        console.warn(
+          '[fulltext] unreadable entry (existing index row kept):',
+          full,
+          (error as Error)?.message ?? error
+        );
         return;
       }
       if (stat.isDirectory()) {
@@ -267,10 +364,14 @@ export async function buildFulltextIndex(
           return;
         }
 
-        const text = await extractText(full, ext, stat.size);
-        if (!text) return; // no extractable text → not indexed (matches old behavior)
+        const extracted = await extractTextDetailed(full, ext, stat.size);
+        if (extracted.unreadable) {
+          skipped.push(rel);
+          return;
+        }
+        if (!extracted.text) return; // no extractable text → not indexed
         if (prevMtime !== undefined) changedPaths.push(rel);
-        upserts.push({ path: rel, name, mtime: stat.mtimeMs, content: text });
+        upserts.push({ path: rel, name, mtime: stat.mtimeMs, content: extracted.text });
         seen.add(rel);
         count += 1;
         onProgress?.(count);
@@ -280,11 +381,10 @@ export async function buildFulltextIndex(
 
   await walk(rootPath);
 
-  // Files indexed before but not seen this walk (deleted from disk, or now in
-  // an unreadable subdir) drop out — same outcome as the old full replace,
-  // which only re-inserted walked files.
-  const removed: string[] = [];
-  for (const p of prior.keys()) if (!seen.has(p)) removed.push(p);
+  // Files indexed before but not seen this walk (deleted from disk) drop out.
+  // Anything covered by `skipped` is exempt: we could not examine it, so the
+  // old row is stale-but-searchable rather than silently gone.
+  const removed = selectRemoved(prior.keys(), seen, skipped);
 
   // Incremental apply: clear stale rows for changed files, insert changed + new,
   // drop removed. Unchanged rows (the common case on re-index) are never
@@ -294,6 +394,25 @@ export async function buildFulltextIndex(
   await deleteFulltextPaths(rootPath, removed);
 
   return { count };
+}
+
+/**
+ * Prior rows to delete after a walk: everything not seen this time, except
+ * paths covered by `skipped`. `skipped` holds '/'-separated paths relative to
+ * the index root ('' = the root itself was unreadable, so nothing may be
+ * deleted). Prefix matching respects path boundaries — `a/b` covers `a/b/c`
+ * but not `a/bc`.
+ */
+export function selectRemoved(
+  priorPaths: Iterable<string>,
+  seen: ReadonlySet<string>,
+  skipped: readonly string[]
+): string[] {
+  const covered = (p: string): boolean =>
+    skipped.some((s) => s === '' || p === s || p.startsWith(`${s}/`));
+  const removed: string[] = [];
+  for (const p of priorPaths) if (!seen.has(p) && !covered(p)) removed.push(p);
+  return removed;
 }
 
 /** Full-text search via SQLite FTS5 (returns snippet excerpts). Empty if none. */

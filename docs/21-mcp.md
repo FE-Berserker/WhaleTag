@@ -28,7 +28,7 @@
 
 **发现(只读)**:`whale_roots`(位置 + 索引状态,客户端第一个该调的)、`whale_search`(FTS trigram 名/路径/标签)、`whale_advanced_search`(SearchQuery 结构化过滤)、`whale_fulltext_search`(正文搜索 + snippet)、`whale_build_fulltext`(增量建正文索引)、`whale_list_tags`(distinct 标签 + 标签库描述)、`whale_list_directory`。
 
-**读取(归纳的输入)**:`whale_read_text`(编码自适应读文本,offset/limit 分页)、`whale_extract_text`(单文件抽取:`fulltext.ts` 的 `extractText`,支持 PDF/HTML/文本类;**office 不支持**)、`whale_get_meta`(≤200 路径批量读 sidecar)。
+**读取(归纳的输入)**:`whale_read_text`(编码自适应读文本,offset/limit 分页)、`whale_extract_text`(单文件抽取:`fulltext.ts` 的 `extractText`,支持 PDF/HTML/文本类;**office 不支持**;PDF 超过 128 MiB 直接报错,不再整文件读进内存)、`whale_get_meta`(≤200 路径批量读 sidecar)。
 
 **整理——元数据级(免审批,不碰用户文件)**:`whale_apply_tags`(加/移标签,`updateFileTags` 加锁合并,写入前经 `normalizeSmartTags` 规范化——与 UI 打标行为同源,外部客户端写不出 UI 不会产生的标签形态)、`whale_write_description`(写 sidecar description——**归纳结果的推荐落点**,可搜索、UI 可见)。
 

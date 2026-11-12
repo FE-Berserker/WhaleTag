@@ -14,7 +14,7 @@
 - `exif_processed`:已抽 GPS 的文件缓存(防止 N 次扫描重抽)
 - 触发器同步 `files` ↔ `files_fts`
 
-**增量重建**:`buildFulltextIndex` 只 select `path + mtime`(**不把全文 content load 进内存**);mtime 未变的行原样留在表里(不重抽、不重插),改动 / 新增才抽 → `insertFulltext`,消失的 path → `deleteFulltextPaths`,见 [src/main/fulltext.ts](../src/main/fulltext.ts)。(取代旧的全量重写策略 —— 大语料下须把每个文件正文搬进内存,冻结数秒。)
+**增量重建**:`buildFulltextIndex` 只 select `path + mtime`(**不把全文 content load 进内存**);mtime 未变的行原样留在表里(不重抽、不重插),改动 / 新增才抽 → `insertFulltext`,消失的 path → `deleteFulltextPaths`,见 [src/main/fulltext.ts](../src/main/fulltext.ts)。(取代旧的全量重写策略 —— 大语料下须把每个文件正文搬进内存,冻结数秒。) **读取失败 ≠ 文件被删**:遍历中打不开的目录 / 条目、以及超过 128 MiB 的 PDF 记入 `skipped`,它们既有的行**保留**(仍然可搜索,等下一次构建成功再刷新),绝不算进 removed —— 瞬时权限错误不会把已索引内容清空。读取失败与"空文件"在 `extractText` 内部用 `unreadable` 标志区分。
 
 **分批提交**:`INGEST_BATCH = 1000`,批间 `setImmediate` yield —— 首次大目录索引不冻结主进程。`QUERY_LIMIT = 50` / `ADV_LIMIT = 300`。
 
@@ -69,8 +69,8 @@ loadExifProcessed(rootPath)                 // 查询
 [src/main/fulltext.ts](../src/main/fulltext.ts) 覆盖:
 
 - 纯文本 / Markdown / HTML / 代码类(直接读)
-- PDF(`pdfjs-dist`,纯 JS 主进程抽取,经 `getPdfjs()` 惰性 load,见 [docs/01 §4](./01-architecture.md))
-- **并发抽取**:`buildFulltextIndex` 的 walk + `extractText` 用 `mapWithConcurrency(8)` 并发(子目录递归 + 文件抽取重叠);共享的 `seen` / `count` / `upserts` 只在 `await` 之间同步变异,JS 单线程下无竞态。FTS5 的 `DELETE WHERE path = ?` 已实测可用,支持增量 upsert / delete
+- PDF(`pdfjs-dist`,纯 JS 主进程抽取,经 `getPdfjs()` 惰性 load,见 [docs/01 §4](./01-architecture.md));单文件超过 `MAX_PDF_BYTES = 128 MiB` **直接跳过并保留旧索引行**——pdfjs 必须把整个文件读进内存,不设上限时一个多 GB 的 PDF 会打爆索引 worker;MCP 的 `whale_extract_text` 对超限 PDF 返回明确错误
+- **并发抽取**:`buildFulltextIndex` 的 walk + `extractText` 用 `mapWithConcurrency(8)` 并发(子目录递归 + 文件抽取重叠);共享的 `seen` / `count` / `upserts` 只在 `await` 之间同步变异,JS 单线程下无竞态。FTS5 的 `DELETE WHERE path = ?` 已实测可用,支持增量 upsert / delete。删除集合由纯函数 `selectRemoved(prior, seen, skipped)` 计算:跳过路径按**路径边界**豁免(`a/b` 覆盖 `a/b/c`,不覆盖 `a/bc`;`''` 表示根目录本身不可读 → 一条都不删)
 
 媒体(binary)不参与全文索引。
 
