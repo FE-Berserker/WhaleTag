@@ -127,6 +127,13 @@ detailed read 保留健康目录数据并报告 corrupt/unreadable；非法 JSON
 - 回归网：[boot-guard.test.ts](../src/renderer/services/boot-guard.test.ts) 18 例（jsdom）——错误详情归一、限流与窗口回填、覆盖层内容 / Reload / 幂等 / 移除、就绪前后两种上报行为、看门狗触发与 `markReady` 取消、`dispose`；[crash-guard.test.ts](../src/main/crash-guard.test.ts) 新增 4 例覆盖 `sanitizeErrorDetail`。
 - 评估未做：把恢复界面做成带「Open crash log / Quit」的完整面板（需要主进程暴露日志路径与新 IPC，收益不如直接 reload 明确）；把 `window.onerror` 的 report 也写进 redux 便于设置页展示（会依赖可能已损坏的 store）。
 
+### P1-17. MCP bearer token 明文落盘 ✅
+本地 MCP 服务器只监听 `127.0.0.1`，但 token 本身此前是 `mcp-config.json` 里的明文——任何能读该文件的进程（或一次备份、一次同步目录外泄）都能完整冒充客户端：读工具（`whale_search` / `whale_read_text` / `whale_extract_text` / `whale_roots`）不需要审批，等于拿到全部已授权位置的读取权。
+- **加密落盘**：[mcp-config.ts](../src/main/mcp/mcp-config.ts) 的持久化文档新增 `tokenStorage` 与 `tokenEncrypted` 两个字段；有可用密钥库时用 Electron `safeStorage.encryptString` 加密后 base64 落盘，文件里不再出现明文 `token`。
+- **回退链**：加密不可用（无密钥库）→ 写明文并标 `tokenStorage: "plain"`；密文读不出来（换机、密钥库重置、后端切换）→ 先退回同一文件里的明文 token，两者都没有才开始新 token 并在日志里说明（此时旧客户端会 401）；旧版明文配置在下一次写入时自动迁移为加密形态。
+- **边界**：Linux 无 keyring 时 Electron 走 `basic_text` 后端，`isEncryptionAvailable()` 仍为真——那里的"加密"只有混淆强度，不是真正的密钥保护；`safeStorage` 只能在 app ready 之后用，`loadMcpConfig()` 由 `initMcpServer()` 在 `bootstrap()` 内调用，顺序满足。
+- 回归网：[mcp-config.test.ts](../src/main/mcp/mcp-config.test.ts) 16 例，新增 5 例覆盖「旧明文自动迁移并加解密往返」「无密钥库回退明文」「密文损坏时退回同文件明文」「密文与明文都不可用时重新生成」「纯函数 `normalizeMcpConfig(doc, cipher)` 解密路径」；测试用注入的 `TokenCipher`（`__setTokenCipherForTest` / `__resetMcpConfigForTest`），不依赖真实平台密钥库。
+
 ---
 
 ## 🟡 P2 — 类型逃逸

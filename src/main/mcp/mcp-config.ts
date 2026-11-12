@@ -1,7 +1,7 @@
 import path from 'path';
 import { existsSync, readFileSync } from 'fs';
 import { randomBytes } from 'crypto';
-import { app } from 'electron';
+import { app, safeStorage } from 'electron';
 import { atomicWriteJson } from '../atomic-write';
 
 /**
@@ -13,6 +13,14 @@ import { atomicWriteJson } from '../atomic-write';
  *
  * The renderer reads/writes this via the `mcp:*` IPC handlers in
  * `ipc-mcp.ts`; nothing else touches the file.
+ *
+ * At-rest token: the bearer token grants read access to every configured
+ * location (and, with approval, writes), so the file never stores it in clear
+ * text when Electron's OS-backed `safeStorage` can encrypt. The persisted
+ * document carries either `tokenEncrypted` (`tokenStorage: "safeStorage"`) or
+ * — on machines without a usable keyring — a plaintext `token`
+ * (`tokenStorage: "plain"`). Legacy plaintext documents are migrated to
+ * encrypted storage on the next write. See docs/21 §4.
  */
 
 export interface McpConfig {
@@ -26,7 +34,68 @@ export interface McpConfig {
   readOnly: boolean;
 }
 
+/** Encrypt/decrypt surface, injectable so the vault path is testable. */
+export interface TokenCipher {
+  isAvailable(): boolean;
+  encrypt(plain: string): string;
+  decrypt(encoded: string): string;
+}
+
+/** Shape written to `mcp-config.json`; `McpConfig` is the in-memory view. */
+interface PersistedMcpConfig {
+  enabled: boolean;
+  port: number;
+  readOnly: boolean;
+  tokenStorage: 'safeStorage' | 'plain';
+  tokenEncrypted?: string;
+  token?: string;
+}
+
 const DEFAULT_PORT = 7433;
+
+/** Cipher used where encryption must be assumed unavailable (pure parsing). */
+const UNAVAILABLE_CIPHER: TokenCipher = {
+  isAvailable: () => false,
+  encrypt: () => {
+    throw new Error('encryption is unavailable');
+  },
+  decrypt: () => {
+    throw new Error('encryption is unavailable');
+  },
+};
+
+/**
+ * OS-backed cipher. `safeStorage` is only usable after the app is ready —
+ * `loadMcpConfig()` is called from `initMcpServer()`, which runs inside
+ * `bootstrap()` after `whenReady()`, so that holds in production. On Linux
+ * without a keyring Electron falls back to a hardcoded key ("basic_text");
+ * `isEncryptionAvailable()` still reports true there, which keeps configs
+ * readable but only obfuscates the token — docs/21 says so.
+ */
+const electronCipher: TokenCipher = {
+  isAvailable() {
+    try {
+      return (
+        typeof safeStorage?.isEncryptionAvailable === 'function' &&
+        safeStorage.isEncryptionAvailable()
+      );
+    } catch {
+      return false;
+    }
+  },
+  encrypt(plain) {
+    return safeStorage.encryptString(plain).toString('base64');
+  },
+  decrypt(encoded) {
+    return safeStorage.decryptString(Buffer.from(encoded, 'base64'));
+  },
+};
+
+let cipherOverride: TokenCipher | null = null;
+
+function currentCipher(): TokenCipher {
+  return cipherOverride ?? electronCipher;
+}
 
 function configPath(): string {
   return path.join(app.getPath('userData'), 'mcp-config.json');
@@ -43,16 +112,70 @@ function isUsableToken(token: unknown): token is string {
   return typeof token === 'string' && token.length >= 16 && !/\s/.test(token);
 }
 
+function asConfigObject(loaded: unknown): Partial<PersistedMcpConfig> {
+  return loaded && typeof loaded === 'object' && !Array.isArray(loaded)
+    ? (loaded as Partial<PersistedMcpConfig>)
+    : {};
+}
+
+/**
+ * Resolve the bearer token from a persisted document. Order: encrypted value
+ * (when the cipher can read it) → plaintext value (legacy or keyring-less
+ * install) → a freshly generated one. Every fallback that loses a previously
+ * stored token is logged, because clients holding the old token will start
+ * failing with 401 and the log is the only place that explains why.
+ */
+function resolveToken(
+  doc: Partial<PersistedMcpConfig>,
+  cipher: TokenCipher
+): string {
+  const encrypted =
+    typeof doc.tokenEncrypted === 'string' && doc.tokenEncrypted.length > 0
+      ? doc.tokenEncrypted
+      : null;
+  let failure = '';
+  if (encrypted) {
+    if (cipher.isAvailable()) {
+      try {
+        const decrypted = cipher.decrypt(encrypted);
+        if (isUsableToken(decrypted)) return decrypted;
+        failure = 'the decrypted token is not usable';
+      } catch (e) {
+        failure = `decryption failed: ${String(e)}`;
+      }
+    } else {
+      failure = 'encryption is unavailable on this machine';
+    }
+  }
+  if (isUsableToken(doc.token)) {
+    if (failure) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[mcp] falling back to the plaintext token (${failure}); it will be re-encrypted on the next write`
+      );
+    }
+    return doc.token;
+  }
+  if (failure || doc.token !== undefined) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[mcp] a new bearer token was generated because the stored one could not be read (${failure || 'malformed token'})`
+    );
+  }
+  return generateToken();
+}
+
 /**
  * Coerce an arbitrary parsed JSON document into a usable config. Exported so
  * the validation matrix (non-object documents, bad ports, unusable tokens)
- * can be unit-tested without touching the filesystem or Electron.
+ * can be unit-tested without touching the filesystem or Electron. Passing a
+ * cipher exercises the encrypted-token branch.
  */
-export function normalizeMcpConfig(loaded: unknown): McpConfig {
-  const doc =
-    loaded && typeof loaded === 'object' && !Array.isArray(loaded)
-      ? (loaded as Partial<McpConfig>)
-      : {};
+export function normalizeMcpConfig(
+  loaded: unknown,
+  cipher: TokenCipher = UNAVAILABLE_CIPHER
+): McpConfig {
+  const doc = asConfigObject(loaded);
   const port = doc.port;
   return {
     enabled: doc.enabled === true,
@@ -60,9 +183,34 @@ export function normalizeMcpConfig(loaded: unknown): McpConfig {
       typeof port === 'number' && Number.isFinite(port) && port > 0 && port < 65536
         ? Math.floor(port)
         : DEFAULT_PORT,
-    token: isUsableToken(doc.token) ? doc.token : generateToken(),
+    token: resolveToken(doc, cipher),
     readOnly: doc.readOnly !== false, // default ON: safest first run
   };
+}
+
+/** The document written to disk; never contains both token forms. */
+function toPersistedDoc(cfg: McpConfig, cipher: TokenCipher): PersistedMcpConfig {
+  const base = {
+    enabled: cfg.enabled,
+    port: cfg.port,
+    readOnly: cfg.readOnly,
+  };
+  if (cipher.isAvailable()) {
+    try {
+      return {
+        ...base,
+        tokenStorage: 'safeStorage',
+        tokenEncrypted: cipher.encrypt(cfg.token),
+      };
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error(
+        '[mcp] could not encrypt the bearer token; storing it in plain text:',
+        e
+      );
+    }
+  }
+  return { ...base, tokenStorage: 'plain', token: cfg.token };
 }
 
 let cached: McpConfig | null = null;
@@ -102,7 +250,7 @@ export function loadMcpConfig(): McpConfig {
     // eslint-disable-next-line no-console
     console.warn('[mcp] config unreadable, regenerating with defaults:', e);
   }
-  cached = normalizeMcpConfig(loaded);
+  cached = normalizeMcpConfig(loaded, currentCipher());
   schedulePersist();
   return cached;
 }
@@ -110,7 +258,7 @@ export function loadMcpConfig(): McpConfig {
 async function persist(): Promise<void> {
   if (!cached) return;
   try {
-    await atomicWriteJson(configPath(), cached);
+    await atomicWriteJson(configPath(), toPersistedDoc(cached, currentCipher()));
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error('[mcp] failed to persist config:', e);
@@ -155,4 +303,18 @@ export async function regenerateMcpToken(): Promise<McpConfig> {
   loadMcpConfig().token = generateToken();
   await persistNow();
   return { ...loadMcpConfig() };
+}
+
+/**
+ * Test seams: swap the cipher (the production one needs a real Electron app)
+ * and drop the in-memory cache so a re-read hits the file again. Await
+ * `flushMcpConfigWrites()` before resetting, or a queued write may see
+ * `cached === null` and be skipped.
+ */
+export function __setTokenCipherForTest(cipher: TokenCipher | null): void {
+  cipherOverride = cipher;
+}
+
+export function __resetMcpConfigForTest(): void {
+  cached = null;
 }

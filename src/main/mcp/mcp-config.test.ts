@@ -40,6 +40,8 @@ const originalLoad = (Module as any)._load;
   return originalLoad.apply(Module, [request, ...rest]);
 };
 
+import type { TokenCipher } from './mcp-config';
+
 type McpConfigModule = typeof import('./mcp-config');
 let mod: McpConfigModule;
 
@@ -181,5 +183,125 @@ describe('mcp-config — load + persist', () => {
       fs.readFileSync(path.join(TMP_USER_DATA, 'mcp-config.json'), 'utf8')
     ) as { token: string };
     assert.equal(onDisk.token, cfg.token);
+  });
+});
+
+describe('mcp-config — bearer token at rest', () => {
+  const file = path.join(TMP_USER_DATA, 'mcp-config.json');
+  const TOKEN_B = 'B'.repeat(32);
+  const TOKEN_C = 'C'.repeat(32);
+
+  const encrypting: TokenCipher = {
+    isAvailable: () => true,
+    encrypt: (plain) => `enc:${Buffer.from(plain, 'utf8').toString('base64')}`,
+    decrypt: (encoded) => {
+      if (!encoded.startsWith('enc:')) throw new Error('not our ciphertext');
+      return Buffer.from(encoded.slice(4), 'base64').toString('utf8');
+    },
+  };
+  const plaintextOnly: TokenCipher = {
+    isAvailable: () => false,
+    encrypt: () => {
+      throw new Error('encryption is unavailable');
+    },
+    decrypt: () => {
+      throw new Error('encryption is unavailable');
+    },
+  };
+
+  const writePlaintext = (token: string): void => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ enabled: false, port: 7434, token, readOnly: true })
+    );
+  };
+  const readDoc = (): Record<string, unknown> =>
+    JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+
+  it('re-encrypts a legacy plaintext config on load and reads it back', async () => {
+    writePlaintext(TOKEN_B);
+    mod.__setTokenCipherForTest(encrypting);
+    mod.__resetMcpConfigForTest();
+
+    assert.equal(mod.loadMcpConfig().token, TOKEN_B);
+    await mod.flushMcpConfigWrites();
+
+    const doc = readDoc();
+    assert.equal(doc.tokenStorage, 'safeStorage');
+    assert.equal(typeof doc.tokenEncrypted, 'string');
+    assert.equal('token' in doc, false, 'plaintext token must not be written');
+    assert.notEqual(doc.tokenEncrypted, TOKEN_B);
+
+    mod.__resetMcpConfigForTest();
+    assert.equal(mod.loadMcpConfig().token, TOKEN_B);
+    await mod.flushMcpConfigWrites();
+  });
+
+  it('falls back to plaintext storage when encryption is unavailable', async () => {
+    writePlaintext(TOKEN_B);
+    mod.__setTokenCipherForTest(plaintextOnly);
+    mod.__resetMcpConfigForTest();
+
+    const token = mod.loadMcpConfig().token;
+    await mod.flushMcpConfigWrites();
+
+    const doc = readDoc();
+    assert.equal(doc.tokenStorage, 'plain');
+    assert.equal(doc.token, token);
+    assert.equal('tokenEncrypted' in doc, false);
+  });
+
+  it('uses the plaintext token when the encrypted one cannot be decrypted', async () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        enabled: true,
+        port: 7435,
+        readOnly: false,
+        tokenStorage: 'safeStorage',
+        tokenEncrypted: 'not-a-real-ciphertext',
+        token: TOKEN_C,
+      })
+    );
+    mod.__setTokenCipherForTest(encrypting);
+    mod.__resetMcpConfigForTest();
+
+    const cfg = mod.loadMcpConfig();
+    assert.equal(cfg.token, TOKEN_C, 'plaintext fallback keeps clients working');
+    await mod.flushMcpConfigWrites();
+    // The next write upgrades the fallback back to encrypted storage.
+    const doc = readDoc();
+    assert.equal(doc.tokenStorage, 'safeStorage');
+    assert.equal('token' in doc, false);
+  });
+
+  it('generates a fresh token when an encrypted config cannot be unlocked at all', async () => {
+    writePlaintext(TOKEN_B);
+    mod.__setTokenCipherForTest(encrypting);
+    mod.__resetMcpConfigForTest();
+    mod.loadMcpConfig();
+    await mod.flushMcpConfigWrites();
+
+    mod.__setTokenCipherForTest(plaintextOnly);
+    mod.__resetMcpConfigForTest();
+    const cfg = mod.loadMcpConfig();
+    assert.notEqual(cfg.token, TOKEN_B);
+    assert.ok(cfg.token.length >= 16);
+    await mod.flushMcpConfigWrites();
+    assert.equal(readDoc().token, cfg.token);
+
+    mod.__setTokenCipherForTest(null);
+  });
+
+  it('decrypts through normalizeMcpConfig without touching the filesystem', () => {
+    const doc = {
+      enabled: true,
+      port: 7433,
+      readOnly: true,
+      tokenStorage: 'safeStorage',
+      tokenEncrypted: encrypting.encrypt(TOKEN_C),
+    };
+    assert.equal(mod.normalizeMcpConfig(doc, encrypting).token, TOKEN_C);
+    assert.notEqual(mod.normalizeMcpConfig(doc).token, TOKEN_C);
   });
 });

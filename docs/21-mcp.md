@@ -12,7 +12,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| [src/main/mcp/mcp-config.ts](../src/main/mcp/mcp-config.ts) | 配置(`<userData>/mcp-config.json`,原子落盘,主进程所有):`enabled` / `port` / `token` / `readOnly`。默认**关 + 只读** |
+| [src/main/mcp/mcp-config.ts](../src/main/mcp/mcp-config.ts) | 配置(`<userData>/mcp-config.json`,原子落盘,主进程所有):`enabled` / `port` / `token` / `readOnly`。token 经 `safeStorage` 加密落盘(无可用密钥库时回退明文,见 §7);默认**关 + 只读** |
 | [src/main/mcp/mcp-http.ts](../src/main/mcp/mcp-http.ts) | **无 Electron 依赖**的协议核心:Bearer 鉴权(定时安全比较)、JSON body 读取、有状态 Streamable HTTP 会话(每 `mcp-session-id` 一个 `McpServer` + `StreamableHTTPServerTransport`)。可被官方客户端 SDK 端到端测试 |
 | [src/main/mcp/mcp-tools.ts](../src/main/mcp/mcp-tools.ts) | 18 个工具的注册与实现,直接调用 `sidecar.ts` / `index-worker-host` / `ipc/fs-read` / `ipc/fs-write` / `fulltext.ts` |
 | [src/main/mcp/mcp-approval.ts](../src/main/mcp/mcp-approval.ts) | 写操作审批闸:fail-closed(无窗口 / 60s 超时 / 拒绝 = 全部视为拒绝) |
@@ -37,7 +37,7 @@
 ## 4. 安全模型(与 docs/13 §11 对应)
 
 1. **只监听 127.0.0.1**,永不暴露局域网;默认关闭,需在设置里显式开启。
-2. **Bearer token**:每次请求必带 `Authorization: Bearer <token>`,`timingSafeEqual` 比较;token 本地生成,设置页可显隐 / 复制 / 再生成。
+2. **Bearer token**:每次请求必带 `Authorization: Bearer <token>`,`timingSafeEqual` 比较;token 本地生成、**加密落盘**(见 §7),设置页可显隐 / 复制 / 再生成。
 3. **allowedRoots 硬约束**:所有工具的路径先过 `assertWithinAllowedRoot`;且 MCP 比渲染层 IPC **更严**——move/copy 的**目的地也必须在 roots 内**(`assertBothEndsInside`,渲染层的拖拽豁免不适用于外部客户端)。
 4. **写分级**:sidecar 级(标签/描述)免审批;文件级(move/copy/delete/zip/create)推 `mcp:approvalRequest` 到窗口,用户明确点"允许"才执行;无窗口 / 60s 超时 / 拒绝一律 fail-closed。审批**一次只弹一条**(FIFO):只有队首会被广播并开始计时,排队请求的 60s **从它被显示时**才开始(旧实现让第二条在看不见的队列里烧完超时 → 用户从未见过的对话框被自动拒绝);队列上限 `MAX_PENDING_APPROVALS = 8`,超出立即拒绝而不是无限堆积。
 5. **只读模式**(默认开):所有变更工具直接拒绝(含打标、描述、以及会写索引的 `whale_build_fulltext`),搜索与读取不受影响。闸门是两道:调用开始前查一次,审批等待(最长 60s)返回后**再查一次**——等待期间用户打开只读,已点过的"允许"也不能放行;切换只读为开时立即 `denyAllPending()`,不让无效对话框继续挂在屏幕上。
@@ -79,5 +79,5 @@ ZCode / Claude Desktop 等 Streamable HTTP 客户端配置:
 - **office 文档抽取不支持**(docx/xlsx/pptx),`whale_extract_text` 会明确报错;后续可在 worker 里加转换管线。
 - 有状态会话存在内存里,应用重启后客户端需重连(重新 initialize)。
 - `whale_build_fulltext` 是长操作,大位置可能跑数分钟;客户端超时策略由客户端自己决定。
-- 测试:`mcp-approval.test.ts` 覆盖审批闸全部 fail-closed 路径,外加 FIFO 队列语义(只广播队首、队首结算后才提升下一条、排队期间不烧超时、队列满了立即拒绝、退出时不弹出下一条);`mcp-http.test.ts` 用**官方客户端 SDK** 走通 401 / initialize / tools 列表 / 只读工具调用 / 未审批变更拒绝的端到端链路,并覆盖前缀/未知会话 404、4 MiB+1 → 413、闲置回收与关闭 sweeper(electron 模块在测试中以 stub 注入);`mcp-config.test.ts` 覆盖归一化矩阵(非对象 JSON、越界端口、坏 token、只读默认值)与读写往返;`mcp-server.test.ts` 覆盖启停、端口回退、只读开关、keep-alive 连接下的快速停止与并发开关串行化。工具面守卫在 `mcp-http.test.ts` 的 "tool guards" 组里用真实配置的 root 走端到端:只读拒绝打标 / 建索引、root 本身拒绝打标(且父目录不落 `.whale`)、root 内普通文件可打标、目录拒绝当文本读;`allowed-roots.test.ts` 覆盖 `isConfiguredRoot` 的归一化匹配;`fs-write.test.ts` 用两个并发 copy/move 抢同一目标名验证只有一个成功且既有目标字节不变,并覆盖 `commonParentDir` 的跨目录归档路径。
-- token 明文落盘 `<userData>/mcp-config.json`(设置页可一键再生成)——任何能读该文件的本地进程可完全冒充客户端;换取设置页直接展示 / 复制,属本地工具的通行取舍。MCP 配置变更在生命周期队列内**先原子落盘再生效**,切换后立即崩溃不丢状态。
+- 测试:`mcp-approval.test.ts` 覆盖审批闸全部 fail-closed 路径,外加 FIFO 队列语义(只广播队首、队首结算后才提升下一条、排队期间不烧超时、队列满了立即拒绝、退出时不弹出下一条);`mcp-http.test.ts` 用**官方客户端 SDK** 走通 401 / initialize / tools 列表 / 只读工具调用 / 未审批变更拒绝的端到端链路,并覆盖前缀/未知会话 404、4 MiB+1 → 413、闲置回收与关闭 sweeper(electron 模块在测试中以 stub 注入);`mcp-config.test.ts` 覆盖归一化矩阵(非对象 JSON、越界端口、坏 token、只读默认值)、读写往返,以及 token 加密落盘:旧明文自动迁移、无密钥库回退明文、密文损坏时退回同文件明文、两者都不可用时重新生成;`mcp-server.test.ts` 覆盖启停、端口回退、只读开关、keep-alive 连接下的快速停止与并发开关串行化。工具面守卫在 `mcp-http.test.ts` 的 "tool guards" 组里用真实配置的 root 走端到端:只读拒绝打标 / 建索引、root 本身拒绝打标(且父目录不落 `.whale`)、root 内普通文件可打标、目录拒绝当文本读;`allowed-roots.test.ts` 覆盖 `isConfiguredRoot` 的归一化匹配;`fs-write.test.ts` 用两个并发 copy/move 抢同一目标名验证只有一个成功且既有目标字节不变,并覆盖 `commonParentDir` 的跨目录归档路径。
+- token 优先经 Electron 的 OS 密钥库(`safeStorage`)加密后落盘 `<userData>/mcp-config.json`(字段 `tokenEncrypted` + `tokenStorage: "safeStorage"`);机器上没有可用密钥库时回退明文(字段 `token` + `tokenStorage: "plain"`)并在日志里说明。旧明文配置在下一次写入时自动迁移为加密形态;密文读不出来(换机、密钥库被重置)时优先退回同一文件里的明文 token,两者都没有才重新生成并告警——此时持有旧 token 的客户端会拿到 401。注意 Linux 无 keyring 时 Electron 会用内置口令走 `basic_text` 后端,`isEncryptionAvailable()` 仍为真,这时的"加密"只有混淆强度,不能当作真正的密钥保护。MCP 配置变更在生命周期队列内**先原子落盘再生效**,切换后立即崩溃不丢状态。

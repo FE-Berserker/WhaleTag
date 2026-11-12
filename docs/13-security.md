@@ -103,7 +103,7 @@
 
 外部 AI 客户端的文件操作入口(详见 [./21-mcp.md](./21-mcp.md)):
 
-- 只监听 `127.0.0.1`,默认关闭;每个请求必须携带 Bearer token(`timingSafeEqual` 比较,设置页可再生成);Host 头必须是回环自身(先于 401 返回 403,防 DNS rebinding)。
+- 只监听 `127.0.0.1`,默认关闭;每个请求必须携带 Bearer token(`timingSafeEqual` 比较,设置页可再生成);token 优先经 OS 密钥库(`safeStorage`)加密落盘,无可用密钥库时回退明文并在配置里标记(`tokenStorage`),旧明文配置下次写入自动迁移;Host 头必须是回环自身(先于 401 返回 403,防 DNS rebinding)。
 - 所有工具路径过 `assertWithinAllowedRoot`;且比渲染层 IPC 更严——move/copy 的**目的地**也必须在 roots 内。
 - 写操作分级:sidecar 级(标签/描述)免审批;文件级(move/copy/delete/zip/create)推送审批弹窗,**无窗口 / 60s 超时 / 拒绝一律视为拒绝**(fail-closed)。
 - 只读模式(默认开)拒绝一切变更工具;删除仅回收站,不提供永久删除。
