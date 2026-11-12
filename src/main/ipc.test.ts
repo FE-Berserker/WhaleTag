@@ -34,7 +34,14 @@ import { createRequire } from 'module';
 import { promises as fsp } from 'fs';
 import os from 'os';
 import path from 'path';
-import { setAllowedRoots } from './allowed-roots';
+import { setAllowedRoots, getAllowedRoots } from './allowed-roots';
+import { closeAllWatchers } from './dir-watcher';
+import {
+  __resetKnownRootsForTest,
+  flushKnownRootsWrites,
+  initKnownRoots,
+  isKnownRoot,
+} from './known-roots';
 
 // tsconfig.json has `module: CommonJS`, so `import.meta.url` is not
 // available. `__filename` is the CommonJS equivalent — the test file
@@ -83,6 +90,8 @@ interface TestRig {
   execFileCalls: { args: unknown[] }[];
   /** Per-call outcome. Index aligns with the call sequence. */
   outcomes: ExecOutcome[];
+  /** Directory paths the stubbed native folder dialog returns (empty = cancel). */
+  dialogPaths: string[];
   registerIpcHandlers: () => void;
 }
 
@@ -126,6 +135,7 @@ async function buildRig(): Promise<TestRig> {
   const showItemInFolderCalls: { args: unknown[] }[] = [];
   const execFileCalls: { args: unknown[] }[] = [];
   const outcomes: ExecOutcome[] = [];
+  const dialogPaths: string[] = [];
 
   // Inject `electron` stub. `ipc.ts` uses named imports, which the
   // CommonJS interop layer resolves from the default export. Setting the
@@ -147,7 +157,12 @@ async function buildRig(): Promise<TestRig> {
       // only on failure).
       openPath: async () => '',
     },
-    dialog: { showOpenDialog: () => undefined },
+    dialog: {
+      showOpenDialog: async () => ({
+        canceled: dialogPaths.length === 0,
+        filePaths: [...dialogPaths],
+      }),
+    },
     clipboard: { writeText: () => undefined },
     nativeImage: {
       createFromPath: () => null,
@@ -202,6 +217,7 @@ async function buildRig(): Promise<TestRig> {
     showItemInFolderCalls,
     execFileCalls,
     outcomes,
+    dialogPaths,
     registerIpcHandlers: mod.registerIpcHandlers,
   };
 }
@@ -573,6 +589,79 @@ describe('fs:write handlers — confinement + failure-contract', () => {
     await assert.rejects(
       async () => handler({}, path.join(os.tmpdir(), 'whale-outside-del.txt'), false),
       /Refused/
+    );
+  });
+});
+
+/**
+ * Location provenance (known-roots.ts). The renderer sends the root list, so
+ * without a main-process record of what the user picked, a compromised
+ * renderer could register `/` and defeat every path guard. These pin: the
+ * upgrade seed, the refusal after seeding, and the native picker as the only
+ * way to add a location after that.
+ */
+describe('location provenance (known-roots)', () => {
+  let rig: TestRig;
+  let userData: string;
+  let picked: string;
+  let outside: string;
+
+  beforeEach(async () => {
+    clearInjectedMocks();
+    __resetKnownRootsForTest();
+    rig = await buildRig();
+    userData = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-known-'));
+    picked = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-picked-'));
+    outside = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-outside-'));
+    initKnownRoots(userData);
+    rig.registerIpcHandlers();
+  });
+
+  afterEach(async () => {
+    closeAllWatchers();
+    setAllowedRoots([]);
+    // Flush before resetting: a queued persist still points at these dirs.
+    await flushKnownRootsWrites();
+    __resetKnownRootsForTest();
+    clearInjectedMocks();
+    clearIpcModuleCache();
+    for (const dir of [userData, picked, outside]) {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('seeds the record from the first renderer push (upgrade path)', async () => {
+    const handler = rig.ipcHandlers.get('fs:setAllowedRoots')!;
+    await handler({}, [picked]);
+    assert.equal(getAllowedRoots().length, 1, 'the first push seeds and registers');
+    await flushKnownRootsWrites();
+    assert.equal(isKnownRoot(picked), true, 'the seeded root is persisted');
+  });
+
+  it('refuses a directory the user never picked once seeded', async () => {
+    const handler = rig.ipcHandlers.get('fs:setAllowedRoots')!;
+    await handler({}, [picked]); // seeds the record
+    await handler({}, [outside]); // never picked -> must be dropped
+    assert.deepEqual(
+      getAllowedRoots(),
+      [],
+      'an unprovenanced directory must never become writable'
+    );
+  });
+
+  it('accepts a directory after the native picker returned it', async () => {
+    const set = rig.ipcHandlers.get('fs:setAllowedRoots')!;
+    await set({}, [picked]); // seed with a different location
+
+    rig.dialogPaths.push(outside);
+    const pick = rig.ipcHandlers.get('dialog:openDirectory')!;
+    assert.equal(await pick({}), outside);
+
+    await set({}, [picked, outside]);
+    assert.equal(
+      getAllowedRoots().length,
+      2,
+      'a directory picked in the dialog becomes registrable'
     );
   });
 });

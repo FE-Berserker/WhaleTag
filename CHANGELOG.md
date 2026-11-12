@@ -56,6 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **目录枚举也受位置边界约束**:`fs:listDirectory` / `fs:listDirectoryRecursive` / `folderMeta:read` 此前不校验 allowedRoots,被注入的渲染层可以枚举任意目录、在任意目录写扫描缓存——尽管文档声称“读取入口也遵守同一位置边界”。三个通道现在与写通道、文件读取用同一把尺子(fail-closed:未注册位置时一律拒绝),递归扫描的缓存因此也只落在边界内;同时删除了渲染层从未调用、没有任何校验的 `fs:pathExists`(handler + preload + 类型声明)。`waitForAllowedRoots()` 在首次挂载时先让出一个 microtask,避免目录列表早于 Root 的 `setAllowedRoots` 被误拒。
   **Directory enumeration is now bounded by the locations too**: `fs:listDirectory`, `fs:listDirectoryRecursive` and `folderMeta:read` did not check allowedRoots, so an injected renderer could enumerate any directory and even write the recursive scan cache into arbitrary `.whale/` folders — despite the docs claiming reads honour the same boundary. All three now use the same guard as writes and file reads (fail-closed: refused when no location is registered), which also keeps the recursive cache inside the boundary. The unused, unguarded `fs:pathExists` channel was removed (handler, preload and type), and `waitForAllowedRoots()` now yields one microtask on first mount so directory listing cannot be refused before Root has pushed `setAllowedRoots`.
 
+
+- **位置边界不能再被渲染层自行登记绕过**:`fs:setAllowedRoots` 此前直接信任渲染层传来的根目录数组,渲染层一旦被注入,push 一个 `/` 就能让 allowedRoots 形同虚设。现在主进程用 `known-roots.json` 记住用户真正在原生对话框里选过的目录,只放行这些;升级/首装时做一次种子(TOFU)避免既有位置失效,记录损坏或不可读时重新 seed 而不是把用户锁在门外。
+  **The location boundary can no longer be widened by the renderer itself**: `fs:setAllowedRoots` used to trust the array the renderer sent, so an injected renderer could push `/` and turn allowedRoots into decoration. The main process now keeps `known-roots.json` — the directories the user picked in the native folder dialog — and only accepts those; an upgrade or first install seeds the record once (trust on first use) so existing locations keep working, and a corrupt or unreadable record re-seeds instead of locking the user out.
+
 ## [0.5.0] - 2026-09-15
 
 ### Added

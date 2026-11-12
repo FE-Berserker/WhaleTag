@@ -1,4 +1,5 @@
 import { ipcMain, dialog } from 'electron';
+import { rememberPickedRoot } from '../known-roots';
 
 /**
  * Native file/folder dialog handlers (`dialog:*`). Split out of the old
@@ -11,7 +12,11 @@ async function openDirectoryDialog(): Promise<string | null> {
     properties: ['openDirectory', 'createDirectory'],
   });
   if (result.canceled || result.filePaths.length === 0) return null;
-  return result.filePaths[0];
+  const picked = result.filePaths[0];
+  // Provenance for the location guard (known-roots.ts): only directories the
+  // user picked here become registrable locations.
+  rememberPickedRoot(picked);
+  return picked;
 }
 
 /** Shows the native "select image file" dialog. Returns null if cancelled. */

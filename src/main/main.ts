@@ -40,6 +40,7 @@ import {
 } from './auto-update';
 import { buildMenu } from './menu';
 import { assertWithinAllowedRoot } from './allowed-roots';
+import { initKnownRoots } from './known-roots';
 import { getWhaleAppVersion } from './app-version';
 import { decodeWhaleFileUrl } from '../shared/whale-file-url';
 import { createFileRangeResponse } from './protocol-range';
@@ -399,6 +400,11 @@ function registerAutoUpdateHandlers(): void {
 
 function bootstrap(): void {
   Menu.setApplicationMenu(buildMenu());
+  // Load the user-picked locations record before the renderer's first
+  // `fs:setAllowedRoots` push — the push is filtered through it so a
+  // compromised renderer cannot register an arbitrary directory
+  // (known-roots.ts; missing file = fresh install/upgrade → seeds once).
+  initKnownRoots(app.getPath('userData'));
   registerIpcHandlers();
   // docs/04 §10: forward index-worker build progress to the renderer
   // (SearchBar's index build + Settings → Full-text builds). Broadcast to

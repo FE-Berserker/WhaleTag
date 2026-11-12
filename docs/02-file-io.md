@@ -65,6 +65,7 @@
 - Windows 大小写归一(`isSameOrDescendant` 调用前 `toLowerCase()`)
 - **只读位置**(`isReadOnly=true`)的写拦截在 renderer 层(IOActions / FileList / useListCommands 守卫);allowedRoots **包含**只读位置(见 §1 上方条目),主进程写 IPC 不对其早 throw
 - **读取也受限**:`fs:listDirectory` / `fs:listDirectoryRecursive` / `folderMeta:read` 与文件读取一样过 `assertWithinAllowedRoot` —— 目录枚举能揭示位置外有哪些文件,递归扫描还会把缓存写进 `<dir>/.whale/`,所以不能只防"读内容"。`fs:pathExists` 这个无校验、渲染层从未调用的死通道已删除(暴露面只减不增)。渲染层首次挂载时子 effect 早于 Root 的 `setAllowedRoots`,因此列目录前先 `await waitForAllowedRoots()`。侧车批量读(`sidecar:readMany*`)仍不校验 root:它只返回调用方已给出文件名对应的元数据,无法枚举目录。
+- **位置必须来自用户的选择**:`fs:setAllowedRoots` 不再直接信任渲染层传来的数组。[known-roots.ts](../src/main/known-roots.ts) 在 `<userData>/known-roots.json` 记录"用户真的在原生对话框里选过的目录"(`dialog:openDirectory` 处理器用 `rememberPickedRoot` 记),推送时只放行已知目录,其余丢弃并记 `console.warn`;升级/首装第一次推送做一次性 seed(TOFU)并落盘,首次推送即使是空的也会关闭 seed 窗口(否则首装无位置时被注入者还能后手以 `/` 完成 seed);记录损坏/不可读时按未 seed 重来,路径被目录占用时先改名为 `.corrupt-<时间戳>` 再记录。这样渲染层即使被注入也注册不了 `/`。
 
 **renderer 侧 await helper**(`src/renderer/services/allowed-roots.ts`):
 

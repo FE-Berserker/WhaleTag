@@ -20,6 +20,8 @@
 - `fs.realpathSync` 解析目标(不存在递归父目录再拼尾部),防 symlink 逃逸
 - Windows 大小写归一(`isSameOrDescendant` 比较前 `toLowerCase`)
 
+**位置来历(provenance)**:`fs:setAllowedRoots` 只接受主进程记录在案的目录——用户在原生文件夹对话框里选过的(处理器在返回路径前用 [known-roots.ts](../src/main/known-roots.ts) 的 `rememberPickedRoot` 记录,持久化到 `<userData>/known-roots.json`),或升级/首装后第一次推送时的一次性种子(TOFU,写入记录后再以记录为准)。未知目录记 `console.warn` 后丢弃,不进入 `allowedRoots`——渲染层即使被注入,也无法把 `/` 注册成位置。记录文件损坏或不可读时按"未 seed"重来,而不是把用户锁在门外(若该路径被目录占用,先把目录改名为 `known-roots.json.corrupt-<时间戳>` 再重新记录,否则之后每次写入都会失败);位置目录改名后旧路径不再是已知目录,需重新添加。
+
 **只读位置**:仍会注册进 `allowedRoots` 以允许读取；`allowedRoots` 只界定“哪些位置可访问”，不等同于只读权限。只读位置的写操作拦截在 renderer 的 IOActions / FileList / useListCommands 守卫，主进程写 IPC 不会仅凭 `isReadOnly` 拒绝。
 
 修订历史 IPC(`ext:backupRevision` / `ext:listRevisions` / `ext:restoreRevision` / `ext:deleteRevision`)过同一闸;`deleteRevision` 额外把 revision 路径绑定到所属文件的 `<dir>/.whale/revisions/` 前缀(与 restore 相同)——`rm --force` 不进回收站,不做绑定就是任意路径强删。`ext:cleanupRevisions` 只接受有限、非负的 number，非法天数在删除前 reject。详见 [docs/07-extensions.md](./07-extensions.md)。

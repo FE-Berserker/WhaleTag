@@ -150,6 +150,14 @@ docs/13 一直写着"读取入口也遵守同一位置边界"，但三个只读�
 - **保留的例外**：`sidecar:readMany*` 仍不校验 root——它只返回调用方已给出文件名对应的元数据，无法枚举目录；收紧会把"按路径读元数据"变成另一条启动竞态。
 - 回归网：[ipc.test.ts](../src/main/ipc.test.ts) 的 read-side guards 新增 5 例：listDirectory 内部可用 / 外部拒绝、listDirectoryRecursive 外部拒绝、folderMeta:read 内部可用 / 外部拒绝、`fs:pathExists` 通道不存在、无 root 时三通道全部拒绝。
 
+### P1-20. 位置边界可以被渲染层自己「登记」绕过 ✅
+[allowed-roots.ts](../src/main/allowed-roots.ts) 的注释声称这是"软纵深防御，被注入的渲染层也动不了位置外的文件"，但 `fs:setAllowedRoots` 直接信任渲染层发来的数组——被注入的渲染层 push 一个 `['/']`，整条边界立刻失效，`fs:writeFile` / `fs:readFile` / 删除全部放行。边界实际上只防住了"路径写错"，没防住"渲染层被控制"。
+- **主进程记录位置来历**：新增 [known-roots.ts](../src/main/known-roots.ts)。`dialog:openDirectory` 处理器在把路径交回渲染层之前调用 `rememberPickedRoot`，持久化到 `<userData>/known-roots.json`（在位置边界之外，渲染层即使被注入也写不到）。
+- **推送过滤**：`fs:setAllowedRoots` 只放行记录里的目录；未知目录 `console.warn` 后丢弃（既不注册、也不进 watcher / 索引）。索引键、`lastSyncedRoots` diff 都按过滤后的集合走。
+- **升级兼容**：老用户的位置只存在于渲染层持久化状态里。第一次推送（记录文件不存在）做一次性种子并落盘，之后以记录为准；**首次推送即使是空的也关闭 seed 窗口**，否则首装（无位置）时被注入的渲染层还能在之后以 `/` 完成 seed；记录损坏或不可读时按"未 seed"重来，路径被目录占用时先把目录改名为 `known-roots.json.corrupt-<时间戳>` 再记录（否则后续每次写入都会失败）。代价是首装/升级那一次推送仍属 TOFU——已在 docs/13 §2 明示。
+- **改名语义**：位置目录改名后旧路径不再算已知目录，重新用对话框添加即可（原来同样会因路径失效而打不开）。
+- 回归网：[known-roots.test.ts](../src/main/known-roots.test.ts) 8 例（首推 seed 并持久化、未知目录拒绝、重启后记录仍在、对话框记录、相对路径忽略、损坏重 seed、不可读重 seed、原子写无 `.tmp` 残留）+ [ipc.test.ts](../src/main/ipc.test.ts) 的 location provenance 3 例（首推 seed、已 seed 后拒绝未选目录、对话框选过即注册）。
+
 ---
 
 ## 🟡 P2 — 类型逃逸

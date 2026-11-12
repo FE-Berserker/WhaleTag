@@ -1,6 +1,7 @@
 import os from 'os';
 import path from 'path';
 import { ipcMain } from 'electron';
+import { acceptRootsFromRenderer } from '../known-roots';
 import { setAllowedRoots, getAllowedRoots } from '../allowed-roots';
 import { closeIndexDb } from '../index-worker-host';
 import { syncWatchedRoots } from '../dir-watcher';
@@ -27,9 +28,18 @@ export function registerFsRootsHandlers(): void {
   let lastSyncedRoots: string[] = [];
 
   // The renderer syncs its configured locations here so write handlers can
-  // confine mutations to those roots (see assertWithinAllowedRoot).
+  // confine mutations to those roots (see assertWithinAllowedRoot). The push
+  // is filtered through the main-process record of directories the user
+  // actually picked (known-roots.ts) — otherwise a compromised renderer could
+  // register `/` and defeat the whole boundary.
   ipcMain.handle('fs:setAllowedRoots', (_event, roots: string[]) => {
-    const next = roots ?? [];
+    const { accepted: next, refused } = acceptRootsFromRenderer(roots ?? []);
+    for (const raw of refused) {
+      console.warn(
+        '[roots] ignoring a location that was never picked by the user:',
+        raw
+      );
+    }
     // A root that disappeared = a removed location: close its index.db in
     // the worker so per-location handles don't leak for the rest of the
     // session (docs/04 §10). Fire-and-forget — a later query for a still-
