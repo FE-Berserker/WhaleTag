@@ -60,6 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **位置边界不能再被渲染层自行登记绕过**:`fs:setAllowedRoots` 此前直接信任渲染层传来的根目录数组,渲染层一旦被注入,push 一个 `/` 就能让 allowedRoots 形同虚设。现在主进程用 `known-roots.json` 记住用户真正在原生对话框里选过的目录,只放行这些;升级/首装时做一次种子(TOFU)避免既有位置失效,记录损坏或不可读时重新 seed 而不是把用户锁在门外。
   **The location boundary can no longer be widened by the renderer itself**: `fs:setAllowedRoots` used to trust the array the renderer sent, so an injected renderer could push `/` and turn allowedRoots into decoration. The main process now keeps `known-roots.json` — the directories the user picked in the native folder dialog — and only accepts those; an upgrade or first install seeds the record once (trust on first use) so existing locations keep working, and a corrupt or unreadable record re-seeds instead of locking the user out.
 
+
+- **MCP 工具面补齐审批「放行」路径的端到端测试**:此前只有「拒绝」用例,而且它在未注册 root 时运行、先撞位置守卫,审批闸被整体删掉也照样通过。新增 tool surface 组用自动放行的传输层走真实审批队列,逐工具断言副作用(list_directory / get_meta / write_description / extract_text / create_folder / create_text_file / copy / move / delete / zip),其中创建文本文件同时验证 UTF-8 字节数与拒绝覆盖,删除走 `shell.trashItem`。
+  **End-to-end coverage for the MCP approval ALLOW path**: the only approval test was the deny side, and it ran without a configured root — so the location guard fired first and the test would still pass with the approval gate deleted. A new tool-surface suite injects an auto-approving transport and goes through the real queue, asserting the side effect of each tool (list_directory / get_meta / write_description / extract_text / create_folder / create_text_file / copy / move / delete / zip); the text-file case also pins UTF-8 byte accounting and the no-overwrite rule, and delete goes through `shell.trashItem`.
+
 ## [0.5.0] - 2026-09-15
 
 ### Added

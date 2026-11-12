@@ -35,7 +35,13 @@ const electronStub: any = {
     isPackaged: true,
   },
   ipcMain: { handle: () => undefined, on: () => undefined },
-  shell: {},
+  shell: {
+    // `whale_delete_files` trashes through Electron's shell API; the harness
+    // simulates it with rm so the tool's own bookkeeping is what gets tested.
+    trashItem: async (target: string) => {
+      await fs.promises.rm(target, { recursive: true, force: true });
+    },
+  },
   utilityProcess: {
     fork: () => {
       throw new Error('utilityProcess is not available in tests');
@@ -420,6 +426,257 @@ describe('mcp tool guards (location roots, read-only, read caps)', () => {
     });
     assert.equal(res.isError, true);
     assert.match(textOf(res), /Not a file/);
+    await client.close();
+  });
+});
+
+/**
+ * The rest of the tool surface: read tools that never touch the index worker,
+ * sidecar-only writes, and the APPROVAL-ALLOW path for every file operation.
+ * Before this suite the only approval test was the deny path, so an approval
+ * gate that silently allowed everything would have passed.
+ */
+describe('mcp tool surface (approval allow path)', () => {
+  let ROOT = '';
+  let config: typeof import('./mcp-config');
+  let approval: typeof import('./mcp-approval');
+
+  function textOf(res: unknown): string {
+    const content = (res as { content?: unknown }).content;
+    return ((content as { type: string; text?: string }[]) ?? [])
+      .filter((c) => c.type === 'text')
+      .map((c) => c.text ?? '')
+      .join('');
+  }
+
+  function jsonOf<T>(res: unknown): T {
+    return JSON.parse(textOf(res)) as T;
+  }
+
+  before(async () => {
+    ROOT = await fs.promises.realpath(
+      await fs.promises.mkdtemp(path.join(os.tmpdir(), 'whale-mcp-tools-'))
+    );
+    setAllowedRoots([ROOT]);
+    config = await import('./mcp-config');
+    await config.setMcpReadOnly(false);
+    approval = await import('./mcp-approval');
+    // Auto-approve the visible request on the next microtask, the way the
+    // dialog answers it. The approve() path then runs for real.
+    approval.bindApprovalTransport({
+      broadcast: (req) => {
+        queueMicrotask(() => approval.resolveApproval(req.reqId, true));
+      },
+      hasWindows: () => true,
+    });
+  });
+
+  after(async () => {
+    approval.bindApprovalTransport({
+      broadcast: () => undefined,
+      hasWindows: () => false,
+    });
+    approval.denyAllPending();
+    await config.setMcpReadOnly(true);
+    setAllowedRoots([]);
+    await fs.promises.rm(ROOT, { recursive: true, force: true });
+  });
+
+  it('lists one directory level', async () => {
+    const dir = await fs.promises.mkdtemp(path.join(ROOT, 'list-'));
+    await fs.promises.writeFile(path.join(dir, 'a.txt'), 'A', 'utf8');
+    await fs.promises.mkdir(path.join(dir, 'inner'));
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'whale_list_directory',
+      arguments: { path: dir },
+    });
+    assert.notEqual(res.isError, true);
+    const parsed = jsonOf<{
+      count: number;
+      entries: { name: string; isDirectory: boolean }[];
+    }>(res);
+    assert.equal(parsed.count, 2);
+    assert.deepEqual(
+      parsed.entries.map((e) => [e.name, e.isDirectory]).sort(),
+      [
+        ['a.txt', false],
+        ['inner', true],
+      ]
+    );
+    await client.close();
+  });
+
+  it('reads sidecar metadata back after tagging', async () => {
+    const dir = await fs.promises.mkdtemp(path.join(ROOT, 'meta-'));
+    const file = path.join(dir, 'note.txt');
+    await fs.promises.writeFile(file, 'meta', 'utf8');
+    const { client } = await connectClient();
+    await client.callTool({
+      name: 'whale_apply_tags',
+      arguments: { paths: [file], add: ['surface-test'] },
+    });
+    const res = await client.callTool({
+      name: 'whale_get_meta',
+      arguments: { paths: [file] },
+    });
+    assert.notEqual(res.isError, true);
+    const parsed = jsonOf<{
+      metas: Record<string, { tags: string[] }>;
+    }>(res);
+    const meta = parsed.metas[file];
+    assert.ok(meta, 'the tagged file has metadata');
+    assert.deepEqual(meta.tags, ['surface-test']);
+    await client.close();
+  });
+
+  it('writes a description and keeps existing tags', async () => {
+    const dir = await fs.promises.mkdtemp(path.join(ROOT, 'desc-'));
+    const file = path.join(dir, 'note.txt');
+    await fs.promises.writeFile(file, 'desc', 'utf8');
+    const { client } = await connectClient();
+    await client.callTool({
+      name: 'whale_apply_tags',
+      arguments: { paths: [file], add: ['keep-me'] },
+    });
+    const res = await client.callTool({
+      name: 'whale_write_description',
+      arguments: { path: file, description: 'summary from the assistant' },
+    });
+    assert.notEqual(res.isError, true);
+    const meta = await client.callTool({
+      name: 'whale_get_meta',
+      arguments: { paths: [file] },
+    });
+    const parsed = jsonOf<{
+      metas: Record<string, { description?: string; tags: string[] }>;
+    }>(meta);
+    const entry = parsed.metas[file];
+    assert.ok(entry, 'the described file has metadata');
+    assert.equal(entry.description, 'summary from the assistant');
+    assert.deepEqual(entry.tags, ['keep-me']);
+    await client.close();
+  });
+
+  it('extracts text from a supported document', async () => {
+    const dir = await fs.promises.mkdtemp(path.join(ROOT, 'extract-'));
+    const file = path.join(dir, 'readme.md');
+    await fs.promises.writeFile(file, '# Title\n\nBody text.', 'utf8');
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'whale_extract_text',
+      arguments: { path: file },
+    });
+    assert.notEqual(res.isError, true);
+    const parsed = jsonOf<{ text: string }>(res);
+    assert.match(parsed.text, /Body text/);
+    await fs.promises.rm(dir, { recursive: true, force: true });
+    await client.close();
+  });
+
+  it('creates a folder after approval', async () => {
+    const target = path.join(ROOT, 'created-folder');
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'whale_create_folder',
+      arguments: { path: target },
+    });
+    assert.notEqual(res.isError, true);
+    assert.equal(fs.statSync(target).isDirectory(), true);
+    await client.close();
+  });
+
+  it('creates a text file after approval and refuses to overwrite it', async () => {
+    const target = path.join(ROOT, 'report.md');
+    const content = '# Report\n\n中文内容。';
+    const { client } = await connectClient();
+    const created = await client.callTool({
+      name: 'whale_create_text_file',
+      arguments: { path: target, content },
+    });
+    assert.notEqual(created.isError, true);
+    assert.equal(await fs.promises.readFile(target, 'utf8'), content);
+    assert.equal(
+      jsonOf<{ bytes: number }>(created).bytes,
+      Buffer.byteLength(content, 'utf8')
+    );
+    const again = await client.callTool({
+      name: 'whale_create_text_file',
+      arguments: { path: target, content: 'clobber' },
+    });
+    assert.equal(again.isError, true);
+    assert.equal(await fs.promises.readFile(target, 'utf8'), content);
+    await client.close();
+  });
+
+  it('copies files after approval', async () => {
+    const dir = await fs.promises.mkdtemp(path.join(ROOT, 'copy-src-'));
+    const source = path.join(dir, 'data.txt');
+    await fs.promises.writeFile(source, 'COPY ME', 'utf8');
+    const dest = await fs.promises.mkdtemp(path.join(ROOT, 'copy-dst-'));
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'whale_copy_files',
+      arguments: { paths: [source], destDir: dest },
+    });
+    assert.notEqual(res.isError, true);
+    assert.equal(jsonOf<{ copied: number }>(res).copied, 1);
+    assert.equal(
+      await fs.promises.readFile(path.join(dest, 'data.txt'), 'utf8'),
+      'COPY ME'
+    );
+    assert.equal(fs.existsSync(source), true, 'copy keeps the source');
+    await fs.promises.rm(dir, { recursive: true, force: true });
+    await client.close();
+  });
+
+  it('moves files after approval', async () => {
+    const dir = await fs.promises.mkdtemp(path.join(ROOT, 'move-src-'));
+    const source = path.join(dir, 'data.txt');
+    await fs.promises.writeFile(source, 'MOVE ME', 'utf8');
+    const dest = await fs.promises.mkdtemp(path.join(ROOT, 'move-dst-'));
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'whale_move_files',
+      arguments: { paths: [source], destDir: dest },
+    });
+    assert.notEqual(res.isError, true);
+    assert.equal(jsonOf<{ moved: number }>(res).moved, 1);
+    assert.equal(fs.existsSync(source), false);
+    assert.equal(
+      await fs.promises.readFile(path.join(dest, 'data.txt'), 'utf8'),
+      'MOVE ME'
+    );
+    await client.close();
+  });
+
+  it('deletes files after approval (trash)', async () => {
+    const dir = await fs.promises.mkdtemp(path.join(ROOT, 'delete-'));
+    const target = path.join(dir, 'trash-me.txt');
+    await fs.promises.writeFile(target, 'bye', 'utf8');
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'whale_delete_files',
+      arguments: { paths: [target] },
+    });
+    assert.notEqual(res.isError, true);
+    assert.equal(jsonOf<{ deleted: number }>(res).deleted, 1);
+    assert.equal(fs.existsSync(target), false);
+    await client.close();
+  });
+
+  it('zips files after approval', async () => {
+    const dir = await fs.promises.mkdtemp(path.join(ROOT, 'zip-'));
+    await fs.promises.writeFile(path.join(dir, 'one.txt'), 'ONE', 'utf8');
+    const archive = path.join(ROOT, 'bundle.zip');
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'whale_zip_files',
+      arguments: { paths: [dir], zipPath: archive },
+    });
+    assert.notEqual(res.isError, true);
+    assert.equal(fs.existsSync(archive), true);
+    assert.ok(fs.statSync(archive).size > 0, 'the archive has content');
     await client.close();
   });
 });

@@ -158,6 +158,12 @@ docs/13 一直写着"读取入口也遵守同一位置边界"，但三个只读�
 - **改名语义**：位置目录改名后旧路径不再算已知目录，重新用对话框添加即可（原来同样会因路径失效而打不开）。
 - 回归网：[known-roots.test.ts](../src/main/known-roots.test.ts) 8 例（首推 seed 并持久化、未知目录拒绝、重启后记录仍在、对话框记录、相对路径忽略、损坏重 seed、不可读重 seed、原子写无 `.tmp` 残留）+ [ipc.test.ts](../src/main/ipc.test.ts) 的 location provenance 3 例（首推 seed、已 seed 后拒绝未选目录、对话框选过即注册）。
 
+### P1-21. MCP 工具面：审批「放行」路径与 9 个工具零端到端覆盖 ✅
+审批闸的测试此前只有「拒绝」一侧：`mcp-http.test.ts` 的 deny 用例在未注册 root 时运行，`assertWithinAllowedRoot` 先于审批触发，所以即使把审批闸整体删掉，该用例依旧会通过。"用户点了允许之后到底发生了什么"完全没有断言——包括那句最贵的承诺：`approve()` 只在用户放行后才执行真实写入。
+- **新增 tool surface 组**（[mcp-http.test.ts](../src/main/mcp/mcp-http.test.ts)）：用 `bindApprovalTransport` 注入一个自动放行的传输层（`broadcast` 里 `resolveApproval(reqId, true)`），再走真实审批队列，逐工具断言副作用：`whale_list_directory`、`whale_get_meta`（打标后回读）、`whale_write_description`（覆盖描述且保留既有标签）、`whale_extract_text`、`whale_create_folder`、`whale_create_text_file`（字节数按 UTF-8 计、二次调用拒绝覆盖且原内容不变）、`whale_copy_files`（源保留、目标字节一致）、`whale_move_files`（源消失）、`whale_delete_files`（走 `shell.trashItem`，测试用 rm 模拟）、`whale_zip_files`（归档存在且非空）。
+- **harness 变化**：electron stub 的 `shell` 从空对象改为带 `trashItem`（测试内 rm 模拟回收站），否则删除工具在测试环境里必然抛 `undefined is not a function`，反而测不到审批后的真实路径。
+- 未覆盖并记录在案：依赖索引 worker 的 `whale_search` / `whale_advanced_search` / `whale_fulltext_search` / `whale_list_tags` / `whale_build_fulltext` 仍只有只读拒绝用例——`utilityProcess` 在测试里不可用，端到端需要先造一个索引替身，留作后续。
+
 ---
 
 ## 🟡 P2 — 类型逃逸
