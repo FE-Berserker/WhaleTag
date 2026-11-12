@@ -11,6 +11,8 @@ import {
 import GppMaybeIcon from '@mui/icons-material/GppMaybe';
 
 import { ipcApi } from '-/services/ipc-api';
+import { notifyApp } from '-/services/app-notice';
+import { errorMessage } from '-/services/errors';
 import type { McpApprovalRequest } from '../../shared/mcp-types';
 
 /**
@@ -23,10 +25,14 @@ import type { McpApprovalRequest } from '../../shared/mcp-types';
  *
  * Mounted once in MainLayout. On mount it also pulls the pending queue so a
  * window reload mid-approval can still answer (requests auto-deny after 60s).
+ * Answers are confirmed against main before the request leaves the screen: a
+ * failed IPC keeps it visible (the client is still blocked) and reports the
+ * failure, while `settled: false` means the request expired meanwhile.
  */
 export default function McpApprovalDialog() {
   const { t } = useTranslation();
   const [requests, setRequests] = useState<McpApprovalRequest[]>([]);
+  const [answering, setAnswering] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubscribe = ipcApi.onMcpApprovalRequest((req) => {
@@ -43,17 +49,25 @@ export default function McpApprovalDialog() {
           return [...prev, ...pending.filter((r) => !seen.has(r.reqId))];
         });
       })
-      .catch(() => undefined);
+      .catch((error) => {
+        notifyApp(t('operationFailed', { message: errorMessage(error) }));
+      });
     return unsubscribe;
+    // `t` only formats the one-off error notice; re-subscribing on language
+    // change would drop a live push.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Drop requests whose expiry passed without a user answer (main auto-denied
-  // them) so the dialog can't show a zombie entry.
+  // them) so the dialog can't show a zombie entry, and re-render once a second
+  // so the countdown below actually counts down.
+  const [clock, setClock] = useState(() => Date.now());
   useEffect(() => {
     if (requests.length === 0) return;
     const timer = setInterval(() => {
-      const now = Date.now();
-      setRequests((prev) => prev.filter((r) => r.expiresAt > now));
+      const at = Date.now();
+      setClock(at);
+      setRequests((prev) => prev.filter((r) => r.expiresAt > at));
     }, 1000);
     return () => clearInterval(timer);
   }, [requests.length]);
@@ -62,12 +76,34 @@ export default function McpApprovalDialog() {
   // Oldest request first — a younger push must not jump the queue while an
   // older one is ticking toward its auto-deny.
   const req = [...requests].sort((a, b) => a.expiresAt - b.expiresAt)[0];
+  const remainingSeconds =
+    req.expiresAt > 0
+      ? Math.max(0, Math.ceil((req.expiresAt - clock) / 1000))
+      : null;
 
   const answer = (allowed: boolean) => {
-    setRequests((prev) => prev.filter((r) => r.reqId !== req.reqId));
-    void ipcApi
+    if (answering) return;
+    setAnswering(req.reqId);
+    ipcApi
       .mcpResolveApproval(req.reqId, allowed)
-      .catch(() => undefined);
+      .then((result) => {
+        setRequests((prev) => prev.filter((r) => r.reqId !== req.reqId));
+        if (!result.settled) {
+          // Main already dropped it (timeout / deny-all); the click answered a
+          // ghost, so say so instead of silently closing.
+          notifyApp(t('mcpApproveExpired'));
+        }
+      })
+      .catch((error) => {
+        // Keep the request on screen: the client is still blocked, and a
+        // silent disappearance would look like a successful answer.
+        notifyApp(t('mcpApproveFailed', { message: errorMessage(error) }));
+        void ipcApi
+          .mcpPendingApprovals()
+          .then((pending) => setRequests(pending))
+          .catch(() => undefined);
+      })
+      .finally(() => setAnswering(null));
   };
 
   return (
@@ -102,15 +138,35 @@ export default function McpApprovalDialog() {
               {req.details.join('\n')}
             </Typography>
           ) : null}
+          {remainingSeconds !== null ? (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              component="div"
+              sx={{ mt: 1 }}
+            >
+              {t('mcpApproveExpiresIn', { seconds: remainingSeconds })}
+            </Typography>
+          ) : null}
         </div>
       </DialogContent>
       <DialogActions>
         {/* autoFocus on Deny: a fast Enter must never mean "allow" — batch
             destructive operations deserve a deliberate confirmation. */}
-        <Button onClick={() => answer(false)} color="inherit" autoFocus>
+        <Button
+          onClick={() => answer(false)}
+          color="inherit"
+          autoFocus
+          disabled={answering !== null}
+        >
           {t('mcpApproveDeny')}
         </Button>
-        <Button onClick={() => answer(true)} variant="contained" color="primary">
+        <Button
+          onClick={() => answer(true)}
+          variant="contained"
+          color="primary"
+          disabled={answering !== null}
+        >
           {t('mcpApproveAllow')}
         </Button>
       </DialogActions>

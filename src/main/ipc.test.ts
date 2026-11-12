@@ -412,6 +412,52 @@ describe('read-side allowedRoots guards', () => {
     );
   });
 
+  it('fs:listDirectory lists inside an allowed root and refuses outside', async () => {
+    await fsp.writeFile(path.join(root, 'one.txt'), 'x');
+    await fsp.mkdir(path.join(root, 'sub'));
+    const handler = rig.ipcHandlers.get('fs:listDirectory')!;
+    const entries = (await handler({}, root)) as { name: string }[];
+    const names = entries.map((e) => e.name);
+    assert.ok(names.includes('one.txt'), 'inside listing must work');
+    assert.ok(names.includes('sub'), 'directories must be listed too');
+    // The temp dir is the PARENT of the allowed root: outside the boundary.
+    await assert.rejects(async () => handler({}, os.tmpdir()), /Refused/);
+  });
+
+  it('fs:listDirectoryRecursive refuses a root outside the locations', async () => {
+    const handler = rig.ipcHandlers.get('fs:listDirectoryRecursive')!;
+    await assert.rejects(
+      async () => handler({}, os.tmpdir(), { maxDepth: 1 }),
+      /Refused/
+    );
+  });
+
+  it('folderMeta:read reads inside an allowed root and refuses outside', async () => {
+    const handler = rig.ipcHandlers.get('folderMeta:read')!;
+    const inside = (await handler({}, root)) as Record<string, unknown>;
+    assert.equal(typeof inside, 'object');
+    await assert.rejects(
+      async () => handler({}, path.join(os.tmpdir(), 'whale-elsewhere')),
+      /Refused/
+    );
+  });
+
+  it('fs:pathExists is no longer exposed', async () => {
+    assert.equal(rig.ipcHandlers.has('fs:pathExists'), false);
+  });
+
+  it('listing and folder metadata fail closed when no roots are registered', async () => {
+    setAllowedRoots([]);
+    for (const channel of [
+      'fs:listDirectory',
+      'fs:listDirectoryRecursive',
+      'folderMeta:read',
+    ]) {
+      const handler = rig.ipcHandlers.get(channel)!;
+      await assert.rejects(async () => handler({}, root), /Refused/, channel);
+    }
+  });
+
   it('read guards fail closed when no roots are registered', async () => {
     setAllowedRoots([]);
     const handler = rig.ipcHandlers.get('fs:readFile')!;

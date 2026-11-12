@@ -49,6 +49,7 @@ import { useConfirm } from '-/components/ConfirmDialogProvider';
 import { useDirectoryTreeRefresh } from '-/hooks/DirectoryTreeRefreshContextProvider';
 import { ipcApi } from '-/services/ipc-api';
 import { errorMessage } from '-/services/errors';
+import { waitForAllowedRoots } from '-/services/allowed-roots';
 import { COLUMN_HEADER_HEIGHT } from '-/theme';
 import { basename, joinPath, isSameOrDescendant } from '-/services/path-util';
 import { changedParentsToReload } from './directory-tree-refresh';
@@ -220,6 +221,9 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
     requestedRef.current.add(dirPath);
     setLoading((prev) => new Set(prev).add(dirPath));
     try {
+      // Directory listing is confined to the registered locations (docs/13
+      // §13); wait for Root's first `setAllowedRoots` push before asking.
+      await waitForAllowedRoots();
       const entries = await ipcApi.listDirectory(dirPath);
       // Store folders and files (folders first, each alphabetical). Files are
       // only rendered when an extension view is open (see showFiles); keeping

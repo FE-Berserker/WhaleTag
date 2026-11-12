@@ -26,6 +26,7 @@ import {
 } from '../domain/recursive-entries';
 import type { RootState } from '-/reducers';
 import { ipcApi } from '-/services/ipc-api';
+import { waitForAllowedRoots } from '-/services/allowed-roots';
 import { isSameOrDescendant } from '-/services/path-util';
 import { useCurrentLocationContext } from './CurrentLocationContextProvider';
 
@@ -214,6 +215,10 @@ export function DirectoryContentContextProvider({
       setLoading(true);
       setError(null);
       try {
+        // Listing (flat + recursive) and folder metadata reads are confined to
+        // the registered locations (docs/13 §13); on the first mount this
+        // effect runs before Root has pushed the roots.
+        await waitForAllowedRoots();
         if (debouncedDepth <= 1) {
           // Fast path: current dir only. Same behavior as before H.24.
           const list = await ipcApi.listDirectory(dirPath);

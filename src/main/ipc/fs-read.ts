@@ -1,5 +1,5 @@
 import path from 'path';
-import { existsSync, promises as fsp } from 'fs';
+import { promises as fsp } from 'fs';
 import { ipcMain } from 'electron';
 import { DirEntry } from '../../shared/ipc-types';
 import { mapWithConcurrency } from '../concurrency';
@@ -8,10 +8,10 @@ import { loadRecursiveScan } from '../recursive-cache';
 import { assertWithinAllowedRoot } from '../allowed-roots';
 
 /**
- * Read-side `fs:*` handlers: directory listing (flat + recursive), text /
- * binary file reads, existence probe. Split out of the old god-registrar
- * `ipc.ts` (docs/01 §12) — behavior is verbatim; only the module boundary
- * is new.
+ * Read-side `fs:*` handlers: directory listing (flat + recursive) and text /
+ * binary file reads. Every path-taking handler here is confined to the
+ * configured location roots. Split out of the old god-registrar
+ * `ipc.ts` (docs/01 §12) — behavior is otherwise unchanged.
  */
 
 /** Names of entries that are never useful to show in a file browser. */
@@ -183,14 +183,21 @@ export async function readTextFile(filePath: string): Promise<string> {
 }
 
 export function registerFsReadHandlers(): void {
-  ipcMain.handle('fs:listDirectory', (_event, dirPath: string) =>
-    listDirectory(dirPath)
-  );
+  // Listing is a read too, and `listDirectoryRecursive` even writes its scan
+  // cache into `<dir>/.whale/index-recursive/` — so both are confined exactly
+  // like file reads (docs/13 §13). Before 2026-11 they were bare `readdir`
+  // calls, which let a compromised renderer enumerate any directory on disk.
+  ipcMain.handle('fs:listDirectory', (_event, dirPath: string) => {
+    assertWithinAllowedRoot(dirPath);
+    return listDirectory(dirPath);
+  });
 
   ipcMain.handle(
     'fs:listDirectoryRecursive',
-    (_event, dirPath: string, options?: { maxDepth?: number }) =>
-      loadRecursiveScan(dirPath, options?.maxDepth ?? 3, listDirectoryRecursive)
+    (_event, dirPath: string, options?: { maxDepth?: number }) => {
+      assertWithinAllowedRoot(dirPath);
+      return loadRecursiveScan(dirPath, options?.maxDepth ?? 3, listDirectoryRecursive);
+    }
   );
 
   ipcMain.handle('fs:readTextFile', (_event, filePath: string) => {
@@ -213,7 +220,7 @@ export function registerFsReadHandlers(): void {
     return buf.toString('base64');
   });
 
-  ipcMain.handle('fs:pathExists', (_event, targetPath: string) =>
-    existsSync(targetPath)
-  );
+  // `fs:pathExists` used to live here: an unconfined `existsSync` that no
+  // renderer code ever called. Removed in 2026-11 rather than confined —
+  // dead IPC surface is attack surface.
 }

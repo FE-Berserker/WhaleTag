@@ -136,10 +136,11 @@ export function requestApproval(args: {
  * Renderer answered (mcp:resolveApproval IPC). Only the visible head can be
  * answered; an unknown or already-settled reqId is a no-op.
  */
-export function resolveApproval(reqId: string, allowed: boolean): void {
+export function resolveApproval(reqId: string, allowed: boolean): boolean {
   const entry = queue[0];
-  if (!entry || entry.req.reqId !== reqId) return;
+  if (!entry || entry.req.reqId !== reqId) return false;
   settle(entry, allowed);
+  return true;
 }
 
 /**

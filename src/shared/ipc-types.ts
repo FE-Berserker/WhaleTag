@@ -172,7 +172,6 @@ export interface WhaleApi {
   readFile: (filePath: string) => Promise<ArrayBuffer>;
   /** Reads an arbitrary file as base64, encoded in Main to avoid a byte-array IPC payload. */
   readFileBase64: (filePath: string) => Promise<string>;
-  pathExists: (targetPath: string) => Promise<boolean>;
   openDirectoryDialog: () => Promise<string | null>;
   /** Shows the native file picker restricted to images. Returns null if cancelled. */
   openImageFileDialog: () => Promise<string | null>;
@@ -396,7 +395,7 @@ export interface WhaleApi {
   mcpResolveApproval: (
     reqId: string,
     allowed: boolean
-  ) => Promise<{ ok: true }>;
+  ) => Promise<{ ok: true; settled: boolean }>;
   /** Unanswered approval requests (dialog remount after a reload). */
   mcpPendingApprovals: () => Promise<McpApprovalRequest[]>;
   /** Subscribe to write-op approval requests. Returns unsubscribe. */

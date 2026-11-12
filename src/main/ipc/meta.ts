@@ -62,9 +62,12 @@ export function registerMetaHandlers(): void {
   );
 
   // ---- Folder metadata (`.whale/wsm.json`): tags/color/description + view prefs ----
-  ipcMain.handle('folderMeta:read', (_event, dirPath: string) =>
-    readFolderMeta(dirPath)
-  );
+  // Reads are confined too (docs/13 §13): the metadata of a directory is still
+  // data about a location the user did not grant access to.
+  ipcMain.handle('folderMeta:read', (_event, dirPath: string) => {
+    assertWithinAllowedRoot(dirPath);
+    return readFolderMeta(dirPath);
+  });
 
   ipcMain.handle(
     'folderMeta:write',

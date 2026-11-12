@@ -134,6 +134,22 @@ detailed read 保留健康目录数据并报告 corrupt/unreadable；非法 JSON
 - **边界**：Linux 无 keyring 时 Electron 走 `basic_text` 后端，`isEncryptionAvailable()` 仍为真——那里的"加密"只有混淆强度，不是真正的密钥保护；`safeStorage` 只能在 app ready 之后用，`loadMcpConfig()` 由 `initMcpServer()` 在 `bootstrap()` 内调用，顺序满足。
 - 回归网：[mcp-config.test.ts](../src/main/mcp/mcp-config.test.ts) 16 例，新增 5 例覆盖「旧明文自动迁移并加解密往返」「无密钥库回退明文」「密文损坏时退回同文件明文」「密文与明文都不可用时重新生成」「纯函数 `normalizeMcpConfig(doc, cipher)` 解密路径」；测试用注入的 `TokenCipher`（`__setTokenCipherForTest` / `__resetMcpConfigForTest`），不依赖真实平台密钥库。
 
+### P1-18. MCP 审批弹窗：作答未经确认就消失，失败等于工具被静默挂起 ✅
+审批闸本身是 fail-closed 的，但弹窗这一侧此前是**乐观移除**：[McpApprovalDialog.tsx](../src/renderer/components/McpApprovalDialog.tsx) 在点击"允许/拒绝"的瞬间就把请求从列表里删掉，然后 `mcpResolveApproval(...).catch(() => undefined)` 吞掉失败。IPC 一旦失败，用户以为已经答复、界面也消失了，而主进程的队列里请求还在——外部 AI 客户端的工具调用要一直等到 60 秒超时才被自动拒绝，期间既没有弹窗也没有任何提示。
+- **作答要等主进程确认**：`mcpResolveApproval` 的返回值从 `{ ok: true }` 扩成 `{ ok: true, settled: boolean }`（主进程 `resolveApproval` 现在返回"是否真的结算了"）。`settled: true` 才关闭弹窗；`settled: false` 说明请求已经超时或被清空，关闭并提示"已超时"。
+- **失败不吞**：IPC 失败时弹窗**保留**（客户端确实还在被阻塞），弹出错误提示，并重新拉取一次 `mcpPendingApprovals()` 与主进程对齐；挂载时的补拉失败也从 `.catch(() => undefined)` 改成提示。
+- **防重复提交**：作答在途时两个按钮都禁用（双击/连点不再触发第二次 IPC）。
+- **剩余时间可见**：弹窗每秒刷新并显示"剩余 N 秒"，与主进程 60 秒自动拒绝的时钟对齐（时钟在请求被展示时才开始走，见 docs/21 §5）。
+- 回归网：[McpApprovalDialog.test.tsx](../src/renderer/components/McpApprovalDialog.test.tsx) 6 例（推送出现 / 挂载补拉 / 结算后才关闭 / IPC 失败保留并提示 / 提前超时提示 / 在途禁用按钮），配合 `mcp-approval.test.ts` 的 9 例队列语义。
+
+### P1-19. 目录枚举越界：`fs:listDirectory` / `folderMeta:read` 不校验 root ✅
+docs/13 一直写着"读取入口也遵守同一位置边界"，但三个只读通道没走 `assertWithinAllowedRoot`：`fs:listDirectory`、`fs:listDirectoryRecursive`（除枚举外还会把扫描缓存写进 `<dir>/.whale/index-recursive/`）、`folderMeta:read`（返回目录的标签 / 颜色 / 描述）。另外还有一个渲染层从未调用的 `fs:pathExists`（裸 `existsSync`）。这组接口让被注入的主窗口（扩展 iframe 已隔离，但主窗口的预览内容同属一个信任域）可以枚举任意目录、在任意目录落 `.whale` 缓存。
+- **同一把尺子**：三个通道补上 `assertWithinAllowedRoot`，与写通道、文件读取一致；fail-closed——未注册任何 root 时一律 `Refused`。
+- **死 API 删除**：`fs:pathExists` 从 handler、preload 与 `WhaleApi` 声明中移除（全仓无调用方）。暴露面只减不增。
+- **启动顺序**：React 子 effect 早于 Root 的 `setAllowedRoots`，收紧后首次挂载会撞上 fail-closed。[allowed-roots.ts](../src/renderer/services/allowed-roots.ts) 的 `waitForAllowedRoots()` 在无 in-flight 注册时先让出一个 microtask（同一轮 commit 的父 effect 随后才执行），[DirectoryTree.tsx](../src/renderer/components/DirectoryTree.tsx) 与 [DirectoryContentContextProvider.tsx](../src/renderer/hooks/DirectoryContentContextProvider.tsx) 在列目录前 `await` 它。
+- **保留的例外**：`sidecar:readMany*` 仍不校验 root——它只返回调用方已给出文件名对应的元数据，无法枚举目录；收紧会把"按路径读元数据"变成另一条启动竞态。
+- 回归网：[ipc.test.ts](../src/main/ipc.test.ts) 的 read-side guards 新增 5 例：listDirectory 内部可用 / 外部拒绝、listDirectoryRecursive 外部拒绝、folderMeta:read 内部可用 / 外部拒绝、`fs:pathExists` 通道不存在、无 root 时三通道全部拒绝。
+
 ---
 
 ## 🟡 P2 — 类型逃逸

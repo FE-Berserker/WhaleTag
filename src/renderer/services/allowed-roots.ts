@@ -36,7 +36,15 @@ export function setAllowedRootsAndWait(roots: string[]): Promise<void> {
  * an already-resolved promise when no registration is in flight (i.e. nothing
  * has called `setAllowedRootsAndWait` yet — typically only on the very first
  * render before Root's effect runs; callers should guard accordingly).
+ *
+ * The single microtask hop matters: React fires child effects BEFORE the
+ * parent's, so on the first mount a child that lists a directory would look up
+ * `inFlight` before `Root` has pushed the roots. Yielding once lets the parent
+ * effect run first (effects of one commit flush synchronously, microtasks
+ * drain afterwards), after which `inFlight` is set.
  */
-export function waitForAllowedRoots(): Promise<void> {
+export async function waitForAllowedRoots(): Promise<void> {
+  if (inFlight) return inFlight;
+  await Promise.resolve();
   return inFlight ?? Promise.resolve();
 }

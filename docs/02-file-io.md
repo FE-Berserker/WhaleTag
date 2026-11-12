@@ -64,6 +64,7 @@
 - 对称路径用 `fs.realpathSync` 解析目标(不存在则递归解析存在的父目录再拼尾部,`allowed-roots.ts:27-39` `resolveGuardPath`),防止 symlink 逃逸;`setAllowedRoots` 也对 root 做 `realpathSync`(不可达 fallback 到 `path.resolve`)
 - Windows 大小写归一(`isSameOrDescendant` 调用前 `toLowerCase()`)
 - **只读位置**(`isReadOnly=true`)的写拦截在 renderer 层(IOActions / FileList / useListCommands 守卫);allowedRoots **包含**只读位置(见 §1 上方条目),主进程写 IPC 不对其早 throw
+- **读取也受限**:`fs:listDirectory` / `fs:listDirectoryRecursive` / `folderMeta:read` 与文件读取一样过 `assertWithinAllowedRoot` —— 目录枚举能揭示位置外有哪些文件,递归扫描还会把缓存写进 `<dir>/.whale/`,所以不能只防"读内容"。`fs:pathExists` 这个无校验、渲染层从未调用的死通道已删除(暴露面只减不增)。渲染层首次挂载时子 effect 早于 Root 的 `setAllowedRoots`,因此列目录前先 `await waitForAllowedRoots()`。侧车批量读(`sidecar:readMany*`)仍不校验 root:它只返回调用方已给出文件名对应的元数据,无法枚举目录。
 
 **renderer 侧 await helper**(`src/renderer/services/allowed-roots.ts`):
 
@@ -72,7 +73,7 @@
 为对齐"何时发写 IPC"和"何时根目录到位",提供两个 module-scope helper:
 
 - `setAllowedRootsAndWait(roots)` — `Root.tsx` 用它替代裸的 `ipcApi.setAllowedRoots`,记下 in-flight promise
-- `waitForAllowedRoots()` — 子组件在发写 IPC 前 `await` 它(没注册时直接 resolve)
+- `waitForAllowedRoots()` — 子组件在发写 IPC / 列目录前 `await` 它;没有 in-flight 注册时先让出一个 microtask,让同一轮 commit 里父 effect 的注册先落地(Root 的 effect 在子之后同步执行)
 
 不要新增同步 IPC(`sendSync`);`await` 的是已经 in-flight 的同一个 promise,不增加 round trip。完整原因 + 替代方案评估见 [docs/09-known-issues.md §16](./09-known-issues.md)。
 

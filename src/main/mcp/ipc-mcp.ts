@@ -29,10 +29,12 @@ export function registerMcpHandlers(): void {
 
   ipcMain.handle(
     'mcp:resolveApproval',
-    (_event, reqId: string, allowed: boolean) => {
-      resolveApproval(reqId, allowed);
-      return { ok: true } as const;
-    }
+    (_event, reqId: string, allowed: boolean) => ({
+      ok: true as const,
+      // false when the request already timed out or was denied — the dialog
+      // then knows it is reconciling a ghost rather than answering anything.
+      settled: resolveApproval(reqId, allowed),
+    })
   );
 
   // A window (re)loading mid-approval pulls the current queue on mount so

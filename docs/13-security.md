@@ -24,7 +24,7 @@
 
 修订历史 IPC(`ext:backupRevision` / `ext:listRevisions` / `ext:restoreRevision` / `ext:deleteRevision`)过同一闸;`deleteRevision` 额外把 revision 路径绑定到所属文件的 `<dir>/.whale/revisions/` 前缀(与 restore 相同)——`rm --force` 不进回收站,不做绑定就是任意路径强删。`ext:cleanupRevisions` 只接受有限、非负的 number，非法天数在删除前 reject。详见 [docs/07-extensions.md](./07-extensions.md)。
 
-读取入口也遵守同一位置边界：目录缩略图加载/背景加载会校验目录(缺图时可能自动生成并写 `.whale`)，设置目录缩略图/背景会校验目标目录；原生对话框自选的 source 图片可以位于位置外，但服务只读取源、只在目标目录 `.whale/` 写入。`index:query` / `index:advanced` / `index:tags` / `index:status` / `fulltext:search` / `fulltext:has` 均在访问索引前校验 root。
+读取入口也遵守同一位置边界：`fs:readFile` / `fs:readTextFile` / `fs:readFileBase64` / `fs:listDirectory` / `fs:listDirectoryRecursive` / `folderMeta:read` 都过 `assertWithinAllowedRoot`——目录枚举同样能揭示位置外路径，递归扫描还会写 `<dir>/.whale/` 缓存，所以不能只防"读内容"；`fs:pathExists` 这个无校验的死通道已删除。目录缩略图加载/背景加载会校验目录(缺图时可能自动生成并写 `.whale`)，设置目录缩略图/背景会校验目标目录；原生对话框自选的 source 图片可以位于位置外，但服务只读取源、只在目标目录 `.whale/` 写入。`index:query` / `index:advanced` / `index:tags` / `index:status` / `fulltext:search` / `fulltext:has` 均在访问索引前校验 root。侧车批量读(`sidecar:readMany*`)仍不校验 root——它只返回调用方已给出文件名对应的元数据，无法枚举目录。
 
 详见 [docs/02-file-io.md §6](./02-file-io.md)。
 
