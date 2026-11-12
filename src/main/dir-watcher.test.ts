@@ -13,6 +13,9 @@ import {
   setDirChangedBroadcast,
   _watchCountForTest,
   _reindexDirtyForTest,
+  _startWatchForcedPerDirForTest,
+  _watchModeForTest,
+  _dirWatcherCountForTest,
   type DirChangedEvent,
 } from './dir-watcher';
 import * as indexWorkerHost from './index-worker-host';
@@ -346,5 +349,85 @@ describe('dir-watcher (real fs.watch on temp dir)', () => {
     assert.equal(_watchCountForTest(), 1);
     syncWatchedRoots([]);
     assert.equal(_watchCountForTest(), 0);
+  });
+});
+
+/**
+ * Linux has no `fs.watch {recursive:true}`; the fallback walks the tree and
+ * watches every folder. Forced on any OS through the test seam, because the
+ * per-dir code path is identical everywhere.
+ */
+describe('dir-watcher per-directory fallback (Linux path)', () => {
+  let root = '';
+  let events: DirChangedEvent[];
+  let origRequest: typeof indexWorkerHost.request;
+
+  before(async () => {
+    root = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-watch-pd-'));
+    events = [];
+    setDirChangedBroadcast((ev) => events.push(ev));
+    origRequest = indexWorkerHost.request;
+    (indexWorkerHost as { request: unknown }).request = async (op: string) => {
+      if (op === 'index:status') return { count: 1, ready: true };
+      return undefined;
+    };
+  });
+
+  after(async () => {
+    closeAllWatchers();
+    setDirChangedBroadcast(null);
+    (indexWorkerHost as { request: unknown }).request = origRequest;
+    await fsp.rm(root, { recursive: true, force: true }).catch(() => undefined);
+  });
+
+  it('walks nested folders, follows new subtrees, releases deleted ones', async () => {
+    await fsp.mkdir(path.join(root, 'a', 'b'), { recursive: true });
+    await fsp.mkdir(path.join(root, '.whale'), { recursive: true });
+    await fsp.mkdir(path.join(root, 'node_modules', 'pkg'), { recursive: true });
+
+    assert.equal(_startWatchForcedPerDirForTest(root), true);
+    assert.equal(_watchModeForTest(root), 'per-dir');
+    // root + a + a/b; `.whale` and `node_modules` are never descended into.
+    await waitFor(
+      () => (_dirWatcherCountForTest(root) ?? 0) === 3,
+      'one watcher per real folder'
+    );
+
+    await fsp.writeFile(path.join(root, 'a', 'b', 'one.txt'), 'one');
+    await waitFor(
+      () => events.flatMap((e) => e.paths).includes('a/b/one.txt'),
+      'a change two levels down'
+    );
+
+    // A folder created after the initial walk must be followed, including its
+    // children created in the same call (mkdir -p style).
+    events.length = 0;
+    await fsp.mkdir(path.join(root, 'a', 'fresh', 'inner'), { recursive: true });
+    await waitFor(
+      () => (_dirWatcherCountForTest(root) ?? 0) >= 5,
+      'watchers attached to the new subtree'
+    );
+    await fsp.writeFile(path.join(root, 'a', 'fresh', 'inner', 'deep.txt'), 'deep');
+    await waitFor(
+      () => events.flatMap((e) => e.paths).includes('a/fresh/inner/deep.txt'),
+      'a change inside the newly created subtree'
+    );
+
+    // Deleting the subtree must release its watchers (not leak one per delete).
+    await fsp.rm(path.join(root, 'a', 'fresh'), { recursive: true, force: true });
+    await waitFor(
+      () => (_dirWatcherCountForTest(root) ?? 0) === 3,
+      'watchers released for the deleted subtree'
+    );
+
+    // Churn in the excluded trees never reaches the watcher or the renderer.
+    // Wait out the debounced flush from the delete above first, otherwise its
+    // trailing flush lands in this observation window.
+    await sleep(800);
+    events.length = 0;
+    await fsp.writeFile(path.join(root, 'node_modules', 'pkg', 'x.js'), 'x');
+    await fsp.writeFile(path.join(root, '.whale', 'wsd.json'), '{}');
+    await sleep(800);
+    assert.equal(events.length, 0, `excluded trees produced ${JSON.stringify(events)}`);
   });
 });

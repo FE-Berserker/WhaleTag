@@ -74,11 +74,10 @@
 
 - [ ] 按分发策略定 arch
 
-### C-5. Linux 无递归目录监听(功能性,2026-07-18 引入)
-- **现状**:[dir-watcher.ts](../src/main/dir-watcher.ts)(docs/04 §10 fs.watch 失效机制)用 `fs.watch {recursive:true}` —— Windows/macOS 正常,**Linux 抛 `ERR_FEATURE_UNAVAILABLE_ON_PLATFORM`,该 root 回落到手动刷新 / 手动重建**(行为与引入前一致,不是回归,但 Linux 上没有自动刷新)。
-- **修法**:Linux 走 per-dir 递归监听(自建目录树快照 + 逐目录 fs.watch,新目录出现时补挂),或引入 chokidar(跨平台但多一个原生无关的大依赖)。~半天-1天。
-
-- [ ] Linux per-dir 递归监听 / chokidar 评估
+### C-5. Linux 无递归目录监听(功能性,2026-07-18 引入)✅ 已解决(2026-11-12)
+- **原问题**:[dir-watcher.ts](../src/main/dir-watcher.ts)(docs/04 §10 fs.watch 失效机制)用 `fs.watch {recursive:true}` —— Windows/macOS 正常,**Linux 抛 `ERR_FEATURE_UNAVAILABLE_ON_PLATFORM`,该 root 回落到手动刷新 / 手动重建**。
+- **修法(已实现)**:recursive 创建失败即切 **per-dir 递归监听**——启动遍历目录树逐目录 `fs.watch`,新目录出现补挂、删除/改名释放其下 watcher;`.whale` / `node_modules` / `.git` 不下降(自写回声 + inotify 预算),上限 4096 个 watcher(到顶警告一次)。没有引入 chokidar:省掉一个与原生模块无关的大依赖,POSIX 上语义等价。Windows/macOS 仍走 single recursive watcher,零行为变化;测试用强制 per-dir 的 test seam 在任意平台跑同一代码路径(docs/04 §10 有完整描述)。
+- [x] Linux per-dir 递归监听(未引入 chokidar)
 
 ---
 

@@ -1,4 +1,4 @@
-import fs from 'fs';
+import fs, { promises as fsp } from 'fs';
 import path from 'path';
 import { request } from './index-worker-host';
 
@@ -15,9 +15,13 @@ import { request } from './index-worker-host';
  *     manual build path; we never create `.whale/index.db` unprompted, which
  *     also keeps read-only locations write-free).
  *
- * Platform: `fs.watch {recursive: true}` works on Windows + macOS. On Linux
- * it throws `ERR_FEATURE_UNAVAILABLE_ON_PLATFORM` — the root is then marked
- * unsupported and behaves as before (manual refresh / rebuild).
+ * Platform: `fs.watch {recursive: true}` works on Windows + macOS. Linux has
+ * no recursive mode (`ERR_FEATURE_UNAVAILABLE_ON_PLATFORM`), so `startWatch`
+ * falls back to one watcher per directory: it walks the tree once, watches
+ * every folder, and follows directories added/removed/renamed while running
+ * (`attachDirTree` / `syncSubtree`). `.whale`, `node_modules` and `.git` are
+ * never descended into (self-echo, and inotify's default ~8k watch budget),
+ * and the total is capped by `MAX_DIR_WATCHERS`.
  *
  * Self-echo: everything under a `.whale` path segment is dropped — our own
  * sidecar / index.db / thumbs / transcode writes would otherwise retrigger
@@ -44,6 +48,11 @@ const DEBOUNCE_MS = 500;
 /** Cap on reported paths per flush (the rest are dropped — refresh doesn't
  *  need the full list, and huge bursts (git checkout) would flood IPC). */
 const MAX_PATHS_PER_FLUSH = 500;
+/** Directories the per-dir fallback never descends into: our own `.whale`
+ *  (self-echo), and the two trees that make inotify's watch budget explode. */
+const WATCH_SKIP_DIRS = new Set(['.whale', 'node_modules', '.git']);
+/** Hard cap on per-dir watchers (inotify's default budget is ~8k per user). */
+const MAX_DIR_WATCHERS = 4_096;
 /** Backoff before re-indexing a root after its last change flush. */
 const REINDEX_DEBOUNCE_MS = 1500;
 
@@ -62,7 +71,11 @@ export function isSameOrDescendantPath(ancestor: string, candidate: string): boo
 }
 
 interface RootWatch {
-  watcher: fs.FSWatcher;
+  /** `recursive`: one watcher keyed by the root. `per-dir`: one per folder. */
+  mode: 'recursive' | 'per-dir';
+  watchers: Map<string, fs.FSWatcher>;
+  /** Warn once when the per-dir watcher cap is reached. */
+  watcherLimitWarned: boolean;
   /** Coalesced changed paths (relative, forward-slash) awaiting flush. */
   pending: Set<string>;
   flushTimer: NodeJS.Timeout | null;
@@ -248,10 +261,7 @@ async function reindexFulltextIfBuilt(fp: string): Promise<void> {
   }
 }
 
-function onWatchEvent(rootPath: string, w: RootWatch, filename: string | null): void {
-  // fs.watch recursive reports paths relative to the watched root (or null on
-  // buffer overflow — degrade to a blanket refresh marker).
-  const rel = filename == null ? '' : filename.split(path.sep).join('/');
+function queueChange(rootPath: string, w: RootWatch, rel: string): void {
   if (rel && isMetaPath(rel)) return; // our own `.whale/` churn — self-echo
   w.pending.add(rel);
   if (w.flushTimer) clearTimeout(w.flushTimer);
@@ -259,9 +269,142 @@ function onWatchEvent(rootPath: string, w: RootWatch, filename: string | null): 
   w.flushTimer.unref?.();
 }
 
-function startWatch(rootPath: string): RootWatch | null {
+function onWatchEvent(rootPath: string, w: RootWatch, filename: string | null): void {
+  // fs.watch recursive reports paths relative to the watched root (or null on
+  // buffer overflow — degrade to a blanket refresh marker).
+  queueChange(rootPath, w, filename == null ? '' : filename.split(path.sep).join('/'));
+}
+
+function attachWatcher(
+  rootPath: string,
+  w: RootWatch,
+  dir: string,
+  watcher: fs.FSWatcher
+): void {
+  w.watchers.set(dir, watcher);
+  watcher.on('error', () => {
+    // Recursive mode: the single watcher died (root unmounted / renamed) —
+    // drop the root; `syncWatchedRoots` re-creates it when the root is back.
+    // Per-dir mode: drop only this folder; the parent's rename event
+    // re-attaches it if the tree comes back.
+    if (w.mode === 'recursive') stopWatch(rootPath);
+    else detachWatcher(w, dir);
+  });
+}
+
+function detachWatcher(w: RootWatch, dir: string): void {
+  const watcher = w.watchers.get(dir);
+  if (!watcher) return;
+  w.watchers.delete(dir);
+  try {
+    watcher.close();
+  } catch {
+    // already closed
+  }
+}
+
+function detachTree(w: RootWatch, dir: string): void {
+  const prefix = dir.endsWith(path.sep) ? dir : `${dir}${path.sep}`;
+  for (const key of [...w.watchers.keys()]) {
+    if (key === dir || key.startsWith(prefix)) detachWatcher(w, key);
+  }
+}
+
+function attachDirWatcher(rootPath: string, w: RootWatch, dir: string): boolean {
+  if (w.watchers.has(dir)) return true;
+  if (w.watchers.size >= MAX_DIR_WATCHERS) {
+    if (!w.watcherLimitWarned) {
+      w.watcherLimitWarned = true;
+      console.warn(
+        `[dir-watcher] per-directory watch limit reached (${MAX_DIR_WATCHERS}) for ${rootPath}; deeper folders are no longer watched — use manual refresh or rebuild the index`
+      );
+    }
+    return false;
+  }
+  try {
+    const watcher = fs.watch(dir, (eventType, filename) =>
+      onPerDirEvent(rootPath, w, dir, eventType, filename)
+    );
+    attachWatcher(rootPath, w, dir, watcher);
+    return true;
+  } catch {
+    return false; // deleted between readdir and watch, or unreadable
+  }
+}
+
+async function attachDirTree(rootPath: string, w: RootWatch, startDir: string): Promise<void> {
+  const stack = [startDir];
+  while (stack.length > 0) {
+    const dir = stack.pop() as string;
+    if (!attachDirWatcher(rootPath, w, dir)) continue;
+    let entries: fs.Dirent[];
+    try {
+      entries = await fsp.readdir(dir, { withFileTypes: true });
+    } catch {
+      continue; // deleted while we walked it
+    }
+    for (const entry of entries) {
+      // Symlinked folders are not followed: a link cycle would attach
+      // watchers forever (and `MAX_DIR_WATCHERS` would stop at an arbitrary
+      // point instead of at the real tree bound).
+      if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+      if (WATCH_SKIP_DIRS.has(entry.name)) continue;
+      stack.push(path.join(dir, entry.name));
+    }
+  }
+}
+
+/** Follow a directory created / removed / renamed after the initial walk. */
+async function syncSubtree(rootPath: string, w: RootWatch, target: string): Promise<void> {
+  let info: fs.Stats;
+  try {
+    info = await fsp.stat(target);
+  } catch {
+    detachTree(w, target); // folder (or a parent of it) is gone
+    return;
+  }
+  if (!info.isDirectory()) return;
+  await attachDirTree(rootPath, w, target);
+}
+
+function onPerDirEvent(
+  rootPath: string,
+  w: RootWatch,
+  dir: string,
+  eventType: string,
+  filename: string | null
+): void {
+  // One watcher per folder reports names relative to that folder; null means
+  // the kernel dropped events — degrade to a blanket refresh marker.
+  if (filename == null) {
+    queueChange(rootPath, w, '');
+    return;
+  }
+  // Windows reports the watched folder itself — sometimes via an extended
+  // `\\?\C:\...` path — when that folder is deleted/renamed, so an "absolute
+  // filename" must not be joined onto `dir` (that produced junk entries like
+  // `a/b/?/C:/...`).
+  let name = filename;
+  if (name.startsWith('\\\\?\\')) name = name.slice(4);
+  const full = path.isAbsolute(name) ? path.normalize(name) : path.join(dir, name);
+  const rel = path.relative(rootPath, full).split(path.sep).join('/');
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return;
+  queueChange(rootPath, w, rel);
+  // Directories added/removed/renamed while running need watcher bookkeeping:
+  // a new folder must get its own watcher, and a deleted one must release the
+  // watchers beneath it (otherwise the map leaks on every delete).
+  if (eventType === 'rename') {
+    void syncSubtree(rootPath, w, full).catch((error) => {
+      console.warn(`[dir-watcher] failed to follow ${full}:`, error);
+    });
+  }
+}
+
+function startWatch(rootPath: string, forcePerDir = false): RootWatch | null {
   const w: RootWatch = {
-    watcher: null as unknown as fs.FSWatcher,
+    mode: 'recursive',
+    watchers: new Map(),
+    watcherLimitWarned: false,
     pending: new Set(),
     flushTimer: null,
     reindexing: false,
@@ -269,18 +412,22 @@ function startWatch(rootPath: string): RootWatch | null {
     reindexTimer: null,
     reindexFailures: 0,
   };
-  try {
-    w.watcher = fs.watch(rootPath, { recursive: true }, (_event, filename) =>
-      onWatchEvent(rootPath, w, filename)
-    );
-  } catch {
-    // Linux: recursive watch unsupported → root falls back to manual refresh.
-    return null;
+  if (!forcePerDir) {
+    try {
+      const watcher = fs.watch(rootPath, { recursive: true }, (_event, filename) =>
+        onWatchEvent(rootPath, w, filename)
+      );
+      attachWatcher(rootPath, w, rootPath, watcher);
+      return w;
+    } catch {
+      // Linux: `recursive: true` throws ERR_FEATURE_UNAVAILABLE_ON_PLATFORM.
+      // Fall through to one watcher per directory.
+    }
   }
-  w.watcher.on('error', () => {
-    // Watcher died (root unmounted / renamed) — drop it; the next
-    // `syncWatchedRoots` re-creates it if the root is back.
-    stopWatch(rootPath);
+  w.mode = 'per-dir';
+  if (!attachDirWatcher(rootPath, w, rootPath)) return null; // root missing
+  void attachDirTree(rootPath, w, rootPath).catch((error) => {
+    console.warn(`[dir-watcher] failed to attach directory watchers for ${rootPath}:`, error);
   });
   return w;
 }
@@ -291,11 +438,14 @@ function stopWatch(rootPath: string): void {
   if (w.flushTimer) clearTimeout(w.flushTimer);
   if (w.reindexTimer) clearTimeout(w.reindexTimer);
   w.reindexDirty = false;
-  try {
-    w.watcher.close();
-  } catch {
-    // already closed
+  for (const watcher of w.watchers.values()) {
+    try {
+      watcher.close();
+    } catch {
+      // already closed
+    }
   }
+  w.watchers.clear();
   watches.delete(rootPath);
 }
 
@@ -333,4 +483,21 @@ export function _pendingForTest(rootPath: string): string[] | null {
 }
 export function _reindexDirtyForTest(rootPath: string): boolean | null {
   return watches.get(rootPath)?.reindexDirty ?? null;
+}
+
+/** Test seam: force the per-directory fallback (the Linux path) on any OS. */
+export function _startWatchForcedPerDirForTest(rootPath: string): boolean {
+  if (watches.has(rootPath)) stopWatch(rootPath);
+  const w = startWatch(rootPath, true);
+  if (!w) return false;
+  watches.set(rootPath, w);
+  return true;
+}
+
+export function _watchModeForTest(rootPath: string): 'recursive' | 'per-dir' | null {
+  return watches.get(rootPath)?.mode ?? null;
+}
+
+export function _dirWatcherCountForTest(rootPath: string): number | null {
+  return watches.get(rootPath)?.watchers.size ?? null;
 }

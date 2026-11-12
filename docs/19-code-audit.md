@@ -96,6 +96,13 @@ detailed read 保留健康目录数据并报告 corrupt/unreadable；非法 JSON
 - 回归网：新增 [fulltext.test.ts](../src/main/fulltext.test.ts) 10 例——文本/HTML 抽取（空白折叠、实体、标签剥离）、超限 PDF 在读之前被拒（1 字节文件 + 伪造的 size 证明没走 `readFile`）、缺失 PDF 报 `unreadable` 而不是抛出、空文件与读失败分离（`unreadable` 标志）、构建只索引支持的扩展名、改动/删除文件的增量 delta、无变化重建保留行，以及 `selectRemoved` 的前缀边界 / 根不可读 / 豁免三种情况。
 - 评估未做：把 `walk` 的"每目录 8 并发"改成全局信号量。当前实现每层最多 8 个并发任务，深/宽目录树的理论放大没有实测证据，改动会打乱进度语义且收益不明确，先记录不执行。
 
+### P1-13. Linux 无递归监听 → per-dir 递归兜底 ✅
+第七轮关掉 [docs/16](./16-cross-platform.md) C-5：Linux 的 `fs.watch` 不支持 `recursive: true`，此前该 root 直接回落手动刷新，外部改动既不会出现在文件区、也不会进索引。现在 recursive 创建失败即切 per-dir（[dir-watcher.ts](../src/main/dir-watcher.ts)）：
+- 启动遍历目录树、每个文件夹挂一个 `fs.watch`；`rename` 事件上 `stat` 目标——新目录 `attachDirTree` 补挂（含同一调用里建出的嵌套子目录），消失的目录 `detachTree` 释放其下全部 watcher（否则每删一个目录泄漏一个 watcher）。
+- 事件路径 = 被监听目录 + filename 再换算回 root 相对路径；Windows 在删除被监听目录时会回调**绝对路径**（含 `\\?\C:\...` 扩展前缀），必须按绝对路径处理，直接 `path.join(dir, filename)` 会产生 `a/b/?/C:/...` 这种垃圾路径（实际测试先失败在这里）。
+- `.whale` 不下降（自写回声），`node_modules` / `.git` 也不下降（inotify 默认 watch 预算是每用户 ~8k）；总 watcher 数上限 `MAX_DIR_WATCHERS = 4096`，到顶只警告一次，深层目录退化为手动刷新。
+- 平台无回归：Windows/macOS 仍走 single recursive watcher；测试通过 `_startWatchForcedPerDirForTest` 在任意平台强制 per-dir 路径——[dir-watcher.test.ts](../src/main/dir-watcher.test.ts) 新增 1 例（嵌套目录、新建子树补挂、删除子树释放、排除树零事件），其余 9 例继续覆盖广播/抑制/退避/fulltext。
+
 ---
 
 ## 🟡 P2 — 类型逃逸
