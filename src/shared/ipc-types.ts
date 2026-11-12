@@ -431,6 +431,15 @@ export interface WhaleApi {
    */
   appGetVersion: () => Promise<string>;
 
+  /**
+   * Best-effort diagnostics: report a renderer-side failure (boot watchdog,
+   * global `error` / `unhandledrejection`, or the React error boundary) so main
+   * can append it to `<userData>/crash.log` next to process crashes.
+   * Fire-and-forget — the renderer may be in a broken state; main sanitizes the
+   * payload and never throws back.
+   */
+  reportRendererError: (detail: string) => void;
+
   // ---------------------------------------------------------------------
   // Phase 6 — Application auto-update (electron-updater + GitHub Releases).
   // Main calls `initAutoUpdater()` on `whenReady`; renderer drives check /

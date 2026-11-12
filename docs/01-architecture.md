@@ -238,3 +238,37 @@ try {
 
 - 19 个视角 / 领域模块已迁入 `src/renderer/domain/`;contracts(ipc-types / whale-meta / extension-types 等)留 shared;smart-tags 因 main 仍引用故留下。
 - period 解析(`isPeriodTag` / `dateTagRangeKey` / `DateTagRange` / `parseYyyymmdd`)在 [smart-tags.ts](../src/shared/smart-tags.ts)(main 的日期标签迁移要用),[calendar.ts](../src/renderer/domain/calendar.ts) import + re-export,渲染层调用点零改动;全库不再有 shared → renderer/domain 反向依赖。
+
+## 14. 崩溃与恢复
+
+两类崩溃此前都是"用户看不到原因":渲染进程死掉 → 窗口永久白屏,只能杀进程重开;主进程未捕获异常 → 打包版里窗口直接消失,stderr 没人看得到。策略在 [crash-guard.ts](../src/main/crash-guard.ts)(纯函数,不依赖 Electron),接线在 [main.ts](../src/main/main.ts)。
+
+**渲染进程崩溃**
+
+- [main.ts](../src/main/main.ts) 的 `attachRendererCrashGuard` 监听 `webContents.on('render-process-gone')`;`reason === 'clean-exit'` 是正常关窗(退出流程里的 `destroy()` 也会走到),**不 reload**,否则会把正在关闭的窗口复活。
+- 其余原因(GPU 崩溃 / renderer OOM / 被外部杀掉)走 `planReload`:60 秒窗口内最多自动 reload 2 次(`MAX_AUTO_RELOADS` / `RELOAD_WINDOW_MS`);距上次 reload 超过窗口则预算重置(一周崩一次仍能自愈)。
+- 预算用尽后弹 `Restart interface / Quit` 原生对话框:`Restart` 重置预算并 reload,`Quit` 走 `app.quit()`;窗口已销毁或弹窗本身抛错时直接退出,不再尝试 reload(避免 reload 一个不存在的窗口)。
+
+**崩溃日志**
+
+- 每次崩溃追加一行到 `<userData>/crash.log`:`[ISO 时间] renderer|main crash: <详情>`,主进程异常写入完整 stack。`appendCrashLog` 首次写入时创建目录(`mkdirSync(recursive)`),只追加不截断。
+- 日志写入是 best-effort:目录不可写 / 磁盘满时只吞掉异常,不阻断 reload 或退出——崩溃处理路径自己再抛异常会把一次崩溃变成"无响应进程"。
+
+**主进程未捕获异常**
+
+- `process.on('uncaughtException')` → `handleFatalError`:先 `console.error`,再尽力写 `crash.log`,再 `dialog.showErrorBox`,最后 `app.exit(1)`。
+- 三步各自 try/catch:用户数据目录不可用(未 ready)、窗口服务器已消失时,仍然必须退出——否则半死进程会一直占着单实例锁,用户重开也起不来。
+- `unhandledRejection` 维持原行为:只记日志、不退出(第三方异步回调里的误伤不应终止整个应用)。
+
+**渲染层启动失败与全局错误**
+
+- React 错误边界只覆盖 root 之下的渲染错误。[boot-guard.ts](../src/renderer/services/boot-guard.ts) 在 `createRoot` 之前安装全局 `error` / `unhandledrejection` 监听与启动看门狗:`Root` 渲染期抛错、`PersistGate` 卡在 rehydrate、React 之外的异步错误,都不再只是 DevTools 里一行字。
+- 边界说明:bundle 自身的静态 `import` 在 `index.tsx` 执行之前就会求值,那一层的抛错这层兜底覆盖不到(要覆盖得在 HTML 里内联脚本,当前未做)。
+- 就绪前(以 `BootReady` 的 effect 调用 `markReady` 为准)发生错误、或 15 秒内始终未就绪(`BOOT_WATCHDOG_MS`),会在 `#root` 上覆盖一层纯 DOM 的恢复界面——inline style,不依赖 React / MUI / i18n / theme,因为出错的可能正是其中任意一个——显示原因与 `Reload / 重载` 按钮;`markReady` 时移除覆盖层。就绪之后的错误只上报,不遮挡界面。
+- 上报经 preload 的 `reportRendererError` → IPC `app:report-renderer-error` → 主进程 `sanitizeErrorDetail`(任意类型转字符串、逐行保留、去控制字符、上限 4000 字符)写入同一个 `crash.log`。渲染层用滑动窗口限制每分钟最多 20 条(`MAX_REPORTS_PER_MINUTE`),防止错误循环把日志撑爆。错误边界 `componentDidCatch` 也走这条通道,附带 component stack。
+
+**测试**
+
+- [crash-guard.test.ts](../src/main/crash-guard.test.ts) 15 例:reload 预算递增 / 窗口边界(恰好 60 秒仍算窗口内)/ 超窗重置 / `clean-exit` 不动作、日志格式与追加不截断、致命路径的调用顺序(`log → append → box → exit`)以及日志与弹窗同时失败时仍然 `exit(1)`、`sanitizeErrorDetail` 的类型归一 / 控制字符 / 截断。
+- [boot-guard.test.ts](../src/renderer/services/boot-guard.test.ts) 18 例:错误详情归一、滑动窗口限流与窗口回填、覆盖层的标题/详情/Reload/幂等与移除、`error` 与 `unhandledrejection` 的就绪前上报+遮罩、`markReady` 后只上报不遮罩、看门狗超时触发、就绪后不触发、`dispose` 后静默。
+

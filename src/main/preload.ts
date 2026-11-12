@@ -285,6 +285,10 @@ const whaleApi: WhaleApi = {
   appCheckForUpdates: () => ipcRenderer.invoke('app:update-check'),
   appDownloadUpdate: () => ipcRenderer.invoke('app:update-download'),
   appQuitAndInstall: () => ipcRenderer.send('app:update-quit-and-install'),
+  // Fire-and-forget diagnostics: renderer boot/global errors land in the same
+  // `<userData>/crash.log` as process crashes (see renderer/services/boot-guard).
+  reportRendererError: (detail: string) =>
+    ipcRenderer.send('app:report-renderer-error', detail),
   onAppUpdateEvent: (
     channel: 'available' | 'progress' | 'downloaded' | 'error',
     callback: (data: AppUpdateEventPayload) => void

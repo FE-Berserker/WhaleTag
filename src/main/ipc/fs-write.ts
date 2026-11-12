@@ -10,6 +10,7 @@ import { atomicWriteBytes } from '../atomic-write';
 import { mapWithConcurrency } from '../concurrency';
 import { withLock } from '../dir-lock';
 import { assertWithinAllowedRoot } from '../allowed-roots';
+import { PYTHON_ZIP_SCRIPT, pythonZipPairs } from '../desktop-linux';
 
 /**
  * Write-side `fs:*` handlers: rename / move / copy / import / delete /
@@ -205,7 +206,41 @@ function runOsZip(sources: string[], zipPath: string): Promise<string> {
         'zip',
         ['-r', '-q', archive, ...sources.map((s) => path.relative(cwd, s))],
         { cwd },
-        (err) => done(err)
+        (err) => {
+          if (!err) {
+            done(null);
+            return;
+          }
+          if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+            done(err);
+            return;
+          }
+          // `zip` is not installed by default on several distributions
+          // (Ubuntu Desktop included); `python3` is. The fallback writes the
+          // same relative layout (dirs walked, empty dirs skipped) so the
+          // user still gets an archive instead of "打包失败" (docs/16 C-2).
+          console.warn(
+            '[fs-write] the zip CLI is not installed; falling back to python3 zipfile'
+          );
+          execFile(
+            'python3',
+            [
+              '-c',
+              PYTHON_ZIP_SCRIPT,
+              JSON.stringify(pythonZipPairs(sources, cwd)),
+              archive,
+            ],
+            { cwd },
+            (pythonError) =>
+              done(
+                pythonError
+                  ? new Error(
+                      `zip is not installed and the python3 fallback failed: ${pythonError.message}`
+                    )
+                  : null
+              )
+          );
+        }
       );
     }
   });

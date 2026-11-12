@@ -103,6 +103,30 @@ detailed read 保留健康目录数据并报告 corrupt/unreadable；非法 JSON
 - `.whale` 不下降（自写回声），`node_modules` / `.git` 也不下降（inotify 默认 watch 预算是每用户 ~8k）；总 watcher 数上限 `MAX_DIR_WATCHERS = 4096`，到顶只警告一次，深层目录退化为手动刷新。
 - 平台无回归：Windows/macOS 仍走 single recursive watcher；测试通过 `_startWatchForcedPerDirForTest` 在任意平台强制 per-dir 路径——[dir-watcher.test.ts](../src/main/dir-watcher.test.ts) 新增 1 例（嵌套目录、新建子树补挂、删除子树释放、排除树零事件），其余 9 例继续覆盖广播/抑制/退避/fulltext。
 
+### P1-14. Linux 桌面 fallback：终端 / reveal / 打包 ✅
+第八轮收掉 [docs/16](./16-cross-platform.md) C-2 的三项欠账。共同点不是崩溃，而是**在真实桌面上悄悄什么都不发生**，且都长期被写成「已知限制」：
+- **终端**：[shell-command.ts](../src/main/shell-command.ts) 之前只 `spawn('xterm')` 且把 spawn 失败吞掉，GNOME / KDE / Cinnamon 默认没有 xterm，右键「用户命令」等于点了没反应。新增 [desktop-linux.ts](../src/main/desktop-linux.ts) 的 `linuxTerminalCandidates`（`$TERMINAL` → `x-terminal-emulator` → gnome-terminal / konsole / xfce4-terminal / tilix / kitty / alacritty → xterm，各自的 argv 形状不同），`launchLinuxTerminal` 必须等到 `spawn` 事件才算成功——ENOENT 是异步事件，看 `spawn()` 返回值会把失败当成功；全失败才抛错，渲染层现有 catch 会显示真实原因。
+- **reveal**：[shell.ts](../src/main/ipc/shell.ts) 的 Linux 分支改为按 `linuxRevealSteps` 顺序尝试：D-Bus `org.freedesktop.FileManager1.ShowItems`（让运行中的文件管理器选中，路径转 file URI）→ `nautilus --select` → `dolphin --select` → `xdg-open` 父目录。缺失/非零退出一律跳过并记录，只有全失败才报错。
+- **打包**：[fs-write.ts](../src/main/ipc/fs-write.ts) 的 POSIX `runOsZip` 在 `zip` 报 ENOENT 时退回 `python3` + 内置 `zipfile` 脚本；`pythonZipPairs` 沿用 `commonParentDir` 的相对布局（跨目录选择不会塌成 basename），唯一差异是空目录不入包。
+- 回归网：[desktop-linux.test.ts](../src/main/desktop-linux.test.ts) 8 例——候选顺序/argv 形状、缺 `$TERMINAL` 时的首位、逐个跳过 ENOENT 并返回第一个真正起来的终端、全失败错误清单、D-Bus URI 编码与父目录步骤、跨目录相对路径映射。桌面相关知识与执行分离后，这些用例在 Windows CI 上也能跑。
+
+### P1-15. 崩溃不可恢复：渲染进程白屏 / 主进程静默退出 ✅
+第九轮处理两类「应用死了但用户不知道为什么」的路径。此前全仓没有 `render-process-gone` 监听、也没有 `process.on('uncaughtException')`（只有 `unhandledRejection` 日志），策略抽到 [crash-guard.ts](../src/main/crash-guard.ts) 便于无 Electron 环境单测：
+- **渲染进程崩溃不再永久白屏**：[main.ts](../src/main/main.ts) 的 `attachRendererCrashGuard` 监听 `webContents.on('render-process-gone')`。`clean-exit`（正常关窗/退出）不动作；其余原因按 `planReload` 在 60 秒窗口内自动 reload 最多 2 次，超窗重置预算（避免「崩一次就永远弹窗」）。预算用尽弹 `Restart interface / Quit` 原生框，Restart 重置预算并 reload，Quit 退出；窗口已销毁或弹框抛错时直接退出，不 reload 一个不存在的窗口（否则会陷进 crash/reload 循环）。
+- **主进程致命异常有痕迹、有退出**：`uncaughtException` → `handleFatalError`：`console.error` → 尽力追加 `<userData>/crash.log` → `dialog.showErrorBox` → `app.exit(1)`。三步各自 try/catch：用户目录不可用或窗口服务器已消失时仍必须退出，否则半死进程占着单实例锁，用户重开也起不来。
+- **崩溃日志**：`formatCrashEntry` 生成 `[ISO] renderer|main crash: <详情>`，main 侧带完整 stack；`appendCrashLog` 首次写入自动建目录、只追加。写日志失败只吞掉——处理崩溃的路径自己再抛异常，会把一次崩溃变成无响应进程。
+- 回归网：[crash-guard.test.ts](../src/main/crash-guard.test.ts) 11 例——reload 预算递增、恰好 60 秒仍在窗口内、超窗重置、`clean-exit` 不动状态、日志 ISO 格式与追加不截断、致命路径调用顺序（`log → append → box → exit`）、日志与弹窗同时失败仍 `exit(1)`、非 `Error` 抛出值。
+- 评估未做：`indexer.ts` 的「sidecar 读失败仍写入无标签行」保持原样——文件仍可搜索（只是暂时没有标签），改成跳过会让它在索引里消失，是更差的结果；`index-worker-host` 崩溃已有 pending 拒绝 + 懒重启，`LocationIndexContextProvider` 轮询能恢复，无需再包一层。
+
+### P1-16. 渲染层启动失败 / 全局错误：白屏且无痕迹 ✅
+第十轮补上第九轮没覆盖的一半：崩溃进程有策略了，但**渲染层自身的致命错误**——`Root` 渲染期抛错、`PersistGate` 卡在 rehydrate、React 之外的异步错误——仍然只会留一个白窗口和 DevTools 里一行字。错误边界（`ErrorBoundary`）只包住 root 之下的渲染错误，而且它的 `componentDidCatch` 只 `console.error`，`crash.log` 里什么也没有。
+- **全局监听 + 启动看门狗**：新增 [boot-guard.ts](../src/renderer/services/boot-guard.ts)，在 [index.tsx](../src/renderer/index.tsx) 的 `createRoot` 之前安装 `window` 的 `error` / `unhandledrejection` 监听；`BootReady` 组件挂载后调用 `markReady()`。`markReady` 之前出错、或 15 秒（`BOOT_WATCHDOG_MS`）仍未就绪，就盖一层**纯 DOM** 的恢复界面（inline style，不碰 React/MUI/i18n/theme——出错的可能正是它们），给原因和 `Reload / 重载`；就绪之后的错误只上报，不再遮界面。
+- **同一份 crash.log**：新增 preload API `reportRendererError` → IPC `app:report-renderer-error`；主进程用 `sanitizeErrorDetail` 归一（任意 IPC 载荷转字符串、去控制字符、保留换行以留 stack、上限 4000 字符）后写入 `<userData>/crash.log`。首屏白屏的用户报告从此有可诊断的落点。
+- **限流**：滑窗每分钟最多 20 条（`MAX_REPORTS_PER_MINUTE`），渲染进程进入错误循环时不会把日志刷爆；`reportRendererError` 自身失败只吞掉（诊断路径不允许制造新的未捕获异常）。
+- **错误边界也走这条通道**：`ErrorBoundary.componentDidCatch` 除 `console.error` 外，把 `error.stack + componentStack` 上报；`window.whale` 缺失（preload 已拆）时静默跳过。
+- 回归网：[boot-guard.test.ts](../src/renderer/services/boot-guard.test.ts) 18 例（jsdom）——错误详情归一、限流与窗口回填、覆盖层内容 / Reload / 幂等 / 移除、就绪前后两种上报行为、看门狗触发与 `markReady` 取消、`dispose`；[crash-guard.test.ts](../src/main/crash-guard.test.ts) 新增 4 例覆盖 `sanitizeErrorDetail`。
+- 评估未做：把恢复界面做成带「Open crash log / Quit」的完整面板（需要主进程暴露日志路径与新 IPC，收益不如直接 reload 明确）；把 `window.onerror` 的 report 也写进 redux 便于设置页展示（会依赖可能已损坏的 store）。
+
 ---
 
 ## 🟡 P2 — 类型逃逸

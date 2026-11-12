@@ -29,7 +29,7 @@
 | 移动 | `fs:move` 优先 rename;**跨卷 EXDEV** 回退 `fs.copyFile + fs.rm`(确保不静默失败) |
 | 复制 | `fs:copyFile` 二进制复制;sidecar 单独 follow-up 写 |
 | 删除 | 默认走 **`shell.trashItem`**(系统回收站);设置 `deleteToTrash: false` 走 `fs.rm` 永久删除;toast 附"打开回收站"按钮 |
-| 打包 | `zipEntries` → Windows 用 PowerShell `Compress-Archive`,其余平台用 `zip -r`。POSIX 从**所有源的最近公共父目录**执行(`commonParentDir`),多选跨目录时条目仍保留相对路径(旧实现只取第一个源的目录,其余源被静默丢弃/重复);目标已存在则拒绝,不覆盖 |
+| 打包 | `zipEntries` → Windows 用 PowerShell `Compress-Archive`,其余平台用 `zip -r`。POSIX 从**所有源的最近公共父目录**执行(`commonParentDir`),多选跨目录时条目仍保留相对路径(旧实现只取第一个源的目录,其余源被静默丢弃/重复);`zip` 未安装(Ubuntu Desktop 默认不装)时退回 `python3` + 内置 `zipfile` 脚本,布局相同(空目录不入包);目标已存在则拒绝,不覆盖 |
 | 新建 | `createTextFile` / `createDirectory` —— **不覆盖已有**(不可变偏好);文本创建用 `writeFile(..., { flag: 'wx' })` 原子拒绝已存在目标,不靠 `existsSync` 预检查 |
 | 打开 | 优先内置扩展(dispatch 选 `selectExtension`);无匹配走 `shell.openPath` |
 

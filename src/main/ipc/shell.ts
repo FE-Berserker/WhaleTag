@@ -1,8 +1,8 @@
-import path from 'path';
 import { promises as fsp } from 'fs';
 import { ipcMain, shell } from 'electron';
 import { exec, execFile } from 'child_process';
 import { runUserCommand } from '../shell-command';
+import { linuxRevealSteps } from '../desktop-linux';
 
 /**
  * OS-integration `shell:*` handlers: trash, reveal-in-folder, reveal+select,
@@ -46,8 +46,12 @@ export function registerShellHandlers(): void {
   //           Unicode (Node's `execFile` quotes them, then `explorer.exe`
   //           mis-parses the comma in the switch).
   //   - macOS: `open -R <path>` reveals in Finder.
-  //   - Linux: `xdg-open <parent>` first; if it errors (e.g. no
-  //           `xdg-open` binary) fall back to `nautilus --select <path>`.
+  //   - Linux: ordered fallback in desktop-linux.ts — D-Bus
+  //           `org.freedesktop.FileManager1.ShowItems` (selects in whichever
+  //           manager is running), then `nautilus --select` / `dolphin
+  //           --select`, then `xdg-open <parent>` (opens the folder without
+  //           selecting). Skipped steps are logged; the error is surfaced
+  //           only when every step failed.
   //         The macOS / Linux paths keep `execFile` because the shell API
   //         doesn't expose a "select" primitive on those platforms. Spawn
   //         failures now reject so the renderer can surface the error
@@ -113,21 +117,28 @@ export function registerShellHandlers(): void {
       } else if (platform === 'darwin') {
         await run('open', ['-R', targetPath]);
       } else {
-        // Linux: open the parent dir; if it fails, try nautilus --select
-        // as a fallback. Each helper rejects on hard spawn errors; we
-        // catch the parent-open failure so a missing `xdg-open` still
-        // gives the user nautilus.
-        const parent = path.dirname(targetPath);
-        try {
-          await run('xdg-open', [parent], { tolerateNonZeroExit: true });
-        } catch (e) {
-          console.warn(
-            `[shell:revealAndSelect] xdg-open unavailable, falling back to nautilus: ${
-              e instanceof Error ? e.message : String(e)
-            }`
-          );
+        // Linux: try the fallback chain from desktop-linux.ts — D-Bus
+        // FileManager1 ShowItems (works with whichever manager is running),
+        // then nautilus/dolphin `--select`, then `xdg-open` the parent folder.
+        // A helper that is missing (ENOENT) or exits non-zero is skipped; the
+        // error is only surfaced when every step failed, so a missing
+        // `xdg-open` no longer hides a working file manager.
+        const failures: string[] = [];
+        for (const step of linuxRevealSteps(targetPath)) {
+          try {
+            await run(step.bin, step.args, {
+              tolerateNonZeroExit: step.bin === 'xdg-open',
+            });
+            return;
+          } catch (e) {
+            const message = e instanceof Error ? e.message : String(e);
+            failures.push(message);
+            console.warn(`[shell:revealAndSelect] ${message}`);
+          }
         }
-        await run('nautilus', ['--select', targetPath]);
+        throw new Error(
+          `Could not reveal ${targetPath} in a file manager: ${failures.join('; ')}`
+        );
       }
     }
   );

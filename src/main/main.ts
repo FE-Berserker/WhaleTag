@@ -2,7 +2,16 @@ import path from 'path';
 import { statSync } from 'fs';
 import os from 'os';
 // Mapique map tiles require remote img-src in CSP (see index.html + below).
-import { app, BrowserWindow, ipcMain, Menu, protocol, session, shell } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  protocol,
+  session,
+  shell,
+} from 'electron';
 import windowStateKeeper from 'electron-window-state';
 import { registerIpcHandlers } from './ipc';
 // P0-2: index utilityProcess lifecycle hook. The worker is lazy-spawned on
@@ -38,6 +47,15 @@ import {
   resolveExtensionRequest,
   mimeForPath,
 } from './extension-protocol';
+import {
+  MAX_AUTO_RELOADS,
+  appendCrashLog,
+  formatCrashEntry,
+  handleFatalError,
+  planReload,
+  sanitizeErrorDetail,
+  type ReloadState,
+} from './crash-guard';
 
 /**
  * `process.env.NODE_ENV` is replaced at webpack build time:
@@ -124,11 +142,10 @@ function createWindow(): void {
     return { action: 'deny' };
   });
 
-  // Graceful shutdown: ask the renderer to flush redux-persist before the
-  // window (and therefore the renderer process) is destroyed. The storage
-  // adapter writes synchronously in the main process, so the flush guarantees
-  // the latest state is on disk before the app exits.
-  //
+  // Crash resilience (docs/01 §14): a dead renderer must not leave a blank
+  // window with no way back. Reload up to MAX_AUTO_RELOADS times, then ask.
+  attachRendererCrashGuard(mainWindow);
+
   // Graceful shutdown: ask the renderer to flush redux-persist before the
   // window (and therefore the renderer process) is destroyed. The storage
   // adapter writes synchronously in the main process, so the flush guarantees
@@ -187,6 +204,88 @@ function createWindow(): void {
       path.resolve(__dirname, '..', 'renderer', 'index.html')
     );
   }
+}
+
+/** `<userData>/crash.log` — see docs/01 §14 and crash-guard.ts. */
+function crashLogPath(): string {
+  return path.join(app.getPath('userData'), 'crash.log');
+}
+
+/**
+ * docs/01 §14 — renderer crash recovery.
+ *
+ * `render-process-gone` fires for GPU crashes, renderer OOM and explicit
+ * kills. Electron's default is to leave the window blank forever; before this
+ * handler existed the only way out was to kill the app. Policy (reload budget,
+ * quiet-window refill) lives in `crash-guard.ts` so it can be unit-tested.
+ *
+ * `clean-exit` is skipped: that is the normal window-close path (e.g. our own
+ * `destroy()` during quit) and reloading it would resurrect a closing window.
+ */
+function attachRendererCrashGuard(win: BrowserWindow): void {
+  let state: ReloadState = { attempts: 0, lastReloadAt: 0 };
+
+  win.webContents.on('render-process-gone', (_event, details) => {
+    // eslint-disable-next-line no-console
+    console.error(
+      '[main] renderer process gone:',
+      details.reason,
+      `exitCode=${details.exitCode}`
+    );
+    if (details.reason === 'clean-exit') return;
+
+    try {
+      appendCrashLog(
+        crashLogPath(),
+        formatCrashEntry(
+          'renderer',
+          `${details.reason} (exitCode=${details.exitCode})`
+        )
+      );
+    } catch {
+      // Best-effort: an unwritable log must not block the recovery below.
+    }
+
+    const plan = planReload(details, state, Date.now());
+    state = plan.next;
+    if (plan.reload) {
+      if (win.isDestroyed()) return;
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[main] reloading after renderer crash (attempt ${state.attempts}/${MAX_AUTO_RELOADS})`
+      );
+      win.webContents.reload();
+      return;
+    }
+
+    if (win.isDestroyed()) return;
+    let restart = false;
+    try {
+      const choice = dialog.showMessageBoxSync(win, {
+        type: 'error',
+        title: 'WhaleTag crashed',
+        message: 'The interface process stopped unexpectedly.',
+        detail:
+          `Reason: ${details.reason} (exit code ${details.exitCode})\n\n` +
+          'Restarting the interface usually recovers; if it crashes again, quit and reopen WhaleTag.',
+        buttons: ['Restart interface', 'Quit'],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
+      });
+      restart = choice === 0;
+    } catch {
+      // Window already gone — fall through to quit.
+      restart = false;
+    }
+
+    if (restart) {
+      state = { attempts: 0, lastReloadAt: 0 };
+      if (!win.isDestroyed()) win.webContents.reload();
+      return;
+    }
+    app.quit();
+  });
 }
 
 /**
@@ -257,6 +356,21 @@ function registerAutoUpdateHandlers(): void {
   ipcMain.handle('app:update-check', () => checkForUpdates());
   ipcMain.handle('app:update-download', () => downloadUpdate());
   ipcMain.on('app:update-quit-and-install', () => quitAndInstall());
+
+  // Renderer-side failures (boot watchdog, global handlers, the React error
+  // boundary) land in the same crash.log as process-level crashes so a blank
+  // window always leaves a trace. Fire-and-forget: the sender may be dying and
+  // the payload is untrusted, so it is sanitized and never answered.
+  ipcMain.on('app:report-renderer-error', (_event, detail: unknown) => {
+    try {
+      appendCrashLog(
+        crashLogPath(),
+        formatCrashEntry('renderer', sanitizeErrorDetail(detail))
+      );
+    } catch (error) {
+      console.error('[main] failed to record a renderer error:', error);
+    }
+  });
 
   // Bridge the in-process subscriber Set to the per-window push channel.
   // `auto-update.ts` already calls `subscribe()` on its own events; we
@@ -398,7 +512,6 @@ function bootstrap(): void {
     });
 
   // macOS: re-create a window when the dock icon is clicked with no windows open.
-  // macOS: re-create a window when the dock icon is clicked with no windows open.
   app.on('activate', () => {
     if (!mainWindow || mainWindow.isDestroyed()) {
       createWindow();
@@ -507,19 +620,41 @@ function pinUserDataToProductName(): void {
 
 pinUserDataToProductName();
 
-// Last-line-of-defense loggers. The whale-file protocol handler is the only
-// known offender so far, but the same bug class (an async error escaping
-// `protocol.handle`'s try/catch and bubbling up as an unhandled promise
-// rejection that takes the renderer down with a "WhaleTag encountered an
-// error" dialog) could show up in any future async handler. Catching and
-// logging them keeps a regression visible to whoever's watching the dev
-// console instead of silently killing the app.
+// Last-line-of-defense handlers.
+//
+// `unhandledRejection`: the whale-file protocol handler was the first known
+// offender (an async error escaping `protocol.handle`'s try/catch), but the
+// same bug class can appear in any async handler. Logging keeps the regression
+// visible instead of silently killing the app.
 process.on('unhandledRejection', (reason) => {
   // eslint-disable-next-line no-console
   console.error(
     '[main] unhandledRejection:',
     reason instanceof Error ? `${reason.stack ?? reason.message}` : reason
   );
+});
+
+// `uncaughtException`: Node's default is to print the stack and exit, which in
+// a packaged build means the window vanishes with no explanation and no log
+// the user can find. docs/01 §14: persist the crash, tell the user, exit 1.
+// Any exception raised while handling this one (a broken dialog, a full disk)
+// must not stop the exit — see handleFatalError's per-step isolation.
+process.on('uncaughtException', (error) => {
+  handleFatalError(error, {
+    log: (message, err) => {
+      // eslint-disable-next-line no-console
+      console.error(message, err);
+    },
+    appendCrashLog: (entry) => {
+      try {
+        appendCrashLog(crashLogPath(), entry);
+      } catch {
+        // userData may be unavailable if this fires before `whenReady`.
+      }
+    },
+    showErrorBox: (title, content) => dialog.showErrorBox(title, content),
+    exit: (code) => app.exit(code),
+  });
 });
 
 app.whenReady().then(bootstrap);

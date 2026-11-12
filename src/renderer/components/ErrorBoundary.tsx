@@ -33,6 +33,19 @@ export default class ErrorBoundary extends Component<
     // Surface to the DevTools console for debugging.
     // eslint-disable-next-line no-console
     console.error('Uncaught render error:', error, info.componentStack);
+
+    // Persist the failure next to process crashes so a user-reported blank
+    // screen leaves something to diagnose (docs/01 §14). Best-effort only:
+    // the bridge or the main process may already be unhealthy.
+    try {
+      window.whale?.reportRendererError(
+        `react error boundary: ${error.stack ?? error.message}\n${
+          info.componentStack ?? ''
+        }`
+      );
+    } catch {
+      // Diagnostics must never mask the original render error.
+    }
   }
 
   private handleReload = (): void => {

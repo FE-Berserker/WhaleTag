@@ -51,16 +51,19 @@
 - **原问题**:[allowed-roots.ts](../src/main/allowed-roots.ts) `assertWithinAllowedRoot` 与 [extension-protocol.ts](../src/main/extension-protocol.ts) `isWithinRoot` 都把 target 和 root 整体 `toLowerCase()` 再比。Windows/mac(默认大小写不敏感)没问题;**Linux ext4 大小写敏感**,注册 `/home/u/Photos` 会连 `/home/u/photos/...` 也放进写白名单——是不同路径,破坏写保护语义。
 - **修法**(2026-07-16):新增 [path-fold.ts](../src/main/path-fold.ts) 的 `foldPath(p)`——`win32`/`darwin` 小写、其它(linux)原样,两处守卫(allowed-roots 3 个位点 + extension-protocol `isWithinRoot`)都改用它。**为什么 darwin 也 fold**:mac 默认 APFS 大小写不敏感,且 `realpath` 已把 case 归一到磁盘真实大小写,故 fold 与 exact 在 mac 上结果一致(fold 是 no-op-after-realpath);只在罕见的 case-sensitive mac 上 fold 略宽(= 改前风险,可接受),linux 则从过宽修成精确。`better-sqlite3` 之类无关。测试:[path-fold.test.ts](../src/main/path-fold.test.ts) 覆盖两分支(经 test-seam param);allowed-roots / extension-protocol 的 case 断言改成平台条件(`CASE_INSENSITIVE_FS` ? 接受 : 拒绝),32/32 过。
 
-### C-2. Linux 桌面环境 fallback 链缺失(易用性)
-- **现状**:
-  - [shell-command.ts](../src/main/shell-command.ts) ~L113-117:「用户命令」开终端只 `xterm -e bash -c`。GNOME / KDE / Cinnamon 默认不带 xterm;spawn 失败被吞(L119-123,文档记为「已知限制」)。
-  - [shell.ts](../src/main/ipc/shell.ts) `revealAndSelect`:linux 只 fallback 到 `nautilus --select`(GNONE 专);KDE 是 `dolphin --select`、XFCE 是 `thunar`。`xdg-open` 已覆盖主场景,这是锦上添花。
-  - [fs-write.ts](../src/main/ipc/fs-write.ts) `runOsZip`:linux 走外部 `zip -r` 命令,最小化 linux 镜像 / 容器未必装;失败是干净报错,不崩。
-- **修法**:① 终端 DE 感知 fallback(`gnome-terminal` / `konsole` / `xfce4-terminal` / `xterm` 兜底,**moderate**);② reveal fallback 扩展 `dolphin --select`(**trivial**);③ `zip` 可 fallback 到 Python/`busybox unzip`,或记为运行时前置(**moderate**;原先说的「fallback 到已依赖的 7zip」已随 archive 模块移除而不成立)。
-
-- [ ] 终端 DE fallback
-- [ ] reveal fallback 扩展
-- [ ] runOsZip linux 兜底
+### C-2. Linux 桌面环境 fallback 链 ✅ 已解决(2026-11-12)
+- **修复前**:
+  - [shell-command.ts](../src/main/shell-command.ts)「用户命令」开终端只 `xterm -e bash -c`。GNOME / KDE / Cinnamon 默认不带 xterm;spawn 失败被吞,右键菜单点了没反应。
+  - [shell.ts](../src/main/ipc/shell.ts) `revealAndSelect`:linux 只 fallback 到 `nautilus --select`(GNOME 专);KDE 是 `dolphin --select`,其余桌面没有选中能力。
+  - [fs-write.ts](../src/main/ipc/fs-write.ts) `runOsZip`:linux 走外部 `zip -r`;`zip` 在 Ubuntu Desktop 默认**不装**,打包直接失败。
+- **修复**:新增 [desktop-linux.ts](../src/main/desktop-linux.ts),把三处桌面相关知识收敛成可单测的「有序候选链」,调用方只负责执行与报错:
+  - **终端**:`linuxTerminalCandidates()` — `$TERMINAL` → `x-terminal-emulator` → `gnome-terminal(--)` → `konsole(-e)` → `xfce4-terminal(-x)` → `tilix` → `kitty` → `alacritty` → `xterm(-e)`;`launchLinuxTerminal()` 逐个 spawn 并等待 `spawn` 事件(ENOENT 是异步到达的,不能看返回值),全失败才抛错——渲染层已有 catch 会弹出真实错误,不再静默;窗口用 `; exec bash` 保持打开。
+  - **reveal**:`linuxRevealSteps()` — D-Bus `org.freedesktop.FileManager1.ShowItems`(让运行中的文件管理器选中,URI 编码)→ `nautilus --select` → `dolphin --select` → `xdg-open 父目录`;某一步缺失或非零退出就跳过,全失败才报错。
+  - **打包**:[fs-write.ts](../src/main/ipc/fs-write.ts) 的 POSIX 分支在 `zip` 报 ENOENT 时退回 `python3` + 内置 `zipfile` 脚本(`pythonZipPairs` 保持 `commonParentDir` 的相对布局;唯一差异是空目录不入包)。
+- 测试:[desktop-linux.test.ts](../src/main/desktop-linux.test.ts) 8 例(候选顺序与 argv 形状、跳过缺失终端、全失败时的错误清单、D-Bus URI 编码、跨目录相对路径映射)。
+- [x] 终端 DE fallback
+- [x] reveal fallback 扩展
+- [x] runOsZip linux 兜底
 
 ### C-3. 图标资源(构建)
 - **现状**:[resources/](../resources/) 只有 `icon.ico` + png,无 `.icns`。[builder.json](../resources/builder.json) 顶层 `icon` 指向 `.ico`,mac / linux 会忽略各自原生图标需求,fallback 到 Electron 默认图标(能跑,只是丑,且 electron-builder 会 warning)。`png-to-ico` / `png2icns` 两个 devDep 是**死依赖**(无任何脚本 import)。
@@ -96,7 +99,7 @@
 | **CI 矩阵**:macos-latest(arm64 + x64)+ ubuntu-latest(x64)各跑 `package:{mac,linux}` | 配置活,半天 | **必须**(原生模块不能从 Windows 交叉编译,须在目标 OS 上 `npm install` + 打包) |
 | 生成 `.icns` + 补 `mac.icon`(C-3) | 1-2 小时 | 想要正经图标就得做;否则 fallback Electron 图标 |
 | Linux 路径守卫大小写修复(C-1) | — | ✅ 已完成(2026-07-16) |
-| Linux 终端 / reveal / zip fallback(C-2) | moderate,半天 | 想要 linux 体验完整就得做 |
+| Linux 终端 / reveal / zip fallback(C-2) | moderate,半天 | ✅ 已解决 (2026-11-12) |
 | mac 签名 + 公证(B-1) | 1 天(证书到手后)+ $99/年 | 仅公开分发需要 |
 | 运行时前置文档(可选外部工具) | 文档 | 同 Windows 现状([docs/14](./14-packaging.md)),照搬一节 |
 

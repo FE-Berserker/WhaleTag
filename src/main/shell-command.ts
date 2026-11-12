@@ -16,6 +16,7 @@ import { spawn } from 'child_process';
 import path from 'path';
 import { assertWithinAllowedRoot } from './allowed-roots';
 import { quotePathForShell } from './shell-quote';
+import { launchLinuxTerminal } from './desktop-linux';
 import { COMMAND_PATH_BLOCKED } from '../shared/shell-types';
 
 export interface CommandValues {
@@ -99,15 +100,13 @@ export async function runUserCommand(
     name: path.basename(targetPath),
   };
   const finalCommand = substituteAndQuote(template, values);
-  openTerminalWindow(finalCommand);
+  await openTerminalWindow(finalCommand);
   return { ok: true };
 }
 
 /**
  * Open a new terminal window running `command` (the substituted + quoted
- * command line). Fire-and-forget: the child is detached + unref'd so WhaleTag
- * doesn't wait for it, and a spawn failure (missing terminal binary) is
- * swallowed at this layer — the command already launched is best-effort.
+ * command line).
  *
  * Platform notes:
  *  - Windows: `cmd /d /s /k "<command>"` opens a persistent cmd window. `/s`
@@ -116,10 +115,18 @@ export async function runUserCommand(
  *    quotes and runs the inner command verbatim. `/k` keeps the window open.
  *  - macOS: AppleScript tells Terminal.app to run the command (the only
  *    reliable way to open a visible Terminal window with a command).
- *  - Linux: best-effort `xterm`; desktop-environment variance is documented as
- *    a known limitation.
+ *  - Linux: walks the desktop-environment fallback chain in
+ *    `desktop-linux.ts` ($TERMINAL → x-terminal-emulator → GNOME/KDE/XFCE/
+ *    Others → xterm) and keeps the window open after the command
+ *    (`; exec bash`). Throws when no terminal could be spawned, so the
+ *    renderer can show a real error instead of the menu item silently doing
+ *    nothing (docs/16 C-2).
  */
-function openTerminalWindow(command: string): void {
+async function openTerminalWindow(command: string): Promise<void> {
+  if (process.platform === 'linux') {
+    await launchLinuxTerminal(`${command}; exec bash`);
+    return;
+  }
   let child;
   if (process.platform === 'win32') {
     child = spawn('cmd.exe', ['/d', '/s', '/k', `"${command}"`], {
@@ -128,23 +135,18 @@ function openTerminalWindow(command: string): void {
       windowsVerbatimArguments: true,
       windowsHide: false,
     });
-  } else if (process.platform === 'darwin') {
+  } else {
     const escaped = command.replace(/"/g, '\\"');
     child = spawn(
       'osascript',
       ['-e', `tell application "Terminal" to do script "${escaped}"`],
       { detached: true, stdio: 'ignore' }
     );
-  } else {
-    child = spawn('xterm', ['-e', 'bash', '-c', `${command}; exec bash`], {
-      detached: true,
-      stdio: 'ignore',
-    });
   }
-  child.on('error', () => {
-    // Best-effort: a missing terminal binary (e.g. no xterm on a stripped
-    // Linux distro) shouldn't crash WhaleTag. Surfacing this nicely is a
-    // follow-up; the common case (Windows cmd) always exists.
+  child.on('error', (error) => {
+    // Best-effort on Windows/macOS: the platform terminal is always present,
+    // so a spawn failure here is exceptional enough to log rather than throw.
+    console.warn('[shell-command] failed to open a terminal window:', error);
   });
   child.unref();
 }

@@ -278,7 +278,7 @@ describe('shell:revealAndSelect handler', () => {
     );
   });
 
-  it('Linux: tries xdg-open first then nautilus --select', async () => {
+  it('Linux: asks D-Bus FileManager1 first and stops on success', async () => {
     setPlatform('linux');
     rig.registerIpcHandlers();
 
@@ -287,60 +287,61 @@ describe('shell:revealAndSelect handler', () => {
 
     assert.equal(
       rig.execFileCalls.length,
-      2,
-      'both xdg-open and nautilus must run on Linux'
+      1,
+      'a working D-Bus ShowItems call is the select-capable step; no CLI fallback needed'
     );
-    const first = rig.execFileCalls[0].args as [string, string[]];
-    const second = rig.execFileCalls[1].args as [string, string[]];
-    assert.equal(first[0], 'xdg-open');
-    assert.deepEqual(first[1], ['/home/foo']);
-    assert.equal(second[0], 'nautilus');
-    assert.deepEqual(second[1], ['--select', '/home/foo/bar.md']);
+    const [cmd, args] = rig.execFileCalls[0].args as [string, string[]];
+    assert.equal(cmd, 'dbus-send');
+    assert.equal(args[0], '--session');
+    assert.ok(args.includes('org.freedesktop.FileManager1.ShowItems'));
+    assert.ok(
+      args.some((a) => a.startsWith('array:string:file:') && a.endsWith('bar.md')),
+      'the file URI must be passed to ShowItems'
+    );
   });
 
-  it('Linux: xdg-open non-zero exit does not abort the chain', async () => {
+  it('Linux: a failing D-Bus call falls through to nautilus --select', async () => {
     setPlatform('linux');
     rig.registerIpcHandlers();
-    rig.outcomes.push('exit-error'); // xdg-open exits non-zero
-    rig.outcomes.push('success'); // nautilus succeeds
+    rig.outcomes.push('exit-error'); // no FileManager1 service listening
+    rig.outcomes.push('success'); // nautilus works
 
     const handler = rig.ipcHandlers.get('shell:revealAndSelect')!;
     await handler({}, '/home/foo/bar.md');
-    assert.equal(
-      rig.execFileCalls.length,
-      2,
-      'nautilus must still run after xdg-open fails (tolerateNonZeroExit)'
-    );
+    assert.equal(rig.execFileCalls.length, 2);
+    const [cmd, args] = rig.execFileCalls[1].args as [string, string[]];
+    assert.equal(cmd, 'nautilus');
+    assert.deepEqual(args, ['--select', '/home/foo/bar.md']);
   });
 
-  it('Linux: xdg-open spawn failure falls back to nautilus (does not throw)', async () => {
+  it('Linux: missing managers are skipped and xdg-open is the last resort', async () => {
     setPlatform('linux');
     rig.registerIpcHandlers();
-    rig.outcomes.push('spawn-error'); // xdg-open missing
-    rig.outcomes.push('success'); // nautilus succeeds
-
-    const handler = rig.ipcHandlers.get('shell:revealAndSelect')!;
-    await handler({}, '/home/foo/bar.md');
-    assert.equal(
-      rig.execFileCalls.length,
-      2,
-      'nautilus fallback must run after xdg-open spawn failure'
-    );
-  });
-
-  it('Linux: nautilus --select spawn failure rejects so the user sees an error', async () => {
-    setPlatform('linux');
-    rig.registerIpcHandlers();
-    rig.outcomes.push('success'); // xdg-open ok
+    rig.outcomes.push('spawn-error'); // dbus-send missing
     rig.outcomes.push('spawn-error'); // nautilus missing
+    rig.outcomes.push('spawn-error'); // dolphin missing
+    rig.outcomes.push('success'); // xdg-open opens the folder
+
+    const handler = rig.ipcHandlers.get('shell:revealAndSelect')!;
+    await handler({}, '/home/foo/bar.md');
+    assert.equal(rig.execFileCalls.length, 4);
+    const [cmd, args] = rig.execFileCalls[3].args as [string, string[]];
+    assert.equal(cmd, 'xdg-open');
+    assert.deepEqual(args, ['/home/foo']);
+  });
+
+  it('Linux: every step failing rejects so the user sees an error', async () => {
+    setPlatform('linux');
+    rig.registerIpcHandlers();
+    rig.outcomes.push('spawn-error', 'spawn-error', 'spawn-error', 'spawn-error');
 
     const handler = rig.ipcHandlers.get('shell:revealAndSelect')!;
     await assert.rejects(
       async () => {
         await handler({}, '/home/foo/bar.md');
       },
-      /spawn ENOENT/,
-      'nautilus is the terminal step; its failure must reject'
+      /Could not reveal .* in a file manager: .*xdg-open/,
+      'the aggregated error must name the steps that were tried'
     );
   });
 });
