@@ -96,6 +96,31 @@ describe('index-db (SQLite + FTS5 trigram)', () => {
     }
   });
 
+  it('keeps the stored tags when the walk could not read the sidecar (docs/04 §7)', async () => {
+    const root = await tmpRoot();
+    try {
+      await setup(root);
+      await ingestFiles(root, [
+        entry({ path: 'a/note.txt', name: 'note.txt', tags: ['keep-me', 'other'] }),
+      ]);
+      assert.equal(queryFiles(root, 'keep-me').length, 1);
+
+      // The next walk hit a sidecar read failure: only filename-derived tags.
+      await ingestFiles(root, [
+        entry({ path: 'a/note.txt', name: 'note.txt', tags: [], tagsUnreadable: true }),
+      ]);
+      assert.equal(queryFiles(root, 'keep-me').length, 1, 'stored tags survive');
+      assert.match(filesPrior(root).get('a/note.txt') ?? '', /keep-me/);
+
+      // A successful read is authoritative again: clearing tags clears them.
+      await ingestFiles(root, [entry({ path: 'a/note.txt', name: 'note.txt', tags: [] })]);
+      assert.equal(queryFiles(root, 'keep-me').length, 0);
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('closeDb drops the cached handle; double-close is a no-op and the next query reopens (docs/04 §10)', async () => {
     const root = await tmpRoot();
     try {

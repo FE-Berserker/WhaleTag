@@ -64,6 +64,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **MCP 工具面补齐审批「放行」路径的端到端测试**:此前只有「拒绝」用例,而且它在未注册 root 时运行、先撞位置守卫,审批闸被整体删掉也照样通过。新增 tool surface 组用自动放行的传输层走真实审批队列,逐工具断言副作用(list_directory / get_meta / write_description / extract_text / create_folder / create_text_file / copy / move / delete / zip),其中创建文本文件同时验证 UTF-8 字节数与拒绝覆盖,删除走 `shell.trashItem`。
   **End-to-end coverage for the MCP approval ALLOW path**: the only approval test was the deny side, and it ran without a configured root — so the location guard fired first and the test would still pass with the approval gate deleted. A new tool-surface suite injects an auto-approving transport and goes through the real queue, asserting the side effect of each tool (list_directory / get_meta / write_description / extract_text / create_folder / create_text_file / copy / move / delete / zip); the text-file case also pins UTF-8 byte accounting and the no-overwrite rule, and delete goes through `shell.trashItem`.
 
+
+- **侧车读失败不再擦掉索引里的标签**:索引遍历遇到读不出的 `wsd.json` 时,此前会把该目录文件的标签按"只剩文件名标签"覆盖进数据库——一次瞬时的权限/损坏错误就让标签从搜索和标签过滤里消失,直到下次重建成功。现在这类条目带 `tagsUnreadable` 标记,写入时保留数据库里已有的标签(且不参与"未变就跳过"),下一次读取成功时仍以侧车为准。
+  **A failed sidecar read no longer erases tags from the index**: when the walk could not read a directory's `wsd.json`, indexing used to overwrite that directory's tag rows with the filename-derived partial view — one transient permission or corruption error made the tags disappear from search and tag filters until a later rebuild. Those rows now carry a `tagsUnreadable` flag; the ingester keeps the stored tags (and never skips them as "unchanged"), while a later successful read is authoritative again.
+
 ## [0.5.0] - 2026-09-15
 
 ### Added

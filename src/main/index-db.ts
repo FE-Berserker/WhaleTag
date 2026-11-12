@@ -238,6 +238,10 @@ function yieldToEventLoop(): Promise<void> {
  *  are derived from the path (stable per path); `is_dir` is stable per path.
  *  See docs/15 P0-1. */
 function filesSignature(e: IndexEntry): string {
+  // An unreadable sidecar gives us a partial tag view; it can never match a
+  // stored signature, so the row is always visited (and its stored tags kept
+  // by the upsert below) instead of being skipped as "unchanged".
+  if (e.tagsUnreadable) return `${e.mtime}|${e.size}|?unreadable`;
   return `${e.mtime}|${e.size}|${(e.tags ?? []).join(' ')}`;
 }
 
@@ -285,7 +289,8 @@ export async function ingestFiles(
     VALUES (@path, @name, @is_dir, @size, @mtime, @ext, @tags)
     ON CONFLICT(path) DO UPDATE SET
       name=excluded.name, is_dir=excluded.is_dir, size=excluded.size,
-      mtime=excluded.mtime, ext=excluded.ext, tags=excluded.tags
+      mtime=excluded.mtime, ext=excluded.ext,
+      tags=CASE WHEN @keep_tags THEN files.tags ELSE excluded.tags END
   `);
 
   const prior = filesPrior(rootPath);
@@ -328,6 +333,7 @@ export async function ingestFiles(
         mtime: e.mtime,
         ext: e.ext,
         tags: (e.tags ?? []).join(' '),
+        keep_tags: e.tagsUnreadable ? 1 : 0,
       });
     }
   });

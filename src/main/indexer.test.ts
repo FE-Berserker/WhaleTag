@@ -35,7 +35,13 @@ describe('buildIndex sidecar degradation', () => {
       const good = entries.find((entry) => entry.path === 'good/plain.txt');
       const bad = entries.find((entry) => entry.path === 'bad/plain.txt');
       assert.deepEqual(good?.tags, ['keep']);
+      assert.equal(good?.tagsUnreadable, undefined, 'a readable sidecar is authoritative');
       assert.deepEqual(bad?.tags, []);
+      assert.equal(
+        bad?.tagsUnreadable,
+        true,
+        'the ingester must keep the stored tags for this row'
+      );
       assert.equal(warnings.length, 1, 'the degraded directory is surfaced');
     } finally {
       console.warn = originalWarn;

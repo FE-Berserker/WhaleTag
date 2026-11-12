@@ -34,7 +34,8 @@ function makeEntry(
   isDir: boolean,
   mtime: number,
   size: number,
-  tags: string[]
+  tags: string[],
+  tagsUnreadable = false
 ): IndexEntry {
   return {
     name,
@@ -44,6 +45,7 @@ function makeEntry(
     mtime,
     ext: isDir ? '' : extOf(name),
     tags,
+    ...(tagsUnreadable ? { tagsUnreadable: true } : {}),
   };
 }
 
@@ -90,12 +92,17 @@ export async function buildIndex(
 
     if (files.length) {
       let sidecars: Awaited<ReturnType<typeof readSidecars>> = {};
+      let tagsUnreadable = false;
       try {
         sidecars = await readSidecars(dir, files.map((f) => f.name));
       } catch (error) {
         // A corrupt/unreadable wsd.json must not abort the whole location scan.
         // Keep the error visible and index this directory without stored tags;
         // write APIs still reject so the damaged metadata is never overwritten.
+        // `tagsUnreadable` tells the ingester to keep the tags already stored
+        // for these rows — a transient read failure must not erase the tag
+        // index (the sidecar itself is still intact on disk).
+        tagsUnreadable = true;
         console.warn('[indexer] Sidecar read failed; indexing without stored tags:', dir, error);
       }
       for (const { name, full, stat } of files) {
@@ -108,7 +115,8 @@ export async function buildIndex(
             false,
             stat.mtime.getTime(),
             stat.size,
-            tags
+            tags,
+            tagsUnreadable
           )
         );
       }

@@ -60,13 +60,16 @@ export default function McpApprovalDialog() {
 
   // Drop requests whose expiry passed without a user answer (main auto-denied
   // them) so the dialog can't show a zombie entry, and re-render once a second
-  // so the countdown below actually counts down.
-  const [clock, setClock] = useState(() => Date.now());
+  // so the countdown below actually counts down. The count is computed against
+  // the current clock at render time (not a state snapshot taken when the
+  // component mounted) — otherwise a request arriving a second after mount
+  // would briefly read "61s" because the snapshot is stale.
+  const [, setTick] = useState(0);
   useEffect(() => {
     if (requests.length === 0) return;
     const timer = setInterval(() => {
       const at = Date.now();
-      setClock(at);
+      setTick((n) => n + 1);
       setRequests((prev) => prev.filter((r) => r.expiresAt > at));
     }, 1000);
     return () => clearInterval(timer);
@@ -78,7 +81,7 @@ export default function McpApprovalDialog() {
   const req = [...requests].sort((a, b) => a.expiresAt - b.expiresAt)[0];
   const remainingSeconds =
     req.expiresAt > 0
-      ? Math.max(0, Math.ceil((req.expiresAt - clock) / 1000))
+      ? Math.max(0, Math.ceil((req.expiresAt - Date.now()) / 1000))
       : null;
 
   const answer = (allowed: boolean) => {

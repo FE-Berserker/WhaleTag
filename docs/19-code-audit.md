@@ -164,6 +164,13 @@ docs/13 一直写着"读取入口也遵守同一位置边界"，但三个只读�
 - **harness 变化**：electron stub 的 `shell` 从空对象改为带 `trashItem`（测试内 rm 模拟回收站），否则删除工具在测试环境里必然抛 `undefined is not a function`，反而测不到审批后的真实路径。
 - 未覆盖并记录在案：依赖索引 worker 的 `whale_search` / `whale_advanced_search` / `whale_fulltext_search` / `whale_list_tags` / `whale_build_fulltext` 仍只有只读拒绝用例——`utilityProcess` 在测试里不可用，端到端需要先造一个索引替身，留作后续。
 
+### P1-22. 侧车读失败 → 索引把标签整批擦掉（与全文那轮同类） ✅
+[indexer.ts](../src/main/indexer.ts) 在某个目录的 `wsd.json` 读取失败时只 `console.warn`，然后照常发条目，`tags` 仅剩文件名解析出的部分。`ingestFiles` 随后按"当前这次遍历看到的状态"覆盖数据库——于是一次瞬时权限/损坏错误，就把该目录所有文件的标签从搜索与标签过滤里抹掉，直到下一次成功重建。侧车本身可能完好无损，这属于"读失败被当成删除"的同一类错误。
+- **标记 partial 视图**：`IndexEntry` 新增可选 `tagsUnreadable`；`buildIndex` 在读侧车失败时给该目录下每个文件条目置位（目录条目不涉及标签）。
+- **保留已存标签**：`ingestFiles` 的上游 SQL 改为 `tags=CASE WHEN @keep_tags THEN files.tags ELSE excluded.tags END`；带该标记的行不做"签名未变就跳过"的优化（partial 视图永远不等于完整签名），其余字段照常更新。
+- **读取成功仍以侧车为准**：下一轮读取成功时走正常分支，清空标签会真正清空（回归用例覆盖）。
+- 回归网：[index-db.test.ts](../src/main/index-db.test.ts) 新增"侧车读失败保留已存标签"用例（写入 `keep-me` → 带标记重建 → FTS 仍命中、`filesPrior` 仍含标签 → 正常重建后清空生效）；[indexer.test.ts](../src/main/indexer.test.ts) 的降级用例补断言：坏目录条目 `tagsUnreadable === true`、好目录不带该标记。
+
 ---
 
 ## 🟡 P2 — 类型逃逸

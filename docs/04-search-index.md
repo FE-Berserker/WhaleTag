@@ -34,6 +34,8 @@ loadExifProcessed(rootPath)                 // 查询
 
 `TaskReminder` 启动时总是重 build 索引,确保子目录新打的 pending workflow tag 能被检索到。
 
+**侧车读失败不擦标签**:遍历时若某个目录的 `wsd.json` 读不出(损坏 / 权限),`buildIndex` 仍会返回该目录的文件,但每条带 `tagsUnreadable: true`——此时 `tags` 只有文件名里解析出的标签。`ingestFiles` 对带该标记的行**保留数据库里已有的 tags**(`ON CONFLICT ... tags=CASE WHEN @keep_tags THEN files.tags ELSE excluded.tags END`),并且不做"签名未变就跳过"的优化(partial 视图永远算不上未变)。这样一次瞬时读失败不会把位置里的标签从搜索/标签过滤里抹掉;下次读取成功时仍以侧车为准(清空标签会真正清空)。
+
 ## 3. 即时搜索(UI 行为)
 
 - 顶部 SearchBar:输入关键字(文件名 + 标签)模糊匹配,**Enter 触发**(`SQLite FTS5 trigram`),非逐键

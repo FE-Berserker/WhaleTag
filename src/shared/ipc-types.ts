@@ -69,6 +69,12 @@ export interface IndexEntry {
   ext: string;
   /** Effective tags (filename-embedded ∪ sidecar) — used for tag search. */
   tags: string[];
+  /**
+   * The directory's sidecar could not be read, so `tags` only holds the
+   * filename-derived tags. Indexing must keep the tags already stored for this
+   * row instead of overwriting them with this partial view (docs/04 §7).
+   */
+  tagsUnreadable?: boolean;
 }
 
 /** A full-text search hit returned from a `wsft.jsonl` index. */
