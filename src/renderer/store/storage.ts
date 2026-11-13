@@ -39,7 +39,6 @@ const mainProcessStorage: Storage = {
     try {
       value = await window.whale.persistRead(key);
     } catch (e) {
-      // eslint-disable-next-line no-console
       console.error('[persist-storage-adapter] read IPC failed for', key, e);
       return null;
     }
@@ -50,7 +49,6 @@ const mainProcessStorage: Storage = {
       if (typeof localStorage !== 'undefined') {
         const legacy = localStorage.getItem(key);
         if (legacy !== null) {
-          // eslint-disable-next-line no-console
           console.warn(
             '[persist-storage-adapter] migrating legacy localStorage blob for',
             key
@@ -58,7 +56,6 @@ const mainProcessStorage: Storage = {
           try {
             await window.whale.persistWrite(key, legacy);
           } catch (e) {
-            // eslint-disable-next-line no-console
             console.error(
               '[persist-storage-adapter] failed to write migrated blob for',
               key,
@@ -72,7 +69,6 @@ const mainProcessStorage: Storage = {
       return null;
     }
     if (typeof value !== 'string') {
-      // eslint-disable-next-line no-console
       console.error(
         '[persist-storage-adapter] read returned non-string for',
         key,
@@ -93,7 +89,6 @@ const mainProcessStorage: Storage = {
       // renderer's `setItem` Promise now rejects, so redux-persist logs
       // the error and the user sees it in DevTools rather than silently
       // losing changes on next launch.
-      // eslint-disable-next-line no-console
       console.error('[persist-storage-adapter] write IPC failed for', key, e);
       throw e;
     }
@@ -103,7 +98,6 @@ const mainProcessStorage: Storage = {
     try {
       await window.whale.persistDelete(key);
     } catch (e) {
-      // eslint-disable-next-line no-console
       console.error('[persist-storage-adapter] delete IPC failed for', key, e);
       throw e;
     }

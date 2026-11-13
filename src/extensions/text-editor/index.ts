@@ -478,7 +478,6 @@ function updateStatusBar() {
  selEl.textContent = numberFormatter.format(stats.selectionLength);
  } catch (err) {
  // Never let a status-bar failure block content rendering.
- // eslint-disable-next-line no-console
  console.error('[text-editor] updateStatusBar failed', err);
  lnEl.textContent = STATUS_NO_VALUE;
  colEl.textContent = STATUS_NO_VALUE;

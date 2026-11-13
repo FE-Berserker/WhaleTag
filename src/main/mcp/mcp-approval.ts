@@ -59,7 +59,6 @@ function activate(entry: PendingApproval): void {
   } catch (error) {
     // A destroyed window can throw on send; fail closed instead of leaving a
     // request that no dialog will ever show.
-    // eslint-disable-next-line no-console
     console.error('[mcp] approval broadcast failed:', error);
     settle(entry, false);
   }
@@ -105,7 +104,6 @@ export function requestApproval(args: {
     return Promise.resolve(false);
   }
   if (queue.length >= MAX_PENDING_APPROVALS) {
-    // eslint-disable-next-line no-console
     console.warn(
       `[mcp] approval queue full (${MAX_PENDING_APPROVALS}); denying ${args.tool}`
     );

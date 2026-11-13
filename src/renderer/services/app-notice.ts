@@ -38,7 +38,6 @@ export function notifyApp(
     try {
       listener(notice);
     } catch (e) {
-      // eslint-disable-next-line no-console
       console.error('[app-notice] listener failed', e);
     }
   }

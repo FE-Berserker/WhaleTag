@@ -223,48 +223,51 @@ describe('GanttEntryMenu #1: section wiring', () => {
 
 describe('GanttEntryMenu #2: action dispatch', () => {
   it('routes "Open" through onOpen with the right-clicked entry', () => {
-    let opened: DirEntry | null = null;
+    // A box rather than a `let opened: DirEntry | null = null`: assigning from
+    // inside the callback isn't tracked by control-flow analysis, so `opened`
+    // stays narrowed to `null` and `opened?.path` collapses to `never`.
+    const opened: { value: DirEntry | null } = { value: null };
     const e = entry('a.txt');
     const ctx: GanttEntryContext = { x: 1, y: 2, entry: e };
     const { getByTestId } = renderMenu({
       ctx,
       currentTags: [],
       onOpen: (entry) => {
-        opened = entry;
+        opened.value = entry;
       },
     });
     fireEvent.click(getByTestId('gantt-open'));
-    assert.equal(opened?.path, e.path);
+    assert.equal(opened.value?.path, e.path);
   });
 
   it('routes "Delete" through onDelete', () => {
-    let deleted: DirEntry | null = null;
+    const deleted: { value: DirEntry | null } = { value: null };
     const e = entry('a.txt');
     const ctx: GanttEntryContext = { x: 1, y: 2, entry: e };
     const { getByTestId } = renderMenu({
       ctx,
       currentTags: [],
       onDelete: (entry) => {
-        deleted = entry;
+        deleted.value = entry;
       },
     });
     fireEvent.click(getByTestId('gantt-delete'));
-    assert.equal(deleted?.path, e.path);
+    assert.equal(deleted.value?.path, e.path);
   });
 
   it('routes "Clear period" through onRemoveEntryDateTag', () => {
-    let clearedFor: DirEntry | null = null;
+    const clearedFor: { value: DirEntry | null } = { value: null };
     const e = entry('a.txt');
     const ctx: GanttEntryContext = { x: 1, y: 2, entry: e };
     const { getByTestId } = renderMenu({
       ctx,
       currentTags: ['20260704-20260710'],
       onRemoveEntryDateTag: (entry) => {
-        clearedFor = entry;
+        clearedFor.value = entry;
       },
     });
     fireEvent.click(getByTestId('gantt-clear-period'));
-    assert.equal(clearedFor?.path, e.path);
+    assert.equal(clearedFor.value?.path, e.path);
   });
 });
 

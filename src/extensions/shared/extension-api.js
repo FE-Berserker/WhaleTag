@@ -19,7 +19,6 @@
       try {
         handler(currentLocale);
       } catch (e) {
-        // eslint-disable-next-line no-console
         console.error('[whaleExt] locale handler error', e);
       }
     });
@@ -45,7 +44,6 @@
       try {
         handler(message);
       } catch (e) {
-        // eslint-disable-next-line no-console
         console.error('[whaleExt] message handler error', e);
       }
     });
@@ -79,7 +77,6 @@
       try {
         handler(currentLocale);
       } catch (e) {
-        // eslint-disable-next-line no-console
         console.error('[whaleExt] locale handler error', e);
       }
       return function () {

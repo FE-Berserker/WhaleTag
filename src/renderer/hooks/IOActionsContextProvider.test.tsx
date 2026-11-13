@@ -221,7 +221,7 @@ describe('importExternalCore', () => {
       errors: [],
       // importedPaths missing — simulates a pre-2026-07 main-process build
       // that hasn't returned the field yet. Should not crash.
-    } as { copied: number; errors: string[]; importedPaths: string[] };
+    } as unknown as { copied: number; errors: string[]; importedPaths: string[] };
 
     await importExternalCore({
       sources: ['/os/old.md'],

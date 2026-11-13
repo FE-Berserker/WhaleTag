@@ -373,7 +373,8 @@ export default function FileList() {
   // selection / scroll tick).
   const handleColumnWidth = useCallback(
     (id: string, px: number) => {
-      const bounds = LIST_COLUMN_BOUNDS[id];
+      const bounds = LIST_COLUMN_BOUNDS[id as keyof typeof LIST_COLUMN_BOUNDS];
+      if (!bounds) return;
       const clamped = Math.max(
         bounds.min,
         Math.min(bounds.max, Math.round(px))
@@ -597,7 +598,13 @@ export default function FileList() {
   );
 
   const selectedEntries = useMemo(
-    () => visible.filter((e) => selectedPathsRef.current.has(e.path)),
+    () => {
+      // `selectedPathsRef` is mutated in place; `selectedTick` is the revision
+      // counter that tells this memo the Set changed. Read it so the dependency
+      // is real (exhaustive-deps otherwise flags it as unnecessary).
+      void selectedTick;
+      return visible.filter((e) => selectedPathsRef.current.has(e.path));
+    },
     [visible, selectedTick]
   );
 
@@ -619,7 +626,12 @@ export default function FileList() {
   // redundant with react-window's built-in memo and broken — see F1/F4 in the
   // H.23 review.)
   const isSelected = useCallback(
-    (entry: DirEntry) => selectedPathsRef.current.has(entry.path),
+    (entry: DirEntry) => {
+      // See `selectedEntries`: `selectedTick` is read to keep this callback's
+      // identity keyed on the selection revision while the Set stays in a ref.
+      void selectedTick;
+      return selectedPathsRef.current.has(entry.path);
+    },
     [selectedTick]
   );
 
@@ -725,6 +737,8 @@ export default function FileList() {
   // whenever the previous folder contributed extra selected paths.
   const selectAllState = useMemo<'checked' | 'indeterminate' | 'unchecked'>(
     () => {
+      // Selection lives in a mutated ref; the tick is what invalidates this.
+      void selectedTick;
       if (visible.length === 0) return 'unchecked';
       let selectedVisible = 0;
       for (const e of visible) {
@@ -881,6 +895,7 @@ export default function FileList() {
     enabledOverrides,
     openWithExtension,
     openNative,
+    showNotice,
   ]);
 
   // handleDelete + handleMove moved to `useListCommands` (P0-1d).
@@ -922,7 +937,7 @@ export default function FileList() {
         showNotice(e instanceof Error ? e.message : String(e));
       }
     },
-    [renameEntry]
+    [renameEntry, showNotice]
   );
 
   const handleCopyConfirm = async (newName: string) => {
@@ -1030,6 +1045,7 @@ export default function FileList() {
       descByName,
       normalize,
       saveMany,
+      showNotice,
     ]
   );
 
@@ -1055,7 +1071,7 @@ export default function FileList() {
         showNotice(e instanceof Error ? e.message : String(e))
       );
     },
-    [tagsByName, descByName, normalize, save]
+    [tagsByName, descByName, normalize, save, showNotice]
   );
 
   // Mapique single-entry editing: set/clear a file's location and add/remove
@@ -1077,7 +1093,7 @@ export default function FileList() {
         showNotice(e instanceof Error ? e.message : String(e))
       );
     },
-    [currentLocation, tagsByName, descByName, normalize, save]
+    [currentLocation, tagsByName, descByName, normalize, save, showNotice]
   );
 
   const handleClearGeo = useCallback(
@@ -1092,7 +1108,7 @@ export default function FileList() {
         showNotice(e instanceof Error ? e.message : String(e))
       );
     },
-    [currentLocation, tagsByName, descByName, save]
+    [currentLocation, tagsByName, descByName, save, showNotice]
   );
 
   const handleAddTag = useCallback(
@@ -1114,7 +1130,7 @@ export default function FileList() {
         showNotice(e instanceof Error ? e.message : String(e))
       );
     },
-    [currentLocation, tagsByName, descByName, normalize, save, now]
+    [currentLocation, tagsByName, descByName, normalize, save, now, showNotice]
   );
 
   const handleRemoveTag = useCallback(
@@ -1130,7 +1146,7 @@ export default function FileList() {
         showNotice(e instanceof Error ? e.message : String(e))
       );
     },
-    [currentLocation, tagsByName, descByName, save]
+    [currentLocation, tagsByName, descByName, save, showNotice]
   );
 
   // H.24 P0-1: rewrite the file's date-typed tag (replaces any prior date tag).
@@ -1149,7 +1165,7 @@ export default function FileList() {
         showNotice(e instanceof Error ? e.message : String(e))
       );
     },
-    [currentLocation, tagsByName, descByName, save]
+    [currentLocation, tagsByName, descByName, save, showNotice]
   );
 
   // H.24 P0-1: strip every date-typed tag from the file's sidecar. Companion
@@ -1170,7 +1186,7 @@ export default function FileList() {
         showNotice(e instanceof Error ? e.message : String(e))
       );
     },
-    [currentLocation, tagsByName, descByName, save]
+    [currentLocation, tagsByName, descByName, save, showNotice]
   );
 
   // handleBulkDelete / handleBulkMove / handlePackageConfirm / handleCreate /
@@ -1347,7 +1363,7 @@ export default function FileList() {
   // shallow memo short-circuit unrelated parent rerenders.
   const onClickTag = useCallback(
     (tag: string) => setActiveTag(activeTag === tag ? null : tag),
-    [activeTag]
+    [activeTag, setActiveTag]
   );
   const onTagContextMenu = useCallback(
     (entry: DirEntry, tag: string, x: number, y: number) =>
@@ -1442,7 +1458,6 @@ export default function FileList() {
     }),
     [
       visible,
-      thumbCache.current,
       tagsByName,
       descByName,
       activeTag,
@@ -1468,7 +1483,6 @@ export default function FileList() {
       handleAddTag,
       handleRemoveTag,
       selectedPathsRef,
-      visibleByPath,
       resolveEntry,
       focusIndex,
       columnWidths,
@@ -1623,7 +1637,9 @@ export default function FileList() {
                 columnWidths={columnWidths}
                 hiddenColumns={hiddenColumns}
                 setColumnWidth={(id, px) => {
-                  const bounds = LIST_COLUMN_BOUNDS[id];
+                  const bounds =
+                    LIST_COLUMN_BOUNDS[id as keyof typeof LIST_COLUMN_BOUNDS];
+                  if (!bounds) return;
                   const clamped = Math.max(
                     bounds.min,
                     Math.min(bounds.max, Math.round(px))

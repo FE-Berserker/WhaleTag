@@ -935,7 +935,7 @@ export function TagChipContextMenu(props: TagChipContextMenuProps) {
                     } catch (err) {
                       // The dialog has already closed by now; without this the
                       // user would see the old period chip and no explanation.
-                      showError(
+                      showError?.(
                         err instanceof Error ? err.message : String(err)
                       );
                     }

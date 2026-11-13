@@ -159,11 +159,18 @@ export default function extensionsReducer(
     case SET_FILE_EDIT_STATE: {
       const { filePath, state: patch } = (action as SetFileEditStateAction)
         .payload;
+      // New files start stamped clean; an indexed read already has its own
+      // dirty/saving flags. Spreading defaults before the prior entry keeps a
+      // single specification per key (TS2783 under strict).
+      const prior = state.editState[filePath] ?? {
+        dirty: false,
+        saving: false,
+      };
       return {
         ...state,
         editState: {
           ...state.editState,
-          [filePath]: { dirty: false, saving: false, ...state.editState[filePath], ...patch },
+          [filePath]: { ...prior, ...patch },
         },
       };
     }

@@ -591,10 +591,12 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
               zoomable
               // Show each node in its own type/tag color so the minimap is
               // a useful overview of the graph, not a uniform grey blob.
+              // MiniMap's attribute callback must return a string; fall back to
+              // react-flow's own default node fill instead of `undefined`.
               nodeColor={(n) => {
                 const d = n.data as TagNodeData | FileNodeData | undefined;
                 if (!d || typeof (d as { color?: unknown }).color !== 'string') {
-                  return undefined;
+                  return '#e2e2e2';
                 }
                 return (d as { color: string }).color;
               }}

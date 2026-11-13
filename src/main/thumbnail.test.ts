@@ -40,11 +40,14 @@ async function makePng(filePath: string): Promise<void> {
  * ffmpeg-static is unavailable, which still lets the non-video tests run.
  */
 async function makeVideo(filePath: string): Promise<boolean> {
-  if (!ffmpegStatic) return false;
+  // Bind to a local const first: TS does not narrow the default import binding
+  // inside the Promise executor below, so `ffmpegStatic` would stay string|null.
+  const ffmpegPath = ffmpegStatic;
+  if (!ffmpegPath) return false;
   const { execFile } = await import('child_process');
   await new Promise<void>((resolve, reject) => {
     execFile(
-      ffmpegStatic,
+      ffmpegPath,
       [
         '-f',
         'lavfi',
@@ -54,7 +57,7 @@ async function makeVideo(filePath: string): Promise<boolean> {
         'yuv420p',
         filePath,
       ],
-      (err) => (err ? reject(err) : resolve())
+      (err: Error | null) => (err ? reject(err) : resolve())
     );
   });
   return true;

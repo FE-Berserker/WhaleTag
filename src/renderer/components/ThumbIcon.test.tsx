@@ -22,7 +22,7 @@ describe('ThumbIcon', () => {
         exports,
         children: [],
         paths: [],
-      } as NodeJS.Module;
+      } as unknown as NodeJS.Module;
     };
 
     let rejectLoad!: (error: Error) => void;
@@ -108,7 +108,7 @@ describe('ThumbIcon', () => {
         exports,
         children: [],
         paths: [],
-      } as NodeJS.Module;
+      } as unknown as NodeJS.Module;
     };
 
     const pending: Array<(url: string | null) => void> = [];

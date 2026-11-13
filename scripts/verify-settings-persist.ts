@@ -166,7 +166,7 @@ async function cdpEval<T = unknown>(
 }
 
 function buildEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env, NODE_ENV: 'development' };
+  const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: 'development' };
   delete env.ELECTRON_RUN_AS_NODE;
   return env;
 }
@@ -193,13 +193,15 @@ function startElectron(cdpPort: number): ChildProcess {
       env: buildEnv(),
     }
   );
-  proc.stdout?.on('data', (d) =>
+  proc.stdout?.on('data', (d: Buffer) =>
     console.log('[electron out]', d.toString().trim())
   );
-  proc.stderr?.on('data', (d) =>
+  proc.stderr?.on('data', (d: Buffer) =>
     console.log('[electron err]', d.toString().trim())
   );
-  proc.on('exit', (code) => console.log('[electron exit]', code));
+  proc.on('exit', (code: number | null) =>
+    console.log('[electron exit]', code)
+  );
   return proc;
 }
 
@@ -232,7 +234,7 @@ function buildMainDev(): Promise<void> {
         env: buildEnv(),
       }
     );
-    proc.on('exit', (code) => {
+    proc.on('exit', (code: number | null) => {
       if (code === 0) resolve();
       else reject(new Error(`build:main:dev exited with ${code}`));
     });

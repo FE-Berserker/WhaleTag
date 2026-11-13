@@ -1756,7 +1756,9 @@ interface DayCellProps {
   entries: DirEntry[];
   data: FileCellData;
   showEmptyHint: boolean;
-  onOpenCalendarMenu: (ctx: CalendarEntryContext) => void;
+  // Optional here because the month grid (GridView) can render without a
+  // domain-menu host; entry cells then simply have no calendar menu.
+  onOpenCalendarMenu?: (ctx: CalendarEntryContext) => void;
   entryTimeLabel?: (entry: DirEntry) => string | null;
   showLunar?: boolean;
 }
@@ -1963,7 +1965,8 @@ function CalendarEntryItem({
 }: {
   entry: DirEntry;
   data: FileCellData;
-  onOpenCalendarMenu: (ctx: CalendarEntryContext) => void;
+  // Optional alongside DayCellProps: the month grid may host no domain menu.
+  onOpenCalendarMenu?: (ctx: CalendarEntryContext) => void;
   entryTimeLabel?: (entry: DirEntry) => string | null;
 }) {
   const { entries, onOpen, onSelectRow, isSelected, thumbCache, t, selectedPaths, readOnly } =
@@ -2019,7 +2022,7 @@ function CalendarEntryItem({
   const handleContext = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    onOpenCalendarMenu({ x: e.clientX, y: e.clientY, entry });
+    onOpenCalendarMenu?.({ x: e.clientX, y: e.clientY, entry });
   };
 
   return (

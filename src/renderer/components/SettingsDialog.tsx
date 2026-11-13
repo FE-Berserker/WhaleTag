@@ -255,7 +255,7 @@ function FulltextSection() {
           );
         });
     }
-  }, [paths]);
+  }, [paths, status]);
 
   const handleAdd = () => {
     const v = input.trim();

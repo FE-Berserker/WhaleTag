@@ -439,7 +439,6 @@ function measureFitWidth() {
  const prevZoom = contentEl.style.zoom;
  contentEl.style.zoom = '1';
  // Force layout flush.
- // eslint-disable-next-line @typescript-eslint/no-unused-expressions
  contentEl.offsetHeight;
  const containerWidth = contentEl.clientWidth;
  const contentWidth = contentEl.scrollWidth;
@@ -517,7 +516,6 @@ function updateStatusBar() {
  linesEl.textContent = numberFormatter.format(state.lineCount);
  } catch (err) {
  // Never let a status-bar failure block content rendering.
- // eslint-disable-next-line no-console
  console.error('[html-viewer] updateStatusBar failed', err);
  sizeEl.textContent = NO_VALUE;
  tagsEl.textContent = NO_VALUE;

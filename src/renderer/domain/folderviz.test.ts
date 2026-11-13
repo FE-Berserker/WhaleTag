@@ -170,23 +170,27 @@ describe('ECharts data converters', () => {
   it('toEChartsTree preserves hierarchy', () => {
     const data = toEChartsTree(root);
     assert.equal(data.name, 'root');
+    assert.ok(data.children);
     assert.equal(data.children.length, 2);
   });
 
   it('toEChartsTreemap preserves hierarchy', () => {
     const data = toEChartsTreemap(root);
     assert.equal(data.name, 'root');
+    assert.ok(data.children);
     assert.equal(data.children.length, 2);
   });
 
   it('toEChartsSunburst preserves hierarchy', () => {
     const data = toEChartsSunburst(root);
     assert.equal(data.name, 'root');
+    assert.ok(data.children);
     assert.equal(data.children.length, 2);
   });
 
   it('honors custom colorizer', () => {
     const data = toEChartsTree(root, { getColor: () => '#ff0000' });
+    assert.ok(data.itemStyle);
     assert.equal(data.itemStyle.color, '#ff0000');
   });
 });

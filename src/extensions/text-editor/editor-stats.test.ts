@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * text-editor — unit tests for editor-stats.ts pure helpers.
  *

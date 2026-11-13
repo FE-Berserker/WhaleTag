@@ -239,7 +239,7 @@ export default function PropertiesTray({
   // shared TagMetaDialog. Mirrors the right-click flow from TagLibrary so
   // there's one dialog surface for both entry points.
   const [editingTag, setEditingTag] = useState<string | null>(null);
-  const resizingRef = useRef<{
+  type ResizeDrag = {
     element: HTMLElement;
     pointerId: number;
     startX: number;
@@ -248,7 +248,8 @@ export default function PropertiesTray({
       pointerUp: (event: PointerEvent) => void;
       pointerCancel: (event: PointerEvent) => void;
     };
-  } | null>(null);
+  };
+  const resizingRef = useRef<ResizeDrag | null>(null);
   const [previewWidth, setPreviewWidth] = useState<number | null>(null);
 
   // Guard against persisted widths from before MIN_WIDTH/MAX_WIDTH existed or
@@ -407,7 +408,7 @@ export default function PropertiesTray({
       if (resizingRef.current) return;
       e.preventDefault();
       const element = e.currentTarget;
-      const drag: NonNullable<typeof resizingRef.current> = {
+      const drag: ResizeDrag = {
         element,
         pointerId: e.pointerId,
         startX: e.clientX,

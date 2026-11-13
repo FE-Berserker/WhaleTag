@@ -27,7 +27,6 @@ import { createMcpHttpCore, type McpHttpCore } from './mcp-http';
 const TMP_USER_DATA = path.join(os.tmpdir(), 'whaletag-mcp-test');
 fs.mkdirSync(TMP_USER_DATA, { recursive: true });
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const electronStub: any = {
   app: {
     getPath: () => TMP_USER_DATA,
@@ -50,7 +49,6 @@ const electronStub: any = {
   BrowserWindow: { getAllWindows: () => [] },
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const originalLoad = (Module as any)._load;
 (Module as any)._load = function (request: string, ...rest: unknown[]) {
   if (request === 'electron') return electronStub;
@@ -166,7 +164,6 @@ describe('mcp http core (official client SDK)', () => {
     const res = await client.callTool({ name: 'whale_roots', arguments: {} });
     // isError is only present on failure results.
     assert.notEqual(res.isError, true);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const text = ((res.content as any[]) ?? [])
       .filter((c) => c.type === 'text')
       .map((c) => c.text)

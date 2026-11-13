@@ -27,7 +27,7 @@ function inject(spec: string, exports: unknown): void {
     exports,
     children: [],
     paths: [],
-  } as NodeJS.Module;
+  } as unknown as NodeJS.Module;
 }
 
 before(async () => {
@@ -164,7 +164,7 @@ function watchDocumentDragListeners() {
     options?: boolean | AddEventListenerOptions
   ) {
     if (types.has(type)) additions += 1;
-    return original.call(this, type, listener, options);
+    return original.call(document, type, listener, options);
   } as typeof document.addEventListener;
   return {
     get additions() {
@@ -187,7 +187,7 @@ function watchWindowFallbackListeners() {
     options?: boolean | AddEventListenerOptions
   ) {
     if (types.has(type)) active += 1;
-    return originalAdd.call(this, type, listener, options);
+    return originalAdd.call(window, type, listener, options);
   } as typeof window.addEventListener;
   window.removeEventListener = function (
     type: string,
@@ -195,7 +195,7 @@ function watchWindowFallbackListeners() {
     options?: boolean | EventListenerOptions
   ) {
     if (types.has(type)) active -= 1;
-    return originalRemove.call(this, type, listener, options);
+    return originalRemove.call(window, type, listener, options);
   } as typeof window.removeEventListener;
   return {
     get active() {

@@ -149,7 +149,6 @@ function resolveToken(
   }
   if (isUsableToken(doc.token)) {
     if (failure) {
-      // eslint-disable-next-line no-console
       console.warn(
         `[mcp] falling back to the plaintext token (${failure}); it will be re-encrypted on the next write`
       );
@@ -157,7 +156,6 @@ function resolveToken(
     return doc.token;
   }
   if (failure || doc.token !== undefined) {
-    // eslint-disable-next-line no-console
     console.warn(
       `[mcp] a new bearer token was generated because the stored one could not be read (${failure || 'malformed token'})`
     );
@@ -203,7 +201,6 @@ function toPersistedDoc(cfg: McpConfig, cipher: TokenCipher): PersistedMcpConfig
         tokenEncrypted: cipher.encrypt(cfg.token),
       };
     } catch (e) {
-      // eslint-disable-next-line no-console
       console.error(
         '[mcp] could not encrypt the bearer token; storing it in plain text:',
         e
@@ -236,7 +233,6 @@ export function loadMcpConfig(): McpConfig {
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         loaded = parsed;
       } else {
-        // eslint-disable-next-line no-console
         console.warn(
           '[mcp] config file is not a JSON object; falling back to defaults'
         );
@@ -247,7 +243,6 @@ export function loadMcpConfig(): McpConfig {
     // fresh one. This regenerates the bearer token, so say it out loud —
     // otherwise every configured client starts failing with 401 for no
     // visible reason.
-    // eslint-disable-next-line no-console
     console.warn('[mcp] config unreadable, regenerating with defaults:', e);
   }
   cached = normalizeMcpConfig(loaded, currentCipher());
@@ -260,7 +255,6 @@ async function persist(): Promise<void> {
   try {
     await atomicWriteJson(configPath(), toPersistedDoc(cached, currentCipher()));
   } catch (e) {
-    // eslint-disable-next-line no-console
     console.error('[mcp] failed to persist config:', e);
     // Re-throw so the settings IPC call fails loudly: resolving here makes the
     // renderer show a new switch/token that disk never received, which then

@@ -57,7 +57,7 @@ before(async () => {
     exports: { useConfirm: () => confirmMock },
     children: [],
     paths: [],
-  } as NodeJS.Module;
+  } as unknown as NodeJS.Module;
   SidecarIssuesAlert = require_('./FileList').SidecarIssuesAlert;
 });
 

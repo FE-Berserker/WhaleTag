@@ -119,7 +119,7 @@ export default function MatrixView({ data, onMoveToColumn, stages }: MatrixViewP
     (entry: DirEntry, x: number, y: number) => {
       data.onMoreFileActions?.(entry, x, y);
     },
-    [data.onMoreFileActions]
+    [data]
   );
 
   // P0-4 (perf audit): stable per-card menu opener, shared by Quadrant and

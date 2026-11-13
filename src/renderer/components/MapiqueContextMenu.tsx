@@ -35,7 +35,10 @@ export const NoTransition = forwardRef<HTMLDivElement, TransitionProps>(
   function NoTransition(props, ref) {
     const { children, in: inProp, onEntering } = props;
     const localRef = useRef<HTMLDivElement>(null);
-    useImperativeHandle(ref, () => localRef.current);
+    // forwardRef<HTMLDivElement> contract: MUI reads the handle only after the
+    // node mounts, when localRef is populated. The cast documents that timing
+    // instead of widening the public ref type.
+    useImperativeHandle(ref, () => localRef.current as HTMLDivElement);
     // See KanbanEntryMenu.NoTransition for the full rationale — same
     // jsdom-skip pattern because MUI's MenuList.adjustStyleForScrollbar
     // dereferences listRef.current synchronously inside onEntering.

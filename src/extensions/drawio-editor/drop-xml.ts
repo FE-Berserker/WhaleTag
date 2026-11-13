@@ -408,7 +408,6 @@ export function decodeDrawioDiagram(payload: string): string | null {
     for (let i = 0; i < binStr.length; i += 1) bytes[i] = binStr.charCodeAt(i);
     // fflate's `decompressSync` auto-detects zlib vs raw deflate vs gzip —
     // matches `pako.inflateRaw` for drawio's default format.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const fflate = require('fflate');
     const inflated = fflate.decompressSync(bytes);
     const innerXml = decodeURIComponent(new TextDecoder().decode(inflated));

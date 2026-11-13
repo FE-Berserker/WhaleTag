@@ -38,7 +38,7 @@ function inject(spec: string, exports: unknown): void {
     exports,
     children: [],
     paths: [],
-  } as NodeJS.Module;
+  } as unknown as NodeJS.Module;
 }
 
 function request(overrides: Partial<McpApprovalRequest> = {}): McpApprovalRequest {

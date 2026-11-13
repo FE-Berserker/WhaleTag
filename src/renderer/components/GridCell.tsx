@@ -183,7 +183,7 @@ export default function GridCell({
       return { paths, names };
     }
     return { paths: [entry.path], names: [entry.name] };
-  }, [selectedPaths, resolveEntry, entry?.path, entry?.name]);
+  }, [selectedPaths, resolveEntry, entry]);
   const [{ isDragging }, dragRef] = useDrag(
     () => ({
       type: DND_TYPE_FILE,

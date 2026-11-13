@@ -102,14 +102,16 @@ const Probe = forwardRef<ProbeHandle, ProbeProps>(function Probe(
 // here. The forwardRef'd `Probe` populates `.current` via
 // `useImperativeHandle` during render.
 function mountProbe(key_: 'workflow' | 'quadrant', knownValues: readonly string[]) {
-  const handleRef: { current: ProbeHandle | null } = { current: null };
+  const handleRef = { current: null as ProbeHandle | null };
   const utils = render(
     <Probe key_={key_} knownValues={knownValues} ref={handleRef as any} />
   );
   // The useImperativeHandle runs synchronously during render in React
   // 18's testing environment; assert it populated before tests read.
   assert.ok(handleRef.current, 'probe did not mount');
-  return { ref: handleRef, utils };
+  // Every caller reads immediately after this assertion. Return the non-null
+  // view so strictNullChecks doesn't force `!` on all ~50 reads.
+  return { ref: handleRef as { current: ProbeHandle }, utils };
 }
 
 before(() => {

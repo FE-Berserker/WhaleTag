@@ -255,21 +255,24 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
         return next;
       });
     }
-  }, []);
+  }, [showHiddenFiles]);
 
   // Reset everything when the active location changes, then preload the root.
+  // Depend on the path string (not the location object) so a metadata-only
+  // re-emit with a fresh object identity doesn't wipe the expanded tree.
+  const currentLocationPath = currentLocation?.path;
   useEffect(() => {
     requestedRef.current = new Set();
     setChildrenByPath(new Map());
     setChildrenError(new Map());
     setLoading(new Set());
-    if (currentLocation) {
-      setExpanded(new Set([currentLocation.path]));
-      void loadChildren(currentLocation.path);
+    if (currentLocationPath) {
+      setExpanded(new Set([currentLocationPath]));
+      void loadChildren(currentLocationPath);
     } else {
       setExpanded(new Set());
     }
-  }, [currentLocation?.id, currentLocation?.path, loadChildren]);
+  }, [currentLocation?.id, currentLocationPath, loadChildren]);
 
   // Reveal the current directory: expand + load every ancestor folder.
   useEffect(() => {
@@ -729,7 +732,6 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
             // remaining, non-reserved props) needs this cast. The contents
             // are typed: nodes is TreeNode[], the renderers take the typed
             // node variants.
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             rowProps={{
               nodes: visibleNodes,
               renderFolder: (n: TreeFolderNode) => renderNode(n.name, n.path, n.depth),

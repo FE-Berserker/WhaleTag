@@ -104,7 +104,6 @@ export default function Root() {
     void ipcApi.syncFulltextPaths(fulltextPaths).catch((e) => {
       // Watcher-sync failure is background; a tagged log is the honest level
       // (nobody clicked anything, and a toast per settings change would spam).
-      // eslint-disable-next-line no-console
       console.warn('[root] fulltext path sync failed', e);
     });
   }, [fulltextPaths]);
@@ -113,16 +112,14 @@ export default function Root() {
   useEffect(() => {
     if (locationItems.length === 0) return;
     void ipcApi.cleanupRevisions(30).catch((e) => {
-      // eslint-disable-next-line no-console
       console.warn('[root] revision cleanup failed', e);
     });
-  }, []);
+  }, [locationItems.length]);
 
   // Pin the react-dnd HTML5 backend to a singleton via useMemo so React 18
   // StrictMode's dev-mode double-invoke doesn't try to register the same
   // backend twice (the symptom is "Cannot have two HTML5 backends at the
   // same time."). See https://github.com/react-dnd/react-dnd/issues/3623.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const DndAny: any = DndProvider;
   const dndBackend = useMemo(() => ({ backend: HTML5Backend }), []);
 

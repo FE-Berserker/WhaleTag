@@ -257,18 +257,35 @@ export function quitAndInstall(): void {
     // Reached when the renderer asks to install before a download completed
     // (double click / stale state). Electron throws synchronously; without
     // this guard it would escape the IPC listener as an uncaught exception.
-    // eslint-disable-next-line no-console
     console.error('[auto-update] quitAndInstall failed:', e);
   }
 }
 
-/** Render-side subscription. Returns the unsubscribe function. */
+/**
+ * Render-side subscription. Returns the unsubscribe function.
+ *
+ * Overloaded per channel so each callback gets its concrete payload type:
+ * a single signature taking the callback union would leave parameters
+ * implicitly `any` under `strict` (the contextual type is a union of
+ * function types, which TS cannot use to infer parameter types).
+ */
+export function subscribe(
+  channel: 'available' | 'downloaded',
+  callback: (info: AppUpdateInfo) => void
+): () => void;
+export function subscribe(
+  channel: 'progress',
+  callback: (p: AppUpdateProgressPayload) => void
+): () => void;
+export function subscribe(
+  channel: 'error',
+  callback: (message: string) => void
+): () => void;
 export function subscribe(
   channel: 'available' | 'progress' | 'downloaded' | 'error',
   callback:
     | ((info: AppUpdateInfo) => void)
     | ((p: AppUpdateProgressPayload) => void)
-    | ((info: AppUpdateInfo) => void)
     | ((message: string) => void)
 ): () => void {
   // The Set is keyed by channel; cast the union-typed callback back to

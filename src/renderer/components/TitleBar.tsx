@@ -27,7 +27,6 @@ export default function TitleBar(): JSX.Element {
       .windowIsMaximized()
       .then(setMaximized)
       .catch((e) => {
-        // eslint-disable-next-line no-console
         console.warn('[titlebar] window state probe failed', e);
       });
     const unsubscribe = ipcApi.onWindowMaximizeChange(setMaximized);
@@ -38,7 +37,6 @@ export default function TitleBar(): JSX.Element {
   // still there); log with a tag instead of leaving unhandled rejections.
   const fire = (p: Promise<unknown>) => {
     void p.catch((e) => {
-      // eslint-disable-next-line no-console
       console.warn('[titlebar] window command failed', e);
     });
   };

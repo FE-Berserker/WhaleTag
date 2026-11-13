@@ -38,19 +38,27 @@ describe('useDrawioBridge lifecycle', () => {
   function trackRequestTimers() {
     const scheduled: number[] = [];
     const cleared: number[] = [];
+    // DOM lib and @types/node disagree about setTimeout's return type
+    // (`number` vs `NodeJS.Timeout`); go through `unknown` and call the saved
+    // browser implementation unbound so both casts stay honest.
+    const callSetTimeout = originalSetTimeout as unknown as (
+      handler: TimerHandler,
+      timeout?: number,
+      ...args: unknown[]
+    ) => number;
     window.setTimeout = ((
       handler: TimerHandler,
       timeout?: number,
       ...args: unknown[]
     ) => {
-      const id = originalSetTimeout.call(window, handler, timeout, ...args);
+      const id = callSetTimeout(handler, timeout, ...args);
       if (timeout === 5000) scheduled.push(id);
       return id;
-    }) as typeof window.setTimeout;
+    }) as unknown as typeof window.setTimeout;
     window.clearTimeout = ((id?: number) => {
       if (id !== undefined) cleared.push(id);
-      originalClearTimeout.call(window, id);
-    }) as typeof window.clearTimeout;
+      (originalClearTimeout as unknown as (id?: number) => void)(id);
+    }) as unknown as typeof window.clearTimeout;
     return { scheduled, cleared };
   }
 
@@ -59,18 +67,18 @@ describe('useDrawioBridge lifecycle', () => {
     const removed: EventListenerOrEventListenerObject[] = [];
     window.addEventListener = ((
       type: string,
-      listener: EventListenerOrEventListenerObject | null,
+      listener: EventListenerOrEventListenerObject,
       options?: boolean | AddEventListenerOptions
     ) => {
-      if (type === 'message' && listener) added.push(listener);
+      if (type === 'message') added.push(listener);
       originalAddEventListener.call(window, type, listener, options);
     }) as typeof window.addEventListener;
     window.removeEventListener = ((
       type: string,
-      listener: EventListenerOrEventListenerObject | null,
+      listener: EventListenerOrEventListenerObject,
       options?: boolean | EventListenerOptions
     ) => {
-      if (type === 'message' && listener) removed.push(listener);
+      if (type === 'message') removed.push(listener);
       originalRemoveEventListener.call(window, type, listener, options);
     }) as typeof window.removeEventListener;
 

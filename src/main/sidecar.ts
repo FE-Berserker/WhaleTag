@@ -642,7 +642,12 @@ async function writeCorruptBackup(
     try {
       // Writing the captured snapshot (rather than copyFile) guarantees the
       // backup is byte-identical even if an external process touches the original.
-      await handle.writeFile(bytes);
+      // Node's FileHandle.writeFile rejects Buffer's generic ArrayBufferLike
+      // flavour under strict TS 5.7 typed-array types; a view over the same
+      // bytes is zero-copy and satisfies Uint8Array.
+      await handle.writeFile(
+        new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+      );
       await handle.datasync();
     } catch (error) {
       await handle.close().catch(() => undefined);

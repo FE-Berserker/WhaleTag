@@ -53,7 +53,6 @@ class FakeUpdater extends EventEmitter {
 
 const fakeUpdater = new FakeUpdater();
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const electronStub: any = {
   app: {
     isPackaged: true,
@@ -67,7 +66,6 @@ const electronStub: any = {
   shell: {},
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const originalLoad = (Module as any)._load;
 (Module as any)._load = function (request: string, ...rest: unknown[]) {
   if (request === 'electron') return electronStub;

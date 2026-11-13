@@ -335,7 +335,6 @@ export default function GanttTimeline({
     });
     return out;
     // Re-derive when scheduled / lanes / filter change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [swimLanes, scheduledByPath, isRowFilteredOut]);
 
   /** Number of lanes that have rows but ALL of those rows are filtered

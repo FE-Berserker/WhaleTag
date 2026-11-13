@@ -178,7 +178,7 @@ docs/13 一直写着"读取入口也遵守同一位置边界"，但三个只读�
 - **数据丢失（P1）**：索引根目录 ENOENT 被当成"真的没了"→ 删除 pass 清空整个 location 且不自愈（[indexer.ts](../src/main/indexer.ts)：根不可读也算 `unreadable` → `complete=false`）；跨目录移动先删源 sidecar 再写目标，写失败时标签永久丢失且调用方 `catch {}` 静默（[sidecar.ts](../src/main/sidecar.ts) 改为先写目标、再按内容未变才删源）。
 - **其余（P1）**：shell 模板由渲染层自报 → 主进程一次性对话框授权（`COMMAND_NOT_APPROVED` + `<userData>/approved-command-templates.json`）；dompurify 3.4.16→3.4.17、MCP SDK 1.30.0→1.32.2、zod 4.6.5→4.6.7，并给 JSON-RPC batch 加 32 元素上限；Mapique DivIcon 的 `data-entry-path` 转义；切换目录清空选中集（`selectAllState` 改按可见项计数）；MediaLightbox 预读加取消守卫（卸载后才创建的 blob 会永久泄漏）；text-editor 跨文件复用 view 时重置 undo 历史（顺带修掉"先赋值后比较"导致语言切换永不执行）；15 个 i18n key 补五语言 + [check-locales.test.ts](../scripts/check-locales.test.ts) 新增"字面量 `t()` key 必须存在于 en"扫描；[run-tests.cjs](../scripts/run-tests.cjs) 去掉未声明的 `glob` 依赖，改 `fs` 递归遍历。
 - **评估后不改**：smart-tags 的裸 4/6 位数字（`2019`）既是 year/month 的规范存储形式（迁移会重写成裸串），也可能撞上用户自建编码标签；收紧会破坏迁移后的年月互斥（4 个既有用例立即失败），记录为取舍（[docs/03 §12](./03-tagging.md)）。
-- **明确不做**：门禁盲区（`scripts/` 进 tsc、`strict`、`--max-warnings`、`no-console`）作为后续独立议题；`taglibrary.renameGroup` 缺 UI 入口仍待产品决策。P2 级的数据正确性项已由下方 P1-24 清理。
+- **后续独立议题**：门禁硬化（`scripts/` 进 tsc、`strict`、`--max-warnings`、死抑制指令）已由下方 P1-25 完成；`no-console` 与 `no-explicit-any` 仍关闭（见 P1-25 的理由）；`taglibrary.renameGroup` 缺 UI 入口仍待产品决策。P2 级的数据正确性项已由下方 P1-24 清理。
 - 回归：`npm run type-check` 0 错、`npm run lint` 0 error（30 条 exhaustive-deps warning，门禁只统计 error）、`npm test` 1827/1827 全绿。
 
 ### P1-24. 2026-11 P2 批次（数据正确性优先）✅
@@ -193,6 +193,13 @@ docs/13 一直写着"读取入口也遵守同一位置边界"，但三个只读�
 - **扩展协议 / 编辑器（第二轮）**：[drawio-editor/drop-xml.ts](../src/extensions/drawio-editor/drop-xml.ts) 的非图片 drop label 在 `html=1` 下按 HTML 渲染，改为先 HTML 转义再 XML 转义（此前只做 XML 转义，文件名 `<img src=x onerror=…>` 会解码回标记）；[drawio-bridge.ts](../src/extensions/drawio-editor/drawio-bridge.ts) 并发插入从"in-flight 静默丢弃"改为 promise 链串行（第二个拖入的文件不再无声消失）；[html-viewer/index.ts](../src/extensions/html-viewer/index.ts) 关闭远程图片时，用户 `<style>` 的 `@import` 与非 `data:` 的 `url()` 一并剥掉（DOMPurify 管不到 `<style>` 文本，`background:url(https://…)` 仍会发请求）；[extension-types.ts](../src/shared/extension-types.ts) 把 `DirectoryDialogResultMessage` 补进 `HostMessage` 联合（此前可用但类型不完整）；[index-db.ts](../src/main/index-db.ts) 的 `insertFulltext` 改为同事务内先按 path 删除再插入——FTS5 虚拟表没有 UNIQUE 约束，漏删一步就会累积重复行。
 - 回归：受影响的 main 测试 63/63、dir-watcher 13/13、drop-xml + index-db 76/76 通过；全量三件套：type-check 0 错、lint 0 error（29 条 exhaustive-deps warning）、`npm test` 1829/1829 全绿。
 
+### P1-25. 2026-11 门禁硬化：strict + scripts 纳入 tsc + warning 即失败 ✅
+P1-23 复核把三项「门禁看起来绿、实际拦不住」的缺陷记为后续议题：[tsconfig.json](../tsconfig.json) 未开 `strict`、`scripts/` 不在 `tsc` 的 include 里、lint 没有 warning 上限（且 `react-hooks` 规则长期只注册插件、从未启用）。本轮全部处理：
+- **strict**：`npx tsc --noEmit --strict` 基线 112 错，其中 [useGanttTagFilter.test.tsx](../src/renderer/components/gantt/useGanttTagFilter.test.tsx) 的 `mountProbe` 返回可空 ref 独占 50 条（TS18047）。先让该 helper 返回非空句柄（`handleRef` + 一次性 `assert.ok`）把 112 降到 62；生产代码按错误类型逐条收窄：[fs-write.ts](../src/main/ipc/fs-write.ts) 的 import outcome 用 `typeof destPath === 'string'` 代替 `in`、[sidecar.ts](../src/main/sidecar.ts) 的损坏备份写 `Uint8Array` 视图、[CalendarView.tsx](../src/renderer/components/CalendarView.tsx) 的菜单回调改可选并在调用点 `?.`、[FileList.tsx](../src/renderer/components/FileList.tsx) 的列宽表用 `keyof` 收窄、[FileListHeader.tsx](../src/renderer/components/FileListHeader.tsx) / [PropertiesTray.tsx](../src/renderer/components/PropertiesTray.tsx) 的 `NonNullable<typeof ref.current>` 在 strict 下塌成 `never`，改用显式拖拽类型、[GalleryView.tsx](../src/renderer/components/GalleryView.tsx) 用 `useRef<GridImperativeAPI | null>` + 空表单例稳定 cell props、[configureStore.ts](../src/renderer/store/configureStore.ts) 的 `migrate` 返回 `Promise<Record<string, unknown>>`、[KnowledgeGraphView.tsx](../src/renderer/components/KnowledgeGraphView.tsx) 的 MiniMap 回退色、[folderviz.ts](../src/renderer/domain/folderviz.ts) 给 `child` 显式注解打断推断环、[reducers/extensions.ts](../src/renderer/reducers/extensions.ts) 的 `prior` 展开。测试侧统一：`as NodeJS.Module` 走 `unknown`、GanttEntryMenu 用 `{ value }` 盒子避开「回调内赋值不被流分析跟踪」、GanttView 先 `assert.ok` 收窄、[auto-update.ts](../src/main/auto-update.ts) 的 `subscribe` 按 channel 重载消掉 7 处隐式 any、`piexifjs` 补最小 `.d.ts`。最终 strict 0 错。
+- **scripts 进 tsc**：`tsconfig.json` 的 include 增加 `scripts/**/*.ts`，随即暴露 [verify-settings-persist.ts](../scripts/verify-settings-persist.ts) 5 处（`ProcessEnv` 注解、Buffer 回调、可空 exit code），修完后 `npm run type-check` 同时覆盖 `src/` 与 `scripts/`。
+- **lint 零容忍**：先清 29 条 `react-hooks/exhaustive-deps`（选择修订号 `selectedTick` 用 `void selectedTick` 说明「它只用于失效、不参与计算」；[FileList.tsx](../src/renderer/components/FileList.tsx) 十处 handler 补 `showNotice`；[MapiqueView.tsx](../src/renderer/components/MapiqueView.tsx) 的 `recordPrev` 改 `useCallback`；[MediaLightbox.tsx](../src/renderer/components/MediaLightbox.tsx) 卸载清理先取 map 的局部引用；[DirectoryTree.tsx](../src/renderer/components/DirectoryTree.tsx) 用 path 局部量替代 `currentLocation` 对象依赖）。随后 lint 脚本加 `--max-warnings 0` 与 `--report-unused-disable-directives`，`eslint --fix` 移除 88 条针对已关闭规则（`no-console` / `no-explicit-any`）的死抑制指令——它们永远不会生效，却会在未来重启规则时假装「已评估」。
+- **仍不启用**：`no-console`（主进程用带模块前缀的 `console.warn/error` 当结构化日志，正确治理是日志分区而非禁用）；`@typescript-eslint/no-explicit-any` 仍 off（现存 26 处 `as any` 留待专项）；`taglibrary.renameGroup` 缺 UI 入口（产品决策）。
+- 回归：`npm run type-check` 0 错（strict，覆盖 src + scripts）；`npm run lint` 0 error / 0 warning（warning 即失败）；`npm test` 1829/1829、419 suites 全绿。
 ---
 
 ## 🟡 P2 — 类型逃逸
@@ -232,7 +239,7 @@ md-editor 的副本已随 0.4.9 删除,仅剩 [text-editor/editor-stats.ts](../s
 |---|---|
 | 位置级 AES-256-GCM 加密 / 安全审计日志未做;扩展能力「全有或全无」;postMessage `targetOrigin:'*'` 收窄 | [docs/13](./13-security.md) §1/§9/§10、[docs/07 §10](./07-extensions.md) |
 | mac 代码签名硬阻塞;Linux DE fallback 链 / 图标 / 递归监听 | [docs/16](./16-cross-platform.md) B-1 / C-2~C-5 |
-| `strictNullChecks` 未开;`readSidecars` 每目录重读;`extractPdfText` 整 PDF 读内存;`loadFolderThumbnail` 无 LRU | [docs/09 §28](./09-known-issues.md)、[docs/15](./15-perf-audit.md) P2-1/P3-1 |
+| `readSidecars` 每目录重读;`extractPdfText` 整 PDF 读内存;`loadFolderThumbnail` 无 LRU | [docs/15](./15-perf-audit.md) P2-1/P3-1 |
 | macOS notarization 阻塞自动更新 | [docs/18](./18-auto-update.md) |
 | Mapique 地名搜索已尝试并回退(勿照原样重试) | [docs/05 §10](./05-perspectives.md) |
 

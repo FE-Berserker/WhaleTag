@@ -16,7 +16,6 @@ import {
 // Excalidraw's imperative API is typed in a deep subpath that doesn't resolve
 // cleanly under this project's `moduleResolution: node`; this is glue code in a
 // sandboxed iframe, so a loose type here is acceptable.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyApi = any;
 
 export default function App() {
@@ -77,10 +76,8 @@ export default function App() {
     }
     let data;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       data = restore(content ? (JSON.parse(content) as any) : {}, null, null);
     } catch {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       data = restore({} as any, null, null);
     }
     // docs/20: stored element links are relative to the .excalidraw file's
@@ -154,12 +151,10 @@ export default function App() {
         const mimeType = thumbnailDataUrl.startsWith('data:image/svg')
           ? 'image/svg+xml'
           : 'image/jpeg';
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         api.addFiles([
           { id: fileId, mimeType, dataURL: thumbnailDataUrl, created: Date.now() },
         ] as any);
         const els = convertToExcalidrawElements([
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           {
             type: 'image',
             x: pos.x,
@@ -272,12 +267,10 @@ export default function App() {
         viewModeEnabled={viewMode}
         onChange={handleChange}
         onLinkOpen={(_element, event) => {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const el = _element as any;
           const link: string | null = el?.link ?? null;
           if (link && !/^https?:/i.test(link)) {
             event.preventDefault();
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (event as any).detail?.nativeEvent?.preventDefault?.();
             // docs/20: links are stored relative; resolve to an absolute path
             // against this .excalidraw's directory just before opening. (If the

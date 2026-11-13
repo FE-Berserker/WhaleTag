@@ -175,7 +175,6 @@ export function TagMetaContextProvider({ children }: { children: ReactNode }) {
       }
     }
     if (Object.keys(additions).length > 0) dispatch(setTagColors(additions));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allTags, tagColors, dispatch]);
 
   // save/saveMany write to disk and then trigger a DirectoryContentContext

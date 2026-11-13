@@ -318,7 +318,7 @@ export default function GanttView({ data, stages, onMoveToColumn }: GanttViewPro
       const tag = periodTagFromRange({ startKey: dayKey, endKey: dayKey });
       data.onSetEntryDateTag(entry, tag);
     },
-    [readOnly, data.onSetEntryDateTag]
+    [readOnly, data]
   );
 
   const handleCommit = useCallback(
@@ -326,7 +326,7 @@ export default function GanttView({ data, stages, onMoveToColumn }: GanttViewPro
       const tag = periodTagFromRange(next);
       data.onSetEntryDateTag?.(entry, tag);
     },
-    [data.onSetEntryDateTag]
+    [data]
   );
 
   const menuSources = useMemo<DirEntry[]>(() => {
@@ -366,7 +366,7 @@ export default function GanttView({ data, stages, onMoveToColumn }: GanttViewPro
     (entry: DirEntry, x: number, y: number) => {
       data.onMoreFileActions?.(entry, x, y);
     },
-    [data.onMoreFileActions]
+    [data]
   );
 
   // ── Single-click on a taskbar pops the shared PeriodTagDialog, with

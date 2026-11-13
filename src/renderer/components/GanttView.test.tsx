@@ -1114,6 +1114,7 @@ describe('GanttView #12: left-click taskbar pops the period dialog', () => {
     const bar = container.querySelector(
       '[data-hitzone="body"][data-entry-path="/root/a.txt"]'
     ) as HTMLElement | null;
+    assert.ok(bar, 'gantt bar should render');
     clickBar(bar);
     const confirm = document.querySelector(
       '[data-testid="period-tag-confirm"]'
@@ -1151,6 +1152,7 @@ describe('GanttView #12: left-click taskbar pops the period dialog', () => {
     // clientX + 8) to the dialog's Paper so the click point itself
     // doesn't sit under the start input.
     const click = { clientX: 137, clientY: 211 };
+    assert.ok(bar, 'gantt bar should render');
     clickBar(bar, click);
     const dialog = document.querySelector('[data-testid="period-tag-dialog"]');
     assert.ok(dialog, 'dialog should mount');
@@ -1194,6 +1196,7 @@ describe('GanttView #12: left-click taskbar pops the period dialog', () => {
       '[data-hitzone="body"][data-entry-path="/root/a.txt"]'
     ) as HTMLElement | null;
     // Click near the left edge — the worst case for the old code.
+    assert.ok(bar, 'gantt bar should render');
     clickBar(bar, { clientX: 8, clientY: 211 });
     const dialog = document.querySelector('[data-testid="period-tag-dialog"]');
     assert.ok(dialog, 'dialog should mount');

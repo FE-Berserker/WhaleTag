@@ -53,13 +53,15 @@ const persistConfig = {
   // settings-level `ai*` fields are stripped separately by the settings
   // reducer (see stripRemovedAiFields in reducers/settings.ts) because
   // settings rehydrates per-key via autoMergeLevel1, not via this migrate.
-  migrate: (state: unknown, version: number): Promise<unknown> => {
+  // redux-persist's PersistedState is a string-keyed bag; the cast keeps the
+  // strict `unknown` signature while preserving the original pass-through.
+  migrate: (state: unknown, version: number): Promise<Record<string, unknown>> => {
     if (version < 2 && state && typeof state === 'object') {
       const next = { ...(state as Record<string, unknown>) };
       delete next.ai;
       return Promise.resolve(next);
     }
-    return Promise.resolve(state);
+    return Promise.resolve(state as Record<string, unknown>);
   },
   // Verbose redux-persist logging in dev; off in production. The console
   // errors added in storage.ts and persist-storage.ts cover the production

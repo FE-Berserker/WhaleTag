@@ -30,7 +30,7 @@
     "package:win": "npm run build && electron-builder --win --x64 --config resources/builder.json",
     "package:mac": "npm run build && electron-builder --mac --config resources/builder.json",
     "package:linux": "npm run build && electron-builder --linux --config resources/builder.json",
-    "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
+    "lint": "eslint . --ext .js,.jsx,.ts,.tsx --report-unused-disable-directives --max-warnings 0",
     "type-check": "tsc --noEmit",
     "test": "node scripts/run-tests.cjs",
     "clean": "rimraf release/app/dist release/build .erb/dll",

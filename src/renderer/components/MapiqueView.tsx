@@ -835,26 +835,29 @@ export default function MapiqueView({
   // P3-3: wrap onSetGeo / onClearGeo so every mutation is recorded on the
   // undo stack. The actual `onSetGeo` / `onClearGeo` callbacks are still
   // called unchanged — the undo stack is purely additive metadata.
-  const recordPrev = (entry: DirEntry): { prevLat: number | null; prevLng: number | null } => {
-    const prev = geoByName.get(entry.path);
-    return {
-      prevLat: prev ? prev.lat : null,
-      prevLng: prev ? prev.lng : null,
-    };
-  };
+  const recordPrev = useCallback(
+    (entry: DirEntry): { prevLat: number | null; prevLng: number | null } => {
+      const prev = geoByName.get(entry.path);
+      return {
+        prevLat: prev ? prev.lat : null,
+        prevLng: prev ? prev.lng : null,
+      };
+    },
+    [geoByName]
+  );
   const applySetGeo = useCallback(
     (entry: DirEntry, lat: number, lng: number) => {
       undoStack.push({ entry, ...recordPrev(entry) });
       onSetGeo?.(entry, lat, lng);
     },
-    [geoByName, onSetGeo, undoStack]
+    [recordPrev, onSetGeo, undoStack]
   );
   const applyClearGeo = useCallback(
     (entry: DirEntry) => {
       undoStack.push({ entry, ...recordPrev(entry) });
       onClearGeo?.(entry);
     },
-    [geoByName, onClearGeo, undoStack]
+    [recordPrev, onClearGeo, undoStack]
   );
 
   // P3-3: handle the Snackbar's Undo button — pop the most recent geo op

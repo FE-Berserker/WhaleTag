@@ -10,11 +10,9 @@ import { promises as fsp, existsSync } from 'fs';
  * `app`. Stub `electron` before the dynamic import (same pattern as
  * mcp-config.test.ts) so the module writes into a scratch directory.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const originalLoad = (Module as any)._load;
 let userData = '';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 (Module as any)._load = function (request: string, ...rest: unknown[]) {
   if (request === 'electron') {
     return { app: { getPath: () => userData } };

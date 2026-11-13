@@ -25,7 +25,6 @@ import {
 // block — by then the other 30+ tests have already loaded their modules.
 before(async () => {
   if (typeof (globalThis as { DOMParser?: unknown }).DOMParser !== 'undefined') return;
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const jsdom = require('global-jsdom');
   jsdom();
 });
@@ -481,7 +480,6 @@ describe('drawio drop-xml.decodeDrawioDiagram', () => {
   it('terminates within 1 s on a valid compressed drawio payload', () => {
     // A minimal drawio compressed payload — empty Page-1 with two root cells.
     // Compressed with fflate raw deflate, base64-encoded.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const fflate = require('fflate');
     const innerXml =
       '<mxGraphModel dx="800" dy="600" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">' +

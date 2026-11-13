@@ -373,7 +373,6 @@ export function triggerStartupMigration(
   if (startupMigration || allowedRoots.length === 0) return null;
   startupMigration = runMigration(allowedRoots)
     .then((res) => {
-      // eslint-disable-next-line no-console
       console.log(
         `[migrate-date-tags] scanned=${res.totalScanned} ` +
           `migrated=${res.totalMigrated} backups=${res.totalBackups} ` +
@@ -381,7 +380,6 @@ export function triggerStartupMigration(
       );
     })
     .catch((err) => {
-      // eslint-disable-next-line no-console
       console.error('[migrate-date-tags] unexpected error', err);
     });
   return startupMigration;

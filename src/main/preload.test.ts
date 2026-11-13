@@ -35,7 +35,6 @@ let exposedName: string | null = null;
 // able to call methods with their real argument shapes without re-declaring
 // the whole `WhaleApi` interface here (that would let the interface and the
 // preload object drift apart — the assertions below are the contract).
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let exposedApi: Record<string, (...args: any[]) => any> | null = null;
 let invokes: IpcCall[] = [];
 let sends: IpcCall[] = [];
@@ -76,7 +75,6 @@ function restoreMocks(): void {
 }
 
 interface Bridge {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   api: Record<string, (...args: any[]) => any>;
 }
 
@@ -180,7 +178,7 @@ describe('preload bridge — exposed shape', () => {
     // A renderer must never receive a function that resolves to the bridge
     // itself or to Electron internals; sample one and check the resolved
     // value is the stubbed IPC reply.
-    return api.listDirectory('/dir').then((reply) => {
+    return api.listDirectory('/dir').then((reply: unknown) => {
       assert.deepEqual(reply, {
         channel: 'fs:listDirectory',
         args: ['/dir'],

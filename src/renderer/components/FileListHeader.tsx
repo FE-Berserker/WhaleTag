@@ -580,7 +580,10 @@ export function RowColumnLabels(props: {
   // Column resizing is a local visual gesture until pointerup. The persisted
   // callback retains its original contract (including the caller's clamp), but
   // runs once with the final value instead of on every pointermove.
-  const dragStateRef = useRef<{
+  // A type alias (not `NonNullable<typeof dragStateRef.current>`) keeps the
+  // gesture shape nameable: React's RefObject<T> current is `T | null`, and
+  // `NonNullable<null>` collapses to `never` when the ref's generic is loose.
+  type ColumnResizeDrag = {
     columnKey: 'name' | 'size' | 'modified';
     element: HTMLElement;
     pointerId: number;
@@ -590,7 +593,8 @@ export function RowColumnLabels(props: {
       pointerUp: (event: PointerEvent) => void;
       pointerCancel: (event: PointerEvent) => void;
     };
-  } | null>(null);
+  };
+  const dragStateRef = useRef<ColumnResizeDrag | null>(null);
   const [columnWidthPreview, setColumnWidthPreview] = useState<{
     columnKey: 'name' | 'size' | 'modified';
     width: number;
@@ -663,7 +667,7 @@ export function RowColumnLabels(props: {
       e.preventDefault();
       e.stopPropagation();
       const element = e.currentTarget;
-      const drag: NonNullable<typeof dragStateRef.current> = {
+      const drag: ColumnResizeDrag = {
         columnKey,
         element,
         pointerId: e.pointerId,

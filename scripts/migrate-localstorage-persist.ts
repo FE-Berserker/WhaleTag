@@ -36,7 +36,6 @@ async function migrate(): Promise<void> {
   await win.close();
 
   if (typeof raw !== 'string' || raw.length === 0) {
-    // eslint-disable-next-line no-console
     console.log('No legacy localStorage persist data found; nothing to migrate.');
     app.quit();
     return;
@@ -58,7 +57,6 @@ async function migrate(): Promise<void> {
     try {
       const existing = JSON.parse(fs.readFileSync(outPath, 'utf8'));
       merged = { ...existing, ...parsed };
-      // eslint-disable-next-line no-console
       console.log('Merged legacy data with existing new-format file.');
     } catch {
       // Existing file is corrupt; just use legacy data.
@@ -69,18 +67,14 @@ async function migrate(): Promise<void> {
 
   const settings = JSON.parse(merged.settings || '{}');
   const locations = JSON.parse(merged.locations || '{}');
-  // eslint-disable-next-line no-console
   console.log('Migrated legacy persist data to', outPath);
-  // eslint-disable-next-line no-console
   console.log('  themeMode:', settings.themeMode);
-  // eslint-disable-next-line no-console
   console.log('  locations:', locations.items?.length ?? 0);
 
   app.quit();
 }
 
 migrate().catch((e) => {
-  // eslint-disable-next-line no-console
   console.error('Migration failed:', e);
   app.quit();
   process.exit(1);

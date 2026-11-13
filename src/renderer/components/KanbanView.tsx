@@ -120,7 +120,7 @@ export default function KanbanView({
     (entry: DirEntry, x: number, y: number) => {
       data.onMoreFileActions?.(entry, x, y);
     },
-    [data.onMoreFileActions]
+    [data]
   );
 
   // P0-4 (perf audit): stable per-card menu opener. Passed down to every

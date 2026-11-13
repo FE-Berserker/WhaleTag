@@ -104,7 +104,9 @@ describe('TagMetaContextProvider conditional now subscription', () => {
     assert.equal(subscribeCalls, 0);
     assert.equal(listeners.size, 0);
     assert.deepEqual(
-      Object.fromEntries(latest?.allTags.map(({ tag, count }) => [tag, count])),
+      Object.fromEntries(
+        (latest?.allTags ?? []).map(({ tag, count }) => [tag, count])
+      ),
       { idea: 1, 'smart:star1': 1, 'period:': 1 }
     );
 

@@ -277,11 +277,14 @@ export default function MediaLightbox({
 
   // Final cleanup on unmount (component truly going away, not just close).
   useEffect(() => {
+    // Capture the map instance for the cleanup: reading `urlsByPathRef.current`
+    // inside the teardown would observe whatever the ref points at later.
+    const urls = urlsByPathRef.current;
     return () => {
-      for (const url of urlsByPathRef.current.values()) {
+      for (const url of urls.values()) {
         URL.revokeObjectURL(url);
       }
-      urlsByPathRef.current.clear();
+      urls.clear();
     };
   }, []);
 

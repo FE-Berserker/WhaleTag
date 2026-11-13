@@ -468,7 +468,6 @@ function InlineRenameInput({
     }
     // `initial` is the seed; we never want to re-fire focus / select when
     // parent re-renders with a new value.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return (
     <TextField

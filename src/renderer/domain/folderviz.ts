@@ -118,7 +118,11 @@ export function buildTree(
       if (!current) break;
       const seg = segments[i];
       if (!current.children) current.children = [];
-      let child = current.children.find((c) => c.name === seg);
+      // Explicit annotation breaks the `child` → `current` → `child`
+      // inference cycle (TS7022 under strict).
+      let child: FolderVizNode | undefined = current.children.find(
+        (c) => c.name === seg
+      );
       if (!child) {
         child = {
           name: seg,

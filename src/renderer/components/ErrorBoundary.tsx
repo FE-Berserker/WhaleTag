@@ -31,7 +31,6 @@ export default class ErrorBoundary extends Component<
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
     // Surface to the DevTools console for debugging.
-    // eslint-disable-next-line no-console
     console.error('Uncaught render error:', error, info.componentStack);
 
     // Persist the failure next to process crashes so a user-reported blank

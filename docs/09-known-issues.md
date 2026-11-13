@@ -358,7 +358,8 @@ Internal React error: Expected static flag was missing. Please notify the React 
 
 **修复**:Snackbar 子元素内恢复可选链(`notice?.severity ?? 'info'` / `notice?.text ?? ''` / `notice?.openTrash`),并留注释说明子元素常驻挂载。
 
-**教训**:① Snackbar 的子元素是"常驻渲染"的,任何读状态的表达式都必须 null-safe(或把条件判断挪到 Snackbar 外面,代价是失去退出动画)。② 本项目 null 安全靠人工,不靠编译器 —— 评审 `| null` 状态的渲染路径时要主动找 naked property access;若未来开 `strictNullChecks`,这是一大波既有错误的入口,需专项评估。
+**教训**:① Snackbar 的子元素是"常驻渲染"的,任何读状态的表达式都必须 null-safe(或把条件判断挪到 Snackbar 外面,代价是失去退出动画)。② 本项目 null 安全曾长期靠人工,不靠编译器 —— 评审 `| null` 状态的渲染路径时要主动找 naked property access。
+**2026-11 更新**:`tsconfig.json` 已开启 `strict`(含 `strictNullChecks`),并把 `scripts/` 纳入 `tsc` include;本次硬化清掉 112 个 strict 错误(其中测试 helper 占多数),进程见 [docs/19](./19-code-audit.md) P1-25。这条教训的"编译器看不见"前提不再成立,但 Snackbar 常驻挂载的结构性风险仍在。
 
 ## 29. pdfjs 自定义 range transport 必须 `extends PDFDataRangeTransport` —— 鸭子类型被 `instanceof` 静默吞掉(2026-07-25)
 

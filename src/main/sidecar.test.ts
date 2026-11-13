@@ -367,7 +367,10 @@ describe('readSidecar lat/lng migration concurrency', () => {
       );
       const originalRead = fsp.readFile;
       let aggregateReads = 0;
-      t.mock.method(fsp, 'readFile', async (file, options) => {
+      const readAggregate = async (
+        file: string | Buffer | URL,
+        options?: BufferEncoding | null
+      ): Promise<string> => {
         if (path.resolve(String(file)) === target) {
           aggregateReads += 1;
           if (aggregateReads === 2) {
@@ -383,8 +386,12 @@ describe('readSidecar lat/lng migration concurrency', () => {
             );
           }
         }
-        return originalRead(file, options);
-      });
+        return (originalRead as unknown as (
+          f: string | Buffer | URL,
+          o?: BufferEncoding | null
+        ) => Promise<string>)(file, options);
+      };
+      t.mock.method(fsp, 'readFile', readAggregate);
 
       const result = await readSidecars(dir, ['a.txt', 'b.txt']);
       assert.equal(aggregateReads, 2);

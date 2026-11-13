@@ -485,8 +485,10 @@ export function registerFsWriteHandlers(): void {
     const importedPaths: string[] = [];
     const errors: string[] = [];
     for (const o of outcomes) {
-      if ('destPath' in o) importedPaths.push(o.destPath);
-      else errors.push(o.error);
+      // The outcome union carries `destPath?` / `error?`, so an `in` check does
+      // not narrow under strictNullChecks (both keys exist on both arms).
+      if (typeof o.destPath === 'string') importedPaths.push(o.destPath);
+      else errors.push(o.error ?? 'copy failed');
     }
     return { copied: importedPaths.length, errors, importedPaths };
   }

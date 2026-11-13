@@ -86,10 +86,8 @@ async function doStartListening(): Promise<void> {
     // A post-listen server error (rare) must not become an unhandled 'error'
     // event and take down the main process.
     server.on('error', (e) => {
-      // eslint-disable-next-line no-console
       console.error('[mcp] server error:', e);
     });
-    // eslint-disable-next-line no-console
     console.log(`[mcp] listening on http://127.0.0.1:${boundPort}/mcp`);
   } catch (error) {
     await newCore.close().catch(() => undefined);
@@ -180,12 +178,10 @@ export function applyMcpConfigChange(
       // call: the renderer only needs the fresh status — which honestly
       // reports running=false — and the reason belongs in the log.
       await startListening().catch((e) => {
-        // eslint-disable-next-line no-console
         console.error('[mcp] failed to start:', e);
       });
     } else if (!config.enabled && running) {
       await stopMcpServer().catch((e) => {
-        // eslint-disable-next-line no-console
         console.error('[mcp] failed to stop:', e);
       });
     }
@@ -216,7 +212,6 @@ export async function initMcpServer(): Promise<void> {
   if (loadMcpConfig().enabled) {
     await startListening().catch((e) => {
       // Never block app startup on the MCP listener — surface and continue.
-      // eslint-disable-next-line no-console
       console.error('[mcp] failed to start:', e);
     });
   }

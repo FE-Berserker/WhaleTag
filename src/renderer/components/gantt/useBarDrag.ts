@@ -352,7 +352,6 @@ export function useBarDrag(args: UseBarDragArgs): UseBarDragResult {
     // periodAtStart is a snapshot for this drag — captured in closure.
     // Including `period` here would re-register listeners on every commit
     // remount, which is wasteful. The `isDragging` gate handles it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDragging, kindRef, period, entryPath, pxPerDay, scaleStartKey, scaleTotalDays, onCommit, styleForPeriod]);
 
   return {

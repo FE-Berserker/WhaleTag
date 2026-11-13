@@ -285,7 +285,7 @@ export default function App() {
     leftover.forEach((el) => {
       if (el.parentNode) el.parentNode.removeChild(el);
     });
-  }, [isExternalDragging]);
+  }, [isExternalDragging, iframeRef]);
 
   // Apply the embedded thumbnail + link cell once the host answers with a
   // `fileEmbed` envelope. The bridge does a `getXml → append → loadXml`
@@ -397,7 +397,6 @@ useEffect(() => {
           // the in-flight insert's closure is already "inactive" by the time
           // the bridge rejects. Only a real unmount should silence the notice.
           if (!mountedRef.current) return;
-          // eslint-disable-next-line no-console
           console.error('[drawio] insertLinkedThumbnail threw:', err);
           // The user's diagram is intact (the bridge aborts instead of
           // loading a replacement), so explain why nothing appeared.
@@ -496,7 +495,7 @@ useEffect(() => {
         </div>
       )}
       <iframe
-        ref={iframeRef}
+        ref={iframeRef as React.RefObject<HTMLIFrameElement>}
         className="drawio-iframe"
         title="Draw.io"
         src={url}

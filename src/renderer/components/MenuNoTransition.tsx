@@ -47,7 +47,8 @@ export const NoTransition = forwardRef<HTMLDivElement, TransitionProps>(
   function NoTransition(props, ref) {
     const { children, in: inProp, onEntering } = props;
     const localRef = useRef<HTMLDivElement>(null);
-    useImperativeHandle(ref, () => localRef.current);
+    // See MapiqueContextMenu.NoTransition: the handle is read after mount.
+    useImperativeHandle(ref, () => localRef.current as HTMLDivElement);
     // See MenuNoTransition.tsx header (item 2): forward onEntering so
     // Popover positions the menu synchronously on enter. The jsdom gate
     // prevents a separate commit-ordering crash — production always runs

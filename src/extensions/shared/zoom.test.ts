@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * zoom / shared — unit tests for the pure-math helpers.
  *

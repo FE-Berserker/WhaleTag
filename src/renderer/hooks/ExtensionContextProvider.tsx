@@ -495,7 +495,6 @@ export function ExtensionContextProvider({
         // Background fs.watch sync: the file may have been deleted or locked
         // between the event and this read. Log with a tag instead of throwing
         // into the watcher callback (nobody can await it).
-        // eslint-disable-next-line no-console
         console.warn('[extension-reload] failed to reload', filePath, e);
       }
     },

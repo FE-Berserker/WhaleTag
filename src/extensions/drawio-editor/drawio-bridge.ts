@@ -12,7 +12,6 @@ export type DrawioTheme = 'kennedy' | 'min' | 'atlas' | 'dark' | 'sketch';
 export interface DrawioMessage {
   event?: string;
   action?: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [key: string]: any;
 }
 
@@ -232,7 +231,6 @@ export function useDrawioBridge(
           }
         } catch (err) {
           if (disposedRef.current) return;
-          // eslint-disable-next-line no-console
           console.warn('[drawio] decode/append failed, falling back:', err);
         }
 
@@ -330,7 +328,6 @@ export function useDrawioBridge(
       }
 
       if (result.kind === 'error') {
-        // eslint-disable-next-line no-console
         console.error('[drawio] drawio returned error:', result.message);
         onError(result.message);
         return;

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * html-viewer — unit tests for html-stats.ts pure helpers.
  *

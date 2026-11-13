@@ -175,7 +175,6 @@ function createWindow(): void {
     // large diagram. 8s leaves room for that while still force-closing a
     // hung renderer; when nothing is dirty the ack lands immediately.
     closeFallback = setTimeout(() => {
-      // eslint-disable-next-line no-console
       console.log('[main] flush fallback timeout');
       finishMainWindowClose();
     }, 8000);
@@ -184,7 +183,6 @@ function createWindow(): void {
   // Belt-and-suspenders: if the window is destroyed without going through our
   // graceful path (e.g. a forced OS close), make sure our bookkeeping is reset.
   mainWindow.on('closed', () => {
-    // eslint-disable-next-line no-console
     console.log('[main] main window closed');
     if (mainWindow && (mainWindow.isDestroyed() || closingMainWindow === mainWindow)) {
       mainWindow = null;
@@ -234,7 +232,6 @@ function attachRendererCrashGuard(win: BrowserWindow): void {
   let state: ReloadState = { attempts: 0, lastReloadAt: 0 };
 
   win.webContents.on('render-process-gone', (_event, details) => {
-    // eslint-disable-next-line no-console
     console.error(
       '[main] renderer process gone:',
       details.reason,
@@ -258,7 +255,6 @@ function attachRendererCrashGuard(win: BrowserWindow): void {
     state = plan.next;
     if (plan.reload) {
       if (win.isDestroyed()) return;
-      // eslint-disable-next-line no-console
       console.warn(
         `[main] reloading after renderer crash (attempt ${state.attempts}/${MAX_AUTO_RELOADS})`
       );
@@ -498,7 +494,6 @@ function bootstrap(): void {
             setTimeout(resolve, 2_000).unref();
           }),
         ]).catch((e) => {
-          // eslint-disable-next-line no-console
           console.error('[main] MCP shutdown failed:', e);
         });
       } finally {
@@ -512,7 +507,6 @@ function bootstrap(): void {
   // isn't pulled into the startup critical path — it backs only this diagnostic.
   void import('ffmpeg-static')
     .then(({ default: p }) => {
-      // eslint-disable-next-line no-console
       console.log(
         p
           ? `FFMPEG_ELECTRON_OK ${p}`
@@ -520,7 +514,6 @@ function bootstrap(): void {
       );
     })
     .catch(() => {
-      // eslint-disable-next-line no-console
       console.log('FFMPEG_ELECTRON_MISSING (video thumbnails disabled)');
     });
 
@@ -542,7 +535,6 @@ function finishMainWindowClose(): void {
     return;
   }
 
-  // eslint-disable-next-line no-console
   console.log(`[main] finishMainWindowClose destroyed=${closingMainWindow.isDestroyed()}`);
 
   if (!closingMainWindow.isDestroyed()) {
@@ -640,7 +632,6 @@ pinUserDataToProductName();
 // same bug class can appear in any async handler. Logging keeps the regression
 // visible instead of silently killing the app.
 process.on('unhandledRejection', (reason) => {
-  // eslint-disable-next-line no-console
   console.error(
     '[main] unhandledRejection:',
     reason instanceof Error ? `${reason.stack ?? reason.message}` : reason
@@ -655,7 +646,6 @@ process.on('unhandledRejection', (reason) => {
 process.on('uncaughtException', (error) => {
   handleFatalError(error, {
     log: (message, err) => {
-      // eslint-disable-next-line no-console
       console.error(message, err);
     },
     appendCrashLog: (entry) => {

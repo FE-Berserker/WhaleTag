@@ -45,7 +45,7 @@ describe('FolderVizView directory data', () => {
         exports,
         children: [],
         paths: [],
-      } as NodeJS.Module;
+      } as unknown as NodeJS.Module;
     };
 
     let recursiveScanCalls = 0;

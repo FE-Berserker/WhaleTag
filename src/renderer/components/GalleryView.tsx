@@ -7,13 +7,22 @@ import {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Box, Typography } from '@mui/material';
-import { Grid as VirtualGrid, useGridRef } from 'react-window';
+import {
+  Grid as VirtualGrid,
+  type GridImperativeAPI,
+} from 'react-window';
 
 import type { DirEntry } from '../../shared/ipc-types';
 import type { TagGroup } from '../domain/tag-library';
 import { mediaPlaylist } from '../domain/gallery';
 import GalleryCell from './GalleryCell';
 
+// Stable fallbacks: GalleryCellData requires both containers, but FileList may
+// pass them as undefined while tags are still loading. Reusing module-level
+// singletons also keeps the per-cell memo comparison stable across renders.
+const EMPTY_TAG_MAP = new Map<string, string[]>();
+const EMPTY_TAG_COLORS: Record<string, string> = {};
+const EMPTY_TAG_GROUPS: TagGroup[] = [];
 interface GalleryViewProps {
   entries: DirEntry[];
   thumbCache: Map<string, string>;
@@ -99,7 +108,10 @@ export default function GalleryView({
   // Keyboard focus index. The container captures arrow keys; this is the caret
   // position inside `mediaEntries`, not the global `visible` index.
   const [focusedIndex, setFocusedIndex] = useState(0);
-  const gridRef = useGridRef();
+  // `useGridRef()` is typed as `GridImperativeAPI | undefined`, but the Grid's
+  // `gridRef` prop is `Ref<GridImperativeAPI>` whose current is `… | null`.
+  // A plain ref keeps both sides on the same null-based shape.
+  const gridRef = useRef<GridImperativeAPI | null>(null);
 
   // Snap focus back into bounds when the playlist shrinks.
   useEffect(() => {
@@ -189,9 +201,9 @@ export default function GalleryView({
       columnCount: cols,
       entrySize,
       thumbCache,
-      tagsByName,
-      tagColors,
-      groups,
+      tagsByName: tagsByName ?? EMPTY_TAG_MAP,
+      tagColors: tagColors ?? EMPTY_TAG_COLORS,
+      groups: groups ?? EMPTY_TAG_GROUPS,
       selected: selected ?? new Set(),
       onSelect,
       onOpen,

@@ -383,7 +383,6 @@ export default function ExtensionHost({
           imageDataUrl = await ipcApi.loadThumbnail(p);
         }
       } catch (err) {
-        // eslint-disable-next-line no-console
         console.warn('[extHost] embed gen failed, using generic icon:', err);
         imageDataUrl = null;
       }
