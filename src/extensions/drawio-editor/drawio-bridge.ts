@@ -3,7 +3,6 @@ import {
   appendSnippetToDiagram,
   buildFileDropSnippet,
   buildLabeledDropSnippet,
-  buildSafeSingleCellDocument,
   decodeDrawioDiagram,
   type FileDropSnippetOptions,
 } from './drop-xml';
@@ -30,7 +29,9 @@ export interface DrawioBridge {
    *  `merge` action requires checksum handshaking for collaborative sync
    *  and rejects single-cell payloads, so we read-modify-write instead.
    *  The diagram briefly flickers (load replaces the whole document); this
-   *  is acceptable for a drag-drop insert. Resolves once loadXml is posted. */
+   *  is acceptable for a drag-drop insert. Resolves once loadXml is posted;
+   *  rejects when the current diagram cannot be read, so callers surface the
+   *  failure instead of overwriting the user's diagram with a blank one. */
   insertLinkedThumbnail: (opts: FileDropSnippetOptions) => Promise<void>;
 }
 
@@ -239,12 +240,15 @@ export function useDrawioBridge(
           console.warn('[drawio] decode/append failed, falling back:', err);
         }
 
-        // Fallback: a fresh single-cell document with the full set of
-        // mxGraphModel attributes drawio's UI needs to initialize cleanly.
-        // Wipes the user's existing diagram but at least leaves drawio in a
-        // good state instead of frozen on a malformed half-edit.
+        // No fallback document on purpose. A previous version loaded a fresh
+        // single-cell document when the read/decode round-trip failed — that
+        // silently replaced the user's entire diagram (data loss, not a
+        // recovery). Abort and let the caller tell the user: an unchanged
+        // diagram is always better than a wiped one.
         if (targetXml === null) {
-          targetXml = buildSafeSingleCellDocument(snippet);
+          throw new Error(
+            'draw.io: could not read the current diagram; insert aborted'
+          );
         }
 
         loadXml(targetXml);

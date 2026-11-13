@@ -150,7 +150,9 @@ function createWindow(): void {
   // Graceful shutdown: ask the renderer to flush redux-persist before the
   // window (and therefore the renderer process) is destroyed. The storage
   // adapter writes synchronously in the main process, so the flush guarantees
-  // the latest state is on disk before the app exits.
+  // the latest state is on disk before the app exits. The same handshake also
+  // saves dirty extension editors (their buffers live in the iframe, not
+  // redux) — see renderer services/extension-save-flush.ts.
   mainWindow.on('close', (event) => {
     const win = mainWindow;
     if (!win) return;
@@ -167,11 +169,16 @@ function createWindow(): void {
     event.preventDefault();
     closingMainWindow = win;
     win.webContents.send('app:request-flush');
+    // Grace period for the renderer flush. 3s covered redux-persist alone,
+    // but the same handshake now also saves dirty extension editors: the
+    // iframe round-trip plus revision write can take a few seconds on a
+    // large diagram. 8s leaves room for that while still force-closing a
+    // hung renderer; when nothing is dirty the ack lands immediately.
     closeFallback = setTimeout(() => {
       // eslint-disable-next-line no-console
       console.log('[main] flush fallback timeout');
       finishMainWindowClose();
-    }, 3000);
+    }, 8000);
   });
 
   // Belt-and-suspenders: if the window is destroyed without going through our

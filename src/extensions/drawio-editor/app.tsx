@@ -383,20 +383,40 @@ useEffect(() => {
           width,
           height,
         })
+        .then(() => {
+          // Mark dirty only once the cell actually landed. The bridge aborts
+          // without touching the document when it cannot read the current
+          // diagram, so a failed insert must not flag unsaved changes.
+          if (mountedRef.current && currentFilePathRef.current === documentPath) {
+            setDirty(true);
+          }
+        })
         .catch((err) => {
-          if (!active) return;
+          // Do not gate this on the listener's `active` flag: clearing the
+          // drag overlay (line 349) re-renders and restarts this effect, so
+          // the in-flight insert's closure is already "inactive" by the time
+          // the bridge rejects. Only a real unmount should silence the notice.
+          if (!mountedRef.current) return;
           // eslint-disable-next-line no-console
           console.error('[drawio] insertLinkedThumbnail threw:', err);
+          // The user's diagram is intact (the bridge aborts instead of
+          // loading a replacement), so explain why nothing appeared.
+          // `handleError` would swap the whole panel for the fatal-error
+          // screen — a transient alert keeps the editor usable.
+          window.alert(messages.insertFailed);
         });
-      if (mountedRef.current && currentFilePathRef.current === documentPath) {
-        setDirty(true);
-      }
     });
     return () => {
       active = false;
       off();
     };
-  }, [bridge, clearExternalDrag, externalDragRef, setDirty]);
+  }, [
+    bridge,
+    clearExternalDrag,
+    externalDragRef,
+    messages.insertFailed,
+    setDirty,
+  ]);
 
   const handleDropOverlay = useCallback(
     (e: React.DragEvent) => {

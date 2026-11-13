@@ -3,6 +3,7 @@ import { persistReducer, persistStore, createTransform } from 'redux-persist';
 
 import rootReducer, { RootState } from '-/reducers';
 import { ExtensionsState } from '-/reducers/extensions';
+import { flushExtensionEditors } from '-/services/extension-save-flush';
 import mainProcessStorage from './storage';
 
 /**
@@ -79,9 +80,12 @@ export const persistor = persistStore(store);
 // The main process intercepts the close event and asks the renderer to flush.
 // Load-bearing with the async (invoke) storage adapter: in-flight writes must
 // be drained here before main destroys the window (3s closeFallback aside).
+// Extension editors keep their buffers inside the iframe, so a dirty
+// drawio/markdown/json tab needs its own flush — redux-persist never sees
+// that content (editState is transient and the transform strips it).
 if (typeof window !== 'undefined' && window.whale?.onBeforeUnloadFlush) {
   window.whale.onBeforeUnloadFlush(async () => {
-    await persistor.flush();
+    await Promise.all([persistor.flush(), flushExtensionEditors()]);
     window.whale.flushComplete();
   });
 }

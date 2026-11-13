@@ -15,6 +15,7 @@ import type {
   ExtensionEncoding,
 } from '../../shared/extension-types';
 import { ipcApi } from '-/services/ipc-api';
+import { registerExtensionSaveFlush } from '-/services/extension-save-flush';
 import ConfirmDiscardDialog, {
   ConfirmDiscardChoice,
 } from '-/components/ConfirmDiscardDialog';
@@ -220,6 +221,38 @@ export function ExtensionContextProvider({
     },
     []
   );
+
+  // §unsaved-close — flush every dirty tab when the WINDOW closes. Main sends
+  // `app:request-flush` and destroys the window after a grace period; without
+  // this the editor buffers (which live in the extension iframe, not redux)
+  // were discarded silently. Saves run in parallel and are capped at 5s so the
+  // ack still lands inside main's 8s fallback; a failed save keeps the dirty
+  // flag set and is logged by the registry.
+  const flushDirtyTabs = useCallback(async () => {
+    const dirtyTabs = tabsRef.current.filter(
+      (t) => editStateMapRef.current[t.filePath]?.dirty
+    );
+    await Promise.all(
+      dirtyTabs.map((tab) => {
+        const save = saveHandlersRef.current.get(tab.id);
+        if (!save) return Promise.resolve();
+        return new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 5000);
+          void save()
+            .catch(() => false)
+            .finally(() => {
+              clearTimeout(timer);
+              resolve();
+            });
+        });
+      })
+    );
+  }, []);
+
+  useEffect(() => {
+    registerExtensionSaveFlush(flushDirtyTabs);
+    return () => registerExtensionSaveFlush(null);
+  }, [flushDirtyTabs]);
 
   // Reentry guard: while the discard dialog is open, a second close/switch
   // attempt (e.g. user double-clicks another file) is treated as 'cancelled'

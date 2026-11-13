@@ -267,32 +267,6 @@ export function buildFileDropDocument(snippet: string): string {
   );
 }
 
-/** Same as `buildFileDropDocument` but with the FULL set of `<mxGraphModel>`
- *  attributes that drawio's UI needs to initialize properly. The minimal
- *  version above lacks `dx`/`dy`/`grid`/`pageWidth`/`pageHeight` etc. — those
- *  default to zero in drawio's render state and the editor's toolbar /
- *  ruler can end up in a frozen state. The attributes here are mirrored
- *  from `EMPTY_DRAWIO` in `src/renderer/hooks/useNewDrawio.ts`, which is the
- *  shape the new-file action uses and which drawio has been verified to
- *  initialize cleanly. The diagram id is freshly generated per insert so
- *  consecutive drops don't collide. */
-export function buildSafeSingleCellDocument(snippet: string): string {
-  const diagramId = uniqueCellId('drop');
-  return (
-    '<mxfile version="22.1.0" type="device">' +
-    `<diagram name="Page-1" id="${diagramId}">` +
-    '<mxGraphModel dx="800" dy="600" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">' +
-    '<root>' +
-    '<mxCell id="0"/>' +
-    '<mxCell id="1" parent="0"/>' +
-    `${snippet}` +
-    '</root>' +
-    '</mxGraphModel>' +
-    '</diagram>' +
-    '</mxfile>'
-  );
-}
-
 /** Pick the next drop position. Drawio cells are placed at (40, 40 + n*150)
  *  so consecutive drops stack down-right without overlapping the 120×120
  *  thumbnails (with a 30-unit gap). After the column fills we wrap to the

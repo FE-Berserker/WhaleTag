@@ -147,7 +147,7 @@ describe('drawio App in-flight lifecycle', () => {
       await act(async () => {
         emitDrawio({
           event: 'export',
-          xml: '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>',
+          xml: '<mxfile><diagram id="page" name="Page-1"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>',
         });
         await Promise.resolve();
       });
@@ -157,6 +157,86 @@ describe('drawio App in-flight lifecycle', () => {
       assert.match(String(loads.at(-1)?.xml), /picture\.png/);
     } finally {
       if (originalImage) Object.defineProperty(globalThis, 'Image', originalImage);
+    }
+  });
+
+  it('aborts the image embed instead of loading a replacement document', async () => {
+    const originalImage = Object.getOwnPropertyDescriptor(globalThis, 'Image');
+    const originalAlert = Object.getOwnPropertyDescriptor(window, 'alert');
+    const images: Array<{
+      onload: (() => void) | null;
+      onerror: (() => void) | null;
+      naturalWidth: number;
+      naturalHeight: number;
+      src: string;
+    }> = [];
+    class FakeImage {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      naturalWidth = 800;
+      naturalHeight = 600;
+      private _src = '';
+      set src(value: string) {
+        this._src = value;
+        images.push(this);
+      }
+      get src() {
+        return this._src;
+      }
+    }
+    Object.defineProperty(globalThis, 'Image', { configurable: true, value: FakeImage });
+    const alerts: string[] = [];
+    Object.defineProperty(window, 'alert', {
+      configurable: true,
+      value: (message: string) => alerts.push(message),
+    });
+
+    try {
+      const { drawioActions, emitHost, emitDrawio, loadFile } = setup();
+      const initialLoads = drawioActions.filter(
+        (msg) => msg.action === 'load'
+      ).length;
+      emitHost({
+        type: 'externalDrag',
+        active: true,
+        path: '/tmp/picture.png',
+        name: 'picture.png',
+        isImage: true,
+      });
+      emitHost({
+        type: 'fileEmbed',
+        path: '/tmp/picture.png',
+        name: 'picture.png',
+        thumbnailDataUrl: 'data:image/png;base64,AA==',
+      });
+      assert.equal(images.length, 1);
+
+      loadFile('<mxfile><diagram>refresh</diagram></mxfile>');
+      await act(async () => {
+        images[0].onload?.();
+        await Promise.resolve();
+      });
+      // The editor answers the export with something that is not a drawio
+      // document, so the read/modify/load round-trip cannot run.
+      await act(async () => {
+        emitDrawio({ event: 'export', xml: '<not-a-diagram/>' });
+        // The abort travels through the bridge's async round-trip; give the
+        // rejection one macrotask to reach the caller's catch.
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+
+      const loads = drawioActions.filter((msg) => msg.action === 'load');
+      assert.equal(
+        loads.length,
+        initialLoads,
+        'an unreadable diagram must not be replaced'
+      );
+      assert.equal(alerts.length, 1, 'the user is told the insert was cancelled');
+    } finally {
+      if (originalImage) Object.defineProperty(globalThis, 'Image', originalImage);
+      if (originalAlert) {
+        Object.defineProperty(window, 'alert', originalAlert);
+      }
     }
   });
 
