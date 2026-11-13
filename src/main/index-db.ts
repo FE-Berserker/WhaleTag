@@ -281,8 +281,14 @@ export function filesPrior(rootPath: string): Map<string, string> {
 export async function ingestFiles(
   rootPath: string,
   entries: IndexEntry[],
-  onProgress?: (done: number, total: number) => void
+  onProgress?: (done: number, total: number) => void,
+  options: { complete?: boolean } = {}
 ): Promise<void> {
+  // `complete === false` means the walk could not read part of the tree
+  // (EPERM/EACCES on a subdirectory). Entries missing from `entries` may
+  // still exist on disk, so dropping their rows would erase a whole subtree
+  // from the index on a transient error — keep them until a complete walk.
+  const complete = options.complete !== false;
   const db = getDb(rootPath);
   const upsert = db.prepare(`
     INSERT INTO files (path, name, is_dir, size, mtime, ext, tags)
@@ -306,19 +312,20 @@ export async function ingestFiles(
   // Drop rows for files no longer on disk (in the db but not walked this run).
   const removed: string[] = [];
   for (const p of prior.keys()) if (!seen.has(p)) removed.push(p);
+  const toDelete = complete ? removed : [];
 
   // docs/04 §10 progress: one counter across the delete + upsert loops; the
   // worker throttles the events, so reporting every batch is fine.
-  const total = removed.length + changed.length;
+  const total = toDelete.length + changed.length;
   let done = 0;
 
   const delStmt = db.prepare('DELETE FROM files WHERE path = ?');
   const delBatch = db.transaction((paths: string[]) => {
     for (const p of paths) delStmt.run(p);
   });
-  for (let i = 0; i < removed.length; i += INGEST_BATCH) {
-    delBatch(removed.slice(i, i + INGEST_BATCH));
-    done += Math.min(INGEST_BATCH, removed.length - i);
+  for (let i = 0; i < toDelete.length; i += INGEST_BATCH) {
+    delBatch(toDelete.slice(i, i + INGEST_BATCH));
+    done += Math.min(INGEST_BATCH, toDelete.length - i);
     onProgress?.(done, total);
     await yieldToEventLoop();
   }
@@ -347,12 +354,19 @@ export async function ingestFiles(
   // P2-2: the files table now holds exactly `seen` (every current entry —
   // unchanged rows stay, changed/new are upserted, removed are deleted), so
   // cache that count for O(1) readiness polls. Self-healing: every ingest
-  // rewrites it, so any drift is corrected on the next walk.
+  // rewrites it, so any drift is corrected on the next walk. When the walk
+  // was incomplete the delete pass was skipped, so recount instead of
+  // trusting `seen.size`.
+  let fileCount = seen.size;
+  if (!complete) {
+    const row = db.prepare('SELECT COUNT(*) AS c FROM files').get() as { c: number };
+    fileCount = row.c;
+  }
   prepareCached(
     db,
     `INSERT INTO meta(key, value) VALUES('files_count', ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-  ).run(seen.size);
+  ).run(fileCount);
 }
 
 /** Filename/path/tags fuzzy search via FTS5 trigram (>=3 chars) or LIKE (<3). */
@@ -369,7 +383,9 @@ export function queryFiles(rootPath: string, q: string): IndexEntry[] {
          WHERE files_fts MATCH ? ORDER BY rank LIMIT ?`
     ).all(ftsPhrase(term), QUERY_LIMIT) as FileRow[];
   } else {
-    const like = `%${term}%`;
+    // Escape the LIKE wildcards too: without this a one/two-character term
+    // like `%`, `_` or a path fragment containing them matched every row.
+    const like = `%${escapeLike(term)}%`;
     rows = prepareCached(
       db,
       `SELECT * FROM files WHERE name LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\'

@@ -7,12 +7,14 @@ import {
   FOLDER_META_FILE,
   FOLDER_INDEX_FILE,
   FOLDER_FULLTEXT_FILE,
+  MIGRATION_STATE_FILE,
   SIDECAR_VERSION,
   type SidecarMeta,
   type AggregatedSidecar,
 } from '../shared/whale-meta';
 import { atomicWriteJson } from './atomic-write';
 import { withLock } from './dir-lock';
+import { mapWithConcurrency } from './concurrency';
 import { assertWithinAllowedRoot } from './allowed-roots';
 import type {
   RecoverCorruptSidecarRequest,
@@ -55,6 +57,10 @@ const RESERVED_META_FILES = new Set([
   FOLDER_META_FILE, // wsm.json
   FOLDER_INDEX_FILE, // wsi.json
   FOLDER_FULLTEXT_FILE, // wsft.jsonl
+  // Migration flags only look like a legacy sidecar. Without this entry the
+  // reader folded it into wsd.json and deleted it, so the flag was cleared on
+  // every start and the migration re-ran (and re-backed-up) forever.
+  MIGRATION_STATE_FILE,
 ]);
 
 /** Path of a directory's aggregated sidecar file. */
@@ -554,13 +560,25 @@ export async function readSidecardsForPathsDetailed(
   // didn't cover. Mostly relevant for never-tagged subdirs whose only
   // sidecar format is the legacy per-file `.whale/<name>.json`.
   if (missing.length > 0) {
-    const perFile = await Promise.allSettled(missing.map((fp) => readSidecar(fp)));
-    for (let i = 0; i < missing.length; i++) {
-      const result = perFile[i];
-      if (result.status === 'fulfilled') {
-        if (result.value) out[missing[i]] = result.value;
-      } else {
-        console.error('[sidecar] Legacy sidecar read failed:', missing[i], result.reason);
+    // Cap concurrency: a recursive view over thousands of untagged files used
+    // to fan out one readSidecar per file at once (and each miss re-reads that
+    // dir's wsd.json) — enough to exhaust the file-handle table (EMFILE) on
+    // Windows. 8 matches the other batch file readers.
+    const perFile = await mapWithConcurrency(missing, 8, async (fp) => {
+      try {
+        return { path: fp, meta: await readSidecar(fp), error: null as unknown };
+      } catch (error) {
+        return { path: fp, meta: null, error };
+      }
+    });
+    for (const entry of perFile) {
+      if (entry.meta) out[entry.path] = entry.meta;
+      else if (entry.error) {
+        console.error(
+          '[sidecar] Legacy sidecar read failed:',
+          entry.path,
+          entry.error
+        );
       }
     }
   }

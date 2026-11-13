@@ -16,6 +16,10 @@ import {
   _startWatchForcedPerDirForTest,
   _watchModeForTest,
   _dirWatcherCountForTest,
+  _simulateWatcherErrorForTest,
+  _reconnectPendingForTest,
+  _setReconnectBaseDelayForTest,
+  _setRetryBaseDelayForTest,
   type DirChangedEvent,
 } from './dir-watcher';
 import * as indexWorkerHost from './index-worker-host';
@@ -429,5 +433,89 @@ describe('dir-watcher per-directory fallback (Linux path)', () => {
     await fsp.writeFile(path.join(root, '.whale', 'wsd.json'), '{}');
     await sleep(800);
     assert.equal(events.length, 0, `excluded trees produced ${JSON.stringify(events)}`);
+  });
+});
+
+/**
+ * Recovery paths (docs/04 §10): a watcher error must not leave the location
+ * silently unwatched, and a root removed mid-rebuild must stop retrying.
+ */
+describe('dir-watcher self-heal', () => {
+  let root = '';
+  let origRequest: typeof indexWorkerHost.request;
+  let buildGate: { promise: Promise<void>; resolve: () => void } | null = null;
+  let buildCount = 0;
+
+  before(async () => {
+    root = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-watch-heal-'));
+    origRequest = indexWorkerHost.request;
+    (indexWorkerHost as { request: unknown }).request = async (op: string) => {
+      if (op === 'index:status') return { count: 1, ready: true };
+      if (op === 'index:build') {
+        buildCount += 1;
+        if (buildGate && buildCount === 1) {
+          await buildGate.promise;
+          throw new Error('simulated build failure');
+        }
+      }
+      return undefined;
+    };
+  });
+
+  after(async () => {
+    closeAllWatchers();
+    _setReconnectBaseDelayForTest(5_000);
+    _setRetryBaseDelayForTest(1_500);
+    (indexWorkerHost as { request: unknown }).request = origRequest;
+    await fsp.rm(root, { recursive: true, force: true }).catch(() => undefined);
+  });
+
+  it('re-attaches a root whose watcher errored out', async () => {
+    _setReconnectBaseDelayForTest(25);
+    syncWatchedRoots([root]);
+    assert.equal(_watchCountForTest(), 1);
+
+    assert.equal(_simulateWatcherErrorForTest(root), true);
+    assert.equal(_watchCountForTest(), 0, 'dead watcher dropped');
+    assert.equal(_reconnectPendingForTest(root), true, 'retry armed');
+
+    await waitFor(() => _watchCountForTest() === 1, 'watcher re-attached', 3000);
+    assert.equal(_reconnectPendingForTest(root), false, 'retry consumed');
+  });
+
+  it('drops the pending retry when the root leaves the config', async () => {
+    _setReconnectBaseDelayForTest(25);
+    syncWatchedRoots([root]);
+    _simulateWatcherErrorForTest(root);
+    assert.equal(_reconnectPendingForTest(root), true);
+
+    syncWatchedRoots([]);
+    assert.equal(_reconnectPendingForTest(root), false, 'retry cancelled');
+    await sleep(120);
+    assert.equal(_watchCountForTest(), 0, 'removed root stays unwatched');
+  });
+
+  it('stops retrying a failing rebuild after the root is removed', async () => {
+    _setRetryBaseDelayForTest(25);
+    buildCount = 0;
+    buildGate = deferred();
+    syncWatchedRoots([root]);
+    setFulltextRoots([]);
+
+    try {
+      await fsp.writeFile(path.join(root, 'heal-fail.txt'), 'x');
+      await waitFor(() => buildCount === 1, 'the first rebuild', 5000);
+
+      // Remove the root while the rebuild is still running, then let it fail.
+      syncWatchedRoots([]);
+      assert.equal(_watchCountForTest(), 0);
+      buildGate.resolve();
+      await sleep(250); // > retryDelay(1) with the 25 ms test base
+
+      assert.equal(buildCount, 1, 'a removed root must not retry its rebuild');
+    } finally {
+      buildGate?.resolve();
+      buildGate = null;
+    }
   });
 });

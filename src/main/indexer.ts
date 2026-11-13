@@ -49,19 +49,47 @@ function makeEntry(
   };
 }
 
-/** Recursively walks `rootPath`, returning a flat list of IndexEntry. */
-export async function buildIndex(
+/** Result of a walk: the entries plus whether every path could be read. */
+export interface WalkReport {
+  entries: IndexEntry[];
+  /**
+   * False when at least one directory/file failed with an error other than
+   * ENOENT (EPERM/EACCES/EBUSY…). The tree may still be there, so the
+   * ingester must not treat missing entries as deletions.
+   */
+  complete: boolean;
+  /** Paths that could not be read/walked (for the warning log). */
+  unreadable: string[];
+}
+
+/** True for "it really is gone" — any other error may be transient. */
+function isVanished(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT';
+}
+
+/**
+ * Recursively walks `rootPath`, returning the entries plus a completeness flag.
+ * `complete: false` makes `index-db.ingestFiles` keep the stored rows for
+ * paths it did not see, instead of deleting a subtree that was merely
+ * unreadable (e.g. a transient EACCES on a network share).
+ */
+export async function buildIndexReport(
   rootPath: string,
   onProgress?: (scanned: number) => void
-): Promise<IndexEntry[]> {
+): Promise<WalkReport> {
   const entries: IndexEntry[] = [];
+  const unreadable: string[] = [];
 
   async function walk(dir: string): Promise<void> {
     let names: string[];
     try {
       names = await fsp.readdir(dir);
-    } catch {
-      return; // unreadable subdir — skip silently
+    } catch (error) {
+      // ENOENT: the directory vanished between listing and recursion — its
+      // rows are genuinely stale and the delete pass should drop them.
+      // Anything else means the subtree may still exist; keep its rows.
+      if (!isVanished(error)) unreadable.push(dir);
+      return;
     }
     // Stat with bounded concurrency, then split files / dirs so the directory's
     // sidecars can be read once (wsd.json is a single aggregated file).
@@ -69,7 +97,8 @@ export async function buildIndex(
       const full = path.join(dir, name);
       try {
         return { name, full, stat: await fsp.stat(full) };
-      } catch {
+      } catch (error) {
+        if (!isVanished(error)) unreadable.push(full);
         return null;
       }
     });
@@ -136,5 +165,13 @@ export async function buildIndex(
   }
 
   await walk(rootPath);
-  return entries;
+  return { entries, complete: unreadable.length === 0, unreadable };
+}
+
+/** Recursively walks `rootPath`, returning a flat list of IndexEntry. */
+export async function buildIndex(
+  rootPath: string,
+  onProgress?: (scanned: number) => void
+): Promise<IndexEntry[]> {
+  return (await buildIndexReport(rootPath, onProgress)).entries;
 }

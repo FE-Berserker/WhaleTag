@@ -163,6 +163,61 @@ describe('index-db (SQLite + FTS5 trigram)', () => {
     }
   });
 
+  it('keeps stored rows for a subtree the walk could not read (incomplete ingest)', async () => {
+    const root = await tmpRoot();
+    try {
+      await setup(root);
+      await ingestFiles(root, [
+        entry({ path: 'seen.txt', name: 'seen.txt' }),
+        entry({ path: 'locked/inside.txt', name: 'inside.txt' }),
+      ]);
+      assert.equal(indexStatus(root).count, 2);
+
+      // The second walk hit EACCES on `locked/`, so that subtree is missing
+      // from `entries` — the ingester must not treat it as a deletion.
+      await ingestFiles(
+        root,
+        [entry({ path: 'seen.txt', name: 'seen.txt' })],
+        undefined,
+        { complete: false }
+      );
+
+      assert.equal(
+        queryFiles(root, 'inside').length,
+        1,
+        'rows under an unreadable subtree survive'
+      );
+      assert.equal(indexStatus(root).count, 2, 'cached count matches the table');
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('escapes LIKE wildcards on the short-term (<3 chars) query path', async () => {
+    const root = await tmpRoot();
+    try {
+      await setup(root);
+      await ingestFiles(root, [
+        entry({ path: 'plain.txt', name: 'plain.txt' }),
+        entry({ path: 'a%b.txt', name: 'a%b.txt' }),
+        entry({ path: 'a_b.txt', name: 'a_b.txt' }),
+      ]);
+      // Without escapeLike, `%`/`_` were wildcards and matched every row.
+      assert.deepEqual(
+        queryFiles(root, '%').map((e) => e.name),
+        ['a%b.txt']
+      );
+      assert.deepEqual(
+        queryFiles(root, '_').map((e) => e.name),
+        ['a_b.txt']
+      );
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('ingestFiles is incremental: unchanged rows skipped, tag-only changes re-indexed (P0-1)', async () => {
     const root = await tmpRoot();
     try {

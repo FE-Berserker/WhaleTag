@@ -102,11 +102,25 @@ async function dispatch(req: IndexWorkerRequest): Promise<void> {
     case 'index:build': {
       const { rootPath } = req.arg as { rootPath: string };
       const progress = makeProgressPoster('index:build', rootPath);
-      const entries = await indexer.buildIndex(rootPath, (n) =>
+      const report = await indexer.buildIndexReport(rootPath, (n) =>
         progress('scan', n, null)
       );
-      await db.ingestFiles(rootPath, entries, (d, t) =>
-        progress('ingest', d, t)
+      if (!report.complete) {
+        // Keep the stored rows for what we could not read this pass: deleting
+        // them would erase a whole subtree on a transient EACCES/EPERM.
+        console.warn(
+          '[index-worker] index:build walk incomplete; keeping stored rows for',
+          report.unreadable.length,
+          'unreadable path(s):',
+          report.unreadable.slice(0, 5)
+        );
+      }
+      const entries = report.entries;
+      await db.ingestFiles(
+        rootPath,
+        entries,
+        (d, t) => progress('ingest', d, t),
+        { complete: report.complete }
       );
       db.removeLegacyWsi(rootPath);
       post({

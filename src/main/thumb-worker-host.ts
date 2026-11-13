@@ -7,6 +7,7 @@
  *    concurrent first-callers share one fork).
  *  - Correlate requests ↔ responses via a `pending` map keyed by reqId.
  *  - Reject every pending request when the child exits or errors.
+ *  - Reject a request when the child goes silent (inactivity watchdog).
  *  - Re-spawn on next request after a crash (no auto-respawn loop —
  *    a hard crash gets one restart from the next user action).
  *  - `killThumbWorker()` for app-quit shutdown (best-effort kill; pending
@@ -23,6 +24,7 @@ import {
   completeRequest,
   failRequest,
   rejectAllPending,
+  markWorkerActivity,
   type Pending,
 } from './worker-protocol';
 import { resolveThumbWorkerEntryPath } from './thumb-worker-spawn';
@@ -34,6 +36,13 @@ import type {
 
 /** Window in which we wait for the worker's `ready` event after spawn. */
 const READY_TIMEOUT_MS = 10_000;
+
+/**
+ * Inactivity watchdog: rejecting after a minute of total silence keeps a
+ * wedged PDF/font renderer from blocking the thumbnail queue forever (the
+ * worker posts nothing while rendering, so any reply resets the clock).
+ */
+const REQUEST_TIMEOUT_MS = 60_000;
 
 const SERVICE_NAME = 'whale-thumb';
 const STDERR_TAG = '[whale-thumb] ';
@@ -81,6 +90,9 @@ async function ensureSpawn(): Promise<void> {
 
     c.on('message', (raw: unknown) => {
       const msg = raw as ThumbWorkerMessage;
+      // Any message — pushed event or reply — proves the worker is alive,
+      // which is what the inactivity watchdog measures.
+      markWorkerActivity(pending);
       // Server-pushed events (no reqId): currently only `ready`, used as
       // one valid signal that the child has booted.
       if ('kind' in msg) {
@@ -170,7 +182,10 @@ export async function thumbRequest(
   await ensureSpawn();
   const c = child;
   if (!c) throw new Error('thumb worker not running');
-  const { reqId, promise } = newRequest(pending);
+  const { reqId, promise } = newRequest(pending, {
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    label: op,
+  });
   try {
     c.postMessage({ reqId, op, arg });
   } catch (e) {

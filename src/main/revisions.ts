@@ -20,6 +20,28 @@ function encodeTimestamp(ts: string): string {
   return ts.replace(/:/g, '-');
 }
 
+/** Last millisecond handed out — keeps two backups from sharing a filename. */
+let lastRevisionMs = 0;
+
+/**
+ * Returns a timestamp whose revision filename is still free. Two saves in the
+ * same millisecond used to write to the same path (the second silently
+ * clobbered the first); bumping the clock by 1 ms keeps the ISO format — and
+ * therefore the list order — intact.
+ */
+function nextTimestamp(revDir: string, ext: string): string {
+  let ms = Math.max(Date.now(), lastRevisionMs + 1);
+  for (let i = 0; i < 1000; i += 1) {
+    const encoded = encodeTimestamp(new Date(ms).toISOString());
+    if (!existsSync(path.join(revDir, `${encoded}${ext}`))) {
+      lastRevisionMs = ms;
+      return encoded;
+    }
+    ms += 1;
+  }
+  throw new Error('Could not allocate a unique revision timestamp');
+}
+
 /** Reverse of encodeTimestamp. */
 function decodeTimestamp(encoded: string): string {
   // ISO strings contain colons at fixed positions; dashes elsewhere are date separators.
@@ -36,11 +58,12 @@ export async function backupRevision(filePath: string): Promise<void> {
 
   const content = await fsp.readFile(filePath, 'utf8');
   const ext = path.extname(filePath);
-  const timestamp = encodeTimestamp(new Date().toISOString());
   const revDir = revisionsDirFor(filePath);
-  const revPath = path.join(revDir, `${timestamp}${ext}`);
 
   await fsp.mkdir(revDir, { recursive: true });
+  const timestamp = nextTimestamp(revDir, ext);
+  const revPath = path.join(revDir, `${timestamp}${ext}`);
+
   await atomicWriteText(revPath, content);
 }
 
@@ -51,14 +74,18 @@ export async function listRevisions(filePath: string): Promise<RevisionInfo[]> {
 
   const entries = await fsp.readdir(revDir);
   const revisions: RevisionInfo[] = [];
+  // Revisions are `<encoded timestamp><ext>`; slice the source file's own
+  // extension rather than the last dot — a file without an extension used to
+  // lose the `.000Z` of its timestamp to the final-dot heuristic.
+  const ext = path.extname(filePath);
 
   for (const entry of entries) {
     const fullPath = path.join(revDir, entry);
     const stat = await fsp.stat(fullPath).catch(() => null);
     if (!stat || !stat.isFile()) continue;
 
-    const dotIndex = entry.lastIndexOf('.');
-    const encoded = dotIndex > 0 ? entry.slice(0, dotIndex) : entry;
+    const encoded =
+      ext && entry.endsWith(ext) ? entry.slice(0, -ext.length) : entry;
     revisions.push({
       timestamp: decodeTimestamp(encoded),
       path: fullPath,

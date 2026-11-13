@@ -37,7 +37,7 @@
 
 import path from 'path';
 import { promises as fsp } from 'fs';
-import { META_DIR, FOLDER_SIDECAR_FILE, FOLDER_META_FILE } from '../shared/whale-meta';
+import { META_DIR, FOLDER_SIDECAR_FILE, FOLDER_META_FILE, MIGRATION_STATE_FILE } from '../shared/whale-meta';
 import { atomicWriteJson } from './atomic-write';
 import { withLock } from './dir-lock';
 import {
@@ -85,7 +85,6 @@ export interface MigrationResult {
   errors: { path: string; message: string }[];
 }
 
-const MIGRATION_STATE_FILE = '_migration-state.json';
 const MIGRATION_FLAG = 'date-prefix-v1';
 const BACKUP_SUFFIX = '.bak-dateprefix';
 
@@ -115,10 +114,10 @@ async function writeMigrationState(
   state: MigrationState
 ): Promise<void> {
   const statePath = path.join(root, META_DIR, MIGRATION_STATE_FILE);
-  const tmp = `${statePath}.tmp`;
   await fsp.mkdir(path.dirname(statePath), { recursive: true });
-  await fsp.writeFile(tmp, JSON.stringify(state, null, 2), 'utf-8');
-  await fsp.rename(tmp, statePath);
+  // atomicWriteJson (tmp + datasync + rename, same contract as the sidecars):
+  // a torn flag file would make the migration re-run and re-backup.
+  await atomicWriteJson(statePath, state);
 }
 
 /** Recursively yield every directory under `root` (including root itself). */
@@ -186,51 +185,53 @@ async function migrateSidecarFile(
   };
   const dir = path.dirname(filePath); // `<dir>/.whale`
   try {
-    const raw = await fsp.readFile(filePath, 'utf-8');
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (err) {
-      // Corrupt JSON — skip; the user has bigger problems and we don't
-      // want to overwrite their data with a partial migration.
-      report.errors.push({
-        path: filePath,
-        message: `JSON.parse failed: ${(err as Error).message}`,
-      });
-      return report;
-    }
-    if (typeof parsed !== 'object' || parsed === null) {
-      // Not the expected object shape — skip silently.
-      return report;
-    }
-    const obj = parsed as { files?: Record<string, { tags?: string[] }> };
-    if (!obj.files) {
-      // No `files` map (e.g. wsm.json has a different shape — handled
-      // separately in migrateFolderMeta). Nothing to do here.
-      return report;
-    }
-    let changed = false;
-    for (const filename of Object.keys(obj.files)) {
-      const entry = obj.files[filename];
-      if (!entry || !Array.isArray(entry.tags)) continue;
-      report.scanned += 1;
-      const r = migrateSidecarTags(entry.tags);
-      if (r.changed) {
-        entry.tags = r.tags;
-        changed = true;
+    // Read INSIDE the per-directory lock. The sidecar writer takes the same
+    // lock, so a snapshot read before acquiring it can be stale by the time
+    // we write — and the atomic write below replaces the whole file, silently
+    // dropping tags the user applied while the migration was queued.
+    await withLock(path.dirname(dir), async () => {
+      const raw = await fsp.readFile(filePath, 'utf-8');
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (err) {
+        // Corrupt JSON — skip; the user has bigger problems and we don't
+        // want to overwrite their data with a partial migration.
+        report.errors.push({
+          path: filePath,
+          message: `JSON.parse failed: ${(err as Error).message}`,
+        });
+        return;
       }
-    }
-    if (changed) {
-      // Per-directory lock for safe write under concurrent batch tagging.
-      await withLock(path.dirname(dir), async () => {
-        if (!flag[MIGRATION_FLAG]) {
-          await fsp.copyFile(filePath, `${filePath}${BACKUP_SUFFIX}`);
-          report.backups += 1;
+      if (typeof parsed !== 'object' || parsed === null) {
+        // Not the expected object shape — skip silently.
+        return;
+      }
+      const obj = parsed as { files?: Record<string, { tags?: string[] }> };
+      if (!obj.files) {
+        // No `files` map (e.g. wsm.json has a different shape — handled
+        // separately in migrateFolderMeta). Nothing to do here.
+        return;
+      }
+      let changed = false;
+      for (const filename of Object.keys(obj.files)) {
+        const entry = obj.files[filename];
+        if (!entry || !Array.isArray(entry.tags)) continue;
+        report.scanned += 1;
+        const r = migrateSidecarTags(entry.tags);
+        if (r.changed) {
+          entry.tags = r.tags;
+          changed = true;
         }
-        await atomicWriteJson(filePath, parsed);
-        report.migrated += 1;
-      });
-    }
+      }
+      if (!changed) return;
+      if (!flag[MIGRATION_FLAG]) {
+        await fsp.copyFile(filePath, `${filePath}${BACKUP_SUFFIX}`);
+        report.backups += 1;
+      }
+      await atomicWriteJson(filePath, parsed);
+      report.migrated += 1;
+    });
   } catch (err) {
     report.errors.push({
       path: filePath,
@@ -257,25 +258,28 @@ async function migrateFolderMetaFile(
   };
   const dir = path.dirname(filePath);
   try {
-    const raw = await fsp.readFile(filePath, 'utf-8');
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (err) {
-      report.errors.push({
-        path: filePath,
-        message: `JSON.parse failed: ${(err as Error).message}`,
-      });
-      return report;
-    }
-    if (typeof parsed !== 'object' || parsed === null) return report;
-    const obj = parsed as { tags?: string[] };
-    if (!Array.isArray(obj.tags)) return report;
-    report.scanned += 1;
-    const r = migrateSidecarTags(obj.tags);
-    if (!r.changed) return report;
-    obj.tags = r.tags;
+    // Same lock-scope rule as migrateSidecarFile: the whole read-modify-write
+    // runs under the per-directory lock so a concurrent folder-meta write
+    // (the user editing tags while the startup migration runs) survives.
     await withLock(path.dirname(dir), async () => {
+      const raw = await fsp.readFile(filePath, 'utf-8');
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (err) {
+        report.errors.push({
+          path: filePath,
+          message: `JSON.parse failed: ${(err as Error).message}`,
+        });
+        return;
+      }
+      if (typeof parsed !== 'object' || parsed === null) return;
+      const obj = parsed as { tags?: string[] };
+      if (!Array.isArray(obj.tags)) return;
+      report.scanned += 1;
+      const r = migrateSidecarTags(obj.tags);
+      if (!r.changed) return;
+      obj.tags = r.tags;
       if (!flag[MIGRATION_FLAG]) {
         await fsp.copyFile(filePath, `${filePath}${BACKUP_SUFFIX}`);
         report.backups += 1;

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import path from 'path';
 import os from 'os';
 import { promises as fsp } from 'fs';
-import { buildIndex } from './indexer';
+import { buildIndex, buildIndexReport } from './indexer';
 import { META_DIR } from '../shared/whale-meta';
 
 describe('buildIndex sidecar degradation', () => {
@@ -45,6 +45,21 @@ describe('buildIndex sidecar degradation', () => {
       assert.equal(warnings.length, 1, 'the degraded directory is surfaced');
     } finally {
       console.warn = originalWarn;
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a complete walk when every directory is readable', async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-indexer-'));
+    try {
+      await fsp.mkdir(path.join(root, 'nested'), { recursive: true });
+      await fsp.writeFile(path.join(root, 'nested', 'file.txt'), 'x');
+
+      const report = await buildIndexReport(root);
+      assert.equal(report.complete, true);
+      assert.deepEqual(report.unreadable, []);
+      assert.ok(report.entries.some((entry) => entry.path === 'nested/file.txt'));
+    } finally {
       await fsp.rm(root, { recursive: true, force: true });
     }
   });

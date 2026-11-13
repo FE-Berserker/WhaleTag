@@ -167,6 +167,49 @@ describe('revision history', () => {
     }
   });
 
+  it('keeps both backups when two saves land in the same millisecond', async () => {
+    const dir = await tmpDir();
+    try {
+      const filePath = path.join(dir, 'doc.txt');
+      await fsp.writeFile(filePath, 'v1', 'utf8');
+      // Same-ms collisions used to overwrite the first revision file.
+      await Promise.all([backupRevision(filePath), backupRevision(filePath)]);
+
+      const revs = await listRevisions(filePath);
+      assert.equal(revs.length, 2, 'both revisions kept');
+      assert.notEqual(revs[0].path, revs[1].path);
+      for (const rev of revs) {
+        assert.match(
+          rev.timestamp,
+          /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+          `timestamp decodes as ISO: ${rev.timestamp}`
+        );
+      }
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('lists revisions of a file without an extension (no final-dot truncation)', async () => {
+    const dir = await tmpDir();
+    try {
+      const filePath = path.join(dir, 'README');
+      await fsp.writeFile(filePath, 'hello', 'utf8');
+      await backupRevision(filePath);
+
+      const revs = await listRevisions(filePath);
+      assert.equal(revs.length, 1);
+      // The old lastIndexOf('.') heuristic ate the `.000Z` of the timestamp.
+      assert.match(
+        revs[0].timestamp,
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+      );
+      assert.equal(await fsp.readFile(revs[0].path, 'utf8'), 'hello');
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('backupRevision is a no-op for non-existent files', async () => {
     const dir = await tmpDir();
     try {

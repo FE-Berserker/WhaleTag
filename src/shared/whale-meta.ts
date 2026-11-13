@@ -12,6 +12,7 @@
  *       ├── wsft.jsonl   # fulltext index (one record per line)
  *       ├── wst.jpg      # folder thumbnail
  *       ├── wsb.jpg      # folder background
+ *       ├── _migration-state.json  # one-shot migration flags (per location root)
  *       └── thumbs/
  *           └── my-file.txt.jpg    # file thumbnail
  */
@@ -25,6 +26,16 @@ export const FOLDER_INDEX_FILE = 'wsi.json';
 export const FOLDER_FULLTEXT_FILE = 'wsft.jsonl';
 export const FOLDER_THUMB_FILE = 'wst.jpg';
 export const FOLDER_BACKGROUND_FILE = 'wsb.jpg';
+
+/**
+ * One-shot migration flags (currently `date-prefix-v1`), one file per
+ * location root. Lives in `.whale/` next to the sidecars, so it MUST stay in
+ * `sidecar.ts`'s `RESERVED_META_FILES`: otherwise the legacy-sidecar reader
+ * treats it as a per-file sidecar, folds it into `wsd.json` and deletes the
+ * file — which clears the flag and makes the migration re-run (and re-backup)
+ * on every start.
+ */
+export const MIGRATION_STATE_FILE = '_migration-state.json';
 
 /** Subdirectory of `.whale/` holding per-file image thumbnails (`.jpg`). */
 export const THUMBS_DIR = 'thumbs';

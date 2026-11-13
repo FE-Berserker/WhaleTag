@@ -6,6 +6,7 @@
  *    concurrent first-callers share one fork).
  *  - Correlate requests ↔ responses via a `pending` map keyed by reqId.
  *  - Reject every pending request when the child exits or errors.
+ *  - Reject a request when the child goes silent (inactivity watchdog).
  *  - Re-spawn on next request after a crash (no auto-respawn loop —
  *    a hard crash gets one restart from the next user action).
  *  - `killIndexWorker()` for app-quit shutdown (best-effort kill without
@@ -24,6 +25,7 @@ import {
   completeRequest,
   failRequest,
   rejectAllPending,
+  markWorkerActivity,
   type Pending,
 } from './worker-protocol';
 import { resolveIndexWorkerEntryPath } from './index-worker-spawn';
@@ -37,6 +39,29 @@ import type {
 
 /** Window in which we wait for the worker's `ready` event after spawn. */
 const READY_TIMEOUT_MS = 10_000;
+
+/**
+ * Inactivity watchdogs. A request rejects once the worker has been silent
+ * for this long — silence is measured against ANY worker message, so a
+ * long build that keeps posting progress is never killed by the timer,
+ * while a wedged worker fails instead of leaving the renderer awaiting
+ * forever (docs/04 §10).
+ */
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const BUILD_REQUEST_TIMEOUT_MS = 60_000;
+
+const REQUEST_TIMEOUTS: Partial<Record<IndexWorkerOp, number>> = {
+  // Builds are legitimately slow; the progress stream keeps the watchdog
+  // quiet, and a minute of total silence means the worker is stuck.
+  'index:build': BUILD_REQUEST_TIMEOUT_MS,
+  'fulltext:build': BUILD_REQUEST_TIMEOUT_MS,
+  // The shutdown call is already raced with a 1 s bound at its call site.
+  'index:shutdown': 5_000,
+};
+
+function timeoutFor(op: IndexWorkerOp): number {
+  return REQUEST_TIMEOUTS[op] ?? DEFAULT_REQUEST_TIMEOUT_MS;
+}
 
 const SERVICE_NAME = 'whale-index';
 const STDERR_TAG = '[whale-index] ';
@@ -85,6 +110,9 @@ async function ensureSpawn(): Promise<void> {
 
     c.on('message', (raw: unknown) => {
       const msg = raw as IndexWorkerMessage;
+      // Any message — pushed event or reply — proves the worker is alive,
+      // which is what the inactivity watchdogs measure.
+      markWorkerActivity(pending);
       // Server-pushed events (no reqId): fan out to subscribers, and use
       // `ready` as one valid signal that the child has booted.
       if ('kind' in msg) {
@@ -177,7 +205,10 @@ export async function request<O extends IndexWorkerOp>(
   await ensureSpawn();
   const c = child;
   if (!c) throw new Error('index worker not running');
-  const { reqId, promise } = newRequest(pending);
+  const { reqId, promise } = newRequest(pending, {
+    timeoutMs: timeoutFor(op),
+    label: op,
+  });
   try {
     c.postMessage({ reqId, op, arg });
   } catch (e) {

@@ -13,7 +13,7 @@ import {
   copySidecar,
   updateFileTags,
 } from './sidecar';
-import { META_DIR, SIDECAR_VERSION } from '../shared/whale-meta';
+import { META_DIR, MIGRATION_STATE_FILE, SIDECAR_VERSION } from '../shared/whale-meta';
 
 /** Per-test scratch directory under the OS temp root. */
 async function tmpDir(): Promise<string> {
@@ -209,6 +209,41 @@ describe('aggregated sidecar store (wsd.json)', () => {
       assert.ok(
         !existsSync(path.join(metaDir, 'legacy.txt.json')),
         'legacy file removed'
+      );
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps _migration-state.json out of the legacy migration', async () => {
+    const dir = await tmpDir();
+    try {
+      const metaDir = path.join(dir, META_DIR);
+      await fsp.mkdir(metaDir, { recursive: true });
+      // A real legacy sidecar forces the one-time migration pass to run.
+      await fsp.writeFile(
+        path.join(metaDir, 'legacy.txt.json'),
+        JSON.stringify({ tags: ['old'] }),
+        'utf8'
+      );
+      // Same directory, same `.json` suffix — but this is the migration flag,
+      // not a per-file sidecar.
+      const statePath = path.join(metaDir, MIGRATION_STATE_FILE);
+      const stateBody = JSON.stringify({ 'date-prefix-v1': true });
+      await fsp.writeFile(statePath, stateBody, 'utf8');
+
+      await readSidecar(filePath(dir, 'legacy.txt'));
+
+      // Deleting it cleared the flag, so the migration re-ran (and
+      // re-backed-up) on every start; folding it in also left a phantom
+      // `files['_migration-state']` entry in wsd.json.
+      assert.equal(existsSync(statePath), true, 'flag file preserved');
+      assert.equal(await fsp.readFile(statePath, 'utf8'), stateBody);
+      const wsdRaw = JSON.parse(await fsp.readFile(wsd(dir), 'utf8'));
+      assert.equal(
+        '_migration-state' in wsdRaw.files,
+        false,
+        'no phantom file entry'
       );
     } finally {
       await fsp.rm(dir, { recursive: true, force: true });

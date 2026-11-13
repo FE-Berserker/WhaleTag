@@ -3,6 +3,7 @@ import path from 'path';
 import { ipcMain } from 'electron';
 import { acceptRootsFromRenderer } from '../known-roots';
 import { setAllowedRoots, getAllowedRoots } from '../allowed-roots';
+import { foldPath } from '../path-fold';
 import { closeIndexDb } from '../index-worker-host';
 import { syncWatchedRoots } from '../dir-watcher';
 import { triggerStartupMigration } from '../migrate-date-tags';
@@ -44,10 +45,15 @@ export function registerFsRootsHandlers(): void {
     // the worker so per-location handles don't leak for the rest of the
     // session (docs/04 §10). Fire-and-forget — a later query for a still-
     // registered root simply reopens its db lazily.
+    //
+    // Compare folded paths: the renderer can re-push the same location with a
+    // different spelling (`C:\Foo` vs `c:\foo`, trailing separator). Exact
+    // string comparison treated those as removals and closed a live db.
+    const nextFolded = new Set(next.map((r) => foldPath(path.resolve(r))));
     for (const prev of lastSyncedRoots) {
-      if (!next.includes(prev)) {
-        void closeIndexDb(prev).catch(() => undefined);
-      }
+      if (next.includes(prev)) continue;
+      if (nextFolded.has(foldPath(path.resolve(prev)))) continue;
+      void closeIndexDb(prev).catch(() => undefined);
     }
     lastSyncedRoots = [...next];
     setAllowedRoots(next);

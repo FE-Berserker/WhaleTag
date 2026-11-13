@@ -86,9 +86,68 @@ interface RootWatch {
   reindexTimer: NodeJS.Timeout | null;
   /** Consecutive failed rebuilds — drives the retry backoff. */
   reindexFailures: number;
+  /**
+   * Set by {@link stopWatch}. In-flight async work (a reindex awaiting the
+   * worker, the per-dir tree walk) re-checks this so a stopped root stops
+   * scheduling rebuilds and stops attaching new watchers.
+   */
+  stopped: boolean;
 }
 
 const watches = new Map<string, RootWatch>();
+
+/**
+ * Re-attach retry state for roots whose watcher died. `fs.watch` can error
+ * out transiently (EMFILE / network share hiccup / kernel queue overflow);
+ * before this, such a root stayed silently unwatched until the next
+ * `fs:setAllowedRoots` push, i.e. usually until the next app start.
+ */
+const RECONNECT_BASE_DELAY_MS = 5_000;
+const RECONNECT_MAX_DELAY_MS = 5 * 60_000;
+const reconnectTimers = new Map<string, NodeJS.Timeout>();
+const reconnectAttempts = new Map<string, number>();
+let reconnectBaseDelayMs = RECONNECT_BASE_DELAY_MS;
+
+function cancelReconnect(rootPath: string): void {
+  const timer = reconnectTimers.get(rootPath);
+  if (timer) clearTimeout(timer);
+  reconnectTimers.delete(rootPath);
+  reconnectAttempts.delete(rootPath);
+}
+
+function scheduleReconnect(rootPath: string, reason: string): void {
+  // Already retrying, or something else restored the watch meanwhile.
+  if (reconnectTimers.has(rootPath) || watches.has(rootPath)) return;
+  const attempts = (reconnectAttempts.get(rootPath) ?? 0) + 1;
+  reconnectAttempts.set(rootPath, attempts);
+  const delay = Math.min(
+    reconnectBaseDelayMs * 2 ** Math.min(attempts - 1, 7),
+    RECONNECT_MAX_DELAY_MS
+  );
+  if (attempts === 1) {
+    console.warn(
+      `[dir-watcher] watcher for ${rootPath} died (${reason}); retrying in ${delay} ms`
+    );
+  }
+  const timer = setTimeout(() => {
+    reconnectTimers.delete(rootPath);
+    if (watches.has(rootPath)) {
+      reconnectAttempts.delete(rootPath);
+      return;
+    }
+    const w = startWatch(rootPath);
+    if (w) {
+      watches.set(rootPath, w);
+      reconnectAttempts.delete(rootPath);
+      console.info(`[dir-watcher] watcher restored for ${rootPath}`);
+      return;
+    }
+    // Root still missing / unwatchable — keep backing off.
+    scheduleReconnect(rootPath, reason);
+  }, delay);
+  timer.unref?.();
+  reconnectTimers.set(rootPath, timer);
+}
 
 /** Broadcast sink — main.ts wires this to `webContents.send`. */
 let broadcast: ((ev: DirChangedEvent) => void) | null = null;
@@ -99,7 +158,7 @@ export function setDirChangedBroadcast(fn: ((ev: DirChangedEvent) => void) | nul
 
 function flush(rootPath: string, w: RootWatch): void {
   w.flushTimer = null;
-  if (w.pending.size === 0) return;
+  if (w.stopped || w.pending.size === 0) return;
   const paths = [...w.pending].slice(0, MAX_PATHS_PER_FLUSH);
   w.pending.clear();
   broadcast?.({ rootPath, paths });
@@ -109,10 +168,12 @@ function flush(rootPath: string, w: RootWatch): void {
 
 /** Debounce before a retry; doubles per consecutive failure, capped at 60 s. */
 const MAX_RETRY_DELAY_MS = 60_000;
+/** Base for the retry backoff (test seam can shrink it). */
+let retryBaseDelayMs = REINDEX_DEBOUNCE_MS;
 
 function retryDelay(failures: number): number {
   return Math.min(
-    REINDEX_DEBOUNCE_MS * 2 ** Math.min(failures, 5),
+    retryBaseDelayMs * 2 ** Math.min(failures, 5),
     MAX_RETRY_DELAY_MS
   );
 }
@@ -122,6 +183,7 @@ function scheduleReindex(
   w: RootWatch,
   delayMs: number = REINDEX_DEBOUNCE_MS
 ): void {
+  if (w.stopped) return;
   if (w.reindexTimer) clearTimeout(w.reindexTimer);
   w.reindexTimer = setTimeout(() => {
     w.reindexTimer = null;
@@ -131,6 +193,7 @@ function scheduleReindex(
 }
 
 async function reindexIfBuilt(rootPath: string, w: RootWatch): Promise<void> {
+  if (w.stopped) return;
   if (w.reindexing) {
     // The timer represented real changes. Remember them instead of dropping
     // the only rebuild that could incorporate those changes.
@@ -143,6 +206,7 @@ async function reindexIfBuilt(rootPath: string, w: RootWatch): Promise<void> {
     // create `.whale/index.db` for a root the user never indexed (this is
     // also what keeps read-only locations write-free).
     const status = await request('index:status', { rootPath });
+    if (w.stopped) return;
     if (!status.ready) {
       w.reindexFailures = 0;
       return;
@@ -150,6 +214,10 @@ async function reindexIfBuilt(rootPath: string, w: RootWatch): Promise<void> {
     await request('index:build', { rootPath });
     w.reindexFailures = 0;
   } catch (error) {
+    // The root was removed while this rebuild was running: don't count the
+    // failure or arm a retry — a stopped root must not keep pinging the
+    // worker forever (the old code did, up to once a minute).
+    if (w.stopped) return;
     // A failed rebuild used to be dropped with "the next change retries" — but
     // nothing retries on a quiet root, leaving the index stale indefinitely.
     // Arm the dirty flag and back off (1.5 s doubling, capped at 60 s) so a
@@ -162,7 +230,9 @@ async function reindexIfBuilt(rootPath: string, w: RootWatch): Promise<void> {
     );
   } finally {
     w.reindexing = false;
-    if (w.reindexDirty) {
+    // A stopped root must not keep scheduling rebuilds (its watcher is gone
+    // and `watches` no longer holds this entry — nobody could clear it).
+    if (!w.stopped && w.reindexDirty) {
       w.reindexDirty = false;
       scheduleReindex(rootPath, w, retryDelay(w.reindexFailures));
     }
@@ -262,6 +332,7 @@ async function reindexFulltextIfBuilt(fp: string): Promise<void> {
 }
 
 function queueChange(rootPath: string, w: RootWatch, rel: string): void {
+  if (w.stopped) return;
   if (rel && isMetaPath(rel)) return; // our own `.whale/` churn — self-echo
   w.pending.add(rel);
   if (w.flushTimer) clearTimeout(w.flushTimer);
@@ -275,6 +346,23 @@ function onWatchEvent(rootPath: string, w: RootWatch, filename: string | null): 
   queueChange(rootPath, w, filename == null ? '' : filename.split(path.sep).join('/'));
 }
 
+/**
+ * Handle a watcher-level error. The old behaviour dropped the root and
+ * relied on `syncWatchedRoots` re-creating it — but that only runs when the
+ * renderer pushes allowed roots, so in practice a transient error left the
+ * location silently unwatched until the next app start (docs/04 §10).
+ */
+function handleWatcherError(rootPath: string, w: RootWatch, error: unknown): void {
+  if (w.stopped) return; // deliberate stop, not a failure
+  const reason = error instanceof Error ? error.message : 'unknown error';
+  // Rebuild the whole watch in either mode. In recursive mode the single
+  // watcher is dead; in per-dir mode one dead folder usually means the
+  // kernel stopped delivering for the root (inotify budget, network share),
+  // and no rename event will arrive to re-attach it.
+  stopWatch(rootPath);
+  scheduleReconnect(rootPath, reason);
+}
+
 function attachWatcher(
   rootPath: string,
   w: RootWatch,
@@ -282,13 +370,8 @@ function attachWatcher(
   watcher: fs.FSWatcher
 ): void {
   w.watchers.set(dir, watcher);
-  watcher.on('error', () => {
-    // Recursive mode: the single watcher died (root unmounted / renamed) —
-    // drop the root; `syncWatchedRoots` re-creates it when the root is back.
-    // Per-dir mode: drop only this folder; the parent's rename event
-    // re-attaches it if the tree comes back.
-    if (w.mode === 'recursive') stopWatch(rootPath);
-    else detachWatcher(w, dir);
+  watcher.on('error', (error: Error) => {
+    handleWatcherError(rootPath, w, error);
   });
 }
 
@@ -311,6 +394,7 @@ function detachTree(w: RootWatch, dir: string): void {
 }
 
 function attachDirWatcher(rootPath: string, w: RootWatch, dir: string): boolean {
+  if (w.stopped) return false;
   if (w.watchers.has(dir)) return true;
   if (w.watchers.size >= MAX_DIR_WATCHERS) {
     if (!w.watcherLimitWarned) {
@@ -335,6 +419,7 @@ function attachDirWatcher(rootPath: string, w: RootWatch, dir: string): boolean 
 async function attachDirTree(rootPath: string, w: RootWatch, startDir: string): Promise<void> {
   const stack = [startDir];
   while (stack.length > 0) {
+    if (w.stopped) return; // stopped mid-walk — don't leak watchers
     const dir = stack.pop() as string;
     if (!attachDirWatcher(rootPath, w, dir)) continue;
     let entries: fs.Dirent[];
@@ -411,6 +496,7 @@ function startWatch(rootPath: string, forcePerDir = false): RootWatch | null {
     reindexDirty: false,
     reindexTimer: null,
     reindexFailures: 0,
+    stopped: false,
   };
   if (!forcePerDir) {
     try {
@@ -435,8 +521,12 @@ function startWatch(rootPath: string, forcePerDir = false): RootWatch | null {
 function stopWatch(rootPath: string): void {
   const w = watches.get(rootPath);
   if (!w) return;
+  w.stopped = true;
+  cancelReconnect(rootPath);
   if (w.flushTimer) clearTimeout(w.flushTimer);
   if (w.reindexTimer) clearTimeout(w.reindexTimer);
+  w.flushTimer = null;
+  w.reindexTimer = null;
   w.reindexDirty = false;
   for (const watcher of w.watchers.values()) {
     try {
@@ -458,6 +548,11 @@ export function syncWatchedRoots(roots: string[]): void {
   for (const key of [...watches.keys()]) {
     if (!wanted.has(key)) stopWatch(key);
   }
+  // A root that errored out is no longer in `watches` but may still have a
+  // retry armed — drop it when the root is no longer configured.
+  for (const key of [...reconnectTimers.keys()]) {
+    if (!wanted.has(key)) cancelReconnect(key);
+  }
   for (const root of wanted) {
     if (watches.has(root)) continue;
     const w = startWatch(root);
@@ -468,6 +563,7 @@ export function syncWatchedRoots(roots: string[]): void {
 /** Close every watcher (app quit). */
 export function closeAllWatchers(): void {
   for (const key of [...watches.keys()]) stopWatch(key);
+  for (const key of [...reconnectTimers.keys()]) cancelReconnect(key);
   for (const timer of fulltextTimers.values()) clearTimeout(timer);
   fulltextTimers.clear();
   fulltextDirty.clear();
@@ -500,4 +596,27 @@ export function _watchModeForTest(rootPath: string): 'recursive' | 'per-dir' | n
 
 export function _dirWatcherCountForTest(rootPath: string): number | null {
   return watches.get(rootPath)?.watchers.size ?? null;
+}
+
+/** Test seam: run the watcher-error path without a real `fs.watch` error. */
+export function _simulateWatcherErrorForTest(rootPath: string): boolean {
+  const w = watches.get(rootPath);
+  if (!w) return false;
+  handleWatcherError(rootPath, w, new Error('simulated watcher error'));
+  return true;
+}
+
+/** Test seam: is a re-attach retry armed for this root? */
+export function _reconnectPendingForTest(rootPath: string): boolean {
+  return reconnectTimers.has(rootPath);
+}
+
+/** Test seam: shrink the get-the-watcher-back backoff (default 5 s). */
+export function _setReconnectBaseDelayForTest(ms: number): void {
+  reconnectBaseDelayMs = ms;
+}
+
+/** Test seam: shrink the index-retry backoff (default 1.5 s). */
+export function _setRetryBaseDelayForTest(ms: number): void {
+  retryBaseDelayMs = ms;
 }
