@@ -21,6 +21,9 @@ let bulkSidecars: SidecarReadResult['sidecars'] = {};
 let issues: SidecarIssue[] = [];
 let depthCalls: unknown[][] = [];
 let bulkCalls: unknown[][] = [];
+/** Overridable so a test can hold one directory's listing pending. */
+let listDirectoryImpl: (dirPath: string) => Promise<DirEntry[]> = async () =>
+  entries;
 
 function injectMock(moduleName: string, exports: unknown): void {
   const modulePath = require_.resolve(moduleName);
@@ -63,7 +66,7 @@ before(() => {
   cleanupDom = globalJsdom();
   injectMock('-/services/ipc-api', {
     ipcApi: {
-      listDirectory: async () => entries,
+      listDirectory: (dirPath: string) => listDirectoryImpl(dirPath),
       readSidecarsDetailed: async (...args: unknown[]) => {
         depthCalls.push(args);
         return { sidecars: depthSidecars, issues };
@@ -100,6 +103,7 @@ afterEach(() => {
   issues = [];
   depthCalls = [];
   bulkCalls = [];
+  listDirectoryImpl = async () => entries;
 });
 
 after(() => {
@@ -191,5 +195,48 @@ describe('DirectoryContentContextProvider sidecar issues', () => {
     await waitFor(() => assert.equal(bulkCalls.length, 1));
     assert.deepEqual(bulkCalls[0], [[visible.path]]);
     assert.deepEqual(observed?.entries.map((item) => item.path), [visible.path]);
+  });
+
+  it('ignores a stale listing that resolves after the next directory', async () => {
+    currentDir = 'C:\\slow';
+    const slowEntry = entry(currentDir, 'slow.txt');
+    const fastEntry = entry('C:\\fast', 'fast.txt');
+    const slow = { resolve: null as ((value: DirEntry[]) => void) | null };
+    listDirectoryImpl = (dirPath) =>
+      dirPath === 'C:\\slow'
+        ? new Promise<DirEntry[]>((resolve) => {
+            slow.resolve = resolve;
+          })
+        : Promise.resolve([fastEntry]);
+
+    const view = renderProvider();
+    await waitFor(() => assert.equal(observed?.loading, true));
+
+    currentDir = 'C:\\fast';
+    view.rerender(
+      <Provider>
+        <Probe />
+      </Provider>
+    );
+    await waitFor(() =>
+      assert.deepEqual(
+        observed?.entries.map((item) => item.path),
+        [fastEntry.path]
+      )
+    );
+
+    // The slow directory finally answers: it must not replace the newer one.
+    slow.resolve?.([slowEntry]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(
+      observed?.entries.map((item) => item.path),
+      [fastEntry.path],
+      'stale load must not overwrite the current directory'
+    );
+    assert.equal(
+      observed?.loading,
+      false,
+      'stale load must not clear the spinner'
+    );
   });
 });

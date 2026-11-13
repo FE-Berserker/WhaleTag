@@ -55,6 +55,7 @@ import {
   writePrefs,
 } from '../domain/perspective-prefs';
 import { geoTagDisplayLabel, tagDisplayLabel } from '-/services/tag-display';
+import { escapeHtml } from '-/services/escape-html';
 import { useDirectoryUI } from '-/hooks/DirectoryContentContextProvider';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { useImageExport, base64FromDataUrl } from '-/hooks/useImageExport';
@@ -337,7 +338,7 @@ export default function TagCloudView({ data }: TagCloudViewProps) {
       tooltip: {
         show: true,
         formatter: (params: TagCloudWordParam) =>
-          `${params.name}<br/>${t('tagCloudCount', { count: params.data?.count ?? 0 })}`,
+          `${escapeHtml(params.name)}<br/>${t('tagCloudCount', { count: params.data?.count ?? 0 })}`,
       },
       series: [
         {
@@ -390,9 +391,9 @@ export default function TagCloudView({ data }: TagCloudViewProps) {
           const j = params.data[1] as number;
           const count = params.data[2] as number;
           if (i === j) {
-            return `${matrixLabels[i]}<br/>${t('tagCloudCount', { count })}`;
+            return `${escapeHtml(matrixLabels[i])}<br/>${t('tagCloudCount', { count })}`;
           }
-          return `${matrixLabels[i]} + ${matrixLabels[j]}<br/>${t('tagCloudCooccurrenceCount', { count })}`;
+          return `${escapeHtml(matrixLabels[i])} + ${escapeHtml(matrixLabels[j])}<br/>${t('tagCloudCooccurrenceCount', { count })}`;
         },
       },
       grid: { top: 16, right: 16, bottom: 128, left: 128 },

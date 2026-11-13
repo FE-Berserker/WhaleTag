@@ -64,6 +64,7 @@ import {
 import { useImageExport, base64FromDataUrl, type ClipboardKind } from '-/hooks/useImageExport';
 import { ipcApi } from '-/services/ipc-api';
 import { formatSize, truncate } from '-/services/format';
+import { escapeHtml } from '-/services/escape-html';
 import { useSelector } from 'react-redux';
 import type { RootState } from '-/reducers';
 
@@ -344,7 +345,7 @@ export default function FolderVizView({ data }: FolderVizViewProps) {
       const size = params.value ?? 0;
       const count = params.data?.fileCount ?? 0;
       const lines = [
-        params.name,
+        escapeHtml(params.name),
         `${t('size')}: ${formatSize(size)}`,
       ];
       if (count > 0) lines.push(`${t('files')}: ${count}`);

@@ -57,6 +57,11 @@ function ThumbIconBase({
   // needs the bounding box. We keep the ref attached to a stable wrapper
   // so the observer survives content swaps (skeleton → img).
   const rootRef = useRef<HTMLDivElement | null>(null);
+  // The component may be recycled for a different entry without unmounting
+  // (grid/list cells without a React key). Track which entry the current
+  // state belongs to so a switch can't show the previous thumbnail or skip
+  // the skeleton because `loaded` was already true.
+  const stateKeyRef = useRef(cacheKey);
 
   useEffect(() => {
     // Non-thumbnailable files render the glyph immediately — no IPC, no
@@ -67,6 +72,14 @@ function ThumbIconBase({
 
     const el = rootRef.current;
     if (!el) return undefined;
+
+    // Recycled cell, new entry: drop the previous entry's image/status before
+    // the cache fast path below can reuse them.
+    if (stateKeyRef.current !== cacheKey) {
+      stateKeyRef.current = cacheKey;
+      setDataUrl(null);
+      setLoaded(false);
+    }
 
     // Synchronous cache fast path: if the parent cache already has the data
     // URL, mirror it into state and skip the observer entirely. This is the

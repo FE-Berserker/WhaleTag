@@ -38,6 +38,7 @@ import ReactECharts from 'echarts-for-react';
 import { echarts } from '../services/echarts-setup';
 
 import { DND_TYPE_FILE, type FileDragItem } from '-/services/dnd';
+import { escapeHtml } from '-/services/escape-html';
 import type { DirEntry } from '../../shared/ipc-types';
 import {
   addDays,
@@ -1488,7 +1489,7 @@ function YearTrendChart({
           params: { name?: string; value?: number } | Array<{ name?: string; value?: number }>
         ) => {
           const p = Array.isArray(params) ? params[0] : params;
-          return `${p.name}<br/>${t('files')}: ${p.value}`;
+          return `${escapeHtml(p.name)}<br/>${t('files')}: ${p.value}`;
         },
       },
       grid: { top: 12, right: 4, bottom: 20, left: 24 },
@@ -2033,6 +2034,13 @@ function CalendarEntryItem({
         userSelect: 'none',
         opacity: isDragging ? 0.4 : 1,
         '&:hover': { bgcolor: 'action.hover' },
+        // A month cell keeps its own scroll box and can hold hundreds of
+        // entries. `content-visibility: auto` lets Chromium skip layout/paint
+        // for rows scrolled out of view; the intrinsic size keeps the
+        // scrollbar from jumping. (Agenda rows are already windowed — this
+        // covers only the day-cell list, with no visible change.)
+        contentVisibility: 'auto',
+        containIntrinsicSize: '0 40px',
         ...(selected && {
           bgcolor: 'action.selected',
           outline: 1,

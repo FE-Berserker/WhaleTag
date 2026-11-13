@@ -199,8 +199,14 @@ export function DirectoryContentContextProvider({
     undefined
   );
 
+  // Monotonic token: a slow load for a previous directory (or an older
+  // refresh / depth change) must not overwrite the state the newest load owns.
+  const loadSeqRef = useRef(0);
+
   const load = useCallback(
     async (dirPath: string) => {
+      const seq = ++loadSeqRef.current;
+      const isCurrent = () => seq === loadSeqRef.current;
       // A load/navigation/refresh starts a new health snapshot; never carry a
       // previous directory's persistent warning into this one.
       setSidecarIssues([]);
@@ -219,9 +225,11 @@ export function DirectoryContentContextProvider({
         // the registered locations (docs/13 §13); on the first mount this
         // effect runs before Root has pushed the roots.
         await waitForAllowedRoots();
+        if (!isCurrent()) return;
         if (debouncedDepth <= 1) {
           // Fast path: current dir only. Same behavior as before H.24.
           const list = await ipcApi.listDirectory(dirPath);
+          if (!isCurrent()) return;
           const visible = list.filter(
             (e) =>
               showHiddenFiles || (!isHiddenName(e.name) && e.name !== META_DIR)
@@ -236,6 +244,7 @@ export function DirectoryContentContextProvider({
           let sidecarMap: Record<string, SidecarMeta> = {};
           try {
             const detailed = await ipcApi.readSidecarsDetailed(dirPath, names);
+            if (!isCurrent()) return;
             sidecarMap = detailed.sidecars;
             setSidecarIssues(detailed.issues);
           } catch {
@@ -257,6 +266,7 @@ export function DirectoryContentContextProvider({
               maxDepth: debouncedDepth,
             });
           } catch (e) {
+            if (!isCurrent()) return;
             setError(e instanceof Error ? e.message : String(e));
             setRawFiles([]);
             setRawDirs([]);
@@ -264,6 +274,7 @@ export function DirectoryContentContextProvider({
             setRecursiveTruncated(false);
             return;
           }
+          if (!isCurrent()) return;
           setRecursiveTruncated(scan.length >= MAX_RECURSIVE_ENTRIES);
           const visibleScan = filterRecursiveEntries(scan, dirPath, showHiddenFiles);
           const files = visibleScan.filter((e) => !e.isDirectory);
@@ -280,9 +291,11 @@ export function DirectoryContentContextProvider({
               // An empty recursive scan has no file whose dirname can select the
               // bulk reader. Still inspect the root's own wsd.json for health.
               const root = await ipcApi.readSidecarsDetailed(dirPath, []);
+              if (!isCurrent()) return;
               setSidecarIssues(root.issues);
             } else {
               const detailed = await ipcApi.readSidecardsForPathsDetailed(allPaths);
+              if (!isCurrent()) return;
               setSidecarIssues(detailed.issues);
               // Filter to existing definitions only (skip undefined).
               for (const [k, v] of Object.entries(detailed.sidecars)) {
@@ -291,18 +304,21 @@ export function DirectoryContentContextProvider({
             }
           } catch {
             // Best-effort: an unexpected IPC failure yields no health snapshot.
+            if (!isCurrent()) return;
             setSidecarIssues([]);
           }
           setSidecarsByPath(byPath);
         }
       } catch (e) {
+        if (!isCurrent()) return;
         setError(e instanceof Error ? e.message : String(e));
         setRawFiles([]);
         setRawDirs([]);
         setSidecarsByPath(new Map());
         setRecursiveTruncated(false);
       } finally {
-        setLoading(false);
+        // A stale load must not clear the spinner the newest load owns.
+        if (isCurrent()) setLoading(false);
       }
     },
     [debouncedDepth, showHiddenFiles]

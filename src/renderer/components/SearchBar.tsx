@@ -136,8 +136,15 @@ export default function SearchBar() {
         : t('indexBuilding', { processed: progress.processed })
       : null;
 
+  // Enter can fire again while a slower query is still in flight, and the
+  // content/index mode can switch mid-flight. Only the newest query may
+  // publish results — otherwise a slow first search overwrites a newer one.
+  const searchSeqRef = useRef(0);
+
   /** Run the search (Enter only). No-op if not ready or query too short. */
   const runSearch = async () => {
+    const seq = ++searchSeqRef.current;
+    const isCurrent = () => seq === searchSeqRef.current;
     const q = query.trim();
     if (contentMode) {
       // Full-text content search across enabled roots (runs in main process).
@@ -150,15 +157,20 @@ export default function SearchBar() {
       setContentBusy(true);
       setSearchError(null);
       try {
-        setContentResults(await searchAllFulltext(fulltextPaths, q));
+        const hits = await searchAllFulltext(fulltextPaths, q);
+        if (!isCurrent()) return;
+        setContentResults(hits);
       } catch (e) {
+        if (!isCurrent()) return;
         // Clear the previous hits: keeping them would present stale data as
         // this query's result while the failure stayed invisible.
         setContentResults([]);
         setSearchError(t('searchFailed', { message: errorMessage(e) }));
       } finally {
-        setContentBusy(false);
-        setOpen(true);
+        if (isCurrent()) {
+          setContentBusy(false);
+          setOpen(true);
+        }
       }
       return;
     }
@@ -172,12 +184,15 @@ export default function SearchBar() {
     }
     setSearchError(null);
     try {
-      setResults(await search(query));
+      const hits = await search(query);
+      if (!isCurrent()) return;
+      setResults(hits);
     } catch (e) {
+      if (!isCurrent()) return;
       setResults([]);
       setSearchError(t('searchFailed', { message: errorMessage(e) }));
     }
-    setOpen(true);
+    if (isCurrent()) setOpen(true);
   };
 
   const handlePick = async (entry: IndexEntry) => {
