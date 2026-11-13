@@ -8,6 +8,7 @@
 
 - `contextIsolation: true` `nodeIntegration: false` `sandbox: true`
 - 渲染层**永不**直接碰 Node,只经 `window.whale`([src/main/preload.ts](../src/main/preload.ts) 经 `contextBridge.exposeInMainWorld`)
+- 用户数据交给会渲染 HTML 的第三方组件时**必须在 sink 转义**:ECharts tooltip 默认 `renderMode: 'html'`(innerHTML),而标签名经 `.whale/wsd.json` 或 MCP 工具可被任意字符串污染 → 统一走 [escape-html.ts](../src/renderer/services/escape-html.ts)。只转义 HTML sink,标签显示值(React 文本节点)保持原样,否则界面会显示 `&lt;`
 - 详细内容见 [docs/01-architecture.md §7](./01-architecture.md)
 
 ## 2. 写路径保护(allowedRoots)
@@ -26,7 +27,9 @@
 
 修订历史 IPC(`ext:backupRevision` / `ext:listRevisions` / `ext:restoreRevision` / `ext:deleteRevision`)过同一闸;`deleteRevision` 额外把 revision 路径绑定到所属文件的 `<dir>/.whale/revisions/` 前缀(与 restore 相同)——`rm --force` 不进回收站,不做绑定就是任意路径强删。`ext:cleanupRevisions` 只接受有限、非负的 number，非法天数在删除前 reject。详见 [docs/07-extensions.md](./07-extensions.md)。
 
-读取入口也遵守同一位置边界：`fs:readFile` / `fs:readTextFile` / `fs:readFileBase64` / `fs:listDirectory` / `fs:listDirectoryRecursive` / `folderMeta:read` 都过 `assertWithinAllowedRoot`——目录枚举同样能揭示位置外路径，递归扫描还会写 `<dir>/.whale/` 缓存，所以不能只防"读内容"；`fs:pathExists` 这个无校验的死通道已删除。目录缩略图加载/背景加载会校验目录(缺图时可能自动生成并写 `.whale`)，设置目录缩略图/背景会校验目标目录；原生对话框自选的 source 图片可以位于位置外，但服务只读取源、只在目标目录 `.whale/` 写入。`index:query` / `index:advanced` / `index:tags` / `index:status` / `fulltext:search` / `fulltext:has` 均在访问索引前校验 root。侧车批量读(`sidecar:readMany*`)仍不校验 root——它只返回调用方已给出文件名对应的元数据，无法枚举目录。
+读取入口也遵守同一位置边界：`fs:readFile` / `fs:readTextFile` / `fs:readFileBase64` / `fs:listDirectory` / `fs:listDirectoryRecursive` / `folderMeta:read` 都过 `assertWithinAllowedRoot`——目录枚举同样能揭示位置外路径，递归扫描还会写 `<dir>/.whale/` 缓存，所以不能只防"读内容"；`fs:pathExists` 这个无校验的死通道已删除。目录缩略图加载/背景加载会校验目录(缺图时可能自动生成并写 `.whale`)，设置目录缩略图/背景会校验目标目录；原生对话框自选的 source 图片可以位于位置外，但服务只读取源、只在目标目录 `.whale/` 写入。单文件缩略图读取(`thumbnail:load`)同样先校验文件路径；`fs:zipEntries` 的归档目标也校验(名字是渲染层拼的用户输入，`..\..\x.zip` 不得越界)，`fs:zipDirectory` 的目标由主进程从源路径推导、保持豁免。`index:query` / `index:advanced` / `index:tags` / `index:status` / `fulltext:search` / `fulltext:has` 均在访问索引前校验 root。侧车批量读(`sidecar:readMany*`)仍不校验 root——它只返回调用方已给出文件名对应的元数据，无法枚举目录。
+
+`fs:importExternal`(从系统拖入文件)的**源路径**不做位置校验：拖拽 API 只给路径字符串，主进程无法验证"这确实是一次用户拖拽"，而要求源在位置内会直接废掉"从资源管理器拖进来"这个功能。**目标目录**仍过 `assertWithinAllowedRoot`。残余风险如实记录：被注入的渲染层可以把任意可读文件复制进某个位置，再经 `fs:readFile` 读回——消除它只能取消位置外拖入，属已知取舍。
 
 详见 [docs/02-file-io.md §6](./02-file-io.md)。
 
@@ -73,12 +76,13 @@
 - **菜单形态(2026-07-22)**:"命令"是右键菜单里**单项父条目**(Terminal 图标 + 右侧 ▸),悬停/点击在其右缘开**飞窗子菜单**列出全部适用命令(各带 Terminal 图标,模板作原生 tooltip)——命令再多也不撑长主菜单。实现在 [EntryContextMenu.tsx](../src/renderer/components/EntryContextMenu.tsx)(flyout 复用 GanttEntryMenu 的兄弟 `<Menu anchorEl>` 模式,悬停开 + 250ms 关窗宽限计时器防斜线误关;flyout Modal root 须设 `pointer-events:none`(paper 恢复 `auto`),否则全屏 root 层盖住父菜单项 → 幻影 mouseLeave/Enter 循环 = 飞窗闪烁)。
 
 - **opt-in**:模板存 redux-persist `settings.userCommands`(默认空 `[]`),未配置则右键菜单不显示"命令"子菜单。
-- **路径不可信,模板可信**:模板是用户显式录入;被替换进去的**文件路径**不可信(文件名可能含 `&` `|` `"` `%` 元字符 → 命令注入)。
+- **路径不可信,模板可信**:模板是用户显式录入;被替换进去的**文件路径**不可信(文件名可能含 `&` `|` `"` `%` 元字符 → 命令注入)。"可信"的前提是它确实来自设置——主进程只执行被推送过的模板(见下一条)。
 - **主进程做替换 + 引号**:renderer 只传 `{ template, targetPath }`;主进程 `runUserCommand` 把 `${path}` / `${dir}` / `${name}` 替换成**加好引号的值**再拼命令。renderer 永不构造 shell 字符串。
 - **引号复用** [shell-quote.ts](../src/main/shell-quote.ts) 的 `quotePathForShell` —— win32 走 cmd 双引号 + 内嵌 `"` 翻倍,POSIX 单引号 close-reopen。
 - **`assertWithinAllowedRoot(targetPath)` 在 IPC 入口**(`shell:runCommand`,[shell.ts](../src/main/ipc/shell.ts))—— 拒配置位置外的路径 / symlink 逃逸 / 未注册根(fail-closed),对齐 `fs:rename` / `fs:delete`。
+- **模板白名单(fail-closed)**:渲染层在启动(`PersistGate` 之后)与设置变更时把 `settings.userCommands` 的模板串推给主进程(`shell:setCommandTemplates`,[UserCommandTemplateSync.tsx](../src/renderer/components/UserCommandTemplateSync.tsx));`runUserCommand` 只执行名单内的模板,其余抛 `COMMAND_NOT_ALLOWED`([shell-command.ts](../src/main/shell-command.ts))。未推送前名单为空 = 一律拒绝,被注入的渲染层无法把该通道当通用 shell 用。
 - **Windows `%` 拒绝**:cmd 默认下 `"..."` 内的 `%VAR%` 仍展开(`%%` 只在 .bat 内有效,`cmd /k` 内不可靠转义)→ 路径含 `%` 直接拒,renderer toast 报 `commandPathBlocked`。`!`(delayed expansion 关)放行。详见 [docs/09 §22](./09-known-issues.md)。
-- **`spawn` + `detached` + `child.unref()`**(fire-and-forget,新终端窗口归用户);永不 `exec`。
+- **`spawn` + `detached` + `child.unref()`**(fire-and-forget,新终端窗口归用户);永不 `exec`。macOS 走 `osascript`,脚本字符串**先双写 `\` 再转义 `"`**(顺序反了会让命令里的反斜杠吃掉转义);终端进程 spawn 失败(`error` 事件)现在 reject 到渲染层,不再 `console.warn` 后返回 `{ ok: true }` 假装启动成功。
 - **不按只读位置拒绝**:命令是用户显式 opt-in 的外部进程(可能只读分析),只保留 `assertWithinAllowedRoot` 这道基础闸。
 
 ## 9. 已知不在范围
@@ -97,7 +101,7 @@
 写操作 33 处过 `assertWithinAllowedRoot`(§2);读路径此前完全不受限、与威胁模型不一致,通道闸已修:
 
 - ✅ `fs:readFile` / `fs:readTextFile` / `fs:readFileBase64` handler 入口加 `assertWithinAllowedRoot`([fs-read.ts](../src/main/ipc/fs-read.ts))。渲染层调用方全部为用户动作驱动(打开文件 / 灯箱 / 搜索命中 / 扩展嵌图,均在位置内),fail-closed 不伤启动路径。
-- ✅ `fs:openNative` 同闸;扩展 `openLinkExternally`(http(s) 分流 `window.open` 后)与 `openNative` 消息汇到它,"任意路径启动 OS 程序"的面被封。
+- ✅ `fs:openNative` 同闸;扩展 `openLinkExternally`(http(s) 分流 `window.open` 后)与 `openNative` 消息汇到它,"任意路径启动 OS 程序"的面被封。扩展发来的 `file://` 链接先 `fileURLToPath` 还原成真实路径再过闸(drawio 的相对链接就是这种形态;此前直接拿 URL 串比对 root，必然失败且错误被静默吞掉)。
 - ✅ `exif:extractGps` / `exif:get-summary` 同闸([search-index.ts](../src/main/ipc/search-index.ts))——Mapique 只对位置内文件取 EXIF,与此节声明对齐。
 - ⏳ **遗留**:能力授予"全有或全无"——manifest 无 permissions / capabilities 字段,text-editor 与 image-viewer 拥有完全相同的宿主能力面。目前 8 个扩展全是内置自研,威胁面可控;引入第三方 / 用户扩展机制前须补"按 manifest 声明能力白名单放行 `request*` 消息类型"。
 

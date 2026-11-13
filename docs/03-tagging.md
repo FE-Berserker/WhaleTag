@@ -18,7 +18,7 @@
 
 - `readSidecars(dir)` 读 wsd.json(整目录)+ `migrateLatLngInPlace`(老 `lat/lng` 字段转 `geo:lat,lng` tag)
 - `readSidecar(filePath)` 单文件读 —— 优先 wsd.json,缺失回退老 per-file `<file>.json`(搬迁兼容)
-- `readSidecardsForPaths(paths)` 批量读,Pass 1(并行)按父目录分组读 wsd.json,Pass 2(并行)缺失的逐个 `readSidecar`
+- `readSidecardsForPaths(paths)` 批量读,Pass 1(并行)按父目录分组读 wsd.json,Pass 2(并发上限 8)缺失的逐个 `readSidecar`(每个 miss 都会重读该目录 wsd.json,不限并发在万级未打标目录上会耗尽文件句柄)
 - `writeSidecar` / `removeSidecar` / `moveSidecar` / `copySidecar` 走 read-modify-write + 主进程 per-directory 写锁串行化
 - 写盘 = `atomicWriteJson`(.tmp + fsync + rename)
 

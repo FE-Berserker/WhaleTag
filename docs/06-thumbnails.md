@@ -60,7 +60,7 @@ type ThumbKind = 'image' | 'svg' | 'video' | 'pdf' | 'font';
 - 每个 cell 用 IntersectionObserver 监听,带 200px lookahead
 - 加载请求进 [src/renderer/services/thumb-load-queue.ts](../src/renderer/services/thumb-load-queue.ts) FIFO 队列,`MAX_CONCURRENT = 4`(对齐 sharp worker pool)
 - 同 key 去重;scroll-out 调 `cancelThumbLoad` 摘除未启动的 task
-- `thumbCache` key = `${path}|${modified}` → data URL,卸载 / 复用时 `observed` 标志丢弃"in-flight 完成后但 cell 已 recycle"的脏结果
+- `thumbCache` key = `${path}|${modified}` → data URL,卸载 / 复用时 `observed` 标志丢弃"in-flight 完成后但 cell 已 recycle"的脏结果;`cacheKey` 变化时还会清空上一张图与 `loaded` 标记——否则没有 React key 的复用单元格会短暂显示上一个文件的缩略图,或因 `loaded` 仍为 true 而跳过 Skeleton
 - **IO `observed` 双向同步**:`isIntersecting: true` 分支复位 `observed = true`,`false` 分支置 `false`。否则快速滚过的 cell 永远停在 Skeleton,滚回视口也不会再填充(细节见 [docs/09-known-issues.md §12](./09-known-issues.md))
 - 加载/解码失败会 catch 并回退类型或文件夹图标，不产生 unhandled rejection；失败结果不写 `thumbCache`，之后重新进入视口仍可重试
 

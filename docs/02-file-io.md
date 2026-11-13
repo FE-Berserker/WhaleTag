@@ -132,7 +132,7 @@ main
 
 **白名单**(`configureStore.ts`):`locations` / `settings` / `taglibrary` / `workflow` / `recent` / `savedsearches` / `extensions`。`extensions` 走 `createTransform` 只持久化 `userDefaults` + `enabledOverrides`,运行时 `registry` 重新加载。
 
-**Flush 流程**:window `close` → `event.preventDefault()` → renderer 发 `app:request-flush` → `persistor.flush()` 排空 → main 收到 `app:flush-complete` → `mainWindow.destroy()`。3 秒内没收到触发 `closeFallback` `setTimeout` 强 destroy。
+**Flush 流程**:window `close` → `event.preventDefault()` → renderer 收到 `app:request-flush` → `Promise.all([persistor.flush(), flushExtensionEditors()])` 排空 → main 收到 `app:flush-complete` → `mainWindow.destroy()`。两条腿都得排:redux-persist 之外,脏扩展编辑器(drawio / markdown / json)在 [ExtensionContextProvider](../src/renderer/hooks/ExtensionContextProvider.tsx) 注册的 flush 里逐个 `requestSave` 落盘(单 tab 5 秒封顶,失败保留 dirty 并上抛到 console)。**8 秒**内没收到 `app:flush-complete` 触发 `closeFallback` `setTimeout` 强 destroy(无脏标签时握手通常立即完成)。
 
 **`autoMergeLevel1` reconciler 行为**:每个 slice key 单独处理 —— `originalState[key] !== reducedState[key]` 时**跳过该 slice 的 rehydration**。所以 sanitize / migrate 这类函数必须**逐键比较,真改了才替换 `base`**;否则 reconciler 看到引用变化 → 整个 slice 落回默认(典型症状:`themeMode` / `viewDepth` 关闭重启后回到默认值)。
 

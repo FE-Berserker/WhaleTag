@@ -25,7 +25,7 @@ Whale：本地优先、离线、隐私安全的 Electron 文件管理与打标�
 - 框架：Node 内建 `node:test`（`import { describe, it } from 'node:test'`），断言用 `node:assert/strict`，经 Electron `--test` 执行。
 - **共置**：测试文件 `foo.test.ts` 放在被测文件旁边，不集中建 tests/ 目录。
 - **自动发现**：`scripts/run-tests.cjs` 扫描 `src/` 与 `scripts/` 下所有 `*.test.ts(x)`，新增测试文件**无需登记清单**（旧的手工清单曾漏 8 个文件，勿走回头路）。
-- 现状约 108 个测试文件，覆盖 main/renderer/shared/extensions 四层。
+- 现状约 128 个测试文件，覆盖 main/renderer/shared/extensions 四层。
 
 ## 目录职责
 

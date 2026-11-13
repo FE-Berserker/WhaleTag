@@ -104,7 +104,7 @@ src/extensions/
 
 - `ExtensionHost.tsx` iframe 宿主,管理加载 / 消息桥 / 保存流程 / 工具栏;**启动看门狗**(2026-07-22):iframe 12s 内未 post `ready` → 显示可重试失败态(此前崩溃/CSP 拦截 = 永久白屏),ready 前显示加载遮罩,重试经 `retryKey` 重挂 iframe
 - 编辑器脏状态经 `contentChangedInEditor` 上报;Save 触发 `parentSaveDocument` → `writeFileWithRevision`
-- 编辑器保存前**自动备份**到 `.whale/revisions/<basename>/<timestamp>.<ext>`
+- 编辑器保存前**自动备份**到 `.whale/revisions/<basename>/<timestamp>.<ext>`；文件名用单调毫秒时间戳(同毫秒的两次保存各留一份,不互相覆盖),列表按源文件自身扩展名还原时间戳(无扩展名文件不再被最后一个点截断)
 - 启动清理 30 天前的旧 revision(`Root.tsx` 调 `cleanupRevisions(30)`)；IPC 只接受有限、非负的 number，非法或负天数会在任何删除发生前 reject
 
 **修订历史**:
@@ -154,7 +154,7 @@ src/extensions/
 - `EMPTY_DRAWIO` 单行占位符(`<diagram>` 紧跟 `<mxGraphModel>`,零空白),避免 `parseDiagramNode` children 分支失败
 - Drawio 保存实测走 `export` action event(不是 `autosave`/`save`);bridge `dispatchDrawioMessage` 必须识别 3 种 event 统一映射到 `{kind: 'xml', xml}`
 - drawio `editor.modified` 默认 false(画了 shape + 1.5s autosave timer 后才翻 true),工具栏 Save 不依赖 dirty 直接允许(未修改 = no-op 写盘)
-- unmount 会注销 save/message handler、清 XML timer 并 reject pending requests；销毁后不再 postMessage，异步保存与图片插入也不得继续更新已卸载组件。`fileContent` 刷新只重绑 handler，不取消已经开始的保存或图片插入；若切换到另一文档，尚未完成的图片插入会在写 XML 前中止，避免把旧文档的拖入内容写进新文档
+- unmount 会注销 save/message handler、清 XML timer 并 reject pending requests；销毁后不再 postMessage，异步保存与图片插入也不得继续更新已卸载组件。`fileContent` 刷新只重绑 handler，不取消已经开始的保存或图片插入；若切换到另一文档，尚未完成的图片插入会在写 XML 前中止，避免把旧文档的拖入内容写进新文档。图片插入是 read→append→loadXml 的读改写：**读不到当前图表时中止并提示，不加载任何替换文档**（旧兜底会用一个单 cell 文档覆盖整张图）
 
 ## 7. 扩展 i18n
 

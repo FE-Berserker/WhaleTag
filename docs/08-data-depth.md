@@ -62,6 +62,7 @@ type DirectoryContentContextValue = DirectoryContentMetaValue & DirectoryUIValue
 - `filterRecursiveEntries` 按相对 root 的完整路径剪枝:`showHiddenFiles=false` 时,隐藏目录及其所有后代、`.whale` 都不进入 entries 或 sidecar 批量读取,避免出现无父行的文件/幽灵图节点
 - `DirectoryContentContextProvider` 内 `useEffect` 200ms 防抖(`setTimeout` + `debouncedDepth` 守卫),拖动 1→5 只触发 1 次递归 IPC
 - `recursiveTruncated: boolean` 在 context 中暴露,由各消费者决定是否展示
+- 每次 `load` 带单调序号:慢的前一次目录 / 深度请求返回后直接丢弃,不覆盖新目录的 entries、也不清新加载的 loading 态;`SearchBar.runSearch` 同规则(旧查询晚到不得覆盖新查询的结果或错误)
 
 ## 3. 批量 sidecar 读取 IPC
 
