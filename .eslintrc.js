@@ -11,6 +11,11 @@ module.exports = {
     'eslint:recommended',
     'plugin:@typescript-eslint/recommended',
     'plugin:react/recommended',
+    // Rules of Hooks is a correctness rule, not a style one: a hook after an
+    // early return crashes React at runtime ("Rendered more hooks than during
+    // the previous render"). It was previously only *registered* as a plugin,
+    // so the rules never ran.
+    'plugin:react-hooks/recommended',
     'plugin:import/typescript',
     'prettier',
   ],

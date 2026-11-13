@@ -321,8 +321,11 @@ export async function renameEntry(oldPath: string, newPath: string): Promise<voi
       invalidateRecursiveScan(oldPath),
       invalidateRecursiveScan(newPath),
     ]);
-  } catch {
-    // file rename already succeeded; metadata sync is non-critical
+  } catch (error) {
+    // The rename already succeeded; metadata sync is best-effort — but it must
+    // not be invisible. Silent tag loss is a data-integrity bug, not a log
+    // annoyance (see moveSidecar's write-before-delete ordering).
+    console.warn('[fs-write] sidecar/thumbnail sync failed after rename:', error);
   }
 }
 
@@ -331,7 +334,12 @@ export async function renameEntry(oldPath: string, newPath: string): Promise<voi
  * Shared by the `fs:move` IPC and the MCP tools.
  */
 export async function moveEntry(oldPath: string, newPath: string): Promise<void> {
-  assertWithinAllowedRoot(oldPath); // destination may be any folder the user picked
+  // Both ends must be inside a registered location. The renderer is untrusted
+  // (it is the process that renders user content), so the destination gets the
+  // same fence as the source — otherwise this is an arbitrary "write any file
+  // anywhere" primitive aimed at startup folders / ~/.ssh.
+  assertWithinAllowedRoot(oldPath);
+  assertWithinAllowedRoot(newPath);
   // Check+move is serialized per destination folder — see renameEntry.
   await withLock(path.dirname(newPath), async () => {
     if (existsSync(newPath)) {
@@ -363,8 +371,10 @@ export async function moveEntry(oldPath: string, newPath: string): Promise<void>
       invalidateRecursiveScan(oldPath),
       invalidateRecursiveScan(newPath),
     ]);
-  } catch {
-    // non-critical
+  } catch (error) {
+    // Best-effort, but logged: a failed sidecar move silently drops the file's
+    // tags/description. See moveSidecar's write-before-delete ordering.
+    console.warn('[fs-write] sidecar/thumbnail sync failed after move:', error);
   }
 }
 
@@ -373,7 +383,10 @@ export async function moveEntry(oldPath: string, newPath: string): Promise<void>
  * best-effort. Shared by the `fs:copy` IPC and the MCP tools.
  */
 export async function copyEntry(sourcePath: string, destPath: string): Promise<void> {
-  assertWithinAllowedRoot(sourcePath); // destination may be any folder the user picked
+  // Both ends fenced — see moveEntry. A copy to an unregistered destination is
+  // the same escape primitive (copy a payload into a startup folder).
+  assertWithinAllowedRoot(sourcePath);
+  assertWithinAllowedRoot(destPath);
   // Serialized check+copy per destination folder. `force: false` is what makes
   // `errorOnExist` effective (Node defaults `force` to true and would silently
   // replace a file that appeared after the pre-check).
@@ -393,8 +406,9 @@ export async function copyEntry(sourcePath: string, destPath: string): Promise<v
       copyThumbnail(sourcePath, destPath),
       invalidateRecursiveScan(destPath),
     ]);
-  } catch {
-    // non-critical
+  } catch (error) {
+    // Best-effort, but logged — see the move path above.
+    console.warn('[fs-write] sidecar/thumbnail sync failed after copy:', error);
   }
 }
 
@@ -446,7 +460,14 @@ export function registerFsWriteHandlers(): void {
         const name = nextAvailableName(path.basename(source), taken);
         taken.add(name);
         const destPath = path.join(destDir, name);
-        await fsp.cp(source, destPath, { recursive: true, errorOnExist: true });
+        await fsp.cp(source, destPath, {
+          recursive: true,
+          // `force: false` is what makes `errorOnExist` effective: Node defaults
+          // `force` to true and would silently replace a file that appeared
+          // between the readdir snapshot above and this copy (merge-over-wipe).
+          force: false,
+          errorOnExist: true,
+        });
         try {
           await Promise.all([
             copySidecar(source, destPath),

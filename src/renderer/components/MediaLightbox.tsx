@@ -114,6 +114,11 @@ export default function MediaLightbox({
   // survived until close/unmount. Now we prune on every navigation to keep
   // only the visible image and its ±1 neighbors in memory.
   const urlsByPathRef = useRef<Map<string, string>>(new Map());
+  // The paths the most recent preload effect wants to keep. An in-flight
+  // preload re-checks this AFTER the await: the effect's own `keep` set is
+  // always satisfied by its own paths, so it cannot detect that navigation or
+  // unmount moved on (that check was dead code).
+  const preloadKeepRef = useRef<Set<string>>(new Set());
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   // The currently-shown entry's path is a stable string; the load effect keys
@@ -223,6 +228,8 @@ export default function MediaLightbox({
       }
     }
     // Kick off any missing neighbors (skip videos — streaming is instant).
+    preloadKeepRef.current = keep;
+    let cancelled = false;
     for (const path of keep) {
       if (urlsByPathRef.current.has(path)) continue;
       const entry = playlist.find((e) => e.path === path);
@@ -233,9 +240,11 @@ export default function MediaLightbox({
           const buf = await ipcApi.readFile(path);
           const blob = new Blob([buf], { type: mimeTypeOf(path) });
           const url = URL.createObjectURL(blob);
-          // Race: index may have moved while we were loading; bail out
-          // before storing if so — otherwise we'd leak blobs into the LRU.
-          if (!keep.has(path)) {
+          // Race: navigation/unmount may have moved on while we were loading.
+          // The mounted component would revoke its own map on unmount, but a
+          // blob created after that cleanup would leak forever — revoke it
+          // here and never store it.
+          if (cancelled || !preloadKeepRef.current.has(path)) {
             URL.revokeObjectURL(url);
             return;
           }
@@ -258,7 +267,12 @@ export default function MediaLightbox({
     // P1-4: prune URLs that fell outside the window. Defer one tick so
     // newly-preloaded neighbors can register before we evict.
     const t = window.setTimeout(() => pruneOutsideWindow(keep), 0);
-    return () => window.clearTimeout(t);
+    return () => {
+      // Stop this run's in-flight preloads from storing blobs the next run (or
+      // the unmount cleanup) will never see.
+      cancelled = true;
+      window.clearTimeout(t);
+    };
   }, [open, index, playlist, currentPath, pruneOutsideWindow]);
 
   // Final cleanup on unmount (component truly going away, not just close).

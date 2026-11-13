@@ -7,8 +7,11 @@ import type { RootState } from '-/reducers';
  * Mirrors the configured command templates into the main process.
  *
  * `shell:runCommand` only executes templates that were pushed here (main keeps
- * a fail-closed allow-list), so this must run on boot — before the user can
- * right-click anything — and again whenever Settings → Commands changes.
+ * a fail-closed allow-list), and even a pushed template needs a one-time
+ * native confirmation in main before it can run — this sync is necessary but
+ * not sufficient, so it can never grant execution on its own. It must run on
+ * boot — before the user can right-click anything — and again whenever
+ * Settings → Commands changes.
  *
  * Selects the array itself (not a mapped copy) so the effect only re-runs when
  * the settings slice actually replaces it.

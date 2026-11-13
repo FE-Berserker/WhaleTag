@@ -149,6 +149,10 @@ export default function SearchBar() {
     if (contentMode) {
       // Full-text content search across enabled roots (runs in main process).
       if (!q) {
+        // Clearing the box and pressing Enter bumps the seq above, so the
+        // in-flight query's `finally` skips on `isCurrent()` — release the
+        // spinner here or it stays on forever.
+        setContentBusy(false);
         setContentResults([]);
         setSearchError(null);
         setOpen(false);
@@ -177,6 +181,9 @@ export default function SearchBar() {
     // CJK single-character queries are allowed; Latin/ASCII need >= 2 chars
     // (a single ASCII letter would match far too many files).
     if (status !== 'ready' || !q || (q.length < 2 && !hasCjk(q))) {
+      // Same cancellation rule as the content branch: a superseded content
+      // search must not leave its spinner armed after a mode switch.
+      setContentBusy(false);
       setResults([]);
       setSearchError(null);
       setOpen(false);

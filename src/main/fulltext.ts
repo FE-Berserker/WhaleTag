@@ -336,7 +336,17 @@ export async function buildFulltextIndex(
       const full = path.join(dir, name);
       let stat;
       try {
-        stat = await fsp.stat(full);
+        const link = await fsp.lstat(full);
+        if (link.isSymbolicLink()) {
+          // Never descend through a symlinked directory (Windows junctions can
+          // point back up the tree → unbounded walk); symlinked files are safe
+          // to follow and keep behaving as before.
+          const target = await fsp.stat(full);
+          if (target.isDirectory()) return;
+          stat = target;
+        } else {
+          stat = link;
+        }
       } catch (error) {
         skipped.push(toRel(rootPath, full));
         console.warn(

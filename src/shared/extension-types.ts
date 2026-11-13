@@ -158,7 +158,8 @@ export type HostMessage =
   | HeicWasmMessage
   | ExternalDragMessage
   | FileEmbedMessage
-  | SiblingsMessage;
+  | SiblingsMessage
+  | DirectoryDialogResultMessage;
 
 // Extension -> Host messages
 
@@ -281,9 +282,48 @@ export function isValidEnvelope<T>(
 ): data is ExtensionEnvelope<T> {
   if (typeof data !== 'object' || data === null) return false;
   const env = data as Partial<ExtensionEnvelope<T>>;
+  const message = env.message as { type?: unknown } | null | undefined;
   return (
     env.protocolVersion === EXT_PROTOCOL_VERSION &&
     env.source === expectedSource &&
-    env.message !== undefined
+    // The old check only required `message !== undefined`, so any payload —
+    // including one with a misspelled or unknown `type` — passed validation
+    // and reached the host's switch. Require a known type as the first filter;
+    // per-message payload validation stays in the handlers that know the shape.
+    typeof message === 'object' &&
+    message !== null &&
+    typeof message.type === 'string' &&
+    KNOWN_MESSAGE_TYPES.has(message.type)
   );
 }
+
+/**
+ * Every message type the host↔extension protocol defines. Kept as a runtime
+ * set (not just types) because envelopes are validated at the iframe boundary.
+ * `directoryDialogResult` is included even though it is not part of
+ * `HostMessage`: the host forwards it verbatim from the dialog callback.
+ */
+const KNOWN_MESSAGE_TYPES: ReadonlySet<string> = new Set([
+  'contentChangedInEditor',
+  'directoryDialogResult',
+  'editDocument',
+  'error',
+  'externalDrag',
+  'fileContent',
+  'fileEmbed',
+  'heicWasm',
+  'loadDefaultTextContent',
+  'openLinkExternally',
+  'parentSaveDocument',
+  'ready',
+  'requestFile',
+  'requestFileEmbed',
+  'requestHeicWasm',
+  'requestSave',
+  'savingFile',
+  'setLocale',
+  'setReadOnly',
+  'setTheme',
+  'siblings',
+  'thumbnailGenerated',
+]);

@@ -193,6 +193,7 @@ runMigration(allowedRoots): Promise<MigrationResult>
 - `tagDisplayLabel` 不在 `now` 状态下显示 i18n 模板名(因为精度到分钟,显示原 `2026-07-04 14:30` 比"此刻"更有信息量)
 - 期间家族"过期"无专门折叠(与 `date:` 共用 `isDateLikeShape` 边界,但通过 `isPeriodTag` 排除)
 - 文件夹元数据(`.whale/wsm.json` 的 `tags`)也对日期家族做互斥收敛,批量子目录打标时每个子目录各自互斥
+- 裸 4 位(`2026`)/ 6 位(`202606`)数字既是 year/month smart tag 的**规范存储形式**([migrate-date-tags.ts](../src/main/migrate-date-tags.ts) 把 `year-2026` / `month-202606` 重写成裸串),"单日期"收敛也必须认得它们;但用户自建的编码标签(`2019`、`123456`)与之一模一样,收敛时会被当成旧日期清掉。字符串无法区分 provenance,属已知取舍;根治需改为带前缀存储 + 数据迁移,本轮不做
 - `nextWeek` 在它指向的那个**周一**就会 stale(过了当日 0:00 立刻降级)
 - ~~`now` smart tag 的 60 秒鲜度窗口写死在 `smart-tags.ts` 的内联比较~~ ✅ 已抽常量(2026-07-18):`NOW_TAG_FRESH_WINDOW_MS` + `isNowTagFresh()` —— 与分钟截断比较**严格等价**
 - ~~`TagLibrary.tsx` 标签列表未虚拟化~~ ✅ 已虚拟化(2026-07-18):cluster(`smart:`/`period:`/`date:` 日期簇)作为 react-window `List` 的第 0 行,普通标签经 [tag-library-pack.ts](../src/renderer/components/tag-library-pack.ts) 按容器宽度贪心打包成行(变宽 chip 无法固定每行个数;宽度模型 latin 6.4px/CJK×2 + 数字 + 34px 基值,宁偏宽不偏移),行级 `useDynamicRowHeight` 实测高;大库只挂载可视窗 + overscan。`geo:` 留在普通标签流(独立坐标家族)。DnD 不受影响(仅可见行内的 chip 挂载拖拽)。测试:[tag-library-pack.test.ts](../src/renderer/components/tag-library-pack.test.ts) 8 例(宽度模型/贪心打包/超宽独行/极窄防死循环/高度估算)

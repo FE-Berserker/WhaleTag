@@ -91,7 +91,6 @@ export default function GalleryCell({
 }: CellComponentProps<GalleryCellData>) {
   const index = rowIndex * columnCount + columnIndex;
   const entry = entries[index];
-  if (!entry) return <div style={style} />;
 
   // Tag-only drop target. Dependency discipline mirrors GridCell / Row:
   // Period-tag drop: opened via context (Phase 5 / §8). Mirrors the same
@@ -108,7 +107,9 @@ export default function GalleryCell({
   const dropPeriodFor = useRef<DirEntry[] | null>(null);
 
   // `targetPath` is a primitive, handlers are stable callbacks from the parent.
-  const targetPath = entry.path;
+  // The empty-cell branch below returns early, so every hook above must be
+  // tolerant of an undefined entry — hence the optional path here.
+  const targetPath = entry?.path ?? '';
   const [{ isOver, canDrop }, dropRef] = useDrop<
     TagDragItem,
     unknown,
@@ -118,7 +119,7 @@ export default function GalleryCell({
       accept: [DND_TYPE_TAG],
       canDrop: () => !readOnly,
       drop: (item) => {
-        if (!onDropTag) return;
+        if (!entry || !onDropTag) return;
         // Period branch — open the date dialog first, then apply.
         if (item.tag === 'period:') {
           const targets =
@@ -152,8 +153,10 @@ export default function GalleryCell({
         canDrop: monitor.canDrop(),
       }),
     }),
-    [targetPath, onDropTag, readOnly, entries, selected]
+    [targetPath, onDropTag, readOnly, entries, selected, entry, openPeriodDialog]
   );
+
+  if (!entry) return <div style={style} />;
 
   const dropActive = isOver && canDrop;
   const isSelected = selected.has(entry.path);

@@ -12,30 +12,39 @@
  * non-existent file. Auto-discovery means new tests always run with zero
  * package.json edits.
  */
+const fs = require('fs');
 const { spawnSync } = require('child_process');
 const path = require('path');
-const glob = require('glob');
 
 const ROOT = path.resolve(__dirname, '..');
 
-const PATTERNS = [
-  'src/**/*.test.ts',
-  'src/**/*.test.tsx',
-  'scripts/**/*.test.ts',
-  'scripts/**/*.test.tsx',
-];
+// Deliberately dependency-free. Discovery used to `require('glob')`, which was
+// never declared in package.json — it only worked because a transitive dev
+// dependency happened to be hoisted. If that ever changed, `npm test` would die
+// with MODULE_NOT_FOUND, and this repo has no CI: type-check/lint/test ARE the
+// gate. A 15-line walker removes the single point of failure.
+const TEST_FILE_RE = /\.test\.tsx?$/;
+const SEARCH_DIRS = ['src', 'scripts'];
 
 const seen = new Set();
 const testFiles = [];
-for (const pattern of PATTERNS) {
-  for (const abs of glob.sync(pattern, {
-    cwd: ROOT,
-    absolute: true,
-    ignore: ['**/node_modules/**'],
-  })) {
-    if (!seen.has(abs)) {
-      seen.add(abs);
-      testFiles.push(abs);
+for (const dir of SEARCH_DIRS) {
+  const absDir = path.join(ROOT, dir);
+  if (!fs.existsSync(absDir)) continue;
+  const stack = [absDir];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      if (entry.name === 'node_modules') continue;
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(full);
+      } else if (entry.isFile() && TEST_FILE_RE.test(entry.name)) {
+        if (!seen.has(full)) {
+          seen.add(full);
+          testFiles.push(full);
+        }
+      }
     }
   }
 }

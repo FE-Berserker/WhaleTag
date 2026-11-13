@@ -263,6 +263,20 @@ function extractStyles(raw: string): { html: string; css: string } {
  return { html, css: styles.join('\n') };
 }
 
+// When remote images are disabled, the user stylesheet must not fetch them
+// either: `background:url(https://tracker/…)` pings the network on render and
+// `@import` pulls in arbitrary CSS. Strip both; `data:` URLs are self-contained
+// and stay.
+function stripRemoteCssRefs(css: string): string {
+  return css
+    .replace(/@import[^;]*(;|$)/gi, '')
+    .replace(
+      /url\(\s*(['"]?)([^'")]*)\1\s*\)/gi,
+      (match, _quote: string, target: string) =>
+        /^\s*data:/i.test(target) ? match : 'none'
+    );
+}
+
 function injectUserStyle(css: string) {
  if (!css) return;
  let el = document.getElementById('whale-user-style') as HTMLStyleElement | null;
@@ -326,7 +340,7 @@ const TAGS_BASE: ReadonlyArray<string> = [
 
 function renderPreview(raw: string) {
  const { html, css } = extractStyles(raw);
- injectUserStyle(css);
+ injectUserStyle(state.imagesEnabled ? css : stripRemoteCssRefs(css));
 
  const allowedTags = state.imagesEnabled ? [...TAGS_BASE, 'img'] : TAGS_BASE;
  const clean = DOMPurify.sanitize(html, {

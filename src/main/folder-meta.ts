@@ -89,7 +89,20 @@ export async function writeFolderMeta(
     });
     const target = wsmPath(dirPath);
     if (isFolderMetaEmpty(merged)) {
-      await fsp.rm(target, { force: true }).catch(() => undefined);
+      try {
+        await fsp.rm(target, { force: true });
+      } catch (error) {
+        // The last field was just cleared, but the file could not be removed
+        // (EBUSY / EPERM on Windows, read-only media). Leaving the stale file
+        // would resurrect exactly what the user cleared on the next read, so
+        // persist the empty state explicitly instead.
+        console.warn(
+          '[folder-meta] could not remove empty wsm.json; writing an empty document instead:',
+          error
+        );
+        await fsp.mkdir(path.dirname(target), { recursive: true });
+        await atomicWriteJson(target, {});
+      }
       return;
     }
     await fsp.mkdir(path.dirname(target), { recursive: true });

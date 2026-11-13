@@ -23,7 +23,7 @@ import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 
 import type { DirEntry, SidecarIssue } from '../../shared/ipc-types';
 import type { ViewMode, SidecarMeta } from '../../shared/whale-meta';
-import { COMMAND_PATH_BLOCKED } from '../../shared/shell-types';
+import { COMMAND_NOT_APPROVED, COMMAND_PATH_BLOCKED } from '../../shared/shell-types';
 import { RootState } from '-/reducers';
 import { todayKey, periodTagFromRange } from '../domain/gantt';
 import {
@@ -711,21 +711,29 @@ export default function FileList() {
     bumpSelection();
   }, [bumpSelection]);
 
+  // Selection is scoped to the directory it was made in: a Set left over from
+  // the previous folder made the header claim "8 selected" (and the tri-state
+  // box claim checked) while bulk actions only touched the intersection with
+  // the new `visible` list. Reset it whenever the directory changes.
+  useEffect(() => {
+    clearSelection();
+  }, [currentDirectoryPath, clearSelection]);
+
   // Tri-state select-all for the list-view column header. Compared against the
   // CURRENT `visible` array so the header always reflects what the user sees
-  // (post-filter / post-search). When the user switches filters we keep any
-  // out-of-visible selections so Shift-range gestures remain valid.
+  // (post-filter / post-search). Comparing Set size to visible.length was wrong
+  // whenever the previous folder contributed extra selected paths.
   const selectAllState = useMemo<'checked' | 'indeterminate' | 'unchecked'>(
     () => {
-      const size = selectedPathsRef.current.size;
-      if (size === 0 || visible.length === 0) return 'unchecked';
-      if (size >= visible.length) return 'checked';
-      return 'indeterminate';
+      if (visible.length === 0) return 'unchecked';
+      let selectedVisible = 0;
+      for (const e of visible) {
+        if (selectedPathsRef.current.has(e.path)) selectedVisible += 1;
+      }
+      if (selectedVisible === 0) return 'unchecked';
+      return selectedVisible === visible.length ? 'checked' : 'indeterminate';
     },
-    // ticking on `selectedTick` would also work, but reading ref.current here
-    // means the memo body runs once per deps change and never observes a stale
-    // Set. The `visible.length` dep is enough to catch directory resizes.
-    [visible.length, selectedTick]
+    [visible, selectedTick]
   );
   const toggleSelectAll = useCallback(() => {
     if (selectAllState === 'checked') {
@@ -1981,10 +1989,17 @@ export default function FileList() {
         onRunCommand={(entry, cmd) => {
           ipcApi.runCommand(cmd.template, entry.path).catch((e: unknown) => {
             const msg = e instanceof Error ? e.message : String(e);
-            // The main process throws Error(COMMAND_PATH_BLOCKED) when the path
-            // can't be safely substituted (e.g. `%` in a filename on Windows);
-            // map that sentinel to a localized message instead of raw English.
-            showNotice(msg === COMMAND_PATH_BLOCKED ? t('commandPathBlocked') : msg);
+            // Main throws sentinels for the two user-visible refusals: an
+            // unsubstitutable path (COMMAND_PATH_BLOCKED) and a template the
+            // user has not approved yet (COMMAND_NOT_APPROVED). Map both to
+            // localized text instead of showing the raw sentinel.
+            showNotice(
+              msg === COMMAND_PATH_BLOCKED
+                ? t('commandPathBlocked')
+                : msg === COMMAND_NOT_APPROVED
+                  ? t('commandNotApproved')
+                  : msg
+            );
           });
         }}
       />

@@ -51,5 +51,14 @@ export const COMMAND_PATH_BLOCKED = 'COMMAND_PATH_BLOCKED';
  */
 export const COMMAND_NOT_ALLOWED = 'COMMAND_NOT_ALLOWED';
 
+/**
+ * Sentinel thrown by the `shell:runCommand` IPC handler when the user has not
+ * yet approved this exact template in the native confirmation dialog. The
+ * template list is renderer-supplied, so membership in it proves nothing about
+ * the user's intent; only an explicit, main-process dialog does. Approvals are
+ * persisted per exact template string (editing a command re-asks).
+ */
+export const COMMAND_NOT_APPROVED = 'COMMAND_NOT_APPROVED';
+
 /** IPC result of `shell:runCommand`. */
 export type RunCommandResult = { ok: true };

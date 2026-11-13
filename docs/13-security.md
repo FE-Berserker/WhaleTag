@@ -31,6 +31,8 @@
 
 `fs:importExternal`(从系统拖入文件)的**源路径**不做位置校验：拖拽 API 只给路径字符串，主进程无法验证"这确实是一次用户拖拽"，而要求源在位置内会直接废掉"从资源管理器拖进来"这个功能。**目标目录**仍过 `assertWithinAllowedRoot`。残余风险如实记录：被注入的渲染层可以把任意可读文件复制进某个位置，再经 `fs:readFile` 读回——消除它只能取消位置外拖入，属已知取舍。
 
+写入侧还有一条同等重要的边界：`fs:move` / `fs:copy` 的**目的地**此前只校验源路径（代码注释称"目的地可以是用户选的任意目录"），等于给注入的渲染层留了一条"把任意内容搬进 Startup / `~/.ssh`"的写逃逸；现在两端都过 `assertWithinAllowedRoot`（[fs-write.ts](../src/main/ipc/fs-write.ts)），与 `fs:rename` 对齐。`fs:importExternal` 的 `cp` 同时补 `force: false`——Node 默认 `force: true` 会静默覆盖 readdir 快照之后才出现的同名文件。
+
 详见 [docs/02-file-io.md §6](./02-file-io.md)。
 
 ## 3. CSP
@@ -76,11 +78,11 @@
 - **菜单形态(2026-07-22)**:"命令"是右键菜单里**单项父条目**(Terminal 图标 + 右侧 ▸),悬停/点击在其右缘开**飞窗子菜单**列出全部适用命令(各带 Terminal 图标,模板作原生 tooltip)——命令再多也不撑长主菜单。实现在 [EntryContextMenu.tsx](../src/renderer/components/EntryContextMenu.tsx)(flyout 复用 GanttEntryMenu 的兄弟 `<Menu anchorEl>` 模式,悬停开 + 250ms 关窗宽限计时器防斜线误关;flyout Modal root 须设 `pointer-events:none`(paper 恢复 `auto`),否则全屏 root 层盖住父菜单项 → 幻影 mouseLeave/Enter 循环 = 飞窗闪烁)。
 
 - **opt-in**:模板存 redux-persist `settings.userCommands`(默认空 `[]`),未配置则右键菜单不显示"命令"子菜单。
-- **路径不可信,模板可信**:模板是用户显式录入;被替换进去的**文件路径**不可信(文件名可能含 `&` `|` `"` `%` 元字符 → 命令注入)。"可信"的前提是它确实来自设置——主进程只执行被推送过的模板(见下一条)。
+- **路径不可信,模板可信**:模板是用户显式录入;被替换进去的**文件路径**不可信(文件名可能含 `&` `|` `"` `%` 元字符 → 命令注入)。"可信"的前提是它确实来自设置——主进程只执行被推送过的模板(见下一条)。不过"来自设置"只是必要条件:首次运行某个模板时主进程还会弹一次原生确认(见下一条)。
 - **主进程做替换 + 引号**:renderer 只传 `{ template, targetPath }`;主进程 `runUserCommand` 把 `${path}` / `${dir}` / `${name}` 替换成**加好引号的值**再拼命令。renderer 永不构造 shell 字符串。
 - **引号复用** [shell-quote.ts](../src/main/shell-quote.ts) 的 `quotePathForShell` —— win32 走 cmd 双引号 + 内嵌 `"` 翻倍,POSIX 单引号 close-reopen。
 - **`assertWithinAllowedRoot(targetPath)` 在 IPC 入口**(`shell:runCommand`,[shell.ts](../src/main/ipc/shell.ts))—— 拒配置位置外的路径 / symlink 逃逸 / 未注册根(fail-closed),对齐 `fs:rename` / `fs:delete`。
-- **模板白名单(fail-closed)**:渲染层在启动(`PersistGate` 之后)与设置变更时把 `settings.userCommands` 的模板串推给主进程(`shell:setCommandTemplates`,[UserCommandTemplateSync.tsx](../src/renderer/components/UserCommandTemplateSync.tsx));`runUserCommand` 只执行名单内的模板,其余抛 `COMMAND_NOT_ALLOWED`([shell-command.ts](../src/main/shell-command.ts))。未推送前名单为空 = 一律拒绝,被注入的渲染层无法把该通道当通用 shell 用。
+- **模板白名单 + 主进程一次性授权**:渲染层在启动(`PersistGate` 之后)与设置变更时把 `settings.userCommands` 的模板串推给主进程(`shell:setCommandTemplates`,[UserCommandTemplateSync.tsx](../src/renderer/components/UserCommandTemplateSync.tsx));但"渲染层说这是用户配置的"**不构成**授权——被注入的渲染层可以推任意模板。因此 `shell:runCommand` 在真正 spawn 前由**主进程**弹原生对话框展示完整命令并等待用户 Allow;批准按模板串持久化到 `<userData>/approved-command-templates.json`(tmp + rename 原子写),同一模板只问一次,编辑模板即重新询问。拒绝或对话框不可用 → 抛 `COMMAND_NOT_APPROVED`(fail-closed,[shell-types.ts](../src/shared/shell-types.ts))。两层合起来:名单负责"不越出设置",对话框负责"用户真的点了同意"([shell.ts](../src/main/ipc/shell.ts))。`runUserCommand` 自身仍只执行名单内模板,其余抛 `COMMAND_NOT_ALLOWED`([shell-command.ts](../src/main/shell-command.ts))。
 - **Windows `%` 拒绝**:cmd 默认下 `"..."` 内的 `%VAR%` 仍展开(`%%` 只在 .bat 内有效,`cmd /k` 内不可靠转义)→ 路径含 `%` 直接拒,renderer toast 报 `commandPathBlocked`。`!`(delayed expansion 关)放行。详见 [docs/09 §22](./09-known-issues.md)。
 - **`spawn` + `detached` + `child.unref()`**(fire-and-forget,新终端窗口归用户);永不 `exec`。macOS 走 `osascript`,脚本字符串**先双写 `\` 再转义 `"`**(顺序反了会让命令里的反斜杠吃掉转义);终端进程 spawn 失败(`error` 事件)现在 reject 到渲染层,不再 `console.warn` 后返回 `{ ok: true }` 假装启动成功。
 - **不按只读位置拒绝**:命令是用户显式 opt-in 的外部进程(可能只读分析),只保留 `assertWithinAllowedRoot` 这道基础闸。
@@ -113,3 +115,4 @@
 - 所有工具路径过 `assertWithinAllowedRoot`;且比渲染层 IPC 更严——move/copy 的**目的地**也必须在 roots 内。
 - 写操作分级:sidecar 级(标签/描述)免审批;文件级(move/copy/delete/zip/create)推送审批弹窗,**无窗口 / 60s 超时 / 拒绝一律视为拒绝**(fail-closed)。
 - 只读模式(默认开)拒绝一切变更工具;删除仅回收站,不提供永久删除。
+- JSON-RPC batch 元素数上限 32(`MAX_BATCH_ELEMENTS`,[mcp-http.ts](../src/main/mcp/mcp-http.ts)):4 MiB body 上限单独不足以阻止单请求塞入十万条小调用串行占用主线程;超限 413。

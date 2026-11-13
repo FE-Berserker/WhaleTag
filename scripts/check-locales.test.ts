@@ -144,6 +144,57 @@ test('all locales: no i18next-reserved option key (lng/ns) used as placeholder',
   assert.deepEqual(problems, [], problems.join('\n'));
 });
 
+// --- usage side: every literal `t('key')` in renderer source must exist -----
+// The key-parity tests above only compare locale files to each other; they
+// cannot see a component calling a key that was never added anywhere. Such a
+// call renders the raw key at runtime and no gate notices — 15 of them had
+// shipped (invertSelection, removeTagFromMany, ...). Literal calls only:
+// `t(variable)` is unverifiable without running the app.
+const RENDERER_DIR = path.resolve(__dirname, '../src/renderer');
+const SOURCE_FILE_RE = /\.(ts|tsx)$/;
+const SKIP_DIRS = new Set(['locales', 'node_modules', '__snapshots__']);
+
+function collectSourceFiles(dir: string, out: string[] = []): string[] {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      if (SKIP_DIRS.has(entry.name)) continue;
+      collectSourceFiles(path.join(dir, entry.name), out);
+    } else if (entry.isFile() && SOURCE_FILE_RE.test(entry.name)) {
+      // Colocated tests pass arbitrary strings through stub `t` helpers; they
+      // are not production UI strings.
+      if (/\.test\.(ts|tsx)$/.test(entry.name)) continue;
+      out.push(path.join(dir, entry.name));
+    }
+  }
+  return out;
+}
+
+test('renderer: every literal t(...) key exists in the en baseline', () => {
+  const baselineKeys = new Set(Object.keys(baseline.raw));
+  const problems: string[] = [];
+  const seen = new Set<string>();
+  for (const file of collectSourceFiles(RENDERER_DIR)) {
+    const text = fs.readFileSync(file, 'utf8');
+    const re = /\bt\(\s*(['"])([A-Za-z0-9_.:+-]+)\1/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text))) {
+      const key = m[2];
+      const id = `${file}\u0000${key}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      // Plural bases resolve through `key_other`; both shapes are legitimate.
+      if (baselineKeys.has(key) || baseline.plurals.has(key)) continue;
+      const line = text.slice(0, m.index).split('\n').length;
+      problems.push(`${path.relative(RENDERER_DIR, file)}:${line}: ${key}`);
+    }
+  }
+  assert.deepEqual(
+    problems,
+    [],
+    `t() keys missing from en/common.json:\n${problems.join('\n')}`
+  );
+});
+
 for (const lng of targetLngs) {
   test(`locale ${lng}: keys match ${BASELINE} baseline`, () => {
     const target = loadLocale(lng);

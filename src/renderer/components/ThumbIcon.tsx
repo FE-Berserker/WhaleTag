@@ -86,7 +86,11 @@ function ThumbIconBase({
     // common case when re-mounting during scroll.
     const cached = thumbCache.get(cacheKey);
     if (cached) {
-      if (cached !== dataUrl) setDataUrl(cached);
+      // Always assign: after a recycled-cell reset `dataUrl` is null, and
+      // comparing against this effect closure's stale value could skip the
+      // update when two entries share the same cached URL (identical folder
+      // thumbnails), leaving the image permanently blank.
+      setDataUrl(cached);
       setLoaded(true);
       return undefined;
     }

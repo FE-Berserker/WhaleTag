@@ -216,6 +216,11 @@ export function DirectoryContentContextProvider({
         setSidecarsByPath(new Map());
         setRecursiveTruncated(false);
         setError(null);
+        // The previous load may have set the spinner and then been superseded
+        // by this empty-path call; without this reset the loading state sticks
+        // forever (visible as a permanent skeleton after the last location is
+        // removed).
+        setLoading(false);
         return;
       }
       setLoading(true);
@@ -249,6 +254,9 @@ export function DirectoryContentContextProvider({
             setSidecarIssues(detailed.issues);
           } catch {
             // Best-effort: an unexpected IPC failure yields no health snapshot.
+            // A stale load must not clear the health issues of the directory
+            // that superseded it.
+            if (!isCurrent()) return;
             setSidecarIssues([]);
           }
           const byPath = new Map<string, SidecarMeta | undefined>();

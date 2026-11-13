@@ -16,6 +16,10 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 
 /** Maximum accepted JSON request body. */
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
+// JSON-RPC allows batching. The byte cap alone still permits ~100k tiny calls
+// in one request, all processed serially in-process; cap the element count too
+// (the MCP SDK's own advisory limit) so a single POST can't monopolize main.
+const MAX_BATCH_ELEMENTS = 32;
 /** A session with no traffic for this long is closed and forgotten. */
 const DEFAULT_SESSION_IDLE_MS = 30 * 60_000;
 /** How often the idle-session sweeper runs. */
@@ -229,6 +233,9 @@ export function createMcpHttpCore(opts: McpHttpCoreOptions): McpHttpCore {
     const task = (async () => {
       if (req.method === 'POST') {
         const body = await readBody(req);
+        if (Array.isArray(body) && body.length > MAX_BATCH_ELEMENTS) {
+          throw new HttpError(413, 'Batch too large');
+        }
         await handlePost(req, res, body);
         return;
       }

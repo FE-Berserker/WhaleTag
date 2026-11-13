@@ -45,9 +45,15 @@ export interface DirChangedEvent {
 const META_DIR = '.whale';
 /** Trailing debounce per root: events keep arriving → flush waits. */
 const DEBOUNCE_MS = 500;
-/** Cap on reported paths per flush (the rest are dropped — refresh doesn't
- *  need the full list, and huge bursts (git checkout) would flood IPC). */
+/** Cap on reported paths per flush. A larger burst is drained by follow-up
+ *  flushes on the next tick instead of being silently dropped (git checkout
+ *  can queue thousands of paths, and a dropped path never reaches the
+ *  full-text invalidation). */
 const MAX_PATHS_PER_FLUSH = 500;
+/** Hard ceiling on how long a continuous burst may postpone the flush. Without
+ *  it the pure trailing debounce never fires under sustained churn (unzip,
+ *  checkout, rsync), so the index stays stale for the whole operation. */
+const MAX_FLUSH_WAIT_MS = 5_000;
 /** Directories the per-dir fallback never descends into: our own `.whale`
  *  (self-echo), and the two trees that make inotify's watch budget explode. */
 const WATCH_SKIP_DIRS = new Set(['.whale', 'node_modules', '.git']);
@@ -78,6 +84,8 @@ interface RootWatch {
   watcherLimitWarned: boolean;
   /** Coalesced changed paths (relative, forward-slash) awaiting flush. */
   pending: Set<string>;
+  /** When the current pending burst started (null = nothing pending). */
+  pendingSince: number | null;
   flushTimer: NodeJS.Timeout | null;
   /** True when a reindex for this root is in flight (skip re-trigger). */
   reindexing: boolean;
@@ -158,12 +166,28 @@ export function setDirChangedBroadcast(fn: ((ev: DirChangedEvent) => void) | nul
 
 function flush(rootPath: string, w: RootWatch): void {
   w.flushTimer = null;
-  if (w.stopped || w.pending.size === 0) return;
-  const paths = [...w.pending].slice(0, MAX_PATHS_PER_FLUSH);
-  w.pending.clear();
+  if (w.stopped || w.pending.size === 0) {
+    w.pendingSince = null;
+    return;
+  }
+  const paths: string[] = [];
+  for (const p of w.pending) {
+    paths.push(p);
+    if (paths.length === MAX_PATHS_PER_FLUSH) break;
+  }
+  for (const p of paths) w.pending.delete(p);
   broadcast?.({ rootPath, paths });
   scheduleReindex(rootPath, w);
   scheduleFulltextReindex(rootPath, paths);
+  if (w.pending.size > 0) {
+    // Drain the remainder on the next tick in another bounded batch. Keeping
+    // the overflow (instead of clearing the set) matters: a dropped path is
+    // invisible to fulltext invalidation forever.
+    w.flushTimer = setTimeout(() => flush(rootPath, w), 0);
+    w.flushTimer.unref?.();
+  } else {
+    w.pendingSince = null;
+  }
 }
 
 /** Debounce before a retry; doubles per consecutive failure, capped at 60 s. */
@@ -334,9 +358,14 @@ async function reindexFulltextIfBuilt(fp: string): Promise<void> {
 function queueChange(rootPath: string, w: RootWatch, rel: string): void {
   if (w.stopped) return;
   if (rel && isMetaPath(rel)) return; // our own `.whale/` churn — self-echo
+  const now = Date.now();
   w.pending.add(rel);
+  if (w.pendingSince == null) w.pendingSince = now;
+  // Trailing debounce normally; after a sustained burst, stop postponing so
+  // the flush (and the reindex it schedules) actually runs mid-operation.
+  const wait = now - w.pendingSince >= MAX_FLUSH_WAIT_MS ? 0 : DEBOUNCE_MS;
   if (w.flushTimer) clearTimeout(w.flushTimer);
-  w.flushTimer = setTimeout(() => flush(rootPath, w), DEBOUNCE_MS);
+  w.flushTimer = setTimeout(() => flush(rootPath, w), wait);
   w.flushTimer.unref?.();
 }
 
@@ -491,6 +520,7 @@ function startWatch(rootPath: string, forcePerDir = false): RootWatch | null {
     watchers: new Map(),
     watcherLimitWarned: false,
     pending: new Set(),
+    pendingSince: null,
     flushTimer: null,
     reindexing: false,
     reindexDirty: false,
@@ -527,6 +557,8 @@ function stopWatch(rootPath: string): void {
   if (w.reindexTimer) clearTimeout(w.reindexTimer);
   w.flushTimer = null;
   w.reindexTimer = null;
+  w.pending.clear();
+  w.pendingSince = null;
   w.reindexDirty = false;
   for (const watcher of w.watchers.values()) {
     try {

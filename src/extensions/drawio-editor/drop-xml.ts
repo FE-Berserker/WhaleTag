@@ -207,6 +207,20 @@ export function buildFileDropSnippet(options: FileDropSnippetOptions): string {
   );
 }
 
+/** The labeled cell style sets `html=1`, so drawio renders the label as HTML
+ *  after XML-decoding it. XML-escaping alone is not enough: a filename such as
+ *  `<img src=x onerror=…>` would decode back into markup and be handed to
+ *  drawio's renderer. Escape HTML first so the decoded label stays inert text
+ *  (the double pass is intentional: XML decode → HTML-escaped text). */
+function escapeLabelHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /** Build a non-image cell snippet — a rounded rectangle whose label is the
  *  filename, hyperlinked to the source file/folder. Used for non-image
  *  drops (PDF, video, code, folders) where the user wants a labelled
@@ -230,7 +244,7 @@ export function buildLabeledDropSnippet(options: FileDropSnippetOptions): string
     height = 60,
   } = options;
   const link = escapeXmlAttr(drawioLinkForInsert(filePath, options.diagramPath));
-  const label = escapeXmlAttr(name);
+  const label = escapeXmlAttr(escapeLabelHtml(name));
   const style = escapeXmlAttr(
     'rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;' +
       'strokeColor=#6c8ebf;fontSize=14;align=center;verticalAlign=middle;' +

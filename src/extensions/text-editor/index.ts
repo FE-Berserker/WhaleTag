@@ -1,5 +1,5 @@
 import './editor.css';
-import { EditorState, Extension, Compartment } from '@codemirror/state';
+import { EditorState, Extension, Compartment, Transaction } from '@codemirror/state';
 import {
  EditorView,
  keymap,
@@ -64,6 +64,9 @@ const fontSizeCompartment = new Compartment();
 const wrapCompartment = new Compartment();
 const foldGutterCompartment = new Compartment();
 const langCompartment = new Compartment();
+// Undo history is per-document, not per-view: the view is reused across files,
+// so the history compartment is reconfigured on every file switch to reset it.
+const historyCompartment = new Compartment();
 
 // Hydrate persisted UI state. localStorage may throw in privacy mode; the
 // helpers themselves wrap in try/catch and fall back to defaults.
@@ -574,7 +577,7 @@ function createEditor(container: HTMLElement, filePath: string) {
  highlightActiveLineGutter(),
  highlightActiveLine(),
  drawSelection(),
- history(),
+ historyCompartment.of(history()),
 
  // --- search ---
  search({ top: true }),
@@ -654,6 +657,9 @@ function setContent(content: string) {
  if (!view) return;
  view.dispatch({
  changes: { from: 0, to: view.state.doc.length, insert: content },
+ // Host-driven loads are not user edits: keep them out of the undo stack so
+ // Ctrl+Z can never "undo the open" into an empty/previous document.
+ annotations: Transaction.addToHistory.of(false),
  });
 }
 
@@ -717,14 +723,21 @@ zoomResetBtn.addEventListener('click', () => zoomReset());
 function handleMessage(msg: HostMessage) {
  switch (msg.type) {
  case 'fileContent': {
+ const switchedFile = currentPath !== msg.path;
  currentPath = msg.path;
  currentEncoding = msg.encoding;
  if (!view) {
  const container = document.getElementById('editor') as HTMLDivElement;
  createEditor(container, msg.path);
- } else if (msg.path !== currentPath) {
- // A different file is being opened — swap language + folding.
+ } else if (switchedFile) {
+ // A different file is being opened — swap language + folding and drop the
+ // previous file's undo history. Undo must never cross documents: with a
+ // shared history, Ctrl+Z restored file A's text into file B and the next
+ // save wrote A over B.
  setLanguageFor(msg.path);
+ view.dispatch({
+ effects: historyCompartment.reconfigure(history()),
+ });
  }
  setContent(msg.content);
  setReadOnly(msg.readOnly);

@@ -284,6 +284,27 @@ describe('drawio drop-xml.buildLabeledDropSnippet', () => {
     );
   });
 
+  it('escapes markup in the filename (html=1 label would otherwise render it)', () => {
+    const snippet = buildLabeledDropSnippet({
+      filePath: '/tmp/<b>a&b.png',
+      name: '<b>a&b.png',
+      thumbnailDataUrl: thumb,
+      cellId: 'lbl-escape',
+      x: 0,
+      y: 0,
+    });
+    // XML-decoding the attribute yields `&lt;b&gt;a&amp;b.png`: inert text for
+    // drawio's HTML label renderer, not a real <b> element.
+    assert.ok(
+      snippet.includes('label="&amp;lt;b&amp;gt;a&amp;amp;b.png"'),
+      `expected doubled-escaped label, got: ${snippet}`
+    );
+    assert.ok(
+      !snippet.includes('label="<b>'),
+      `raw markup must not reach the label attribute: ${snippet}`
+    );
+  });
+
   it('defaults to 200x60 geometry', () => {
     const snippet = buildLabeledDropSnippet({
       filePath: '/a',
@@ -313,7 +334,7 @@ describe('drawio drop-xml.buildLabeledDropSnippet', () => {
     assert.ok(snippet.includes('x="17" y="29" width="300" height="80"'));
   });
 
-  it('escapes & < > and " in the label', () => {
+  it('escapes & < > and " in the label (HTML layer, then XML layer)', () => {
     const snippet = buildLabeledDropSnippet({
       filePath: '/x',
       name: 'A & <B> "C"',
@@ -322,7 +343,14 @@ describe('drawio drop-xml.buildLabeledDropSnippet', () => {
       x: 0,
       y: 0,
     });
-    assert.ok(snippet.includes('label="A &amp; &lt;B&gt; &quot;C&quot;"'));
+    // The style sets html=1: XML-decoding the attribute must still leave the
+    // label HTML-escaped, otherwise drawio renders the markup.
+    assert.ok(
+      snippet.includes(
+        'label="A &amp;amp; &amp;lt;B&amp;gt; &amp;quot;C&amp;quot;"'
+      ),
+      `expected doubled escaping, got: ${snippet}`
+    );
   });
 
   it('round-trips a Windows path through the file:// URL', () => {

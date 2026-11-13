@@ -1,14 +1,92 @@
 import { promises as fsp } from 'fs';
-import { ipcMain, shell } from 'electron';
+import path from 'path';
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { exec, execFile } from 'child_process';
 import { runUserCommand, setUserCommandTemplates } from '../shell-command';
 import { linuxRevealSteps } from '../desktop-linux';
+import { COMMAND_NOT_APPROVED } from '../../shared/shell-types';
 
 /**
  * OS-integration `shell:*` handlers: trash, reveal-in-folder, reveal+select,
  * user commands. Split out of the old god-registrar `ipc.ts` (docs/01 §12) —
  * behavior is verbatim.
  */
+
+/**
+ * Templates the user has explicitly approved in a native confirmation dialog.
+ *
+ * The renderer owns the Settings → Commands list and pushes it to main, so
+ * "the renderer said this template is configured" is NOT evidence of user
+ * intent: an injected renderer can push anything it likes. Execution therefore
+ * requires a one-time per-template approval shown by the MAIN process (the
+ * renderer cannot draw or dismiss it), persisted under the app's user data.
+ */
+const approvedTemplates = new Set<string>();
+let approvalsLoaded = false;
+
+function approvalsFile(): string {
+  return path.join(app.getPath('userData'), 'approved-command-templates.json');
+}
+
+async function loadApprovals(): Promise<void> {
+  if (approvalsLoaded) return;
+  approvalsLoaded = true;
+  try {
+    const raw = await fsp.readFile(approvalsFile(), 'utf8');
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      for (const entry of parsed) {
+        if (typeof entry === 'string' && entry) approvedTemplates.add(entry);
+      }
+    }
+  } catch {
+    // Missing or corrupt file → no approvals yet. Fail closed (ask again)
+    // rather than fail open.
+  }
+}
+
+async function persistApprovals(): Promise<void> {
+  const file = approvalsFile();
+  // tmp + rename: a torn write would silently drop approvals and ask again —
+  // annoying, but a corrupt approvals file is worse (see AGENTS.md red line).
+  const tmp = `${file}.${process.pid}.tmp`;
+  await fsp.mkdir(path.dirname(file), { recursive: true });
+  await fsp.writeFile(
+    tmp,
+    JSON.stringify([...approvedTemplates].sort(), null, 2),
+    'utf8'
+  );
+  await fsp.rename(tmp, file);
+}
+
+async function approveTemplate(
+  template: string,
+  win: BrowserWindow | null
+): Promise<boolean> {
+  if (typeof template !== 'string' || !template) return false;
+  await loadApprovals();
+  if (approvedTemplates.has(template)) return true;
+  const options = {
+    type: 'warning' as const,
+    buttons: ['Allow', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+    title: 'Allow this command?',
+    message: 'Allow WhaleTag to run this command in a terminal window?',
+    detail: template,
+  };
+  const { response } = win
+    ? await dialog.showMessageBox(win, options)
+    : await dialog.showMessageBox(options);
+  if (response !== 0) return false;
+  approvedTemplates.add(template);
+  await persistApprovals().catch((error: unknown) => {
+    // The session-scoped approval still stands; the next launch asks again.
+    console.warn('[shell] failed to persist command approval:', error);
+  });
+  return true;
+}
 
 export function registerShellHandlers(): void {
   // Opens the OS recycle bin / trash so users can see & restore files deleted
@@ -154,7 +232,19 @@ export function registerShellHandlers(): void {
   // clicked file/folder, with the path substituted into ${path}/${dir}/${name}.
   // Opens a NEW terminal window with the command; main quotes the path. See
   // shell-command.ts + docs/13-security.md.
-  ipcMain.handle('shell:runCommand', (_event, template: string, targetPath: string) =>
-    runUserCommand(template, targetPath)
+  //
+  // The template list comes from the renderer, so it is only a filter — the
+  // real authorization is the main-process dialog in approveTemplate(). An
+  // injected renderer can therefore not silently execute code: the user sees
+  // the exact command line before it runs.
+  ipcMain.handle(
+    'shell:runCommand',
+    async (event, template: string, targetPath: string) => {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (!(await approveTemplate(template, win))) {
+        throw new Error(COMMAND_NOT_APPROVED);
+      }
+      return runUserCommand(template, targetPath);
+    }
   );
 }

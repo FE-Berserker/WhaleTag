@@ -474,6 +474,27 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
     }
   };
 
+  // L12: flatten the expanded tree (depth-first) into a visible-node list so it
+  // can be rendered by a virtualized List — a fully-expanded big subtree used
+  // to mount a ListItemButton per node (thousands for a repo's node_modules).
+  // The row-shape rules live in `-/domain/directory-tree-rows` so they can be
+  // unit-tested without mounting the tree.
+  //
+  // Declared before the `!currentLocation` early return: a hook after a
+  // conditional return violates the Rules of Hooks and crashes when the last
+  // location is removed (hooks count changes between renders).
+  const visibleNodes = useMemo(() => {
+    if (!currentLocation) return [] as TreeNode[];
+    return buildTreeRows({
+      rootName: currentLocation.name,
+      rootPath: currentLocation.path,
+      expanded,
+      childrenByPath,
+      childrenError,
+      showFiles,
+    });
+  }, [currentLocation, expanded, childrenByPath, childrenError, showFiles]);
+
   if (!currentLocation) return null;
 
   // Shared drag-start handler for files AND folders. Triggers a native OS drag
@@ -499,23 +520,6 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
       })
     );
   };
-
-  // L12: flatten the expanded tree (depth-first) into a visible-node list so it
-  // can be rendered by a virtualized List — a fully-expanded big subtree used
-  // to mount a ListItemButton per node (thousands for a repo's node_modules).
-  // The row-shape rules live in `-/domain/directory-tree-rows` so they can be
-  // unit-tested without mounting the tree.
-  const visibleNodes = useMemo(() => {
-    if (!currentLocation) return [] as TreeNode[];
-    return buildTreeRows({
-      rootName: currentLocation.name,
-      rootPath: currentLocation.path,
-      expanded,
-      childrenByPath,
-      childrenError,
-      showFiles,
-    });
-  }, [currentLocation, expanded, childrenByPath, childrenError, showFiles]);
 
   // Leaf node for a file. Double-click opens it (image → full-screen lightbox,
   // everything else → a tab); dragging starts a native OS drag into the editor

@@ -399,7 +399,7 @@ export default function MapiqueView({
       el.classList.remove('whale-pin-bounce');
     });
     if (hoveredPath) {
-      const escaped = hoveredPath.replace(/"/g, '\\"');
+      const escaped = cssAttrValue(hoveredPath);
       const el = document.querySelector(`[data-entry-path="${escaped}"]`);
       if (el) el.classList.add('whale-pin-bounce');
     }
@@ -2027,6 +2027,23 @@ function haversineKm(
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
+/** Escapes a value for an HTML attribute. Leaflet's DivIcon renders `html`
+ *  through `innerHTML`, so an unescaped path containing a quote would break
+ *  out of the attribute and become live markup. */
+function escapeAttr(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/** Escapes a value for a double-quoted CSS attribute selector string. */
+function cssAttrValue(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 /** Build a CSS-only pin marker. `color` is shared with the tray indicator;
  *  selected/active states keep the fill color and add a colored border.
  *  P3-2: the inner shape is wrapped in `.whale-pin-wrap` carrying
@@ -2047,7 +2064,7 @@ function makePinIcon(
     : '0 2px 4px rgba(0,0,0,0.4)';
   return L.divIcon({
     className: `whale-map-pin-${state}`,
-    html: `<div class="whale-pin-wrap" data-entry-path="${entryPath ?? ''}" style="
+    html: `<div class="whale-pin-wrap" data-entry-path="${escapeAttr(entryPath ?? '')}" style="
       display: flex;
       align-items: center;
       justify-content: center;

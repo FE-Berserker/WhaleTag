@@ -227,9 +227,10 @@ function main() {
       `npx cross-env NODE_ENV=production TS_NODE_TRANSPILE_ONLY=true webpack --config ${webpackConfig}`,
       { cwd: ROOT, stdio: 'inherit' }
     );
-  } catch (e) {
-    console.error('Webpack build for extensions failed');
-    process.exit(1);
+  } catch {
+    // Throw (instead of process.exit) so the --watch loop can report the
+    // failure and keep watching for the next edit; the caller below exits 1.
+    throw new Error('Webpack build for extensions failed');
   }
 
   // After webpack, inject manifest into each extension's extension-api.js
@@ -253,4 +254,56 @@ function main() {
   console.log(`Built ${extensions.length} extension(s) to ${DIST_EXTENSIONS}`);
 }
 
-main();
+/**
+ * Rebuild on source changes (`npm run watch:extensions`). The script used to
+ * accept the flag and silently ignore it, so devs watched a stale dist.
+ * Debounced because one save produces several events.
+ */
+function watchSources() {
+  let timer = null;
+  const rebuild = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      try {
+        main();
+      } catch (error) {
+        // Keep the watcher alive: a transient syntax error is exactly what the
+        // loop is for.
+        console.error(
+          '[extensions] rebuild failed:',
+          error instanceof Error ? error.message : error
+        );
+      }
+    }, 400);
+    timer.unref?.();
+  };
+
+  try {
+    fs.watch(SRC_EXTENSIONS, { recursive: true }, (_event, name) => {
+      if (!name) return;
+      const rel = String(name);
+      if (rel.includes('node_modules')) return;
+      console.log(`[extensions] change: ${rel}`);
+      rebuild();
+    });
+  } catch (error) {
+    // recursive watch is unsupported on some platforms (older Linux); a single
+    // build already ran, so warn instead of pretending to watch.
+    console.warn(
+      '[extensions] --watch is not supported on this platform:',
+      error instanceof Error ? error.message : error
+    );
+    return;
+  }
+  console.log(`[extensions] watching ${SRC_EXTENSIONS} for changes...`);
+}
+
+try {
+  main();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+}
+
+if (process.argv.includes('--watch')) watchSources();

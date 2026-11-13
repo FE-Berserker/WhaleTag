@@ -523,6 +523,10 @@ export default function ExtensionHost({
     filePath,
     handleSave,
     handleRequestFileEmbed,
+    // `requestFile` is delivered through this callback; omitting it kept the
+    // effect bound to the first render's closure (stale `entries`), so
+    // navigating to a sibling silently did nothing after a directory change.
+    onRequestFile,
     postToExtension,
     handleRpc,
   ]);

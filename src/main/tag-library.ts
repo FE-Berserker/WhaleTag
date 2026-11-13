@@ -61,6 +61,29 @@ function isTagLibraryShape(value: unknown): boolean {
 }
 
 /**
+ * Keep the location sparse: remove the library file when it carries nothing.
+ * If removal fails (Windows EBUSY/EPERM from another open handle, read-only
+ * media), persist an explicit empty document instead — leaving the stale file
+ * in place would resurrect every description the user just cleared on the next
+ * read, which is worse than one harmless empty file.
+ */
+async function removeOrEmptyLibrary(
+  target: string,
+  emptyDoc: () => LocationTagLibrary
+): Promise<void> {
+  try {
+    await fsp.rm(target, { force: true });
+  } catch (error) {
+    console.warn(
+      '[tag-library] could not remove empty wtaglib.json; writing an empty document instead:',
+      error
+    );
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    await atomicWriteJson(target, emptyDoc());
+  }
+}
+
+/**
  * Merge-safe read for the setters: an unreadable/corrupt wtaglib.json is
  * quarantined rather than read as "no descriptions" (see merge-read.ts).
  */
@@ -119,7 +142,10 @@ export async function setTagLibraryDescription(
     else delete next[tag];
     const target = wtaglibPath(locationRoot);
     if (Object.keys(next).length === 0) {
-      await fsp.rm(target, { force: true }).catch(() => undefined);
+      await removeOrEmptyLibrary(target, () => ({
+        version: TAG_LIBRARY_VERSION,
+        descriptions: {},
+      }));
       return;
     }
     await fsp.mkdir(path.dirname(target), { recursive: true });
@@ -146,7 +172,10 @@ export async function clearTagLibraryDescription(
     delete next[tag];
     const target = wtaglibPath(locationRoot);
     if (isTagLibraryEmpty({ version: TAG_LIBRARY_VERSION, descriptions: next })) {
-      await fsp.rm(target, { force: true }).catch(() => undefined);
+      await removeOrEmptyLibrary(target, () => ({
+        version: TAG_LIBRARY_VERSION,
+        descriptions: {},
+      }));
       return;
     }
     await atomicWriteJson(target, {

@@ -229,11 +229,21 @@ async function migrateLatLngInPlace(
     if (c) changed = true;
   }
   if (!changed) return files;
+  // Pre-lock migrated snapshot: the answer of last resort if wsd.json
+  // disappears before the locked re-read (see below).
+  const snapshot = next;
   return withLock(dirPath, async () => {
     // Re-read inside the lock and migrate the current map, not the stale keys
     // from the lock-free snapshot: a concurrent write may add/remove entries.
     const fresh = await loadWsd(dirPath);
-    if (!fresh?.files) return {};
+    if (!fresh?.files) {
+      // The sidecar vanished between the snapshot and this locked re-read
+      // (concurrent delete / rename). Returning {} would read as "this
+      // directory has no files at all" and hide every tag; return the
+      // already-migrated snapshot instead. Nothing is persisted here, so the
+      // deletion is not resurrected.
+      return snapshot;
+    }
     const merged: Record<string, SidecarMeta> = { ...fresh.files };
     for (const name of Object.keys(merged)) {
       const { next: migrated } = migrateLatLngToTag(merged[name] as LegacySidecarMeta);
@@ -355,12 +365,31 @@ async function migrateLegacySidecars(
   // file's tags: rename it out of the `.json` namespace so the migration never
   // re-runs, but keep the bytes recoverable.
   await persistWsd(dirPath, legacy.files);
-  await Promise.all(
-    legacy.paths.map((filePath) =>
-      fsp.rm(filePath, { force: true }).catch(() => undefined)
-    )
-  );
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  await Promise.all(
+    legacy.paths.map(async (filePath) => {
+      try {
+        await fsp.rm(filePath, { force: true });
+      } catch (error) {
+        // Deletion failed (EBUSY / EPERM). Leaving `<file>.json` in place
+        // makes the next load re-import it — potentially resurrecting tags
+        // the user has since removed. Move it out of the `.json` namespace
+        // instead; the bytes stay recoverable.
+        try {
+          await fsp.rename(filePath, `${filePath}.migrated-${stamp}`);
+          console.warn(
+            `[sidecar] moved unremovable legacy sidecar aside as ${path.basename(filePath)}.migrated-${stamp}`
+          );
+        } catch (renameError) {
+          console.warn(
+            `[sidecar] could not remove or quarantine legacy sidecar ${filePath}:`,
+            error,
+            renameError
+          );
+        }
+      }
+    })
+  );
   await Promise.all(
     legacy.corrupt.map(async (filePath) => {
       try {
@@ -810,10 +839,13 @@ export async function moveSidecar(
 
   if (oldDir === newDir) {
     await withLock(oldDir, async () => {
-      const wsd = await loadWsd(oldDir);
-      if (!wsd?.files || !(oldName in wsd.files)) return;
-      const meta = wsd.files[oldName];
-      const next = { ...wsd.files };
+      // loadFilesOrMigrate, not loadWsd: a directory that still has legacy
+      // per-file sidecars must get migrated first, otherwise the rename lands
+      // on an empty map and the metadata is silently left behind.
+      const files = await loadFilesOrMigrate(oldDir);
+      if (!(oldName in files)) return;
+      const meta = files[oldName];
+      const next = { ...files };
       delete next[oldName];
       next[newName] = meta;
       await persistWsd(oldDir, next);
@@ -821,22 +853,32 @@ export async function moveSidecar(
     return;
   }
 
-  // Cross-directory: lift the entry out of the source, then drop it into the
-  // destination. Each step holds only one lock (no cross-dir deadlock risk).
+  // Cross-directory: write the destination FIRST, then drop the source entry.
+  // The old order deleted the source before the destination write, so a failed
+  // destination write (corrupt wsd, EACCES, ENOSPC) lost the tags for good.
+  // This order duplicates metadata on failure instead of losing it — merge
+  // over wipe.
   const meta = await withLock(oldDir, async () => {
-    const wsd = await loadWsd(oldDir);
-    if (!wsd?.files || !(oldName in wsd.files)) return null;
-    const m = wsd.files[oldName];
-    const next = { ...wsd.files };
-    delete next[oldName];
-    await persistWsd(oldDir, next);
-    return m;
+    const files = await loadFilesOrMigrate(oldDir);
+    return files[oldName] ?? null;
   });
   if (!meta) return;
 
   await withLock(newDir, async () => {
     const files = await loadFilesOrMigrate(newDir);
     await persistWsd(newDir, { ...files, [newName]: meta });
+  });
+
+  // Destination is durable — now remove the stale source entry. Guard on the
+  // entry still matching what we lifted: if the name was re-created and
+  // re-tagged in between, keep the newer entry (never delete fresh data).
+  await withLock(oldDir, async () => {
+    const files = await loadFilesOrMigrate(oldDir);
+    const current = files[oldName];
+    if (!current || JSON.stringify(current) !== JSON.stringify(meta)) return;
+    const next = { ...files };
+    delete next[oldName];
+    await persistWsd(oldDir, next);
   });
 }
 

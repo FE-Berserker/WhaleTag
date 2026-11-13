@@ -1,7 +1,7 @@
 import path from 'path';
 import { existsSync, promises as fsp } from 'fs';
 import { META_DIR } from '../shared/whale-meta';
-import { atomicWriteText } from './atomic-write';
+import { atomicWriteBytes } from './atomic-write';
 import type { RevisionInfo } from '../shared/extension-types';
 
 const REVISIONS_DIR = 'revisions';
@@ -56,7 +56,10 @@ function decodeTimestamp(encoded: string): string {
 export async function backupRevision(filePath: string): Promise<void> {
   if (!existsSync(filePath)) return;
 
-  const content = await fsp.readFile(filePath, 'utf8');
+  // Byte-exact backup. Reading as utf8 silently replaced every invalid
+  // sequence (GBK text, any binary payload) with U+FFFD, and restoring wrote
+  // that damage back over the original — a one-click corruption.
+  const content = await fsp.readFile(filePath);
   const ext = path.extname(filePath);
   const revDir = revisionsDirFor(filePath);
 
@@ -64,7 +67,7 @@ export async function backupRevision(filePath: string): Promise<void> {
   const timestamp = nextTimestamp(revDir, ext);
   const revPath = path.join(revDir, `${timestamp}${ext}`);
 
-  await atomicWriteText(revPath, content);
+  await atomicWriteBytes(revPath, content);
 }
 
 /** Lists all revisions for a file, newest first. */
@@ -114,8 +117,10 @@ export async function restoreRevision(
     throw new Error('Invalid revision path');
   }
 
-  const content = await fsp.readFile(revisionPath, 'utf8');
-  await atomicWriteText(filePath, content);
+  // Restore raw bytes (see backupRevision): a utf8 round-trip would corrupt
+  // non-UTF-8 content that the backup now preserves exactly.
+  const content = await fsp.readFile(revisionPath);
+  await atomicWriteBytes(filePath, content);
 }
 
 /**
@@ -151,7 +156,18 @@ export async function cleanupRevisionsForLocation(
   const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
   const revRoot = path.join(locationRoot, META_DIR, REVISIONS_DIR);
   if (!existsSync(revRoot)) return;
-  await cleanupDir(revRoot, cutoff);
+  try {
+    await cleanupDir(revRoot, cutoff);
+  } catch (error) {
+    // Best-effort maintenance. The IPC cleans every location with Promise.all;
+    // one unreadable root (permissions, unplugged drive) must not reject the
+    // whole pass and hide that every other root was cleaned.
+    console.warn(
+      '[revisions] failed to clean up revisions under:',
+      revRoot,
+      error
+    );
+  }
 }
 
 async function cleanupDir(dir: string, cutoff: number): Promise<void> {
@@ -159,7 +175,10 @@ async function cleanupDir(dir: string, cutoff: number): Promise<void> {
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      await cleanupDir(fullPath, cutoff);
+      await cleanupDir(fullPath, cutoff).catch((e) => {
+        // One unreadable subtree must not abort cleanup of its siblings.
+        console.warn('[revisions] failed to scan a revision folder:', fullPath, e);
+      });
       const remaining = await fsp.readdir(fullPath).catch((e) => {
         // Keep the directory (and log it): an unreadable revision folder must
         // not be treated as empty and removed with its contents unknown.

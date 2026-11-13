@@ -199,6 +199,9 @@ function hideError() {
 
 // --- libheif-js wasm bridge (mirrors cad-viewer's occt loader) ---
 let heicWasmReqId = 0;
+/** If the host never answers (torn-down bridge, extension host error), a bare
+ *  promise would hang forever and `libheifPromise` could never retry. */
+const HEIC_WASM_TIMEOUT_MS = 15_000;
 const pendingHeicWasm = new Map<
  string,
  { resolve: (data: ArrayBuffer) => void; reject: (err: Error) => void }
@@ -207,7 +210,20 @@ const pendingHeicWasm = new Map<
 function requestHeicWasm(): Promise<ArrayBuffer> {
  const requestId = `h${(heicWasmReqId += 1)}`;
  return new Promise<ArrayBuffer>((resolve, reject) => {
- pendingHeicWasm.set(requestId, { resolve, reject });
+ const timer = window.setTimeout(() => {
+ pendingHeicWasm.delete(requestId);
+ reject(new Error('HEIC WASM load timed out'));
+ }, HEIC_WASM_TIMEOUT_MS);
+ pendingHeicWasm.set(requestId, {
+ resolve: (data) => {
+ window.clearTimeout(timer);
+ resolve(data);
+ },
+ reject: (err) => {
+ window.clearTimeout(timer);
+ reject(err);
+ },
+ });
  window.whaleExt.postMessage({ type: 'requestHeicWasm', requestId });
  });
 }

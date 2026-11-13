@@ -88,7 +88,14 @@ export async function buildIndexReport(
       // ENOENT: the directory vanished between listing and recursion — its
       // rows are genuinely stale and the delete pass should drop them.
       // Anything else means the subtree may still exist; keep its rows.
-      if (!isVanished(error)) unreadable.push(dir);
+      //
+      // Exception: the ROOT itself. A location root that is currently
+      // unreachable (network share / external drive not mounted) yields ENOENT
+      // for the root, but its rows must NOT be treated as deleted: the whole
+      // location index would be wiped and `ready` would go false, so the
+      // watcher never rebuilds it. Report the root as unreadable → complete:
+      // false → ingestFiles keeps the stored rows.
+      if (dir === rootPath || !isVanished(error)) unreadable.push(dir);
       return;
     }
     // Stat with bounded concurrency, then split files / dirs so the directory's
@@ -96,7 +103,18 @@ export async function buildIndexReport(
     const stats = await mapWithConcurrency(names, 16, async (name) => {
       const full = path.join(dir, name);
       try {
-        return { name, full, stat: await fsp.stat(full) };
+        const link = await fsp.lstat(full);
+        if (link.isSymbolicLink()) {
+          // Follow symlinked files (cheap, cannot recurse) but never a
+          // symlinked directory: a Windows junction can point back up the
+          // tree, turning this walk into unbounded recursion (ENAMETOOLONG)
+          // and latching `complete:false`, which disables the delete pass for
+          // the whole root. dir-watcher already refuses the same descent.
+          const target = await fsp.stat(full);
+          if (target.isDirectory()) return null;
+          return { name, full, stat: target };
+        }
+        return { name, full, stat: link };
       } catch (error) {
         if (!isVanished(error)) unreadable.push(full);
         return null;

@@ -475,6 +475,11 @@ export function isStaleDateTag(tag: string, now: Date = new Date()): boolean {
  */
 export function isAnyDateShapeTag(tag: string): boolean {
   if (isPeriodTag(tag)) return false;
+  // Bare 4- and 6-digit runs ARE the canonical stored form of year/month smart
+  // tags: `migrate-date-tags` rewrites `year-2026` → `2026` and
+  // `month-202606` → `202606`, and the one-date rule relies on recognizing
+  // them. The ambiguity (a user's project code "2019" looks identical) is
+  // inherent to the bare format and is a known trade-off — see docs/03.
   return normalizeDateTag(tag) !== null;
 }
 

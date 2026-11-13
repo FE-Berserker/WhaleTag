@@ -501,8 +501,17 @@ export async function insertFulltext(
   const ins = db.prepare(
     'INSERT INTO fulltext_fts(path, name, mtime, content) VALUES (?, ?, ?, ?)'
   );
+  // FTS5 virtual tables have no UNIQUE constraint, so a re-inserted path would
+  // silently accumulate duplicate rows (a skipped/failed delete step, or an
+  // incremental rebuild that re-inserts a changed file). Delete-then-insert in
+  // the same transaction keeps exactly one row per path; the DELETE filters on
+  // `path`, which FTS5 supports even without a unique index.
+  const del = db.prepare('DELETE FROM fulltext_fts WHERE path = ?');
   const insBatch = db.transaction((recs: FulltextRecord[]) => {
-    for (const r of recs) ins.run(r.path, r.name, r.mtime, r.content);
+    for (const r of recs) {
+      del.run(r.path);
+      ins.run(r.path, r.name, r.mtime, r.content);
+    }
   });
   for (let i = 0; i < records.length; i += INGEST_BATCH) {
     insBatch(records.slice(i, i + INGEST_BATCH));

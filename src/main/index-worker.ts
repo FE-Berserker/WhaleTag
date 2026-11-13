@@ -93,6 +93,36 @@ function fail(reqId: string, err: unknown): void {
 }
 
 /**
+ * Per-root serialization for the heavy build passes.
+ *
+ * `index:build` snapshots the stored rows (prior) and then deletes everything
+ * the walk did not see; `fulltext:build` does the same for the full-text
+ * table. Two overlapping builds for one root can interleave as
+ * "read prior → other build writes → delete against the older prior", which
+ * drops rows the newer pass just inserted (FTS5 has no unique constraint to
+ * absorb the duplicate either). Dispatch used to fire every request
+ * immediately, so a watcher rebuild could land on top of a user-triggered one.
+ * Chaining makes them run in submission order; the map entry is dropped once
+ * the chain drains so it does not leak one promise per location.
+ */
+const buildChains = new Map<string, Promise<void>>();
+
+function enqueueBuild(rootPath: string, task: () => Promise<void>): Promise<void> {
+  const prev = buildChains.get(rootPath) ?? Promise.resolve();
+  const run = prev.then(task, task);
+  const tail: Promise<void> = run
+    .then(
+      () => undefined,
+      () => undefined
+    )
+    .then(() => {
+      if (buildChains.get(rootPath) === tail) buildChains.delete(rootPath);
+    });
+  buildChains.set(rootPath, tail);
+  return run;
+}
+
+/**
  * Dispatch a single request to the right handler. Wrapped in try/catch
  * via the caller so any throw becomes an `IndexWorkerErr` reply.
  */
@@ -101,56 +131,60 @@ async function dispatch(req: IndexWorkerRequest): Promise<void> {
     // -------- writes / builds --------
     case 'index:build': {
       const { rootPath } = req.arg as { rootPath: string };
-      const progress = makeProgressPoster('index:build', rootPath);
-      const report = await indexer.buildIndexReport(rootPath, (n) =>
-        progress('scan', n, null)
-      );
-      if (!report.complete) {
-        // Keep the stored rows for what we could not read this pass: deleting
-        // them would erase a whole subtree on a transient EACCES/EPERM.
-        console.warn(
-          '[index-worker] index:build walk incomplete; keeping stored rows for',
-          report.unreadable.length,
-          'unreadable path(s):',
-          report.unreadable.slice(0, 5)
+      await enqueueBuild(rootPath, async () => {
+        const progress = makeProgressPoster('index:build', rootPath);
+        const report = await indexer.buildIndexReport(rootPath, (n) =>
+          progress('scan', n, null)
         );
-      }
-      const entries = report.entries;
-      await db.ingestFiles(
-        rootPath,
-        entries,
-        (d, t) => progress('ingest', d, t),
-        { complete: report.complete }
-      );
-      db.removeLegacyWsi(rootPath);
-      post({
-        kind: 'progress',
-        op: 'index:build',
-        rootPath,
-        phase: 'ingest',
-        processed: entries.length,
-        total: entries.length,
-        done: true,
+        if (!report.complete) {
+          // Keep the stored rows for what we could not read this pass: deleting
+          // them would erase a whole subtree on a transient EACCES/EPERM.
+          console.warn(
+            '[index-worker] index:build walk incomplete; keeping stored rows for',
+            report.unreadable.length,
+            'unreadable path(s):',
+            report.unreadable.slice(0, 5)
+          );
+        }
+        const entries = report.entries;
+        await db.ingestFiles(
+          rootPath,
+          entries,
+          (d, t) => progress('ingest', d, t),
+          { complete: report.complete }
+        );
+        db.removeLegacyWsi(rootPath);
+        post({
+          kind: 'progress',
+          op: 'index:build',
+          rootPath,
+          phase: 'ingest',
+          processed: entries.length,
+          total: entries.length,
+          done: true,
+        });
+        post({ reqId: req.reqId, ok: true, result: { count: entries.length } });
       });
-      post({ reqId: req.reqId, ok: true, result: { count: entries.length } });
       return;
     }
     case 'fulltext:build': {
       const { rootPath } = req.arg as { rootPath: string };
-      const progress = makeProgressPoster('fulltext:build', rootPath);
-      const { count } = await fulltext.buildFulltextIndex(rootPath, (n) =>
-        progress('extract', n, null)
-      );
-      post({
-        kind: 'progress',
-        op: 'fulltext:build',
-        rootPath,
-        phase: 'extract',
-        processed: count,
-        total: count,
-        done: true,
+      await enqueueBuild(rootPath, async () => {
+        const progress = makeProgressPoster('fulltext:build', rootPath);
+        const { count } = await fulltext.buildFulltextIndex(rootPath, (n) =>
+          progress('extract', n, null)
+        );
+        post({
+          kind: 'progress',
+          op: 'fulltext:build',
+          rootPath,
+          phase: 'extract',
+          processed: count,
+          total: count,
+          done: true,
+        });
+        post({ reqId: req.reqId, ok: true, result: { count } });
       });
-      post({ reqId: req.reqId, ok: true, result: { count } });
       return;
     }
     case 'exif:mark-processed': {
@@ -224,8 +258,11 @@ async function dispatch(req: IndexWorkerRequest): Promise<void> {
     case 'index:close': {
       // Location removed from settings — drop its cached db handle so
       // per-location connections don't accumulate (docs/04 §10). No-op
-      // when the db was never opened.
+      // when the db was never opened. Wait for an in-flight build first:
+      // closing the handle underneath an ingest would make it fail with a
+      // generic SQLITE error instead of finishing (or being skipped).
       const { rootPath } = req.arg as { rootPath: string };
+      await buildChains.get(rootPath)?.catch(() => undefined);
       db.closeDb(rootPath);
       post({ reqId: req.reqId, ok: true, result: undefined });
       return;

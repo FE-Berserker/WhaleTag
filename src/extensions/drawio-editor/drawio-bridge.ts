@@ -201,22 +201,18 @@ export function useDrawioBridge(
   // (a previous version of this function re-encoded before sending —
   // that's the "drag into drawio freezes" bug).
   //
-  // Also: an `insertInflightRef` guard prevents concurrent inserts from
-  // racing — two parallel `getXml → loadXml` cycles would post conflicting
-  // `load` actions to drawio, the second wiping the first's result. If a
-  // second insert arrives while one is in flight, we resolve immediately
-  // without sending anything to drawio (the first insert's loadXml will
-  // land before the second's getXml starts anyway).
-  const insertInflightRef = useRef(false);
+  // Concurrent inserts are serialized through a promise chain instead of being
+  // dropped: the previous `insertInflightRef` early-return silently discarded
+  // the second dropped file (the caller had no error to report), so the file
+  // simply never appeared. Chaining keeps insertion order; two parallel
+  // `getXml → loadXml` cycles would otherwise post conflicting `load` actions
+  // and the second would wipe the first. The queue tail swallows errors so one
+  // failed insert does not poison every later drop.
+  const insertQueueRef = useRef<Promise<void>>(Promise.resolve());
   const insertLinkedThumbnail = useCallback(
-    async (opts: FileDropSnippetOptions): Promise<void> => {
-      if (disposedRef.current || insertInflightRef.current) {
-        // A previous insert is still resolving, or this bridge has been
-        // destroyed. Skip to avoid a parallel/stale loadXml clobbering state.
-        return;
-      }
-      insertInflightRef.current = true;
-      try {
+    (opts: FileDropSnippetOptions): Promise<void> => {
+      const run = insertQueueRef.current.then(async () => {
+        if (disposedRef.current) return;
         const snippet =
           opts.cellKind === 'labeled'
             ? buildLabeledDropSnippet(opts)
@@ -252,9 +248,9 @@ export function useDrawioBridge(
         }
 
         loadXml(targetXml);
-      } finally {
-        insertInflightRef.current = false;
-      }
+      });
+      insertQueueRef.current = run.catch(() => undefined);
+      return run;
     },
     [getXml, loadXml]
   );
@@ -268,7 +264,8 @@ export function useDrawioBridge(
       readyRef.current = false;
       pendingXmlRef.current = null;
       pendingThemeRef.current = null;
-      insertInflightRef.current = false;
+      // Drop the chain reference; queued inserts check disposedRef and no-op.
+      insertQueueRef.current = Promise.resolve();
 
       const queue = requestQueueRef.current;
       requestQueueRef.current = [];

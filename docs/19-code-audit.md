@@ -171,6 +171,28 @@ docs/13 一直写着"读取入口也遵守同一位置边界"，但三个只读�
 - **读取成功仍以侧车为准**：下一轮读取成功时走正常分支，清空标签会真正清空（回归用例覆盖）。
 - 回归网：[index-db.test.ts](../src/main/index-db.test.ts) 新增"侧车读失败保留已存标签"用例（写入 `keep-me` → 带标记重建 → FTS 仍命中、`filesPrior` 仍含标签 → 正常重建后清空生效）；[indexer.test.ts](../src/main/indexer.test.ts) 的降级用例补断言：坏目录条目 `tagsUnreadable === true`、好目录不带该标记。
 
+### P1-23. 2026-11 全仓复核（六通道）✅
+在既有 P0~P3 全部 ✅ 的基线上，新一轮全仓审核（门禁 / 机械 / 安全 / main / 渲染层 / 扩展+shared+scripts+i18n 六个通道）又抓到两类 P0 与一批 P1，本轮已修：
+- **条件式 hook（P0）**：[CalendarView.tsx](../src/renderer/components/CalendarView.tsx)（YearView 热力图分支返回后才调 2 个 `useMemo`）、[DirectoryTree.tsx](../src/renderer/components/DirectoryTree.tsx)（`!currentLocation` 早退后调 `useMemo`）、[GalleryCell.tsx](../src/renderer/components/GalleryCell.tsx)（`!entry` 早退后调 3 个 hook）——hook 数量随分支变化，运行时报 "Rendered more hooks than during the previous render"。修法：hook 上移到早退之前，早退只保留渲染分支；[.eslintrc.js](../.eslintrc.js) 补 `plugin:react-hooks/recommended`——此前只注册了插件、从未启用规则，所以门禁一直是绿的。
+- **写逃逸（P0）**：`fs:move` / `fs:copy` 只校验源路径、不校验目的地，注入的渲染层可把任意内容搬进 Startup / `~/.ssh`；现两端都过 `assertWithinAllowedRoot`（[fs-write.ts](../src/main/ipc/fs-write.ts)），同轮 `fs:importExternal` 的 `cp` 补 `force:false`（默认 true 会静默覆盖）。
+- **数据丢失（P1）**：索引根目录 ENOENT 被当成"真的没了"→ 删除 pass 清空整个 location 且不自愈（[indexer.ts](../src/main/indexer.ts)：根不可读也算 `unreadable` → `complete=false`）；跨目录移动先删源 sidecar 再写目标，写失败时标签永久丢失且调用方 `catch {}` 静默（[sidecar.ts](../src/main/sidecar.ts) 改为先写目标、再按内容未变才删源）。
+- **其余（P1）**：shell 模板由渲染层自报 → 主进程一次性对话框授权（`COMMAND_NOT_APPROVED` + `<userData>/approved-command-templates.json`）；dompurify 3.4.16→3.4.17、MCP SDK 1.30.0→1.32.2、zod 4.6.5→4.6.7，并给 JSON-RPC batch 加 32 元素上限；Mapique DivIcon 的 `data-entry-path` 转义；切换目录清空选中集（`selectAllState` 改按可见项计数）；MediaLightbox 预读加取消守卫（卸载后才创建的 blob 会永久泄漏）；text-editor 跨文件复用 view 时重置 undo 历史（顺带修掉"先赋值后比较"导致语言切换永不执行）；15 个 i18n key 补五语言 + [check-locales.test.ts](../scripts/check-locales.test.ts) 新增"字面量 `t()` key 必须存在于 en"扫描；[run-tests.cjs](../scripts/run-tests.cjs) 去掉未声明的 `glob` 依赖，改 `fs` 递归遍历。
+- **评估后不改**：smart-tags 的裸 4/6 位数字（`2019`）既是 year/month 的规范存储形式（迁移会重写成裸串），也可能撞上用户自建编码标签；收紧会破坏迁移后的年月互斥（4 个既有用例立即失败），记录为取舍（[docs/03 §12](./03-tagging.md)）。
+- **明确不做**：门禁盲区（`scripts/` 进 tsc、`strict`、`--max-warnings`、`no-console`）作为后续独立议题；`taglibrary.renameGroup` 缺 UI 入口仍待产品决策。P2 级的数据正确性项已由下方 P1-24 清理。
+- 回归：`npm run type-check` 0 错、`npm run lint` 0 error（30 条 exhaustive-deps warning，门禁只统计 error）、`npm test` 1827/1827 全绿。
+
+### P1-24. 2026-11 P2 批次（数据正确性优先）✅
+在 P1-23 之外的 P2 清单里，挑"会丢数据 / 会让状态永久卡住、且可独立验证"的一批修复：
+- **构建并发与符号链接**：[index-worker.ts](../src/main/index-worker.ts) 的 `index:build` / `fulltext:build` 走 per-root promise 链串行——两者都是"读 prior → 写入 → 按 prior 删除"，重叠执行会让先读的 prior 删掉后一次刚插入的行（FTS5 无唯一约束，重复行还会累积）；`index:close` 先等该 root 的链清空再关连接。[indexer.ts](../src/main/indexer.ts) / [fulltext.ts](../src/main/fulltext.ts) 改用 `lstat`：符号链接文件仍跟随（安全），符号链接**目录**不下降——Windows junction 指回上层会让遍历无限递归（ENAMETOOLONG）并把 `complete` 锁成 false，进而永久停掉删除 pass。
+- **watcher 突发**：[dir-watcher.ts](../src/main/dir-watcher.ts) 的 500 条/批上限从"截断丢弃"改为"下一 tick 继续 drain"，并新增 5s 最大等待——纯尾沿去抖在解压 / `git checkout` / rsync 期间永不 flush，索引会整段时间陈旧。
+- **清空失败导致"复活"**：[folder-meta.ts](../src/main/folder-meta.ts) / [tag-library.ts](../src/main/tag-library.ts) 清除最后一个字段时若删文件失败（Windows EBUSY、只读盘），旧代码静默吞掉，文件留着 → 下次读取把刚清掉的标签/元数据又读回来；现在失败时写显式空文档并 warn。[sidecar.ts](../src/main/sidecar.ts) 的 legacy 迁移同理：`rm` 失败改为重命名到 `.migrated-<stamp>`（防止下次 load 再次导入旧标签）；`migrateLatLngInPlace` 二次读为 null 时返回已迁移快照而不是 `{}`（否则整个目录看起来没有文件）。
+- **修订快照字节级**：[revisions.ts](../src/main/revisions.ts) 备份 / 恢复改读写 `Buffer` + `atomicWriteBytes`——按 utf8 读 GBK / 二进制文件会把非法序列替换成 U+FFFD，恢复即写回损坏内容；清理遍历的根 / 子目录失败只 warn，不再让一个坏目录 reject 整批。
+- **渲染层**：[DirectoryContentContextProvider.tsx](../src/renderer/hooks/DirectoryContentContextProvider.tsx) 空路径分支复位 `loading`、旧请求的 sidecar catch 补 `isCurrent` 守卫（否则永久骨架屏 / 旧健康状态覆盖新目录）；[SearchBar.tsx](../src/renderer/components/SearchBar.tsx) 清空查询或模式切换时复位 `contentBusy`（旧查询的 finally 被 seq 跳过会永久转圈）；[ThumbIcon.tsx](../src/renderer/components/ThumbIcon.tsx) 缓存快路径无条件 `setState`（复用单元格时两条目命中同一缓存 URL 会一直空白）；[CalendarView.tsx](../src/renderer/components/CalendarView.tsx) `containIntrinsicSize` 40px→28px（实际行高 24 + 上下 4）。
+- **扩展协议**：[extension-types.ts](../src/shared/extension-types.ts) 的 `isValidEnvelope` 加消息类型白名单 + `message` 形状校验（此前只要非 `undefined` 就放行）；[ExtensionHost.tsx](../src/renderer/components/ExtensionHost.tsx) 的 message effect 补 `onRequestFile` 依赖（旧闭包拿着过期 `entries`，兄弟文件导航静默失效）；[heic-viewer/index.ts](../src/extensions/heic-viewer/index.ts) 的 wasm 请求加 15s 超时（宿主无响应时 promise 永久挂起、libheif 永不重试）。
+- **工程**：`@types/leaflet*` 从 `dependencies` 移到 `devDependencies`；[build-extensions.js](../scripts/build-extensions.js) 真正支持 `--watch`（此前 `watch:extensions` 传了 flag 但脚本忽略，dist 一直陈旧；webpack 失败改为抛出，watch 循环可继续）。
+- **扩展协议 / 编辑器（第二轮）**：[drawio-editor/drop-xml.ts](../src/extensions/drawio-editor/drop-xml.ts) 的非图片 drop label 在 `html=1` 下按 HTML 渲染，改为先 HTML 转义再 XML 转义（此前只做 XML 转义，文件名 `<img src=x onerror=…>` 会解码回标记）；[drawio-bridge.ts](../src/extensions/drawio-editor/drawio-bridge.ts) 并发插入从"in-flight 静默丢弃"改为 promise 链串行（第二个拖入的文件不再无声消失）；[html-viewer/index.ts](../src/extensions/html-viewer/index.ts) 关闭远程图片时，用户 `<style>` 的 `@import` 与非 `data:` 的 `url()` 一并剥掉（DOMPurify 管不到 `<style>` 文本，`background:url(https://…)` 仍会发请求）；[extension-types.ts](../src/shared/extension-types.ts) 把 `DirectoryDialogResultMessage` 补进 `HostMessage` 联合（此前可用但类型不完整）；[index-db.ts](../src/main/index-db.ts) 的 `insertFulltext` 改为同事务内先按 path 删除再插入——FTS5 虚拟表没有 UNIQUE 约束，漏删一步就会累积重复行。
+- 回归：受影响的 main 测试 63/63、dir-watcher 13/13、drop-xml + index-db 76/76 通过；全量三件套：type-check 0 错、lint 0 error（29 条 exhaustive-deps warning）、`npm test` 1829/1829 全绿。
+
 ---
 
 ## 🟡 P2 — 类型逃逸

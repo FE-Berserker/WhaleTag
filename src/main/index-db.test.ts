@@ -350,6 +350,23 @@ describe('index-db (SQLite + FTS5 trigram)', () => {
     }
   });
 
+  it('insertFulltext replaces rather than duplicates a path (FTS5 has no unique constraint)', async () => {
+    const root = await tmpRoot();
+    try {
+      await setup(root);
+      const rec = { path: 'dup.md', name: 'dup.md', mtime: 1, content: 'one two' };
+      await insertFulltext(root, [rec]);
+      // The same path arriving again (a re-run that skipped its delete step)
+      // must not leave two rows behind; both would match queries.
+      await insertFulltext(root, [{ ...rec, mtime: 2, content: 'three four' }]);
+      assert.equal(queryFulltext(root, 'three').length, 1);
+      assert.equal(queryFulltext(root, 'one').length, 0);
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('indexStatus reports count and readiness', async () => {
     const root = await tmpRoot();
     try {
