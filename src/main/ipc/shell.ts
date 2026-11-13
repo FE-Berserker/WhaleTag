@@ -1,7 +1,7 @@
 import { promises as fsp } from 'fs';
 import { ipcMain, shell } from 'electron';
 import { exec, execFile } from 'child_process';
-import { runUserCommand } from '../shell-command';
+import { runUserCommand, setUserCommandTemplates } from '../shell-command';
 import { linuxRevealSteps } from '../desktop-linux';
 
 /**
@@ -142,6 +142,13 @@ export function registerShellHandlers(): void {
       }
     }
   );
+
+  // Push the user's configured command templates (Settings → Commands). The
+  // renderer sends this on boot and on every settings change; `shell:runCommand`
+  // only executes templates present in this list (see shell-command.ts).
+  ipcMain.handle('shell:setCommandTemplates', (_event, templates: unknown) => {
+    setUserCommandTemplates(templates);
+  });
 
   // Run a user-configured shell command (Settings → Commands) on a right-
   // clicked file/folder, with the path substituted into ${path}/${dir}/${name}.

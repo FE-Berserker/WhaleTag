@@ -42,5 +42,14 @@ export interface UserCommand {
  */
 export const COMMAND_PATH_BLOCKED = 'COMMAND_PATH_BLOCKED';
 
+/**
+ * Sentinel thrown by `runUserCommand` (main) when the renderer asked for a
+ * template that is not in the user's configured command list. The renderer
+ * pushes that list on boot / on every settings change; main refuses anything
+ * else, so an injected renderer cannot turn `shell:runCommand` into arbitrary
+ * code execution. Matched to the generic "command failed" toast.
+ */
+export const COMMAND_NOT_ALLOWED = 'COMMAND_NOT_ALLOWED';
+
 /** IPC result of `shell:runCommand`. */
 export type RunCommandResult = { ok: true };

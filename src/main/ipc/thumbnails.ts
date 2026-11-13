@@ -24,9 +24,10 @@ export function registerThumbnailHandlers(): void {
     return generateThumbnail(filePath);
   });
 
-  ipcMain.handle('thumbnail:load', (_event, filePath: string) =>
-    loadThumbnail(filePath)
-  );
+  ipcMain.handle('thumbnail:load', (_event, filePath: string) => {
+    assertWithinAllowedRoot(filePath); // reads <dir>/.whale/thumbs/
+    return loadThumbnail(filePath);
+  });
 
   // ---- Folder thumbnails / backgrounds (`.whale/wst.jpg` / `.whale/wsb.jpg`) ----
   ipcMain.handle('thumbnail:loadFolder', (_event, dirPath: string) => {

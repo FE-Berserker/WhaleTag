@@ -1,4 +1,5 @@
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { existsSync, promises as fsp } from 'fs';
 import { ipcMain, shell } from 'electron';
 import { execFile } from 'child_process';
@@ -109,6 +110,23 @@ async function openNative(targetPath: string): Promise<void> {
   if (errorMessage) {
     throw new Error(errorMessage);
   }
+}
+
+/**
+ * Extensions post `file://` links (drawio's relative-link support emits them);
+ * everything else arrives as a plain path. Convert first so the allowedRoots
+ * check sees a real filesystem path — otherwise the root check compared a URL
+ * string and always failed, and drawio links silently did nothing.
+ */
+function openTargetPath(target: string): string {
+  if (typeof target === 'string' && /^file:\/\//i.test(target)) {
+    try {
+      return fileURLToPath(target);
+    } catch {
+      throw new Error(`Invalid file URL: ${target}`);
+    }
+  }
+  return target;
 }
 
 /**
@@ -266,6 +284,10 @@ export function zipDirectory(dirPath: string): Promise<string> {
 export function zipEntries(paths: string[], zipPath: string): Promise<string> {
   if (!paths.length) throw new Error('Nothing selected to package');
   for (const p of paths) assertWithinAllowedRoot(p);
+  // The archive name is renderer user input joined to the current directory
+  // (`..\..\evil.zip` must not escape the configured locations). zipDirectory
+  // stays exempt: its destination is derived in main from a source path.
+  assertWithinAllowedRoot(zipPath);
   if (existsSync(zipPath)) {
     throw new Error(`A file already exists at: ${zipPath}`);
   }
@@ -472,10 +494,12 @@ export function registerFsWriteHandlers(): void {
 
   // Read/exec-side confinement (docs/13 §13): extensions' `openLinkExternally`
   // (non-http) and `openNative` messages funnel here; the OS handler must not
-  // be launchable on paths outside configured locations.
+  // be launchable on paths outside configured locations. `file://` URLs are
+  // converted to a filesystem path BEFORE the check.
   ipcMain.handle('fs:openNative', (_event, targetPath: string) => {
-    assertWithinAllowedRoot(targetPath);
-    return openNative(targetPath);
+    const target = openTargetPath(targetPath);
+    assertWithinAllowedRoot(target);
+    return openNative(target);
   });
 
   ipcMain.handle('fs:zipDirectory', (_event, dirPath: string) =>

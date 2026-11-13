@@ -78,6 +78,9 @@ const whaleApi: WhaleApi = {
     ipcRenderer.invoke('fs:openNative', targetPath),
   runCommand: (template: string, targetPath: string) =>
     ipcRenderer.invoke('shell:runCommand', template, targetPath),
+  // Allow-list for `runCommand`: pushed whenever Settings → Commands changes.
+  setUserCommandTemplates: (templates: string[]) =>
+    ipcRenderer.invoke('shell:setCommandTemplates', templates),
 
   // Zip a folder into a sibling `<dir>.zip`; resolves with the archive path.
   zipDirectory: (dirPath: string) =>

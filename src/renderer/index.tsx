@@ -8,6 +8,7 @@ import i18n from '-/i18n';
 import { PersistGate } from 'redux-persist/integration/react';
 import Root from '-/containers/Root';
 import ErrorBoundary from '-/components/ErrorBoundary';
+import UserCommandTemplateSync from '-/components/UserCommandTemplateSync';
 import {
   errorDetail,
   installBootGuard,
@@ -63,6 +64,8 @@ if (!container) {
                   read the persisted `settings.themeMode` reactively. */}
               <ErrorBoundary>
                 <BootReady onReady={boot.markReady} />
+                {/* Main keeps a fail-closed allow-list of command templates. */}
+                <UserCommandTemplateSync />
                 <Root />
               </ErrorBoundary>
             </I18nextProvider>

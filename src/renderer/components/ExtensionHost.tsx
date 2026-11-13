@@ -500,7 +500,12 @@ export default function ExtensionHost({
           ) {
             window.open(msg.url, '_blank');
           } else {
-            ipcApi.openNative(msg.url).catch(() => undefined);
+            // Main converts `file://` links to a path and refuses anything
+            // outside a configured location; log the refusal instead of
+            // hiding it (a drawio link that does nothing is otherwise opaque).
+            ipcApi.openNative(msg.url).catch((err: unknown) => {
+              console.error('[ExtensionHost] failed to open link:', err);
+            });
           }
           break;
         case 'error':

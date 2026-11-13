@@ -7,7 +7,10 @@
  * window (cmd/Terminal/xterm) so the user sees stdout/stderr and can interact;
  * the window is fire-and-forget — WhaleTag doesn't track it.
  *
- * Security: `assertWithinAllowedRoot` gates the path (mirrors `fs:rename` /
+ * Security: the template must be one the user configured (the renderer pushes
+ * the Settings → Commands list; main executes nothing else — an injected
+ * renderer cannot use this channel as arbitrary code execution).
+ * `assertWithinAllowedRoot` gates the path (mirrors `fs:rename` /
  * `fs:delete`); the path is shell-quoted via `shell-quote.ts`; Windows rejects
  * paths containing `%` (cmd.exe expands `%VAR%` even inside double quotes and
  * there's no reliable escape at the `cmd /k` level). See `docs/13-security.md`.
@@ -17,7 +20,10 @@ import path from 'path';
 import { assertWithinAllowedRoot } from './allowed-roots';
 import { quotePathForShell } from './shell-quote';
 import { launchLinuxTerminal } from './desktop-linux';
-import { COMMAND_PATH_BLOCKED } from '../shared/shell-types';
+import {
+  COMMAND_NOT_ALLOWED,
+  COMMAND_PATH_BLOCKED,
+} from '../shared/shell-types';
 
 export interface CommandValues {
   /** Absolute path of the right-clicked file/folder. */
@@ -26,6 +32,36 @@ export interface CommandValues {
   dir: string;
   /** Basename. */
   name: string;
+}
+
+/** Defensive upper bound on a single configured template. */
+const MAX_TEMPLATE_LENGTH = 2000;
+
+/**
+ * Templates the user configured in Settings → Commands. The renderer pushes
+ * this list (on boot and on every change); `runUserCommand` executes ONLY
+ * templates found here. Without this, the IPC channel `shell:runCommand` would
+ * be a general-purpose shell exec for anything running in the renderer.
+ */
+let allowedTemplates: ReadonlySet<string> = new Set();
+
+/** Replace the allow-list of command templates (called from `shell:setCommandTemplates`). */
+export function setUserCommandTemplates(templates: unknown): void {
+  if (!Array.isArray(templates)) {
+    throw new Error('Invalid command template payload');
+  }
+  const next = new Set<string>();
+  for (const entry of templates) {
+    if (typeof entry !== 'string') continue;
+    if (!entry || entry.length > MAX_TEMPLATE_LENGTH) continue;
+    next.add(entry);
+  }
+  allowedTemplates = next;
+}
+
+/** Test hook: forget the pushed list (process-global, so tests must clean up). */
+export function resetUserCommandTemplatesForTests(): void {
+  allowedTemplates = new Set();
 }
 
 /**
@@ -78,6 +114,8 @@ export function substituteAndQuote(
  * Validate + substitute + open a terminal window running the command.
  *
  * Throws:
+ *  - `Error(COMMAND_NOT_ALLOWED)` if the template is not one the user
+ *    configured (fail-closed; the renderer pushes the list);
  *  - the `assertWithinAllowedRoot` error if the path is outside any configured
  *    location (fail-closed);
  *  - `Error(COMMAND_PATH_BLOCKED)` if the path contains `%` on Windows;
@@ -88,6 +126,9 @@ export async function runUserCommand(
   template: string,
   targetPath: string
 ): Promise<{ ok: true }> {
+  if (typeof template !== 'string' || !allowedTemplates.has(template)) {
+    throw new Error(COMMAND_NOT_ALLOWED);
+  }
   assertWithinAllowedRoot(targetPath);
 
   if (process.platform === 'win32' && targetPath.includes('%')) {
@@ -102,6 +143,18 @@ export async function runUserCommand(
   const finalCommand = substituteAndQuote(template, values);
   await openTerminalWindow(finalCommand);
   return { ok: true };
+}
+
+/**
+ * Escape a command for an AppleScript double-quoted string literal.
+ *
+ * Backslashes are doubled FIRST: AppleScript treats `\` as an escape
+ * introducer, so a literal `\` sitting immediately before a quote would
+ * otherwise consume the escaping we just added and break the script (or
+ * truncate the command). Quoting order matters — never reverse these.
+ */
+export function escapeAppleScriptString(command: string): string {
+  return command.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
 /**
@@ -136,17 +189,20 @@ async function openTerminalWindow(command: string): Promise<void> {
       windowsHide: false,
     });
   } else {
-    const escaped = command.replace(/"/g, '\\"');
-    child = spawn(
-      'osascript',
-      ['-e', `tell application "Terminal" to do script "${escaped}"`],
-      { detached: true, stdio: 'ignore' }
-    );
+    const script = `tell application "Terminal" to do script "${escapeAppleScriptString(
+      command
+    )}"`;
+    child = spawn('osascript', ['-e', script], {
+      detached: true,
+      stdio: 'ignore',
+    });
   }
-  child.on('error', (error) => {
-    // Best-effort on Windows/macOS: the platform terminal is always present,
-    // so a spawn failure here is exceptional enough to log rather than throw.
-    console.warn('[shell-command] failed to open a terminal window:', error);
+  // Surface spawn failures to the renderer instead of claiming success: the
+  // caller used to return { ok: true } after `console.warn`, so a missing
+  // terminal binary looked like the command had been launched.
+  await new Promise<void>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('spawn', () => resolve());
   });
   child.unref();
 }

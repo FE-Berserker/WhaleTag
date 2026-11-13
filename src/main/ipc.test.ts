@@ -34,6 +34,7 @@ import { createRequire } from 'module';
 import { promises as fsp } from 'fs';
 import os from 'os';
 import path from 'path';
+import { pathToFileURL } from 'url';
 import { setAllowedRoots, getAllowedRoots } from './allowed-roots';
 import { closeAllWatchers } from './dir-watcher';
 import {
@@ -424,6 +425,36 @@ describe('read-side allowedRoots guards', () => {
     await handler({}, inside); // resolves — stubbed shell.openPath returns ''
     await assert.rejects(
       async () => handler({}, 'C:\\Windows\\System32\\cmd.exe'),
+      /Refused/
+    );
+  });
+
+  it('fs:openNative converts file:// URLs before the root check', async () => {
+    const inside = path.join(root, 'a.txt');
+    await fsp.writeFile(inside, 'x');
+    const handler = rig.ipcHandlers.get('fs:openNative')!;
+    // drawio link clicks arrive as URLs; the guard must see the real path.
+    await handler({}, pathToFileURL(inside).href);
+    await assert.rejects(
+      async () => handler({}, pathToFileURL(path.join(os.tmpdir(), 'out.txt')).href),
+      /Refused/
+    );
+  });
+
+  it('thumbnail:load refuses a file outside every allowed root', async () => {
+    const handler = rig.ipcHandlers.get('thumbnail:load')!;
+    await assert.rejects(
+      async () => handler({}, path.join(os.tmpdir(), 'outside.jpg')),
+      /Refused/
+    );
+  });
+
+  it('fs:zipEntries refuses an archive path outside the locations', async () => {
+    const inside = path.join(root, 'a.txt');
+    await fsp.writeFile(inside, 'x');
+    const handler = rig.ipcHandlers.get('fs:zipEntries')!;
+    await assert.rejects(
+      async () => handler({}, [inside], path.join(os.tmpdir(), 'evil.zip')),
       /Refused/
     );
   });

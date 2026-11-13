@@ -210,6 +210,13 @@ export interface WhaleApi {
   runCommand: (template: string, targetPath: string) => Promise<{ ok: true }>;
 
   /**
+   * Push the user's configured command templates to main. `runCommand` only
+   * executes templates in the most recently pushed list (fail-closed), so a
+   * compromised renderer cannot turn the channel into arbitrary shell exec.
+   */
+  setUserCommandTemplates: (templates: string[]) => Promise<void>;
+
+  /**
    * Zips a directory into a sibling `<dir>.zip` (auto-suffixed if taken).
    * Resolves with the created archive's path. Reject on failure.
    */
