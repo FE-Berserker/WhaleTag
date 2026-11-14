@@ -443,6 +443,7 @@
   "tagGroups": "タググループ",
   "addTagGroup": "新規タググループ",
   "groupName": "グループ名",
+  "renameGroup": "グループ名を変更",
   "deleteGroup": "グループを削除",
   "confirmDeleteGroup": "グループ \"{{name}}\" を削除しますか? (ファイルに付いたタグは保持されます。)",
   "addTag": "タグを追加",

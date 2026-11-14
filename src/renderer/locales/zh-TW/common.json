@@ -443,6 +443,7 @@
   "tagGroups": "標籤群組",
   "addTagGroup": "新增標籤群組",
   "groupName": "群組名稱",
+  "renameGroup": "重新命名標籤組",
   "deleteGroup": "刪除標籤群組",
   "confirmDeleteGroup": "刪除標籤群組「{{name}}」?(已標記在檔案上的標籤會保留。)",
   "addTag": "新增標籤",

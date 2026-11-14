@@ -27,7 +27,7 @@
 ## 3. 标签库 / 标签组
 
 - **侧栏标签库**([src/renderer/components/TagLibrary.tsx](../src/renderer/components/TagLibrary.tsx)):可拖、可点击筛选
-- **标签组**([src/renderer/components/TagGroups.tsx](../src/renderer/components/TagGroups.tsx)):组有自己的颜色,组内 tag 自动继承
+- **标签组**([src/renderer/components/TagGroups.tsx](../src/renderer/components/TagGroups.tsx)):组有自己的颜色,组内 tag 自动继承;支持新建、重命名、删除(带确认)、加/删 tag——重命名只改组的本地显示名(`taglibrary` slice 的 `title`,随 redux-persist 落盘),不动 tag 字符串、文件与 `.whale/` sidecar
 - **per-location 标签库描述**:`.whale/wtaglib.json` —— 每 tag 一条描述文字;写入是读-改-写(只改目标 tag),基底经 [merge-read.ts](../src/main/merge-read.ts) 读取:文件损坏时先隔离为 `wtaglib.json.corrupt-<时间戳>` 再从空开始,一次编辑不会丢掉其余 tag 的描述;IO 错误上抛而不是当空覆盖
 - **批量打标**保留各文件原 `description`
 

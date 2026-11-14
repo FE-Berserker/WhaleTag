@@ -14,6 +14,7 @@ import AddIcon from '@mui/icons-material/Add';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlined';
+import EditIcon from '@mui/icons-material/EditOutlined';
 import CloseIcon from '@mui/icons-material/Close';
 import LabelIcon from '@mui/icons-material/LabelOutlined';
 import { useDrag } from 'react-dnd';
@@ -24,6 +25,7 @@ import { setTagColor } from '-/reducers/settings';
 import {
   addGroup,
   removeGroup,
+  renameGroup,
   toggleGroup,
   addTagToGroup,
   removeTagFromGroup,
@@ -145,6 +147,7 @@ function GroupTag({
 type DialogState =
   | { mode: 'addGroup' }
   | { mode: 'addTag'; groupId: string }
+  | { mode: 'renameGroup'; groupId: string; currentTitle: string }
   | null;
 
 /**
@@ -199,6 +202,12 @@ export default function TagGroups() {
       // Auto-assign a color the first time we see this tag.
       if (tag && !tagColors[tag]) {
         dispatch(setTagColor(tag, pickTagColor(tag, tagColors)));
+      }
+    } else if (dialog.mode === 'renameGroup') {
+      // Skip the dispatch when nothing changed — avoids a needless
+      // redux-persist write for a no-op rename.
+      if (value.trim() && value.trim() !== dialog.currentTitle) {
+        dispatch(renameGroup(dialog.groupId, value));
       }
     }
     setDialog(null);
@@ -403,6 +412,21 @@ export default function TagGroups() {
                   <AddIcon sx={{ fontSize: 16 }} />
                 </IconButton>
               </Tooltip>
+              <Tooltip title={t('renameGroup')}>
+                <IconButton
+                  size="small"
+                  onClick={() =>
+                    setDialog({
+                      mode: 'renameGroup',
+                      groupId: g.id,
+                      currentTitle: g.title,
+                    })
+                  }
+                  sx={{ p: 0.25 }}
+                >
+                  <EditIcon sx={{ fontSize: 16 }} />
+                </IconButton>
+              </Tooltip>
               <Tooltip title={t('deleteGroup')}>
                 <IconButton
                   size="small"
@@ -452,8 +476,18 @@ export default function TagGroups() {
 
       <PromptDialog
         open={dialog !== null}
-        title={dialog?.mode === 'addGroup' ? t('addTagGroup') : t('addTag')}
-        label={dialog?.mode === 'addGroup' ? t('groupName') : t('tagName')}
+        title={
+          dialog?.mode === 'addGroup'
+            ? t('addTagGroup')
+            : dialog?.mode === 'renameGroup'
+              ? t('renameGroup')
+              : t('addTag')
+        }
+        label={dialog?.mode === 'addTag' ? t('tagName') : t('groupName')}
+        defaultValue={
+          dialog?.mode === 'renameGroup' ? dialog.currentTitle : ''
+        }
+        confirmText={dialog?.mode === 'renameGroup' ? t('rename') : undefined}
         onConfirm={handlePromptConfirm}
         onClose={() => setDialog(null)}
       />

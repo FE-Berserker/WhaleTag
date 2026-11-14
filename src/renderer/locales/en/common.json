@@ -450,6 +450,7 @@
   "tagGroups": "Tag Groups",
   "addTagGroup": "New tag group",
   "groupName": "Group name",
+  "renameGroup": "Rename group",
   "deleteGroup": "Delete group",
   "confirmDeleteGroup": "Delete group \"{{name}}\"? (Tags already on files are kept.)",
   "addTag": "Add tag",

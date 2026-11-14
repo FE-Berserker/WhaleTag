@@ -443,6 +443,7 @@
   "tagGroups": "标签组",
   "addTagGroup": "新建标签组",
   "groupName": "组名称",
+  "renameGroup": "重命名标签组",
   "deleteGroup": "删除标签组",
   "confirmDeleteGroup": "删除标签组「{{name}}」？(已打到文件上的标签会保留。)",
   "addTag": "添加标签",

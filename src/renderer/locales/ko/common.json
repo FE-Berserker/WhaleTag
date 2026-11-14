@@ -443,6 +443,7 @@
   "tagGroups": "태그 그룹",
   "addTagGroup": "새 태그 그룹",
   "groupName": "그룹 이름",
+  "renameGroup": "그룹 이름 변경",
   "deleteGroup": "그룹 삭제",
   "confirmDeleteGroup": "그룹 \"{{name}}\"을(를) 삭제하시겠습니까? (파일에 이미 지정된 태그는 유지됩니다.)",
   "addTag": "태그 추가",
