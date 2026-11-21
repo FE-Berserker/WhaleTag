@@ -268,6 +268,12 @@ P1-23 的安全通道留下四条 P2 记录（进程无 permission handler、`cr
 - ✅ **最后两项 minor 闭环**：多目标 sidecar 写入改为 allSettled 后统一刷新，失败仍 reject 并携带真实 `updatedCount` 与完整 `errors`，多选打标复用统一通知；聚焦 provider/hook 19/19。phase/batch 将测量异常与清理汇入同一报告，双失败也保留原错误、cleanupError、tempRootRemoved 和时间戳；聚焦 CLI/报告 10/10。TagMetaSaveManyError.message 统一限制为前三条加省略号，完整 errors 数组不变，避免其他 saveMany 调用点出现超长 Snackbar。
 - 回归：diff/LF、`npm run lint`、`npm run type-check`、`npm test` 全通过；140 个测试文件，1954 tests / 1952 pass / 0 fail / 2 skipped。当前源码 fresh unpacked 与主进程/worker、GUI、Draw.io 三条 smoke 通过；本次本机 GUI 因已有 text/plain+text/html 按安全策略明确跳过 Copy Path，未触碰该剪贴板，干净 CI 仍执行完整 clipboard 断言。未做人为 300 秒超时/清理故障注入以外的生产故障演练，双失败基准报告路径已由受控 hook 实测；未覆盖 NSIS 与远端 Actions。
 
+### P1-36. 2026-11 Excalidraw/Mermaid 真实验收与传递依赖窄覆盖 ✅
+- ✅ **真实 Excalidraw/Mermaid 链路**：新增 [packaged-excalidraw-smoke.js](../scripts/packaged-excalidraw-smoke.js) 并接入手动 workflow；真实 Add Location、canvas 非空像素、绑定文本编辑、宿主 Save 与磁盘 version/mtime 读回后，再验证最小 Mermaid flowchart 的 lazy preview、原生 Insert、第二次 Save 的 A/B 节点、连线和元素数。Save 前后等真实宿主 tab dirty/clean；Mermaid 只在隔离 iframe origin 的编辑器 localStorage 预置同一个最小 A→B 定义，并断言 textarea 初始值，因此初始或后续 preview 都不会混入默认示例。dialog 提前关闭立即失败，canvas 非空像素、conversion error 和两次磁盘读回断言保留。加强后的脚本在 fresh 包连续两次通过，最终 7 个未删除元素。
+- ✅ **最小依赖覆盖**：只为三个 chevrotain 依赖边声明 lodash-es 4.18.1、Excalidraw 直接 nanoid 3.3.20，并显式保留 mte nanoid 4.0.2 major；先在隔离 lockfile/完整 npm ci 验证，再由主仓库 npm ls、ESM 加载与真实扩展验收复核。npm 析取后的 4.18.1 也由 chevrotain-allstar 与 dagre-d3-es 共享，这些实际消费者均纳入危险 sink 导入检查，文档没有把声明范围误写成完整影响面。
+- ✅ **量化与边界**：本机完整 audit 27→21（0 critical），production 12→6（1 high / 3 moderate / 2 low）；剩余 mte nanoid、KaTeX、ECharts 5 保留兼容与可达性说明，不把 audit 下降宣称为已证明远程利用链消失。AGENTS.md、docs/13、docs/14 与 CHANGELOG 已同步四类冒烟和残余风险。
+- 回归：diff/LF、`npm run lint`、`npm run type-check`、`npm test` 全通过；140 个测试文件，1954 tests / 1952 pass / 0 fail / 2 skipped。包含依赖覆盖的当前源码 fresh unpacked 构建成功，主进程/worker、真实 GUI、Draw.io 与 Excalidraw/Mermaid 四条 smoke 全部通过；本次 GUI 因组合剪贴板按策略跳过 Copy Path 且保持原数据。未覆盖 NSIS 安装包与 GitHub Actions 远端运行。
+
 ---
 
 ## 🟡 P2 — 类型逃逸

@@ -18,7 +18,7 @@ Whale：本地优先、离线、隐私安全的 Electron 文件管理与打标�
 | `npm run build` | 产出 main + extensions + renderer | |
 | `npm run package:win` | Windows 打包（electron-builder） | 打包排坑见 docs/14 |
 
-任何代码改动在宣布完成前必须通过 `lint` / `type-check` / `test` 三件套（由 test-runner / lint-guard 执行）；GitHub Actions 的 `ci.yml` 在 PR/main push 跑同样的 Windows 门禁，`packaged-smoke.yml` 提供手动 fresh 打包与三条冒烟。
+任何代码改动在宣布完成前必须通过 `lint` / `type-check` / `test` 三件套（由 test-runner / lint-guard 执行）；GitHub Actions 的 `ci.yml` 在 PR/main push 跑同样的 Windows 门禁，`packaged-smoke.yml` 提供手动 fresh 打包与四条冒烟（主进程/worker、真实 GUI、Draw.io、Excalidraw/Mermaid）。
 
 ## 测试约定
 

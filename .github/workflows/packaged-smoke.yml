@@ -23,5 +23,7 @@ jobs:
         run: node scripts/packaged-smoke.js
       - name: Smoke real renderer interactions
         run: node scripts/packaged-gui-smoke.js
-      - name: Smoke Draw.io init/render/edit (disk save not covered)
+      - name: Smoke Draw.io render/edit and host Save readback
         run: node scripts/packaged-drawio-smoke.js
+      - name: Smoke Excalidraw edit/save and Mermaid preview/insert
+        run: node scripts/packaged-excalidraw-smoke.js
