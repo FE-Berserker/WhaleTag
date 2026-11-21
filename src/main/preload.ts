@@ -52,8 +52,8 @@ const whaleApi: WhaleApi = {
 
   // Lets the renderer register its configured location roots so the main
   // process can confine writes to them (defense-in-depth).
-  setAllowedRoots: (roots: string[]) =>
-    ipcRenderer.invoke('fs:setAllowedRoots', roots),
+  setAllowedRoots: (roots: string[], readOnlyRoots?: string[]) =>
+    ipcRenderer.invoke('fs:setAllowedRoots', roots, readOnlyRoots),
 
   // Mutations
   rename: (oldPath: string, newPath: string) =>
@@ -286,6 +286,11 @@ const whaleApi: WhaleApi = {
   appGetVersion: () => ipcRenderer.invoke('app:getVersion'),
   appCheckForUpdates: () => ipcRenderer.invoke('app:update-check'),
   appDownloadUpdate: () => ipcRenderer.invoke('app:update-download'),
+  // The About toggle lived only in redux-persist; main never saw it, so the
+  // startup check fired even when the user had turned it off. Pushed on
+  // mount and on every change (see UpdateSection).
+  appSetAutoUpdateCheck: (enabled: boolean) =>
+    ipcRenderer.invoke('app:update-set-auto-check', enabled),
   appQuitAndInstall: () => ipcRenderer.send('app:update-quit-and-install'),
   // Fire-and-forget diagnostics: renderer boot/global errors land in the same
   // `<userData>/crash.log` as process crashes (see renderer/services/boot-guard).

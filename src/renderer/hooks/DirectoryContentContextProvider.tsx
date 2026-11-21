@@ -18,6 +18,8 @@ import {
   type ViewMode,
 } from '../../shared/whale-meta';
 import type { SidecarMeta } from '../../shared/whale-meta';
+import { useTranslation } from 'react-i18next';
+import { notifyApp } from '-/services/app-notice';
 import { extractTags } from '-/services/tags';
 import { geoPointFromTags } from '../domain/geo-tag';
 import {
@@ -151,6 +153,12 @@ export function DirectoryContentContextProvider({
   children: ReactNode;
 }) {
   const { currentDirectoryPath } = useCurrentLocationContext();
+  const { t } = useTranslation();
+  // `t` goes through a ref: it feeds only the failure notice, and putting it in
+  // `load`'s deps would rebuild `load` on every render (i18n implementations
+  // may return a fresh `t` identity), re-running the load effect forever.
+  const translateRef = useRef(t);
+  translateRef.current = t;
   const defaultViewMode = useSelector(
     (s: RootState) => s.settings?.defaultViewMode ?? 'list'
   );
@@ -252,12 +260,29 @@ export function DirectoryContentContextProvider({
             if (!isCurrent()) return;
             sidecarMap = detailed.sidecars;
             setSidecarIssues(detailed.issues);
-          } catch {
+          } catch (error) {
             // Best-effort: an unexpected IPC failure yields no health snapshot.
             // A stale load must not clear the health issues of the directory
             // that superseded it.
             if (!isCurrent()) return;
-            setSidecarIssues([]);
+            // Without this the folder silently rendered every entry as
+            // tagless — indistinguishable from "the user removed all tags".
+            // Record an issue so the tag-health surface can show it, and tell
+            // the user once per failed read.
+            setSidecarIssues([
+              {
+                kind: 'unreadable',
+                reason: 'io',
+                dirPath,
+                sidecarPath: `${dirPath}${dirPath.includes('\\') ? '\\' : '/'}${META_DIR}`,
+              },
+            ]);
+            notifyApp(translateRef.current('sidecarReadFailed'));
+            console.warn(
+              '[DirectoryContent] failed to read sidecar metadata:',
+              dirPath,
+              error
+            );
           }
           const byPath = new Map<string, SidecarMeta | undefined>();
           for (const e of visible) {

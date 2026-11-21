@@ -94,6 +94,18 @@ export function CurrentLocationContextProvider({
   // Record every visited directory into the recent-directories LRU.
   useEffect(() => {
     if (!currentLocation || !currentDirectoryPath) return;
+    // The reset effect above runs on a location change while
+    // `currentDirectoryPath` still holds the PREVIOUS location's directory for
+    // one render, so this effect used to persist "old directory + new
+    // locationId". Clicking that recents entry then navigated a folder that
+    // does not exist inside the new location (rejected as out of bounds) and
+    // consumed one of the 15 slots. Only record paths that belong here.
+    const root = currentLocation.path.replace(/[\\/]+$/, '');
+    const inside =
+      currentDirectoryPath === root ||
+      currentDirectoryPath.startsWith(`${root}\\`) ||
+      currentDirectoryPath.startsWith(`${root}/`);
+    if (!inside) return;
     dispatch(
       recordRecent({
         path: currentDirectoryPath,

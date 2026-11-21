@@ -274,6 +274,74 @@ P1-23 的安全通道留下四条 P2 记录（进程无 permission handler、`cr
 - ✅ **量化与边界**：本机完整 audit 27→21（0 critical），production 12→6（1 high / 3 moderate / 2 low）；剩余 mte nanoid、KaTeX、ECharts 5 保留兼容与可达性说明，不把 audit 下降宣称为已证明远程利用链消失。AGENTS.md、docs/13、docs/14 与 CHANGELOG 已同步四类冒烟和残余风险。
 - 回归：diff/LF、`npm run lint`、`npm run type-check`、`npm test` 全通过；140 个测试文件，1954 tests / 1952 pass / 0 fail / 2 skipped。包含依赖覆盖的当前源码 fresh unpacked 构建成功，主进程/worker、真实 GUI、Draw.io 与 Excalidraw/Mermaid 四条 smoke 全部通过；本次 GUI 因组合剪贴板按策略跳过 Copy Path 且保持原数据。未覆盖 NSIS 安装包与 GitHub Actions 远端运行。
 
+### P1-37. 2026-11 第 37 轮审核：五个高收益修复 ✅
+- ✅ **关窗 flush 不再卡 8 s**:[configureStore.ts](../src/renderer/store/configureStore.ts) 的 `onBeforeUnloadFlush` 加 `try/catch/finally`,`persistor.flush()` 或扩展编辑器 flush 拒绝时仍 `flushComplete()`,并 `console.error` 上报——此前一次写盘失败就等于每次关窗都被主进程 `closeFallback` 强杀,错误完全不可见。
+- ✅ **日历翻月不再跳月**:[calendar.ts](../src/renderer/domain/calendar.ts) 新增 `addMonthsClamped`(先落到目标月 1 号再 `Math.min(day, daysInMonth)`,保留本地时分秒),[CalendarView.tsx](../src/renderer/components/CalendarView.tsx) 的 prev/next 与月选择面板全部改走它——`addMonths` 的 `Date#setMonth` 溢出曾让 1/31 点"下个月"直接跳到 3/3(2 月整月被跳过),闰日年视图同样漂移;`addMonths` 保留给普通日历算术。
+- ✅ **Mapique shift 连选不再崩溃**:[MapiqueView.tsx](../src/renderer/components/MapiqueView.tsx) 的选区锚点从**下标**改为**路径**,shift 时用 `tray.findIndex` 换算(锚点已不在 tray 就退化成普通单选),遍历时按下标存在性判空;`trayFilter` / `nameQuery` 变更时一并清锚点。此前锚点下标在 tray 重排/缩短后越界,`tray[i].path` 抛 TypeError 崩掉整个视图。
+- ✅ **空索引恢复增量重建**:[index-db.ts](../src/main/index-db.ts) 的 `indexStatus` 增加 `exists`(db 文件存在,与行数无关),`ready` 保持"有内容"的 UI 语义;[dir-watcher.ts](../src/main/dir-watcher.ts) 的增重建闸门改用 `exists`——原先 `ready = count > 0`,一个"索引已建但文件全被删"的 root 会被当成从未索引,之后新增的文件永远进不了索引。fulltext 侧同型:[index-db.ts](../src/main/index-db.ts) 新增 `meta.fulltext_initialized` 标记(`buildFulltextIndex` / `ingestFulltext` 成功后写入),`hasFulltext` 改为"标记存在或任一行",空全文索引不再被 `fulltext:has` 判定为未建。`index-protocol.ts` / `ipc-types.ts` 同步类型,MCP `whale_roots` 的错误兜底也补 `exists: false`。
+- ✅ **importExternal 静默失败补日志**:[fs-write.ts](../src/main/ipc/fs-write.ts) 的 sidecar/缩略图同步 catch 从空块改为 `console.warn`(与本文件 rename/move/copy 三处对齐),导入成功但标签没跟过来不再无声无息。
+- 回归:新增 `addMonthsClamped` 共置用例(index-db 的 `exists`/空索引 + `hasFulltext` 空建标记、dir-watcher 的空索引仍重建);`npm run lint`、`npm run type-check`、`npm test` 全通过。
+- 遗留(本轮审核已记录、尚未修):位置只读仅在渲染层(主进程 + MCP 不认)、Revision restore 无确认/无备份、缺 `requestSingleInstanceLock`、IPC 写入口不拒位置根、legacy sidecar 迁移会在位置外写盘、html-viewer `style` 属性未剥远程引用等 P1-A/P1-B 项。**（除 html-viewer 外均已由 P1-38 / P1-39 / P1-40 修掉）**
+
+### P1-38. 2026-11 第 37 轮审核续：修订恢复可回退 / 单实例锁 / 位置根守卫 ✅
+- ✅ **恢复修订前先自动备份**:[revisions.ts](../src/main/revisions.ts) 的 `restoreRevision` 在覆盖前先 `backupRevision(filePath)`,把**当前**内容写进同一修订列表(失败则拒绝恢复并上抛)——此前恢复是一次不可逆覆盖:修订列表只存旧版本,误点一次「恢复」就永久丢掉最新改动,对话框随即关闭,错误只能事后在磁盘上发现。同时 [RevisionHistoryDialog.tsx](../src/renderer/components/RevisionHistoryDialog.tsx) 的恢复按钮加 `useConfirmOptional` 二次确认(`danger`,提示会覆盖当前文件、当前内容已先备份,并显示所选版本时间),不再一键落盘。新增 5 语言 `revisionRestoreConfirm` 文案。
+- ✅ **单实例锁**:[main.ts](../src/main/main.ts) 在 `pinUserDataToProductName()` 之后调用 `app.requestSingleInstanceLock()`,拿不到锁即 `app.quit()` 且**不注册** `whenReady().then(bootstrap)`(否则第二个实例会重复注册 IPC handler、并发写 index.db/wsd.json、抢 MCP 端口);`bootstrap()` 里新增 `app.on('second-instance')` 把已有窗口 `restore/show/focus`(窗口已销毁则重建),二次启动不再"点了没反应"。
+- ✅ **IPC 写入口拒绝位置根本身**:[allowed-roots.ts](../src/main/allowed-roots.ts) 新增 `assertNotLocationRoot`,与 MCP 共用同一检查(MCP 本地副本删除,守卫上移);[fs-write.ts](../src/main/ipc/fs-write.ts) 的 `deletePath` / `renameEntry` / `moveEntry` / `copyEntry` 与 [meta.ts](../src/main/ipc/meta.ts) 的 `sidecar:write` 全部补齐——此前只有 MCP 拒绝根,渲染层 IPC 仍可对整个位置做删除/移动/改名,而根的 sidecar 会写到 `dirname(root)/.whale/`(边界外)。`zipDirectory` 保持既有文档化豁免(归档落在根的兄弟目录属于「打包根」的正常语义,见 [fs-write.ts](../src/main/ipc/fs-write.ts) 注释)。
+- 回归:新增 `revisions.test.ts`「恢复前自动备份当前内容」(恢复后列表 2 条、内容分别为 v1/v2)、`allowed-roots.test.ts` 的 `assertNotLocationRoot` 三例、`main.test.ts` 的「拿不到锁就退出、不 bootstrap」用例(electron stub 补 `requestSingleInstanceLock`);`npm run lint`、`npm run type-check`、`npm test` 全通过。
+
+### P1-39. 2026-11 第 38 轮审核：位置只读下推主进程 ✅
+- ✅ **只读位置不再只是渲染层约定**:[allowed-roots.ts](../src/main/allowed-roots.ts) 新增 `readOnlyRoots` / `setReadOnlyRoots` / `isReadOnlyPath` / `assertWritable`(fold 前缀包含,根自身算命中);`fs:setAllowedRoots` 收起第二个参数 `readOnlyRoots`,由 [fs-roots.ts](../src/main/ipc/fs-roots.ts) 过滤为「已接受 root 的子集」后落地,[preload.ts](../src/main/preload.ts) 与 [ipc-types.ts](../src/shared/ipc-types.ts) 同步,[Root.tsx](../src/renderer/containers/Root.tsx) 推送 `locationItems.filter(l => l.isReadOnly)`。此前只读标记只在渲染层:6 个视图的"另存为/拖入/粘贴新建" 、被注入的渲染层、以及 MCP 变更工具都能把文件写进只读位置。
+- ✅ **写入口逐个接入 `assertWritable`**:[fs-write.ts](../src/main/ipc/fs-write.ts)(createDirectory / createTextFile / writeBinaryFile / deletePath / renameEntry 两端 / moveEntry 两端 / copyEntry 目的端 / zipDirectory / zipEntries / importExternal 目的目录)、[meta.ts](../src/main/ipc/meta.ts)(sidecar:write、sidecar:recoverCorrupt、folderMeta:write、tagLibrary 两个 setter)、[extensions.ts](../src/main/ipc/extensions.ts)(修订备份/写入/恢复/删除;`ext:cleanupRevisions` 只清理非只读 root)、[sidecar.ts](../src/main/sidecar.ts)(`writeSidecar` / `mutateSidecar` / `updateFileTags` —— MCP 标签工具走同一批函数)。
+- ✅ **legacy sidecar 迁移在只读位置不再写盘**:[sidecar.ts](../src/main/sidecar.ts) 的 `migrateLegacySidecars` 读到只读位置时直接返回 legacy 标签、既不 `persistWsd` 也不把旧 JSON 改名隔离——此前"只是打开一个只读位置看一眼"就会触发迁移写 `.whale/wsd.json` 并重命名用户目录里的 JSON。
+- 回归:`allowed-roots.test.ts` 新增 `read-only locations` 三例(根与子树都拒、嵌套在可写 root 内的只读 root 仍拒、清空只读集合后放行);`fs-write.test.ts` 新增「只读位置拒绝 create / move-in / copy-in / delete,且源文件与既有文件保持原样」;`docs/02`、`docs/13`、`docs/21` 同步边界描述。
+
+### P1-40. 2026-11 第 38 轮审核续：P1-B 功能缺陷批次 ✅
+- ✅ **DirectoryTree 文件行不再复用文件夹菜单**:[DirectoryTree.tsx](../src/renderer/components/DirectoryTree.tsx) 的 `ctxMenu` 增加 `isDirectory`,文件行只给「打开(交给 `openEntryInTab`)/ 重命名 / 删除 / 在系统打开 / 复制路径」,「新建文件夹 / 新建文件 / 打包」仅对文件夹出现——此前在文件行右键「新建文件夹」会把文件当父目录、必失败,「打开」则把文件路径当地址导航。
+- ✅ **不可读目录不再冻结索引删除**:[index-db.ts](../src/main/index-db.ts) 的 `ingestFiles` 接受 `{complete:false, unreadable:[]}`,只保留不可读子树下的行、其余照常删除并重算 `files_count`;[index-worker.ts](../src/main/index-worker.ts) 把 `report.unreadable` 一并传入。此前一个永久 EPERM 目录让删除 pass 永远跳过,别处删掉的文件一直留在索引里继续命中搜索(与 P1-39 同轮,文档见 [docs/04](./04-search-index.md))。
+- ✅ **扩展脏状态按标签而非文件路径**:[extensions.ts](../src/renderer/reducers/extensions.ts) 的 `editState` 键改为 `makeTabId(filePath, extensionId)`(action payload 字段 `filePath` → `tabId`),[ExtensionHost.tsx](../src/renderer/components/ExtensionHost.tsx) / [ExtensionTabBar.tsx](../src/renderer/components/ExtensionTabBar.tsx) / [ExtensionContextProvider.tsx](../src/renderer/hooks/ExtensionContextProvider.tsx) 全部改取 `tab.id`——同一文件被两个扩展同时打开时,关闭其一曾把另一个的 dirty 清掉,关闭确认因此被跳过。
+- ✅ **macOS 开终端等真实退出码**:[shell-command.ts](../src/main/shell-command.ts) 的 `osascript` 分支改为 `stdio:['ignore','ignore','pipe']` + 等 `exit`,`code !== 0` 时 reject 并附 stderr 末尾(≤4KB);Windows 的 `cmd /k` 窗口常驻,保持只等 `spawn`。此前 Automation 权限被拒也返回"已启动"。
+- ✅ **autoUpdateCheck 真正下发主进程**:新增 `app:update-set-auto-check`([main.ts](../src/main/main.ts) → [auto-update.ts](../src/main/auto-update.ts) 的 `setAutoUpdateCheckEnabled`,启动检查改成可取消/可补装的延时器),[UpdateSection.tsx](../src/renderer/components/UpdateSection.tsx) 在挂载与开关变化时推送——此前该设置只改 UI,启动静默检查照发。
+- ✅ **text-editor 外部刷新重置撤销历史**:[text-editor/index.ts](../src/extensions/text-editor/index.ts) 在同路径外部刷新(缓冲区干净、内容被替换)时也 `historyCompartment.reconfigure(history())`——此前 Ctrl+Z 能撤回重载前的旧文本,下一次保存把过期内容写回刚被外部修改的文件。
+- ✅ **html-viewer 关闭远程图片后行内 style 也不再外发**:[html-viewer/index.ts](../src/extensions/html-viewer/index.ts) 在 `imagesEnabled === false` 时对渲染后的 `[style]` 元素套 `stripRemoteCssRefs`(`data:` 保留)——此前只清理用户样式表,正文 `style="background:url(https://tracker/…)"` 仍会发请求。
+- ✅ **FileList 键盘导航自动滚动**:[FileList.tsx](../src/renderer/components/FileList.tsx) 加 `listRef` / `gridRef`,焦点变化时 `scrollToRow` / `scrollToCell`(`smart` 对齐)——`Row` 用 `preventScroll` 聚焦且 react-window 只挂可见行,此前方向键把焦点移出视口后既没有可见光标也不再滚动。
+- 复核为误报(不改):Gantt 条形拖拽阈值"双计数"不成立——`useBarDrag.ts` 的两个 pointermove 监听器都按绝对位移 `clientX - downXRef` 计算,且分别在 `pending` / `dragging` 状态互斥生效,不会把 8px 阈值提前到 4px。
+- 回归:`index-db.test.ts` 新增「不可读子树保留、其余照删」(`unreadable` 传绝对路径、库内存 root 相对路径);`ExtensionHost.test.ts` 的 editState mock 改按 `tab-1` 键;`npm run lint`、`npm run type-check`、`npm test` 全通过。
+
+### P1-41. 2026-11 第 39 轮审核：P2 批次(24 条)✅
+- ✅ **缩略图内存缓存加上界**:[ThumbIcon.tsx](../src/renderer/components/ThumbIcon.tsx) 的 data-URL 缓存改为写入端淘汰(`THUMB_CACHE_LIMIT = 800`,Map 插入序)——此前只按目录切换清空,单目录翻 5000 张图可常驻 50–100MB。
+- ✅ **ffmpeg 缩略图超时**:[thumbnail.ts](../src/main/thumbnail.ts) 的 `execFile` 加 `timeout: 10_000, killSignal: 'SIGKILL'`——损坏视频此前会挂住 worker 的队列位。
+- ✅ **缩略图复用判据含大小**:同上文件记 `{mtimeMs, size}`(`generatedFrom`,上限 5000),同 mtime+size 才复用,内存未命中时退回旧 `target.mtimeMs >= srcMtime` 启发式——此前"savedN 秒内改内容"会复用旧图。
+- ✅ **菜单在生产构建隐藏调试项**:[menu.ts](../src/main/menu.ts) 的 reload / forceReload / toggleDevTools 仅在 `!app.isPackaged` 时插入。
+- ✅ **whale-file 协议不再同步 stat 主线程**:[main.ts](../src/main/main.ts) 改为先 `await fsp.stat`(不可达 SMB/设备文件不冻结),再把大小传给 [protocol-range.ts](../src/main/protocol-range.ts) 的 `knownSize` 参数(不再重复 `statSync`)。
+- ✅ **错误不再被吞**:`shell:openTrash` 的 exec 错误改为 reject 带原因;[ipc/window.ts](../src/main/ipc/window.ts) 的 `drag:startFile` 先过 `assertWithinAllowedRoot` 并把拒绝写进 `console.warn`;`app.whenReady().then(bootstrap)` 加 `.catch`(`dialog.showErrorBox` + `app.exit(1)`),此前启动失败是静默黑窗。
+- ✅ **审批模板原子写 + 唯一名**:[ipc/shell.ts](../src/main/ipc/shell.ts) 的 `persistApprovals` 改 `atomicWriteJson`(临时名带 pid+计数器),不再原地写。
+- ✅ **MCP `whale_list_directory` 可截断**:[mcp-tools.ts](../src/main/mcp/mcp-tools.ts) 的 schema 加 `limit`(默认 1000,上限 5000),返回 `{count, truncated, entries}`——此前裸 `readdir` 结果全量回给模型。
+- ✅ **测试 runner 加超时**:[scripts/run-tests.cjs](../scripts/run-tests.cjs) 的 `spawnSync` 加 30 分钟上限(ETIMEDOUT 单独报错),不再无限挂住 CI。
+- ✅ **最近目录去重带 location**:[recent.ts](../src/renderer/reducers/recent.ts) 按 `(path, locationId)` 去重,[CurrentLocationContextProvider.tsx](../src/renderer/hooks/CurrentLocationContextProvider.tsx) 只记录属于当前 location 的目录——切位置时"旧目录 + 新 locationId"曾被持久化,点开必然越界并白占一个槽。
+- ✅ **`week-YYYYMMDD` 进入日历**:[calendar.ts](../src/renderer/domain/calendar.ts) 的 `dateTagDayKey` 识别周标签(取该 ISO 周的周一)——此前 `nextWeek` 打的文件在日历中凭空消失。
+- ✅ **font-viewer 抽屉不显示旧字形**:[font-viewer/index.ts](../src/extensions/font-viewer/index.ts) 把 `glyphGridRendered = false` 移到抽屉重绘之前。
+- ✅ **扩展运行错误可见**:[ExtensionHost.tsx](../src/renderer/components/ExtensionHost.tsx) 的 `case 'error'` 除 `console.error` 外走 `notifyApp`(新键 `extensionRuntimeError`),并对 `parentSaveDocument` / `requestFileEmbed` / `requestFile` / `contentChangedInEditor` / `openLinkExternally` 补 payload 形状守卫——此前空白 iframe 只在 devtools 里留一行。
+- ✅ **Lightbox Esc 语义**:[MediaLightbox.tsx](../src/renderer/components/MediaLightbox.tsx) 在捕获阶段接管 Escape 并 `stopPropagation`,先退缩放、再关闭——MUI Dialog 自己也会响应 Esc,导致"第一次按 Esc 直接关窗"。
+- ✅ **sidecar 读失败不再伪装成"没有标签"**:[DirectoryContentContextProvider.tsx](../src/renderer/hooks/DirectoryContentContextProvider.tsx) 记录一条 `unreadable` issue 并 `notifyApp`(新键 `sidecarReadFailed`)——此前整目录静默渲染成无标签,用户会误以为元数据丢了。
+- ✅ **Tag 清色不再被自动配色覆盖**:新增 `TAG_COLOR_CLEARED`(`''` 标记,[tag-colors.ts](../src/renderer/domain/tag-colors.ts)),[appearance.ts](../src/renderer/reducers/settings/appearance.ts) 的清色改存标记,两处自动配色与展示端(TagMetaContextProvider / TagGroups / PropertiesTray / TagMetaDialog)按 `in` 判定——此前清色后立刻被重新染色。
+- ✅ **扩展双开去重**:[ExtensionContextProvider.tsx](../src/renderer/hooks/ExtensionContextProvider.tsx) 的 `openWithExtension` 加在飞集合 + `setTabs` 按 id 去重——双击会让同一文件开出两个标签、各自独立编辑态。
+- ✅ **全文索引加路径前校验**:[SettingsDialog.tsx](../src/renderer/components/SettingsDialog.tsx) 拒绝非绝对路径与重复项(新键 `fulltextPathInvalid` / `fulltextPathDuplicate`)——此前错字会被持久化,永远停在 error 行。
+- ✅ **Mapique 视野随标记集合刷新**:[MapiqueView.tsx](../src/renderer/components/MapiqueView.tsx) 的 `FitBounds` 改比对 `lat,lng` 集合而非数量增减——旧判据在首屏就有标记时永不 `fitBounds`,过滤/改标签后也不重取。
+- 复核为误报(不改):Gantt 边缘拖拽的 clamp 已在 `periodWithResize` / `dayKeyFromOffset` 内做(可视窗口自动滚动属功能请求,不是缺陷)。
+- 暂缓:`ipc/fs-write.ts` 的 win32 打包入口不走 `commonParentDir`——改归档层级语义无法在 Windows 上安全验证,风险大于不一致本身,记入本篇遗留。
+- 暂缓:`html-viewer` 的用户 `<style>` 仍注入 `document.head`(见 `injectUserStyle`)——它作用于整个扩展页面,`body { … }` 这类规则会同时改工具栏样式。作用域化需要重写选择器(或换 shadow DOM),而该扩展自带样式与用户样式互相依赖,当前无自动化测试可兜底;影响限于该扩展自己的 iframe,不跨进程、不触网,故推迟到有截图回归后再做。
+- 回归:新增 `recent.test.ts`(两条 location 同路径、15 条上限、REMOVE_LOCATION)、`settings.test.ts` 的清色标记用例、`calendar.test.ts` 的 `week-YYYYMMDD` 用例、`DirectoryContentContextProvider.test.tsx` 的"sidecar 读失败报 issue 且条目仍在";`npm run lint`、`npm run type-check`、`npm test` 全通过。
+
+### P1-42. 2026-11 第 40 轮审核：P3 批次(6 条)✅
+
+- ✅ **原子写并发键按 realpath 归一**:[atomic-write.ts](../src/main/atomic-write.ts) 的 `targetKey` 先真身解析再折叠——同一文件经符号链接 / 8.3 短名会有两个队列键,两条队列各自 `rename` 同一 inode(`EPERM` 或静默丢一次写)。
+- ✅ **恢复修订保留权限位**:[revisions.ts](../src/main/revisions.ts) 的 `restoreRevision` 先读 `stat().mode & 0o777` 再传给 `atomicWriteBytes({ mode })`——否则 tmp+rename 会用默认 mode 把 `0600` 的文件悄悄放宽。
+- ✅ **MCP 会话数上限**:[mcp-http.ts](../src/main/mcp/mcp-http.ts) 新增 `maxSessions`(默认 32),新建前按 `lastSeen` 驱逐最久未用会话而不是拒绝;不发 `DELETE` 的客户端不会把 MCP 卡死。
+- ✅ **`SortableHeader` 提到模块作用域**:[FileListHeader.tsx](../src/renderer/components/FileListHeader.tsx) 原在组件体内定义,每帧产生新组件身份(焦点丢失、ripple 重启);顺带把 `RowColumnLabels` 的排序回调收进组件。
+- ✅ **Mapique 被筛掉的 marker 仍可点选**:[MapiqueView.tsx](../src/renderer/components/MapiqueView.tsx) 的 `handleMarkerClick` 先用未过滤 `allTrayEntriesRef` 按路径回查——tray 过滤 / 名称搜索隐藏了行,地图上的 marker 仍在,此前点击被静默丢弃。
+- ✅ **html-viewer 用户 CSS 作用域化**:[html-viewer/index.ts](../src/extensions/html-viewer/index.ts) 注入后按 `cssRules` 把选择器重写为 `#content …`(`html`/`body`/`:root` 映射为 `#content`),`@media`/`@supports` 递归;`body{display:none}` 不再能连带干掉工具栏。
+- 回归:新增 `revisions.test.ts` 的「恢复保留 POSIX mode」、`mcp-http.test.ts` 的「会话上限驱逐 LRU」;`npm run lint`、`npm run type-check`、`npm test` 全通过。
+
 ---
 
 ## 🟡 P2 — 类型逃逸

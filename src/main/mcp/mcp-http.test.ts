@@ -360,6 +360,42 @@ describe('mcp http core — hardening', () => {
     await coreNoIdle.close();
     await new Promise<void>((resolve) => srv.close(() => resolve()));
   });
+  it('caps live sessions by evicting the least recently used one', async () => {
+    const core = createMcpHttpCore({
+      token: () => TOKEN,
+      registerTools: () => undefined,
+      serverInfo: { name: 'whaletag-capped', version: '0.0.0' },
+      sessionIdleMs: 0,
+      maxSessions: 2,
+    });
+    const srv = http.createServer((req, res) => core.handler(req, res));
+    const port = await new Promise<number>((resolve) => {
+      srv.listen(0, '127.0.0.1', () =>
+        resolve((srv.address() as { port: number }).port)
+      );
+    });
+    const connect = async (name: string) => {
+      const transport = new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${port}/mcp`),
+        { requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } } }
+      );
+      const client = new Client({ name, version: '0.0.1' });
+      await client.connect(transport);
+      return client;
+    };
+    const first = await connect('cap-1');
+    const second = await connect('cap-2');
+    assert.equal(core.sessionCount(), 2);
+    // A third handshake must not push the map past the cap; the idlest session
+    // is closed instead of refusing service to the newcomer.
+    const third = await connect('cap-3');
+    assert.equal(core.sessionCount(), 2);
+    for (const client of [first, second, third]) {
+      await client.close().catch(() => undefined);
+    }
+    await core.close();
+    await new Promise<void>((resolve) => srv.close(() => resolve()));
+  });
 });
 
 /**

@@ -52,7 +52,7 @@ export default function ExtensionTabBar({
     >
       {tabs.map((tab) => {
         const active = tab.id === activeTabId;
-        const dirty = editState[tab.filePath]?.dirty ?? false;
+        const dirty = editState[tab.id]?.dirty ?? false;
         return (
           <Stack
             key={tab.id}

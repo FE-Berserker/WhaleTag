@@ -396,6 +396,11 @@ export default function MediaLightbox({
     if (!open) return;
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        // Own the key: MUI's Dialog closes on Escape on its own, which made
+        // "step back out of zoom" impossible — the box closed instead. Capture
+        // phase + stopPropagation keeps the event away from MUI's handler.
+        e.preventDefault();
+        e.stopPropagation();
         stopPan();
         // If zoomed in, Esc first resets the view; a second Esc closes the
         // lightbox. Matches how Apple Preview and Photos behave — Escape
@@ -429,8 +434,9 @@ export default function MediaLightbox({
         }
       }
     };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
+    // Capture phase: runs before MUI's document-level Escape handler.
+    document.addEventListener('keydown', handleKey, true);
+    return () => document.removeEventListener('keydown', handleKey, true);
   }, [open, onClose, goPrev, goNext, zoom, isVideo, stopPan]);
 
   if (!current) return null;

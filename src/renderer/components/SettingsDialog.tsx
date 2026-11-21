@@ -193,6 +193,9 @@ function FulltextSection() {
   const { currentLocation } = useCurrentLocationContext();
 
   const [input, setInput] = useState('');
+  // Rejected "add fulltext path" attempts are explained inline instead of
+  // silently persisting a row that can only ever show an error state.
+  const [pathError, setPathError] = useState<string | null>(null);
   const [status, setStatus] = useState<Record<string, FtStatus>>({});
 
   const build = useCallback(async (p: string) => {
@@ -260,6 +263,22 @@ function FulltextSection() {
   const handleAdd = () => {
     const v = input.trim();
     if (!v) return;
+    // Persisted setting: validate before dispatch. `addFulltextPath` writes to
+    // redux-persist, so a typo ("D:/doc" vs "D:\doc" is fine, but "doc" or a
+    // URL is not) would otherwise stick around forever and always fail at
+    // build time with a path error.
+    const absolute =
+      /^[a-zA-Z]:[\\/]/.test(v) || v.startsWith('\\\\') || v.startsWith('/');
+    if (!absolute) {
+      setPathError(t('fulltextPathInvalid'));
+      return;
+    }
+    const key = normalizeFsPath(v);
+    if (paths.some((p) => normalizeFsPath(p) === key)) {
+      setPathError(t('fulltextPathDuplicate'));
+      return;
+    }
+    setPathError(null);
     dispatch(addFulltextPath(v));
     setInput('');
     void build(v);
@@ -291,7 +310,10 @@ function FulltextSection() {
           fullWidth
           placeholder={t('fulltextPathPlaceholder')}
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => {
+            setInput(e.target.value);
+            if (pathError) setPathError(null);
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') handleAdd();
           }}
@@ -309,6 +331,11 @@ function FulltextSection() {
           </span>
         </Tooltip>
       </Stack>
+      {pathError ? (
+        <Typography variant="caption" color="error">
+          {pathError}
+        </Typography>
+      ) : null}
       {currentLocation ? (
         <Button
           size="small"

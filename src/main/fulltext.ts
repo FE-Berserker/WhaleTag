@@ -8,6 +8,7 @@ import type { FulltextHit } from '../shared/ipc-types';
 import {
   queryFulltext,
   hasFulltext,
+  markFulltextInitialized,
   fulltextPrior,
   insertFulltext,
   deleteFulltextPaths,
@@ -497,6 +498,11 @@ export async function buildFulltextIndex(
   // batches remain valid incremental progress, the failed transaction keeps
   // its prior rows, and removed/stale paths are not deleted on a partial walk.
   await deleteFulltextPaths(rootPath, removed);
+
+  // Mark the root as built at least once — only after every write succeeded.
+  // An index that is currently EMPTY has to stay distinguishable from a
+  // never-built one, otherwise the watcher stops rebuilding it (see hasFulltext).
+  markFulltextInitialized(rootPath);
 
   return { count };
 }

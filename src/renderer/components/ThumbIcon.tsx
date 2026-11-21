@@ -9,6 +9,13 @@ import { enqueueThumbLoad, cancelThumbLoad } from '-/services/thumb-load-queue';
 import FileTypeIcon from './FileTypeIcon';
 
 /**
+ * Upper bound on the shared thumbnail data-URL cache. Entries are 10-20 KB
+ * data URLs; 800 keeps a few screens' worth of history without pinning tens
+ * of MB for the whole session. See the write site in the load effect.
+ */
+export const THUMB_CACHE_LIMIT = 800;
+
+/**
  * Renders a file's thumbnail (image/video/pdf/office files) or a folder/file
  * glyph at `size` px. Loads the thumbnail lazily on mount; the data URL is
  * cached in `thumbCache` (keyed by `${path}|${modified}`) so a cell re-mounting
@@ -112,7 +119,18 @@ function ThumbIconBase({
           }
         }
         if (!observed) return; // scrolled away / unmounted mid-load
-        if (url) thumbCache.set(cacheKey, url);
+        if (url) {
+          // Bounded insertion order: the shared cache is keyed by
+          // `path|modified` and cleared only on directory change, so a long
+          // scroll through a photo folder used to retain every data URL
+          // (~10-20 KB each) for the rest of the session — tens of MB after a
+          // few thousand images. Evict the oldest entry once the cap is hit.
+          if (!thumbCache.has(cacheKey) && thumbCache.size >= THUMB_CACHE_LIMIT) {
+            const oldest = thumbCache.keys().next().value;
+            if (oldest !== undefined) thumbCache.delete(oldest);
+          }
+          thumbCache.set(cacheKey, url);
+        }
         setDataUrl(url ?? null);
       } catch {
         // A removed root, junction target, or decode/IO failure must not become

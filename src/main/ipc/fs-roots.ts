@@ -2,7 +2,11 @@ import os from 'os';
 import path from 'path';
 import { ipcMain } from 'electron';
 import { acceptRootsFromRenderer } from '../known-roots';
-import { setAllowedRoots, getAllowedRoots } from '../allowed-roots';
+import {
+  setAllowedRoots,
+  setReadOnlyRoots,
+  getAllowedRoots,
+} from '../allowed-roots';
 import { foldPath } from '../path-fold';
 import { closeIndexDb } from '../index-worker-host';
 import { syncWatchedRoots } from '../dir-watcher';
@@ -33,38 +37,50 @@ export function registerFsRootsHandlers(): void {
   // is filtered through the main-process record of directories the user
   // actually picked (known-roots.ts) — otherwise a compromised renderer could
   // register `/` and defeat the whole boundary.
-  ipcMain.handle('fs:setAllowedRoots', (_event, roots: string[]) => {
-    const { accepted: next, refused } = acceptRootsFromRenderer(roots ?? []);
-    for (const raw of refused) {
-      console.warn(
-        '[roots] ignoring a location that was never picked by the user:',
-        raw
+  ipcMain.handle(
+    'fs:setAllowedRoots',
+    (_event, roots: string[], readOnlyRoots?: string[]) => {
+      const { accepted: next, refused } = acceptRootsFromRenderer(roots ?? []);
+      for (const raw of refused) {
+        console.warn(
+          '[roots] ignoring a location that was never picked by the user:',
+          raw
+        );
+      }
+      // A root that disappeared = a removed location: close its index.db in
+      // the worker so per-location handles don't leak for the rest of the
+      // session (docs/04 §10). Fire-and-forget — a later query for a still-
+      // registered root simply reopens its db lazily.
+      //
+      // Compare folded paths: the renderer can re-push the same location with a
+      // different spelling (`C:\Foo` vs `c:\foo`, trailing separator). Exact
+      // string comparison treated those as removals and closed a live db.
+      const nextFolded = new Set(next.map((r) => foldPath(path.resolve(r))));
+      for (const prev of lastSyncedRoots) {
+        if (next.includes(prev)) continue;
+        if (nextFolded.has(foldPath(path.resolve(prev)))) continue;
+        void closeIndexDb(prev).catch(() => undefined);
+      }
+      lastSyncedRoots = [...next];
+      setAllowedRoots(next);
+      // Read-only is a property of a location the renderer already knows.
+      // Accept only entries that survived the known-roots filter: a root that
+      // was refused above must not be able to make anything read-only, and a
+      // stale entry for a removed location must not outlive it.
+      setReadOnlyRoots(
+        (readOnlyRoots ?? []).filter((r) =>
+          nextFolded.has(foldPath(path.resolve(r)))
+        )
       );
+      // docs/04 §10: reconcile fs.watch coverage with the same root set (added
+      // locations get a watcher, removed ones are closed). Drives the
+      // `fs:dirChanged` push + incremental index rebuilds on external change.
+      syncWatchedRoots(next);
+      // The startup date-tag migration must wait for this push: at bootstrap
+      // the root set is always still empty (the renderer hasn't mounted yet),
+      // so running it there silently did nothing (docs/09 §26). The trigger's
+      // once-guard keeps later re-pushes (location add/remove) from re-running.
+      void triggerStartupMigration(getAllowedRoots());
     }
-    // A root that disappeared = a removed location: close its index.db in
-    // the worker so per-location handles don't leak for the rest of the
-    // session (docs/04 §10). Fire-and-forget — a later query for a still-
-    // registered root simply reopens its db lazily.
-    //
-    // Compare folded paths: the renderer can re-push the same location with a
-    // different spelling (`C:\Foo` vs `c:\foo`, trailing separator). Exact
-    // string comparison treated those as removals and closed a live db.
-    const nextFolded = new Set(next.map((r) => foldPath(path.resolve(r))));
-    for (const prev of lastSyncedRoots) {
-      if (next.includes(prev)) continue;
-      if (nextFolded.has(foldPath(path.resolve(prev)))) continue;
-      void closeIndexDb(prev).catch(() => undefined);
-    }
-    lastSyncedRoots = [...next];
-    setAllowedRoots(next);
-    // docs/04 §10: reconcile fs.watch coverage with the same root set (added
-    // locations get a watcher, removed ones are closed). Drives the
-    // `fs:dirChanged` push + incremental index rebuilds on external change.
-    syncWatchedRoots(next);
-    // The startup date-tag migration must wait for this push: at bootstrap
-    // the root set is always still empty (the renderer hasn't mounted yet),
-    // so running it there silently did nothing (docs/09 §26). The trigger's
-    // once-guard keeps later re-pushes (location add/remove) from re-running.
-    void triggerStartupMigration(getAllowedRoots());
-  });
+  );
 }

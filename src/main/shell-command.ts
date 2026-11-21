@@ -180,29 +180,54 @@ async function openTerminalWindow(command: string): Promise<void> {
     await launchLinuxTerminal(`${command}; exec bash`);
     return;
   }
-  let child;
   if (process.platform === 'win32') {
-    child = spawn('cmd.exe', ['/d', '/s', '/k', `"${command}"`], {
+    const child = spawn('cmd.exe', ['/d', '/s', '/k', `"${command}"`], {
       detached: true,
       stdio: 'ignore',
       windowsVerbatimArguments: true,
       windowsHide: false,
     });
-  } else {
-    const script = `tell application "Terminal" to do script "${escapeAppleScriptString(
-      command
-    )}"`;
-    child = spawn('osascript', ['-e', script], {
-      detached: true,
-      stdio: 'ignore',
+    // `/k` keeps the window open, so it never exits normally — only the spawn
+    // itself can fail here.
+    await new Promise<void>((resolve, reject) => {
+      child.once('error', reject);
+      child.once('spawn', () => resolve());
     });
+    child.unref();
+    return;
   }
-  // Surface spawn failures to the renderer instead of claiming success: the
-  // caller used to return { ok: true } after `console.warn`, so a missing
-  // terminal binary looked like the command had been launched.
+  // macOS: AppleScript succeeds at SPAWN and only fails on exit (Automation
+  // permission denied, Terminal.app missing, script error). Resolving on
+  // 'spawn' reported success for a command that never ran — wait for the real
+  // exit code and include the stderr tail in the error.
+  const script = `tell application "Terminal" to do script "${escapeAppleScriptString(
+    command
+  )}"`;
+  const child = spawn('osascript', ['-e', script], {
+    detached: true,
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  let stderr = '';
+  child.stderr?.on('data', (chunk: Buffer) => {
+    // Bounded: a stuck child must not grow this without limit.
+    if (stderr.length < 4096) stderr += chunk.toString();
+  });
   await new Promise<void>((resolve, reject) => {
     child.once('error', reject);
-    child.once('spawn', () => resolve());
+    child.once('exit', (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      const detail = stderr.trim().split('\n').slice(-3).join(' ').trim();
+      reject(
+        new Error(
+          `Failed to open a terminal window (osascript exited with ${
+            code ?? signal
+          })${detail ? `: ${detail}` : ''}`
+        )
+      );
+    });
   });
   child.unref();
 }

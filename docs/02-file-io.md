@@ -8,7 +8,7 @@
 
 - **本地文件夹位置**(本地路径,CRUD:`createLocation` / `updateLocation` / `deleteLocation`)
 - **切换最近**:LRU(`reducers/recent.ts`),前进 / 后退栈
-- **只读位置**:写拦截在 **renderer 层**(`IOActionsContextProvider.runAndRefresh` 早 throw + FileList/useListCommands 守卫 + 写按钮 disabled)。**注意**:`setAllowedRoots` 收到的 roots **包含**只读位置(Root.tsx 全量推送)——allowedRoots 只表达"配置的 location",主进程写 IPC 对只读位置**不会**早 throw;Whale 自身元数据如 `.whale/index.db` 仍会写入只读位置。
+- **只读位置**:**两道闸**。渲染层 `IOActionsContextProvider.runAndRefresh` 早 throw + FileList/useListCommands 守卫 + 写按钮 disabled;主进程同批接收只读子集(`Root.tsx` 推送 `setAllowedRoots(roots, readOnlyRoots)`),`assertWritable(target)` 对只读位置内的**任何**用户数据 / 可见元数据写入抛 ``Refused: the location containing this path is read-only``——文件创建、改写、删除、移动/复制目的端、建目录、打包、sidecar/标签/目录元数据/标签库描述、修订备份与恢复都在内。MCP 变更工具走同一批函数,因此同样被拒。Whale 自身的索引缓存(`.whale/index.db`)与缩略图缓存不在此闸内(纯缓存,删了可重建)。
 
 云存储(S3 / WebDAV)、导入导出、`.ts → .whale` 迁移工具均**不在范围**。详见 [docs/09-known-issues.md](./09-known-issues.md)。
 
@@ -64,7 +64,7 @@
 - `assertWithinAllowedRoot(filePath)` 校验给定路径在某个 root 下;**空集合 = 拒绝所有写**(fail-closed,`allowed-roots.ts:47-49` 抛 "Refused: no configured locations")
 - 对称路径用 `fs.realpathSync` 解析目标(不存在则递归解析存在的父目录再拼尾部,`allowed-roots.ts:27-39` `resolveGuardPath`),防止 symlink 逃逸;`setAllowedRoots` 也对 root 做 `realpathSync`(不可达 fallback 到 `path.resolve`)
 - Windows 大小写归一(`isSameOrDescendant` 调用前 `toLowerCase()`)
-- **只读位置**(`isReadOnly=true`)的写拦截在 renderer 层(IOActions / FileList / useListCommands 守卫);allowedRoots **包含**只读位置(见 §1 上方条目),主进程写 IPC 不对其早 throw
+- **只读位置**(`isReadOnly=true`)由主进程强制:`fs:setAllowedRoots` 的第二个参数携带只读子集,`allowed-roots.ts` 的 `isReadOnlyPath` / `assertWritable` 在写入口(含 sidecar、folderMeta、tagLibrary、修订 API)统一拒绝,渲染层守卫只是第一道闸
 - **读取也受限**:`fs:listDirectory` / `fs:listDirectoryRecursive` / `folderMeta:read` 与文件读取一样过 `assertWithinAllowedRoot` —— 目录枚举能揭示位置外有哪些文件,递归扫描还会把缓存写进 `<dir>/.whale/`,所以不能只防"读内容"。`fs:pathExists` 这个无校验、渲染层从未调用的死通道已删除(暴露面只减不增)。渲染层首次挂载时子 effect 早于 Root 的 `setAllowedRoots`,因此列目录前先 `await waitForAllowedRoots()`。侧车批量读(`sidecar:readMany*`)仍不校验 root:它只返回调用方已给出文件名对应的元数据,无法枚举目录。
 - **位置必须来自用户的选择**:`fs:setAllowedRoots` 不再直接信任渲染层传来的数组。[known-roots.ts](../src/main/known-roots.ts) 在 `<userData>/known-roots.json` 记录"用户真的在原生对话框里选过的目录"(`dialog:openDirectory` 处理器用 `rememberPickedRoot` 记),推送时只放行已知目录,其余丢弃并记 `console.warn`;升级/首装第一次推送做一次性 seed(TOFU)并落盘,首次推送即使是空的也会关闭 seed 窗口(否则首装无位置时被注入者还能后手以 `/` 完成 seed);记录损坏/不可读时按未 seed 重来,路径被目录占用时先改名为 `.corrupt-<时间戳>` 再记录。这样渲染层即使被注入也注册不了 `/`。
 - **move / copy 两端都校验**:`fs:move` / `fs:copy` 此前只校验源路径(注释称"目的地可以是用户选的任意目录"),被注入的渲染层可以把任意内容搬进 Startup / `~/.ssh`;现在 `oldPath` ↔ `newPath`、`sourcePath` ↔ `destPath` 两端都过 `assertWithinAllowedRoot`,与 `fs:rename` 对齐。`fs:importExternal` 的 `cp` 同时用 `force:false`——Node 默认 `force:true` 会静默覆盖 readdir 快照之后才出现的同名文件。
@@ -97,6 +97,7 @@ writeFileAtomic(path, write):
 - 写文件前先清理目标目录下 `<basename>.<pid>.<counter>.tmp` 残留(崩溃遗留;每个 target 每进程只 sweep 一次);只接受精确数字后缀,不会把 `foo.jpg.<pid>.<counter>.tmp` 误当成目标 `foo` 的临时文件
 - 临时文件名带 `pid + 单调计数器` 后缀,同一 target 的并发写各有自己的 tmp,不会互相 rename 掉对方的文件
 - **同一 target 的写串行排队,不同 target 并行**(模块级 `Map<string, Promise>`):既避免 sweep 删掉在途临时文件,也避免 Windows 上两个 rename 抢同一目标时的 `EPERM`;前一个写失败不会污染队列里的下一个
+- **队列键按 realpath 归一**:`targetKey` 先 `realpathSync` 再 `foldPath`(目标不存在时只 realpath 父目录 + 拼 basename,都失败才退回 `resolve`)。否则同一文件经符号链接 / 8.3 短名有两个键,两条队列各自 rename 同一 inode——Windows 报 `EPERM`,POSIX 上后写覆盖先写且不报错(静默丢一次写)
 - 递归缓存 `loadRecursiveScan` 在入口重新校验 IPC depth:非有限值回退 3,其余取整并限制在 1–5,避免异常 depth 影响缓存路径或扫描工作量
 - 用于 sidecar、索引迁移标志、redux-persist 写盘
 

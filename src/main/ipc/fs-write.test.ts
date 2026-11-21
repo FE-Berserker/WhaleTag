@@ -5,11 +5,12 @@ import path from 'path';
 import { existsSync, promises as fsp } from 'fs';
 import type { ExecFileOptions } from 'child_process';
 
-import { setAllowedRoots } from '../allowed-roots';
+import { setAllowedRoots, setReadOnlyRoots } from '../allowed-roots';
 import {
   commonParentDir,
   copyEntry,
   createTextFile,
+  deletePath,
   moveEntry,
   runOsZip,
   type OsZipRunner,
@@ -350,6 +351,49 @@ describe('fs-write bounded OS zip processes', () => {
       assert.equal(bytes.subarray(0, 2).toString(), 'PK');
     } finally {
       await fsp.rm(scratch, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('read-only locations reject writes', () => {
+  it('refuses create, move-in, copy-in and delete inside a read-only root', async () => {
+    const locked = await fsp.realpath(
+      await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-ro-locked-'))
+    );
+    const writable = await fsp.realpath(
+      await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-ro-writable-'))
+    );
+    setAllowedRoots([locked, writable]);
+    setReadOnlyRoots([locked]);
+    try {
+      const source = path.join(writable, 'source.txt');
+      await fsp.writeFile(source, 'payload', 'utf8');
+      const existing = path.join(locked, 'existing.txt');
+      await fsp.writeFile(existing, 'keep me', 'utf8');
+
+      // The read-only flag is enforced by the main process, so the refusal
+      // holds even for a renderer (or MCP client) that forgot to check.
+      await assert.rejects(
+        createTextFile(path.join(locked, 'new.txt'), 'x'),
+        /read-only/
+      );
+      await assert.rejects(
+        moveEntry(source, path.join(locked, 'moved.txt')),
+        /read-only/
+      );
+      assert.equal(existsSync(source), true, 'a refused move keeps its source');
+      await assert.rejects(
+        copyEntry(source, path.join(locked, 'copied.txt')),
+        /read-only/
+      );
+      await assert.rejects(deletePath(existing, false), /read-only/);
+      assert.equal(existsSync(existing), true, 'a refused delete keeps the file');
+      assert.equal(existsSync(path.join(locked, 'new.txt')), false);
+    } finally {
+      setReadOnlyRoots([]);
+      setAllowedRoots([]);
+      await fsp.rm(locked, { recursive: true, force: true });
+      await fsp.rm(writable, { recursive: true, force: true });
     }
   });
 });

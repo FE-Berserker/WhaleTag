@@ -162,6 +162,9 @@ export function ExtensionContextProvider({
     tabsRef.current = tabs;
   }, [tabs]);
 
+  // Tab ids whose content read is still in flight — see openWithExtension.
+  const openingTabIdsRef = useRef(new Set<string>());
+
   // A permission change belongs to one location only. Tabs from other roots
   // can remain open in the background and must keep their own readOnly state.
   useEffect(() => {
@@ -246,7 +249,7 @@ export function ExtensionContextProvider({
   // flag set and is logged by the registry.
   const flushDirtyTabs = useCallback(async () => {
     const dirtyTabs = tabsRef.current.filter(
-      (t) => editStateMapRef.current[t.filePath]?.dirty
+      (t) => editStateMapRef.current[t.id]?.dirty
     );
     await Promise.all(
       dirtyTabs.map((tab) => {
@@ -384,7 +387,7 @@ export function ExtensionContextProvider({
       // cleanup only fires now (when the tab leaves the list). Clear edit
       // state explicitly too — the unmount handler does the same and the
       // reducer delete is idempotent.
-      dispatch(clearFileEditState(tab.filePath));
+      dispatch(clearFileEditState(tabId));
       setActiveTabId((prev) => {
         if (prev !== tabId) return prev; // closed a background tab — keep focus
         if (remaining.length === 0) return null;
@@ -418,6 +421,11 @@ export function ExtensionContextProvider({
         activateTab(tabId);
         return;
       }
+      // In-flight dedup: a double click (or key + click) fires two opens before
+      // `readFileContent` resolves, and both used to push the same tab id — two
+      // tabs for one document, each with its own editor state.
+      if (openingTabIdsRef.current.has(tabId)) return;
+      openingTabIdsRef.current.add(tabId);
       setLoading(true);
       setError(null);
       try {
@@ -441,7 +449,10 @@ export function ExtensionContextProvider({
             .map(([k]) => k)
         );
         setTabs((prev) => {
-          const next = [newTab, ...prev];
+          const next = [
+            newTab,
+            ...prev.filter((t) => t.id !== newTab.id),
+          ];
           if (next.length > MAX_TABS) {
             const evictId = pickLruEvict(next, newTab.id, dirtyPaths);
             if (evictId) return next.filter((t) => t.id !== evictId);
@@ -452,6 +463,7 @@ export function ExtensionContextProvider({
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
+        openingTabIdsRef.current.delete(tabId);
         setLoading(false);
       }
     },

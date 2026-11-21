@@ -82,6 +82,18 @@ export const TAG_PALETTE = [
 ];
 
 /**
+ * Sentinel stored in `settings.tagColors[tag]` when the user explicitly clears
+ * a tag's color.
+ *
+ * `delete tagColors[tag]` is indistinguishable from "never seen this tag", so
+ * the auto-assign effect re-colored the tag on the very next render — the clear
+ * button looked broken. A present-but-empty value marks the explicit choice:
+ * `getTagColor` treats it as unset (falsy), while the auto-assigners key off
+ * `tag in tagColors` and now leave it alone.
+ */
+export const TAG_COLOR_CLEARED = '';
+
+/**
  * Picks a color for `tag`. If `tag` already has a color, that color is returned
  * unchanged. Otherwise the next palette color is chosen round-robin based on
  * the current size of `existingColors`, so back-to-back additions always get a

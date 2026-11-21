@@ -2,6 +2,7 @@ import { promises as fsp } from 'fs';
 import path from 'path';
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { exec, execFile } from 'child_process';
+import { atomicWriteJson } from '../atomic-write';
 import { runUserCommand, setUserCommandTemplates } from '../shell-command';
 import { linuxRevealSteps } from '../desktop-linux';
 import { COMMAND_NOT_APPROVED } from '../../shared/shell-types';
@@ -49,14 +50,11 @@ async function persistApprovals(): Promise<void> {
   const file = approvalsFile();
   // tmp + rename: a torn write would silently drop approvals and ask again —
   // annoying, but a corrupt approvals file is worse (see AGENTS.md red line).
-  const tmp = `${file}.${process.pid}.tmp`;
+  // The shared helper uses a pid+counter temp name and serializes writes per
+  // target; a bare `<file>.<pid>.tmp` collided when two approvals were granted
+  // in the same tick (second rename hit ENOENT and was swallowed).
   await fsp.mkdir(path.dirname(file), { recursive: true });
-  await fsp.writeFile(
-    tmp,
-    JSON.stringify([...approvedTemplates].sort(), null, 2),
-    'utf8'
-  );
-  await fsp.rename(tmp, file);
+  await atomicWriteJson(file, [...approvedTemplates].sort());
 }
 
 async function approveTemplate(
@@ -98,8 +96,21 @@ export function registerShellHandlers(): void {
         : process.platform === 'darwin'
           ? 'open trash://'
           : 'xdg-open trash://';
-    return new Promise<void>((resolve) => {
-      exec(cmd, () => resolve());
+    return new Promise<void>((resolve, reject) => {
+      exec(cmd, (error) => {
+        if (error) {
+          // `exec` reports "could not launch explorer/open/xdg-open" here; the
+          // old callback ignored it and resolved, so the UI claimed success
+          // while nothing opened.
+          reject(
+            new Error(
+              `could not open the system trash: ${error instanceof Error ? error.message : String(error)}`
+            )
+          );
+          return;
+        }
+        resolve();
+      });
     });
   });
 

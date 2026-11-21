@@ -719,15 +719,16 @@ async function renderFont(content: string, sizeHint: number | undefined) {
 
  applyPreview();
  updateStatusBar();
+ // Drawing a new font invalidates the (cached) glyph grid; clear the flag
+ // BEFORE any re-render below, otherwise an open Glyphs drawer keeps showing
+ // the previous font's glyphs until the tab is toggled twice.
+ glyphGridRendered = false;
  // If the drawer was open during the previous file (e.g. switch fonts while
  // it's expanded), re-render its content so the new metadata/glyphs appear.
  if (state.drawerOpen) {
  if (state.drawerTab === 'meta') renderMetadata();
  else renderGlyphGrid();
  }
- // Drawing a new font invalidates the (cached) glyph grid; force a rebuild
- // next time the user opens the Glyphs tab.
- glyphGridRendered = false;
 }
 
 function showLoadError(err: unknown) {

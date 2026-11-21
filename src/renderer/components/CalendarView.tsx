@@ -42,7 +42,7 @@ import { escapeHtml } from '-/services/escape-html';
 import type { DirEntry } from '../../shared/ipc-types';
 import {
   addDays,
-  addMonths,
+  addMonthsClamped,
   bucketByDate,
   bucketByDateAndHour,
   calendarDays,
@@ -311,17 +311,17 @@ export default function CalendarView({ data }: CalendarViewProps) {
 
   const goPrev = useCallback(() => {
     setCursor((prev) => {
-      if (viewMode === 'month') return startOfDay(addMonths(prev, -1));
+      if (viewMode === 'month') return startOfDay(addMonthsClamped(prev, -1));
       if (viewMode === 'week') return startOfDay(addDays(prev, -7));
-      return startOfDay(addMonths(prev, -12));
+      return startOfDay(addMonthsClamped(prev, -12));
     });
   }, [viewMode]);
 
   const goNext = useCallback(() => {
     setCursor((prev) => {
-      if (viewMode === 'month') return startOfDay(addMonths(prev, 1));
+      if (viewMode === 'month') return startOfDay(addMonthsClamped(prev, 1));
       if (viewMode === 'week') return startOfDay(addDays(prev, 7));
-      return startOfDay(addMonths(prev, 12));
+      return startOfDay(addMonthsClamped(prev, 12));
     });
   }, [viewMode]);
 
@@ -2137,7 +2137,7 @@ function DatePickerPopover({
       >
         <IconButton
           size="small"
-          onClick={() => setView((v) => startOfDay(addMonths(v, -1)))}
+          onClick={() => setView((v) => startOfDay(addMonthsClamped(v, -1)))}
           aria-label={t('calendarPrevMonth')}
         >
           <ChevronLeftIcon />
@@ -2147,7 +2147,7 @@ function DatePickerPopover({
         </Typography>
         <IconButton
           size="small"
-          onClick={() => setView((v) => startOfDay(addMonths(v, 1)))}
+          onClick={() => setView((v) => startOfDay(addMonthsClamped(v, 1)))}
           aria-label={t('calendarNextMonth')}
         >
           <ChevronRightIcon />

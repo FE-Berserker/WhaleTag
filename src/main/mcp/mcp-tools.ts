@@ -5,8 +5,8 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import { request } from '../index-worker-host';
 import {
+  assertNotLocationRoot,
   assertWithinAllowedRoot,
-  isConfiguredRoot,
   onAllowedRootsChanged,
 } from '../allowed-roots';
 import { readSidecardsForPaths, updateFileTags, mutateSidecar } from '../sidecar';
@@ -60,19 +60,11 @@ function assertBothEndsInside(source: string, dest: string): void {
   assertWithinAllowedRoot(dest);
 }
 
-/**
- * A location root is a container, not an entry. The renderer never offers one
- * as a file row; an external client could otherwise tag/describe it (the
- * sidecar lands one directory ABOVE the boundary) or delete/move the whole
- * workspace behind a single approval dialog.
- */
-function assertNotLocationRoot(target: string): void {
-  if (isConfiguredRoot(target)) {
-    throw new Error(
-      'Refusing to operate on a configured location root itself; operate on entries inside it'
-    );
-  }
-}
+// A location root is a container, not an entry: `assertNotLocationRoot` (from
+// ../allowed-roots, shared with the IPC entry points) refuses it, because an
+// external client could otherwise tag/describe a root — the sidecar would land
+// one directory ABOVE the boundary — or delete/move the whole workspace behind
+// a single approval dialog.
 
 /** whale_read_text decodes the whole file, so refuse absurd sizes up front. */
 const MAX_TEXT_READ_BYTES = 16 * 1024 * 1024;
@@ -165,6 +157,7 @@ export function registerMcpTools(server: McpServer): void {
                 rootPath,
                 count: 0,
                 ready: false,
+                exists: false,
                 fulltextIndexed: false,
                 error: e instanceof Error ? e.message : String(e),
               };
@@ -328,15 +321,28 @@ export function registerMcpTools(server: McpServer): void {
       description: 'One level of a directory (folders first, alphabetical).',
       inputSchema: {
         path: z.string().describe('Absolute directory path'),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(5000)
+          .default(1000)
+          .describe('Max entries to return (the directory may hold more)'),
       },
     },
-    async ({ path: dirPath }) => {
+    async ({ path: dirPath, limit }) => {
       try {
         assertWithinAllowedRoot(dirPath);
         const entries = await listDirectory(dirPath);
+        // A flat directory with tens of thousands of files used to serialize
+        // the whole listing into one JSON-RPC response (tens of MB) with no
+        // cap, unlike whale_read_text's 16 MiB guard. Truncate and let the
+        // client page by narrowing the path.
+        const shown = entries.slice(0, limit);
         return ok({
           count: entries.length,
-          entries: entries.map((e) => ({
+          truncated: shown.length < entries.length,
+          entries: shown.map((e) => ({
             name: e.name,
             path: e.path,
             isDirectory: e.isDirectory,

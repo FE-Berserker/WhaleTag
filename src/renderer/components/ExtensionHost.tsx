@@ -164,7 +164,7 @@ export default function ExtensionHost({
   const [saving, setSaving] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const editState = useSelector(
-    (s: RootState) => s.extensions.editState[filePath]
+    (s: RootState) => s.extensions.editState[tabId]
   );
   const dirty = editState?.dirty ?? false;
 
@@ -266,9 +266,9 @@ export default function ExtensionHost({
 
   useEffect(() => {
     return () => {
-      dispatch(clearFileEditState(filePath));
+      dispatch(clearFileEditState(tabId));
     };
-  }, [dispatch, filePath]);
+  }, [dispatch, tabId]);
 
   const handleSave = useCallback(
     async (content: string, revision?: number): Promise<boolean> => {
@@ -290,7 +290,7 @@ export default function ExtensionHost({
         postToExtension({ type: 'savingFile', path: filePath, revision });
         const ackCurrent = isSaveAckCurrent(revision, latestRevisionRef.current);
         dispatch(
-          setFileEditState(filePath, {
+          setFileEditState(tabId, {
             // An older write still completed successfully, but it must not
             // clear dirty for edits reported while that write was pending.
             ...(ackCurrent ? { dirty: false } : {}),
@@ -307,7 +307,7 @@ export default function ExtensionHost({
         return ackCurrent;
       } catch (e) {
         dispatch(
-          setFileEditState(filePath, {
+          setFileEditState(tabId, {
             dirty: true,
             saving: false,
           })
@@ -322,7 +322,7 @@ export default function ExtensionHost({
         setSaving(false);
       }
     },
-    [dispatch, filePath, postToExtension, readOnly, saving, t]
+    [dispatch, filePath, postToExtension, readOnly, saving, tabId, t]
   );
 
   // §unsaved-close — resolver for the in-flight `requestSave` round-trip. Set
@@ -524,6 +524,13 @@ export default function ExtensionHost({
           setLoadFailed(false);
           break;
         case 'parentSaveDocument':
+          // Payload guard: the envelope only proves `type` is known (see
+          // `isValidEnvelope`), so a malformed extension message must not reach
+          // the save path with a non-string body.
+          if (typeof msg.content !== 'string') {
+            notifyApp(t('extensionRuntimeError', { message: 'invalid save payload' }));
+            break;
+          }
           handleSave(msg.content, msg.revision)
             .then((ok) => {
               saveResolverRef.current?.(ok);
@@ -535,6 +542,7 @@ export default function ExtensionHost({
             });
           break;
         case 'requestFileEmbed':
+          if (typeof msg.path !== 'string' || !msg.path) break;
           handleRequestFileEmbed(msg.path, !!msg.isDirectory).catch(
             () => undefined
           );
@@ -544,17 +552,19 @@ export default function ExtensionHost({
           // Defer to the view panel so the active view re-renders with new
           // content + a refreshed sibling list. Ignore if the host didn't
           // supply a handler (siblings API is opt-in).
-          if (onRequestFile) {
+          if (typeof msg.path === 'string' && msg.path && onRequestFile) {
             onRequestFile(msg.path);
           }
           break;
         case 'contentChangedInEditor':
+          if (typeof msg.dirty !== 'boolean') break;
           if (typeof msg.revision === 'number') {
             latestRevisionRef.current = msg.revision;
           }
-          dispatch(setFileEditState(filePath, { dirty: msg.dirty }));
+          dispatch(setFileEditState(tabId, { dirty: msg.dirty }));
           break;
         case 'openLinkExternally':
+          if (typeof msg.url !== 'string' || !msg.url) break;
           if (
             msg.url.startsWith('http://') ||
             msg.url.startsWith('https://')
@@ -569,9 +579,18 @@ export default function ExtensionHost({
             });
           }
           break;
-        case 'error':
-          console.error('[ExtensionHost] extension error:', msg.message);
+        case 'error': {
+          // An extension that fails to load/render used to leave only a console
+          // line, which the user never sees (blank iframe). Surface it through
+          // the app notice host, the same channel the save failures use.
+          const detail =
+            typeof msg.message === 'string' && msg.message.trim()
+              ? msg.message
+              : 'unknown error';
+          console.error('[ExtensionHost] extension error:', detail);
+          notifyApp(t('extensionRuntimeError', { message: detail }));
           break;
+        }
         default:
           break;
       }
@@ -590,6 +609,11 @@ export default function ExtensionHost({
     onRequestFile,
     postToExtension,
     handleRpc,
+    // editState is keyed by tab id now — a stale tabId would write this tab's
+    // dirty flag onto another tab (same file, different extension).
+    tabId,
+    // `notifyApp` messages for save/runtime errors are translated here.
+    t,
   ]);
 
   const title = manifest.name;

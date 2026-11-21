@@ -764,6 +764,15 @@ function handleMessage(msg: HostMessage) {
  // A same-path fileContent may be a legacy host's readOnly refresh. Never
  // replace unsaved editor text with that older disk snapshot.
  const shouldLoadContent = switchedFile || !dirty;
+ // A same-path refresh of a clean buffer DOES replace the text (external
+ // change on disk). Drop the history here too: otherwise Ctrl+Z restored the
+ // pre-reload buffer, and the next save wrote that stale text back over the
+ // file that had just been changed externally.
+ if (shouldLoadContent && !switchedFile && view) {
+ view.dispatch({
+ effects: historyCompartment.reconfigure(history()),
+ });
+ }
  if (shouldLoadContent) {
  revision = 0;
  setContent(msg.content);

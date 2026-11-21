@@ -103,9 +103,9 @@ src/extensions/
 **文件打开 iframe 生命周期**:
 
 - `ExtensionHost.tsx` iframe 宿主,管理加载 / 消息桥 / 保存流程 / 工具栏;**启动看门狗**(2026-07-22):iframe 12s 内未 post `ready` → 显示可重试失败态(此前崩溃/CSP 拦截 = 永久白屏),ready 前显示加载遮罩,重试经 `retryKey` 重挂 iframe
-- 编辑器脏状态经 `contentChangedInEditor` 上报;Save 触发 `parentSaveDocument` → `writeFileWithRevision`
+- 编辑器脏状态经 `contentChangedInEditor` 上报;Save 触发 `parentSaveDocument` → `writeFileWithRevision`。脏状态按**标签 id**（`makeTabId(filePath, extensionId)`）存放，不按文件路径：同一文件可以同时用两个扩展打开（文本编辑器 + JSON 查看器），按路径存放时两个标签会互相清除 dirty/saving，关闭其一时看起来"没有未保存修改"而丢内容
 - text / drawio / Excalidraw 的保存消息带内容 `revision`，宿主在 `savingFile` 回显实际写盘版本；旧回执不能清除写盘期间新产生的 dirty，stale 写盘即使已落盘也返回 false 并明确提示最新编辑仍未保存。并发保存会提示先等待当前写入；宿主报告成功后 provider 还会从 store 复查权威 dirty，仍有新编辑就取消关闭并恢复焦点。Excalidraw 每次完成写入都把比较基线推进到实际快照，再按当前 scene 重算 dirty，编辑后撤销回该快照也可正确变干净；缺省 revision 的旧扩展保留原行为
-- `fileContent` 用于真实文件切换/外部刷新，只读切换走独立 `setReadOnly`；text 同路径仍有未保存修改时不重灌旧磁盘内容，drawio 只读用 iframe `inert` 阻止继续编辑
+- `fileContent` 用于真实文件切换/外部刷新，只读切换走独立 `setReadOnly`；text 同路径仍有未保存修改时不重灌旧磁盘内容，drawio 只读用 iframe `inert` 阻止继续编辑。text-editor 在同路径外部刷新（缓冲区干净、内容被替换）时也会重建 undo 历史：否则 Ctrl+Z 能撤回重载前的旧文本，下一次保存把过期内容写回刚被外部修改的文件
 - 多标签记录所属 `locationId`，位置只读状态变化只同步该位置的标签，其他位置的后台标签保持原权限与对象身份；关闭前直接从 store 读取权威 dirty，不依赖 effect 镜像。后台脏标签的确认框会临时聚焦目标，取消、保存失败或保存/放弃成功关闭后都恢复此前活动标签（目标已关闭时自然不再选中它）
 - 写盘异常、初始或请求后切换的只读状态、15 秒未收到保存响应都由 ExtensionHost 各通知一次；普通保存统一使用通用保存错误并附上具体原因，超时会明确较晚写盘仍可能完成，关闭/重试前需确认标签状态。provider 在已注册 handler 返回 false 时只恢复焦点，handler 缺失或保存成功后权威 dirty 仍为 true 时才发关闭专用通知，不再叠加 blocking alert 与 snackbar。工具栏 Save 与关闭保存交叠时可能保守地取消关闭并提示保存进行中，不会把未确认内容视为已保存
 - 外部刷新优先精确路径，只有大小写/分隔符归一化后唯一匹配才回退，大小写不同且结果有歧义时绝不重载错误标签；未保存编辑仍优先于磁盘重载
@@ -115,6 +115,8 @@ src/extensions/
 **修订历史**:
 
 - IPC `ext:backupRevision` / `ext:writeFile` / `ext:listRevisions` / `ext:restoreRevision` / `ext:deleteRevision`——均过 `assertWithinAllowedRoot`;`deleteRevision` 把 revision 路径绑定到所属文件的 `.whale/revisions/` 前缀(与 restore 相同),拒绝删除任意路径
+- **恢复会先自备份**:`restoreRevision` 覆盖前先 `backupRevision(filePath)` 把当前内容写进同一修订列表(写不成就拒绝恢复并上抛)——恢复本身因此可回退,误点不会永久丢掉最新版本;UI 侧 `RevisionHistoryDialog` 的恢复按钮还带二次确认(`danger`,显示所选版本时间)
+- **恢复保留文件权限**:覆盖用的是 `atomicWriteBytes`(tmp + rename),临时文件带的是默认 mode;恢复前先 `fsp.stat(filePath).mode & 0o777`,有值就作为 `atomicWriteBytes` 的 `{ mode }` 传入,否则一次 `chmod 0600` 的敏感文件会被恢复动作悄悄放宽回 umask 默认(stat 失败只回退默认 mode,不阻断恢复)
 - UI:`RevisionHistoryDialog`
 
 **i18n**:host `setLocale` 推送,机制见 §8;全局类型抽到 `src/extensions/shared/whale-ext.d.ts`(扩展不再各自 `declare global`)。
@@ -131,7 +133,9 @@ src/extensions/
 
 **跨文件切换要重置 undo**:text-editor 复用同一个 CodeMirror `view`。`fileContent` 消息换文件时若不清历史,`Ctrl+Z` 会把上一个文件的内容写进当前文件(保存即串写);程序化 `setContent` 还会把"加载"记成一笔可撤销编辑。现在 history 放进独立 `Compartment`,换文件时 `reconfigure` 成新历史,`setContent` 用 `Transaction.addToHistory.of(false)` 排除出撤销栈。顺带修正了 `switchedFile` 的判断顺序——原代码先赋值再比较,语言切换分支永远不执行。
 
-**用户 CSS 不得绕过图片开关**:html-viewer 的图片开关同时约束 `<style>` 里的外链——关掉远程图片时,`url(https://…)`(background / cursor / `@font-face` 都会触发)与 `@import` 仍会发请求并拉取任意 CSS。现在 `stripRemoteCssRefs` 移除 `@import` 并把非 `data:` 的 `url()` 替成 `none`,开图片时才原样注入。DOMPurify 只管 HTML,管不到 `<style>` 文本,这是它之外必须单独做的一层。
+**用户 CSS 不得绕过图片开关**:html-viewer 的图片开关同时约束 `<style>` 里的外链——关掉远程图片时,`url(https://…)`(background / cursor / `@font-face` 都会触发)与 `@import` 仍会发请求并拉取任意 CSS。现在 `stripRemoteCssRefs` 移除 `@import` 并把非 `data:` 的 `url()` 替成 `none`,开图片时才原样注入。DOMPurify 只管 HTML,管不到 `<style>` 文本,这是它之外必须单独做的一层。正文元素上的行内 `style` 走同一条清理:关图时对 sanitize 后的 `[style]` 元素逐个剥掉远程 `url()`/`@import`,local 声明(颜色、字号)保留。
+
+**用户 CSS 作用域**:`<style>` 挂在扩展页面 `document.head`,不作用域会命中工具栏与弹窗(`body{display:none}` 曾把整个 UI 一起干掉)。注入后按 `CSSStyleSheet.cssRules` 改写选择器:按 `,` 拆分,`html`/`body`/`:root` 映射为 `#content`、以其开头的选择器换前缀,其余统一前置 `#content `;`@media`/`@supports` 递归处理,非 `CSSStyleRule` 分组(如 `@keyframes`)原样跳过;访问 `cssRules` 被浏览器拒绝时保留未作用域文本而不是丢掉整张表。
 
 各查看器/编辑器共享 `src/extensions/shared/zoom.ts` 与 `keymap.ts`。
 

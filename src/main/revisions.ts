@@ -117,10 +117,31 @@ export async function restoreRevision(
     throw new Error('Invalid revision path');
   }
 
+  // Restoring overwrites the current bytes with no undo — a single mis-click on
+  // an old entry used to destroy the newest edit permanently (the history only
+  // ever held older versions). Back the current content up FIRST so the restore
+  // itself is recoverable from the same list; if that backup cannot be written,
+  // refuse rather than overwrite an unprotected file.
+  try {
+    await backupRevision(filePath);
+  } catch (error) {
+    throw new Error(
+      `Refused to restore: could not back up the current content first (${
+        error instanceof Error ? error.message : String(error)
+      })`
+    );
+  }
+
   // Restore raw bytes (see backupRevision): a utf8 round-trip would corrupt
-  // non-UTF-8 content that the backup now preserves exactly.
+  // non-UTF-8 content that the backup now preserves exactly. Carry the current
+  // permission bits over: the rename would otherwise replace the file with the
+  // temp's default mode (0o666 & ~umask), silently widening `0600` files.
+  const mode = await fsp.stat(filePath).then(
+    (stat) => stat.mode & 0o777,
+    () => undefined
+  );
   const content = await fsp.readFile(revisionPath);
-  await atomicWriteBytes(filePath, content);
+  await atomicWriteBytes(filePath, content, mode === undefined ? undefined : { mode });
 }
 
 /**

@@ -76,6 +76,57 @@ describe('revision history', () => {
     }
   });
 
+  it('keeps the file mode when restoring a revision (POSIX)', async (t) => {
+    if (process.platform === 'win32') {
+      t.skip('POSIX mode bits are not observable on Windows');
+      return;
+    }
+    const dir = await tmpDir();
+    try {
+      const filePath = path.join(dir, 'secret.txt');
+      await fsp.writeFile(filePath, 'v1', 'utf8');
+      await backupRevision(filePath);
+      // The user tightened the file to 0600 after the backup was taken; a
+      // restore must not widen it back to the umask default (rename would
+      // otherwise install the temp file's 0644 mode).
+      await fsp.chmod(filePath, 0o600);
+      await fsp.writeFile(filePath, 'v2', 'utf8');
+
+      const revs = await listRevisions(filePath);
+      await restoreRevision(filePath, revs[0].path);
+      const stat = await fsp.stat(filePath);
+      assert.equal(stat.mode & 0o777, 0o600);
+      assert.equal(await fsp.readFile(filePath, 'utf8'), 'v1');
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('backs up the current content before restoring (restore stays recoverable)', async () => {
+    const dir = await tmpDir();
+    try {
+      const filePath = path.join(dir, 'doc.txt');
+      await fsp.writeFile(filePath, 'v1', 'utf8');
+      await backupRevision(filePath);
+      await fsp.writeFile(filePath, 'v2', 'utf8');
+
+      const before = await listRevisions(filePath);
+      await restoreRevision(filePath, before[0].path);
+
+      // Restoring overwrites the newest edit; it must be captured in the same
+      // history first, or a single mis-click would be unrecoverable.
+      const after = await listRevisions(filePath);
+      assert.equal(after.length, 2);
+      const contents = await Promise.all(
+        after.map((rev) => fsp.readFile(rev.path, 'utf8'))
+      );
+      assert.deepEqual(contents.sort(), ['v1', 'v2']);
+      assert.equal(await fsp.readFile(filePath, 'utf8'), 'v1');
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('rejects restore of revision outside file revisions dir', async () => {
     const dir = await tmpDir();
     try {

@@ -1,5 +1,6 @@
 import type { AnyAction } from 'redux';
 import { DEFAULT_PRESET_ID } from '-/theme/presets';
+import { TAG_COLOR_CLEARED } from '-/domain/tag-colors';
 import {
   DEFAULT_ENTRY_SIZE,
   type ThemeMode,
@@ -303,8 +304,9 @@ export function reduceAppearance<T extends AppearanceFields>(
     case SET_TAG_COLOR: {
       const { tag, color } = action.payload;
       const tagColors = { ...state.tagColors };
-      if (color) tagColors[tag] = color;
-      else delete tagColors[tag];
+      // Clearing must leave a marker behind, otherwise the auto-assign effect
+      // sees "no color" and immediately re-colors the tag. See TAG_COLOR_CLEARED.
+      tagColors[tag] = color || TAG_COLOR_CLEARED;
       return { ...state, tagColors };
     }
     case SET_TAG_COLORS:

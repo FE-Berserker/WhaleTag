@@ -142,6 +142,59 @@ export interface FileListHeaderProps {
  * piece of UI state (`sortAnchor`) for the menu's anchor element; selection /
  * sort / view / zoom all live in the parent.
  */
+// H.23 P1-2: sortable column button. Defined at module scope — inside
+// `FileListHeader` it was a new component identity on every render, so React
+// unmounted/remounted each header cell on any state change (focus loss, MUI
+// ripple restart, extra commits while the user drags a column edge).
+function SortableHeader({
+  columnKey,
+  label,
+  sx,
+  active,
+  dir,
+  sortByLabel,
+  onSelect,
+}: {
+  columnKey: SortKey;
+  label: string;
+  sx?: SxProps<Theme>;
+  active: boolean;
+  dir: SortState['dir'];
+  sortByLabel: string;
+  onSelect: (key: SortKey) => void;
+}) {
+  return (
+    <Button
+      size="small"
+      variant="text"
+      disableRipple
+      onClick={() => onSelect(columnKey)}
+      endIcon={
+        active ? (
+          dir === 'asc' ? (
+            <ArrowUpwardIcon fontSize="small" />
+          ) : (
+            <ArrowDownwardIcon fontSize="small" />
+          )
+        ) : undefined
+      }
+      sx={{
+        minWidth: 0,
+        px: 0.5,
+        color: active ? 'primary.main' : 'text.primary',
+        fontWeight: 600,
+        fontSize: 'caption.fontSize',
+        textTransform: 'none',
+        justifyContent: 'flex-start',
+        ...sx,
+      }}
+      aria-label={`${sortByLabel} ${label}`}
+    >
+      {label}
+    </Button>
+  );
+}
+
 function FileListHeader(props: FileListHeaderProps) {
   const {
     sort,
@@ -577,6 +630,14 @@ export function RowColumnLabels(props: {
     toggleColumn,
   } = props;
 
+  // Shared by the three sortable column buttons: clicking the active column
+  // flips its direction, picking another column starts ascending.
+  const changeSort = (key: SortKey) => {
+    const dir: SortState['dir'] =
+      sort.key === key && sort.dir === 'asc' ? 'desc' : 'asc';
+    setSort({ key, dir });
+  };
+
   // Column resizing is a local visual gesture until pointerup. The persisted
   // callback retains its original contract (including the caller's clamp), but
   // runs once with the final value instead of on every pointermove.
@@ -608,55 +669,6 @@ export function RowColumnLabels(props: {
     y: number;
   } | null>(null);
 
-  // H.23 P1-2: build a sortable-column Button on the fly. Clicking sets the
-  // active key; clicking the active key again flips `dir` (asc ↔ desc).
-  // Tags column is intentionally absent here — there's no `tags` SortKey.
-  const SortableHeader = ({
-    columnKey,
-    label,
-    sx,
-  }: {
-    columnKey: SortKey;
-    label: string;
-    sx?: SxProps<Theme>;
-  }) => {
-    const active = sort.key === columnKey;
-    const nextDir = active
-      ? sort.dir === 'asc'
-        ? 'desc'
-        : 'asc'
-      : 'asc';
-    return (
-      <Button
-        size="small"
-        variant="text"
-        disableRipple
-        onClick={() => setSort({ key: columnKey, dir: nextDir })}
-        endIcon={
-          active ? (
-            sort.dir === 'asc' ? (
-              <ArrowUpwardIcon fontSize="small" />
-            ) : (
-              <ArrowDownwardIcon fontSize="small" />
-            )
-          ) : undefined
-        }
-        sx={{
-          minWidth: 0,
-          px: 0.5,
-          color: active ? 'primary.main' : 'text.primary',
-          fontWeight: 600,
-          fontSize: 'caption.fontSize',
-          textTransform: 'none',
-          justifyContent: 'flex-start',
-          ...sx,
-        }}
-        aria-label={`${t('sortBy')} ${label}`}
-      >
-        {label}
-      </Button>
-    );
-  };
   // Capture keeps the gesture on this handle even when the pointer leaves it.
   // Only a failed capture needs temporary window up/cancel listeners; those
   // are removed by every finish/cancel/unmount path below.
@@ -838,6 +850,10 @@ export function RowColumnLabels(props: {
           columnKey="name"
           label={labels.name}
           sx={{ flex: 1, minWidth: 0, pl: 0.5 }}
+          active={sort.key === 'name'}
+          dir={sort.dir}
+          sortByLabel={t('sortBy')}
+          onSelect={changeSort}
         />
         {renderResizeHandle('name')}
       </Box>
@@ -863,6 +879,10 @@ export function RowColumnLabels(props: {
             columnKey="size"
             label={labels.size}
             sx={{ flex: 1, minWidth: 0, justifyContent: 'flex-end' }}
+            active={sort.key === 'size'}
+            dir={sort.dir}
+            sortByLabel={t('sortBy')}
+            onSelect={changeSort}
           />
           {renderResizeHandle('size')}
         </Box>
@@ -882,6 +902,10 @@ export function RowColumnLabels(props: {
             columnKey="modified"
             label={labels.modified}
             sx={{ flex: 1, minWidth: 0, justifyContent: 'flex-end' }}
+            active={sort.key === 'modified'}
+            dir={sort.dir}
+            sortByLabel={t('sortBy')}
+            onSelect={changeSort}
           />
           {renderResizeHandle('modified')}
         </Box>

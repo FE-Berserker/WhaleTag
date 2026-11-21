@@ -123,7 +123,17 @@ async function encodeVideoThumb(srcPath: string): Promise<Buffer> {
       execFile(
         bin,
         args,
-        { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 },
+        {
+          encoding: 'buffer',
+          maxBuffer: 64 * 1024 * 1024,
+          // A stalled decoder (unreachable SMB share, a device file that never
+          // yields a frame) used to hold one of the four encode permits
+          // forever; four of those froze the whole thumbnail pipeline. Kill the
+          // process instead and report a normal failure so the caller falls
+          // back to the generic icon.
+          timeout: 10_000,
+          killSignal: 'SIGKILL',
+        },
         (err, stdout) => {
           if (err) return reject(err);
           const buf = stdout as unknown as Buffer;
@@ -181,24 +191,48 @@ export function generateThumbnail(filePath: string): Promise<void> {
   return run;
 }
 
+/**
+ * Source identity of the last successful generation per file. The on-disk
+ * heuristic below (thumb mtime >= source mtime) cannot see a source that was
+ * replaced with an OLDER timestamp — `cp -p`, `rsync -t`, or unzipping an
+ * archive keeps the original mtime, so a different file with the same name
+ * would keep the previous thumbnail forever. Remembering {mtimeMs,size} from
+ * the actual generation lets us verify both dimensions in-session; on a cold
+ * start we fall back to the mtime heuristic (cheap, and the worst case is one
+ * stale thumbnail until the file changes again).
+ */
+const generatedFrom = new Map<string, { mtimeMs: number; size: number }>();
+const GENERATED_FROM_MAX = 5000;
+
 async function doGenerateThumbnail(filePath: string): Promise<void> {
   const kind = thumbKindOf(path.basename(filePath));
   if (!kind) return; // nothing Whale can thumbnail
 
   const target = thumbPathFor(filePath);
   let srcMtime: number;
+  let srcSize: number;
   try {
-    srcMtime = (await fsp.stat(filePath)).mtimeMs;
+    const srcStat = await fsp.stat(filePath);
+    srcMtime = srcStat.mtimeMs;
+    srcSize = srcStat.size;
   } catch {
     return; // source gone — nothing to generate; cleanup handles removal
   }
 
   // Reuse the existing thumbnail if the source is unchanged.
+  const remembered = generatedFrom.get(filePath);
+  const unchanged =
+    remembered !== undefined &&
+    remembered.mtimeMs === srcMtime &&
+    remembered.size === srcSize;
   if (existsSync(target)) {
-    try {
-      if ((await fsp.stat(target)).mtimeMs >= srcMtime) return;
-    } catch {
-      // fall through and regenerate
+    if (unchanged) return;
+    if (remembered === undefined) {
+      try {
+        if ((await fsp.stat(target)).mtimeMs >= srcMtime) return;
+      } catch {
+        // fall through and regenerate
+      }
     }
   }
 
@@ -224,6 +258,11 @@ async function doGenerateThumbnail(filePath: string): Promise<void> {
 
     await fsp.mkdir(path.dirname(target), { recursive: true });
     await atomicWriteBytes(target, buf);
+    generatedFrom.set(filePath, { mtimeMs: srcMtime, size: srcSize });
+    if (generatedFrom.size > GENERATED_FROM_MAX) {
+      const oldest = generatedFrom.keys().next().value;
+      if (oldest !== undefined) generatedFrom.delete(oldest);
+    }
   });
 }
 

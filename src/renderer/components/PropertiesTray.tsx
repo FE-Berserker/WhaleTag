@@ -657,7 +657,9 @@ export default function PropertiesTray({
                     key={stage.id}
                     value={stage.value}
                     label={tagDisplayLabel(stage.value, t)}
-                    color={tagColors[stage.value] ?? stage.color}
+                    // `||` not `??`: a cleared tag stores an empty-string marker
+                    // which must fall back to the stage's own color.
+                    color={tagColors[stage.value] || stage.color}
                     onClick={() =>
                       void tagActions.setWorkflow(stage.value, stageValues)
                     }
@@ -709,7 +711,7 @@ export default function PropertiesTray({
                 </Stack>
                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
                   {visibleTags.map((tag, i) => {
-                    const c = tagColors[tag];
+                    const c = tagColors[tag] || undefined;
                     return (
                       <Chip
                         key={tag}
@@ -849,7 +851,9 @@ export default function PropertiesTray({
                     key={stage.id}
                     value={stage.value}
                     label={tagDisplayLabel(stage.value, t)}
-                    color={tagColors[stage.value] ?? stage.color}
+                    // `||` not `??`: a cleared tag stores an empty-string marker
+                    // which must fall back to the stage's own color.
+                    color={tagColors[stage.value] || stage.color}
                     onClick={() =>
                       void tagActions.setWorkflow(stage.value, stageValues)
                     }

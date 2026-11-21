@@ -250,9 +250,13 @@ async function reindexIfBuilt(rootPath: string, w: RootWatch): Promise<void> {
     // Only roots with an EXISTING index get incremental rebuilds — never
     // create `.whale/index.db` for a root the user never indexed (this is
     // also what keeps read-only locations write-free).
+    //
+    // Gate on `exists`, not `ready`: `ready` means "holds rows", so an index
+    // whose files were all deleted looked unbuilt and the root silently stopped
+    // incremental rebuilds — files added afterwards never got indexed again.
     const status = await request('index:status', { rootPath });
     if (w.stopped) return;
-    if (!status.ready) {
+    if (!status.exists) {
       w.reindexFailures = 0;
       return;
     }

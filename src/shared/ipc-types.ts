@@ -183,7 +183,7 @@ export interface WhaleApi {
   openImageFileDialog: () => Promise<string | null>;
 
   /** Register configured location roots so main can confine writes to them. */
-  setAllowedRoots: (roots: string[]) => Promise<void>;
+  setAllowedRoots: (roots: string[], readOnlyRoots?: string[]) => Promise<void>;
 
   // Mutations (reject on failure — never resolve success on error)
   rename: (oldPath: string, newPath: string) => Promise<void>;
@@ -275,8 +275,11 @@ export interface WhaleApi {
   advancedIndex: (rootPath: string, q: SearchQuery) => Promise<IndexEntry[]>;
   /** Distinct tags across the index (for the advanced-search tag picker). */
   indexTags: (rootPath: string) => Promise<string[]>;
-  /** Index status: row count + whether a db exists. */
-  indexStatus: (rootPath: string) => Promise<{ count: number; ready: boolean }>;
+  /** Index status: row count, whether it has content (`ready`), and whether an
+   *  index was ever built (`exists` — the flag incremental rebuilds gate on). */
+  indexStatus: (
+    rootPath: string
+  ) => Promise<{ count: number; ready: boolean; exists: boolean }>;
   /** Server-pushed build progress for `buildLocationIndex` /
    *  `buildFulltextIndex` (docs/04 §10). Returns an unsubscribe function. */
   onIndexProgress: (cb: (ev: IndexProgressEvent) => void) => () => void;
@@ -467,6 +470,12 @@ export interface WhaleApi {
   appCheckForUpdates: () => Promise<AppUpdateCheckResult>;
   /** Begin downloading the previously-detected update. Idempotent per session. */
   appDownloadUpdate: () => Promise<AppUpdateDownloadResult>;
+  /**
+   * Push the Settings → About "check at startup" flag to the main process.
+   * Main previously always ran the startup check with its enabled default, so
+   * the toggle only changed the UI. Also (dis)arms an already-scheduled check.
+   */
+  appSetAutoUpdateCheck: (enabled: boolean) => Promise<void>;
   /**
    * Quit the app now and run the update installer on exit. NSIS / macOS
    * updater expects to terminate the running app to swap the bundle in,

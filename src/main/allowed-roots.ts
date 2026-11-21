@@ -81,8 +81,88 @@ export function isConfiguredRoot(target: string): boolean {
   return allowedRoots.has(norm);
 }
 
-/** Replace the configured location roots with a new list. */
-export function setAllowedRoots(roots: string[]): void {
+/**
+ * Throws when `target` is one of the configured location roots itself.
+ *
+ * A root is a container the user opened, not an entry inside it: deleting,
+ * moving or renaming it is a whole-workspace action the renderer never offers,
+ * and some writes aimed at it land OUTSIDE the boundary (a file sidecar lives
+ * in `dirname(target)/.whale/`). The MCP tools already refused roots; the IPC
+ * entry points did not, so a compromised renderer could reach the same
+ * operations. Hoisted here so both surfaces share one check.
+ */
+export function assertNotLocationRoot(target: string): void {
+  if (isConfiguredRoot(target)) {
+    throw new Error(
+      'Refused: target is a configured location root, not an entry inside one'
+    );
+  }
+}
+
+/**
+ * Read-only subset of the configured locations.
+ *
+ * "Read only" used to be a renderer-only convention: every write path
+ * (delete/move/tag/revision/sidecar) still accepted a path inside such a
+ * location, so a compromised or buggy renderer — or an external MCP client —
+ * could modify a location the user explicitly marked as protected. The
+ * renderer now pushes the read-only subset alongside the roots, and every
+ * write entry point refuses paths inside it. Kept folded like allowedRoots so
+ * `C:\Foo` / `c:\foo` cannot slip through.
+ */
+const readOnlyRoots = new Set<string>();
+
+/**
+ * Replace the read-only subset. Roots are folded the same way as
+ * `setAllowedRoots`; callers pass only locations that are ALSO configured
+ * roots (the IPC handler filters against the accepted set).
+ */
+export function setReadOnlyRoots(roots: string[]): void {
+  readOnlyRoots.clear();
+  for (const r of roots ?? []) {
+    try {
+      readOnlyRoots.add(foldPath(realpathSync(r)));
+    } catch {
+      readOnlyRoots.add(foldPath(path.resolve(r)));
+    }
+  }
+}
+
+/**
+ * True when `target` sits inside (or is) a read-only location. A path that
+ * cannot be resolved still folds by `path.resolve`, mirroring the guard above.
+ */
+export function isReadOnlyPath(target: string): boolean {
+  if (readOnlyRoots.size === 0) return false;
+  let norm: string;
+  try {
+    norm = foldPath(resolveGuardPath(target));
+  } catch {
+    norm = foldPath(path.resolve(target));
+  }
+  for (const root of readOnlyRoots) {
+    const rootPrefix = root.endsWith(path.sep) ? root : root + path.sep;
+    if (norm === root || norm.startsWith(rootPrefix)) return true;
+  }
+  return false;
+}
+
+/**
+ * Throws when the location containing `target` is read-only.
+ *
+ * Written as a separate assert (not folded into `assertWithinAllowedRoot`) so
+ * the message tells the user which rule they hit — the renderer surfaces the
+ * IPC error text verbatim for MCP/e.g. extension saves.
+ */
+export function assertWritable(target: string): void {
+  if (isReadOnlyPath(target)) {
+    throw new Error(
+      `Refused: the location containing this path is read-only (${target})`
+    );
+  }
+}
+
+/** Replace the configured location roots with a new list. */export function setAllowedRoots(roots: string[]): void {
   allowedRoots.clear();
   for (const r of roots ?? []) {
     try {

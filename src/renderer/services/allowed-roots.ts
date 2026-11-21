@@ -17,12 +17,19 @@ import { ipcApi } from './ipc-api';
 let inFlight: Promise<void> | null = null;
 
 /**
- * Register the configured location roots with the main process and remember
- * the promise. Drop-in replacement for the bare `ipcApi.setAllowedRoots` call
- * from `Root.tsx`.
+ * Register the configured location roots (plus the read-only subset) with the
+ * main process and remember the promise. Drop-in replacement for the bare
+ * `ipcApi.setAllowedRoots` call from `Root.tsx`.
+ *
+ * The read-only subset is what makes "read-only" a real boundary: the main
+ * process refuses writes inside those roots even when the IPC came from a
+ * compromised renderer or an approved MCP tool.
  */
-export function setAllowedRootsAndWait(roots: string[]): Promise<void> {
-  inFlight = ipcApi.setAllowedRoots(roots);
+export function setAllowedRootsAndWait(
+  roots: string[],
+  readOnlyRoots: string[] = []
+): Promise<void> {
+  inFlight = ipcApi.setAllowedRoots(roots, readOnlyRoots);
   // Swallow unhandled rejection noise if a caller forgets to await — Root.tsx
   // intentionally fires-and-forgets the result. The Promise we hand back still
   // rejects, so any caller that DOES await it (e.g. TaskReminder) sees the

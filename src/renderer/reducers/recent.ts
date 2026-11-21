@@ -49,8 +49,13 @@ export default function recentReducer(
     case RECORD_RECENT: {
       const entry = (action as RecordRecentAction).payload;
       if (!entry.path || !entry.locationId) return base;
-      // Move-to-front: drop any existing entry for the same path, then prepend.
-      const rest = base.items.filter((it) => it.path !== entry.path);
+      // Move-to-front: drop any existing entry for the same (location, path)
+      // pair, then prepend. Deduping by path alone collapsed two locations that
+      // happen to contain the same directory path (e.g. `D:\Work` mounted twice)
+      // into one recents slot.
+      const rest = base.items.filter(
+        (it) => !(it.path === entry.path && it.locationId === entry.locationId)
+      );
       return { items: [entry, ...rest].slice(0, MAX_RECENT) };
     }
     case CLEAR_RECENT:

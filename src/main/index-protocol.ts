@@ -75,7 +75,7 @@ export type IndexWorkerResult =
   | { op: 'index:query'; result: IndexEntry[] }
   | { op: 'index:advanced'; result: IndexEntry[] }
   | { op: 'index:tags'; result: string[] }
-  | { op: 'index:status'; result: { count: number; ready: boolean } }
+  | { op: 'index:status'; result: { count: number; ready: boolean; exists: boolean } }
   | { op: 'index:close'; result: void }
   | { op: 'index:shutdown'; result: void }
   | { op: 'fulltext:build'; result: { count: number } }

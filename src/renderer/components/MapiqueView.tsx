@@ -299,7 +299,12 @@ export default function MapiqueView({
   // tray (closest-to-center rows surface first). Starts null; falls back
   // to the initial fitBounds centroid until the user actually pans.
   const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number } | null>(null);
-  const selectAnchorRef = useRef<number | null>(null);
+  // Anchor of a shift-range selection, stored as a PATH rather than an index:
+  // the tray reorders on pan/sort/filter and shrinks when the listing changes,
+  // and a stale index used to read `tray[i].path` off the end of the array
+  // (TypeError, whole view crashed). A path that is no longer in the tray is
+  // simply treated as "no anchor".
+  const selectAnchorRef = useRef<string | null>(null);
 
   // Re-render whenever the parent's `geoByName` / `tagsByName` props change
   // identity (TagMetaContextProvider re-derives them on every `setSidecars`,
@@ -472,6 +477,10 @@ export default function MapiqueView({
   // pan, rebuilding every Leaflet marker (the exact cost P0-3 removes).
   const visibleTrayEntriesRef = useRef(visibleTrayEntries);
   visibleTrayEntriesRef.current = visibleTrayEntries;
+  // Unfiltered tray: a marker whose row the tray filter hid still has to be
+  // activatable from the map (the click used to be a silent no-op).
+  const allTrayEntriesRef = useRef(trayEntries);
+  allTrayEntriesRef.current = trayEntries;
   const trayIndexByPath = useMemo(() => {
     const m = new Map<string, number>();
     for (let i = 0; i < visibleTrayEntries.length; i += 1) {
@@ -492,18 +501,26 @@ export default function MapiqueView({
       if (!entry) return;
       setSelected((prev) => {
         const next = new Set(prev);
-        if (mods.shift && selectAnchorRef.current !== null) {
-          const a = selectAnchorRef.current;
-          const [lo, hi] = a < index ? [a, index] : [index, a];
-          for (let i = lo; i <= hi; i += 1) next.add(tray[i].path);
+        const anchorIndex =
+          selectAnchorRef.current === null
+            ? -1
+            : tray.findIndex((e) => e.path === selectAnchorRef.current);
+        if (mods.shift && anchorIndex >= 0) {
+          const [lo, hi] = anchorIndex < index ? [anchorIndex, index] : [index, anchorIndex];
+          for (let i = lo; i <= hi; i += 1) {
+            const row = tray[i];
+            // The tray can shrink between two clicks (filter / listing change):
+            // read defensively instead of crashing the whole view on a hole.
+            if (row) next.add(row.path);
+          }
         } else if (mods.ctrl) {
           if (next.has(entry.path)) next.delete(entry.path);
           else next.add(entry.path);
-          selectAnchorRef.current = index;
+          selectAnchorRef.current = entry.path;
         } else {
           next.clear();
           next.add(entry.path);
-          selectAnchorRef.current = index;
+          selectAnchorRef.current = entry.path;
         }
         return next;
       });
@@ -554,12 +571,16 @@ export default function MapiqueView({
   // Clear selection when the filter changes so invisible items don't stay selected.
   useEffect(() => {
     setSelected(new Set());
+    // The range anchor indexes the OLD tray; drop it so the next shift-click
+    // starts a fresh range instead of spanning rows that just disappeared.
+    selectAnchorRef.current = null;
   }, [trayFilter]);
 
   // P3-1: also clear selection when the name query changes — same rationale
   // as `trayFilter`: don't keep rows selected that are no longer visible.
   useEffect(() => {
     setSelected(new Set());
+    selectAnchorRef.current = null;
   }, [nameQuery]);
 
   // Drop the active entry / selection if they left the current listing.
@@ -962,8 +983,24 @@ export default function MapiqueView({
   const handleMarkerClick = useCallback(
     (path: string, mods: { shift: boolean; ctrl: boolean }) => {
       const idx = trayIndexByPathRef.current.get(path);
-      if (idx === undefined) return;
-      selectRow(idx, mods);
+      if (idx !== undefined) {
+        selectRow(idx, mods);
+        return;
+      }
+      // The tray filter / name query hid this row, but the marker is still on
+      // the map. Activate it by path instead of dropping the click: the marker
+      // highlights and the selection counts as out-of-tray (the tri-state
+      // "select all" already accounts for those).
+      const entry = allTrayEntriesRef.current.find((e) => e.path === path);
+      if (!entry) return;
+      setSelected((prev) => {
+        const next = mods.ctrl ? new Set(prev) : new Set<string>();
+        if (mods.ctrl && prev.has(path)) next.delete(path);
+        else next.add(path);
+        selectAnchorRef.current = path;
+        return next;
+      });
+      setActiveEntry(entry);
     },
     [selectRow]
   );
@@ -1788,15 +1825,32 @@ function FitBounds({
   toDisplay: (lat: number, lng: number) => [number, number];
 }) {
   const map = useMap();
-  const prevCountRef = useRef(geo.length);
+  // Track the point SET, not its size: the old `geo.length > prev` gate never
+  // fired on first mount (prev started at geo.length), so a map opened with
+  // markers already present showed the whole world until one more tagged file
+  // appeared; replacing points (filters, re-tags) never re-fit either.
+  const prevKeysRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    if (geo.length === 0) return;
-    if (geo.length > prevCountRef.current) {
-      const group = L.featureGroup(geo.map((g) => L.marker(toDisplay(g.lat, g.lng))));
-      map.fitBounds(group.getBounds().pad(0.1));
+    if (geo.length === 0) {
+      prevKeysRef.current = new Set();
+      return;
     }
-    prevCountRef.current = geo.length;
+    const keys = new Set(geo.map((g) => `${g.lat},${g.lng}`));
+    const hadPoints = prevKeysRef.current.size > 0;
+    let hasNewPoint = false;
+    for (const key of keys) {
+      if (!prevKeysRef.current.has(key)) {
+        hasNewPoint = true;
+        break;
+      }
+    }
+    prevKeysRef.current = keys;
+    // Keep the user's view when nothing new showed up (panning/zooming is
+    // theirs); refit only when the set gained a point or was empty before.
+    if (!hasNewPoint && hadPoints) return;
+    const group = L.featureGroup(geo.map((g) => L.marker(toDisplay(g.lat, g.lng))));
+    map.fitBounds(group.getBounds().pad(0.1));
   }, [geo, map, toDisplay]);
 
   return null;

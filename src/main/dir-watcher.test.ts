@@ -126,7 +126,7 @@ describe('dir-watcher (real fs.watch on temp dir)', () => {
     ) => {
       requestCalls.push(`${op} ${arg?.rootPath ?? ''}`.trim());
       if (requestOverride) return requestOverride(op, arg);
-      if (op === 'index:status') return { count: 5, ready: true };
+      if (op === 'index:status') return { count: 5, ready: true, exists: true };
       if (op === 'fulltext:has') return fulltextHas;
       return undefined;
     };
@@ -170,10 +170,42 @@ describe('dir-watcher (real fs.watch on temp dir)', () => {
     assert.ok(requestCalls.some((c) => c.startsWith('index:build')));
   });
 
+  it('keeps rebuilding a root whose index exists but holds no rows', async () => {
+    // count=0 + ready=false used to read as "index never built", so a root whose
+    // files were all deleted stopped incremental rebuilds for good — files
+    // added afterwards never reached the index. `exists` is the real gate.
+    requestOverride = (op: string) =>
+      op === 'index:status' ? { count: 0, ready: false, exists: true } : undefined;
+    try {
+      syncWatchedRoots([root]);
+      requestCalls.length = 0;
+      await fsp.writeFile(path.join(root, 'revived.txt'), 'x');
+      const deadline = Date.now() + 10_000;
+      while (
+        !requestCalls.some((c) => c.startsWith('index:build')) &&
+        Date.now() < deadline
+      ) {
+        await sleep(250);
+      }
+      assert.ok(
+        requestCalls.some((c) => c.startsWith('index:build')),
+        `expected a rebuild for an emptied index, calls=${JSON.stringify(requestCalls)}`
+      );
+    } finally {
+      requestOverride = null;
+      await fsp.rm(path.join(root, 'revived.txt'), { force: true });
+      // The tests after this one reuse the watcher created by the first test —
+      // stopping it here would leave them watching nothing at all. Restart it
+      // immediately so this test hands the shared state back unchanged.
+      closeAllWatchers();
+      syncWatchedRoots([root]);
+    }
+  });
+
   it('retries a failed index rebuild on a quiet root (dirty flag + backoff)', async () => {
     let builds = 0;
     requestOverride = async (op: string) => {
-      if (op === 'index:status') return { count: 5, ready: true };
+      if (op === 'index:status') return { count: 5, ready: true, exists: true };
       if (op === 'index:build') {
         builds += 1;
         // Fail the first attempt only: nothing else will touch the root, so a
@@ -245,7 +277,7 @@ describe('dir-watcher (real fs.watch on temp dir)', () => {
     const firstBuild = deferred();
     let buildCount = 0;
     requestOverride = async (op: string) => {
-      if (op === 'index:status') return { count: 5, ready: true };
+      if (op === 'index:status') return { count: 5, ready: true, exists: true };
       if (op === 'index:build') {
         buildCount += 1;
         if (buildCount === 1) await firstBuild.promise;
@@ -288,7 +320,7 @@ describe('dir-watcher (real fs.watch on temp dir)', () => {
     const firstBuild = deferred();
     let buildCount = 0;
     requestOverride = async (op: string) => {
-      if (op === 'index:status') return { count: 5, ready: true };
+      if (op === 'index:status') return { count: 5, ready: true, exists: true };
       if (op === 'fulltext:has') return true;
       if (op === 'fulltext:build') {
         buildCount += 1;
@@ -328,7 +360,7 @@ describe('dir-watcher (real fs.watch on temp dir)', () => {
     const firstBuild = deferred();
     let buildCount = 0;
     requestOverride = async (op: string) => {
-      if (op === 'index:status') return { count: 5, ready: true };
+      if (op === 'index:status') return { count: 5, ready: true, exists: true };
       if (op === 'index:build') {
         buildCount += 1;
         if (buildCount === 1) await firstBuild.promise;
@@ -389,7 +421,7 @@ describe('dir-watcher per-directory fallback (Linux path)', () => {
     setDirChangedBroadcast((ev) => events.push(ev));
     origRequest = indexWorkerHost.request;
     (indexWorkerHost as { request: unknown }).request = async (op: string) => {
-      if (op === 'index:status') return { count: 1, ready: true };
+      if (op === 'index:status') return { count: 1, ready: true, exists: true };
       return undefined;
     };
   });
@@ -467,7 +499,7 @@ describe('dir-watcher self-heal', () => {
     root = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-watch-heal-'));
     origRequest = indexWorkerHost.request;
     (indexWorkerHost as { request: unknown }).request = async (op: string) => {
-      if (op === 'index:status') return { count: 1, ready: true };
+      if (op === 'index:status') return { count: 1, ready: true, exists: true };
       if (op === 'index:build') {
         buildCount += 1;
         if (buildGate && buildCount === 1) {

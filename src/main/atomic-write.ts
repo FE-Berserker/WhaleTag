@@ -1,5 +1,5 @@
 import path from 'path';
-import { promises as fsp } from 'fs';
+import { promises as fsp, realpathSync } from 'fs';
 import { foldPath } from './path-fold';
 
 /**
@@ -32,7 +32,22 @@ const pendingWrites = new Map<string, Promise<void>>();
 
 /** Normalize aliases (`.`, mixed separators, Windows/macOS case) to one key. */
 function targetKey(filePath: string): string {
-  return foldPath(path.resolve(filePath));
+  const resolved = path.resolve(filePath);
+  try {
+    // Symlinked aliases of one file must share a queue, or two concurrent
+    // renames land on the same inode outside the serialization and Windows
+    // reports EPERM (POSIX silently loses one write).
+    return foldPath(realpathSync(resolved));
+  } catch {
+    // The target usually does not exist yet on its first write. Canonicalize
+    // the parent directory instead: `D:\link\wsd.json` and `D:\real\wsd.json`
+    // then still map to one key when `link` is a symlink to `real`.
+    try {
+      return foldPath(path.join(realpathSync(path.dirname(resolved)), path.basename(resolved)));
+    } catch {
+      return foldPath(resolved);
+    }
+  }
 }
 
 /**

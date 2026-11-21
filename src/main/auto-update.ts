@@ -296,20 +296,63 @@ export function subscribe(
 }
 
 /**
- * Schedule a single silent check `delayMs` after init. Fires once; the
- * renderer can still trigger manual checks via `appCheckForUpdates()`.
- * Pass `enabled = false` (e.g. from a settings flag) to skip entirely.
+ * The startup check is a single deferred `checkForUpdates()`. Until now the
+ * `autoUpdateCheck` setting never reached this process — `scheduleStartupCheck`
+ * always ran with its default (enabled), so turning the toggle off in Settings
+ * still fired a silent update request on every launch. The renderer now pushes
+ * the flag via `app:update-set-auto-check` on startup and on every change;
+ * `null` means "not told yet" and keeps the pre-existing enabled default.
  */
-export function scheduleStartupCheck(
-  delayMs = 5_000,
-  enabled = true
-): void {
-  if (!enabled || !app.isPackaged) return;
-  setTimeout(() => {
+let autoCheckEnabled: boolean | null = null;
+let autoCheckDelayMs = 5_000;
+let autoCheckTimer: NodeJS.Timeout | null = null;
+
+function cancelAutoCheckTimer(): void {
+  if (!autoCheckTimer) return;
+  clearTimeout(autoCheckTimer);
+  autoCheckTimer = null;
+}
+
+function armAutoCheckTimer(): void {
+  if (autoCheckTimer || !app.isPackaged) return;
+  if (autoCheckEnabled === false) return;
+  autoCheckTimer = setTimeout(() => {
+    autoCheckTimer = null;
     void checkForUpdates();
     // The 'available' event handles the renderer notification when a
     // newer version is found — see wireAutoUpdaterEvents().
-  }, delayMs).unref?.();
+  }, autoCheckDelayMs);
+  autoCheckTimer.unref?.();
+}
+
+/** Renderer push of the Settings → About "check for updates at startup" flag. */
+export function setAutoUpdateCheckEnabled(enabled: boolean): void {
+  autoCheckEnabled = enabled;
+  if (!enabled) {
+    // Cancel a check that has not fired yet; an in-flight check completes.
+    cancelAutoCheckTimer();
+    return;
+  }
+  // Enabled after startup (or re-enabled): arm a deferred check if the
+  // startup schedule already went by.
+  armAutoCheckTimer();
+}
+
+/**
+ * Schedule a single silent check `delayMs` after init. Fires once; the
+ * renderer can still trigger manual checks via `appCheckForUpdates()`.
+ * `enabled = false` (the settings flag) skips/cancels it entirely.
+ */
+export function scheduleStartupCheck(
+  delayMs = 5_000,
+  enabled = autoCheckEnabled !== false
+): void {
+  if (!enabled) {
+    cancelAutoCheckTimer();
+    return;
+  }
+  autoCheckDelayMs = delayMs;
+  armAutoCheckTimer();
 }
 
 /**

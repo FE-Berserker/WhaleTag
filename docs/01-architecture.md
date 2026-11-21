@@ -67,6 +67,7 @@ folder/
 [src/main/main.ts](../src/main/main.ts) 的关键钩子:
 
 - **`pinUserDataToProductName()`**:`app.whenReady()` **之前** 调 `app.setPath('userData', ...)` + `app.setName(...)`,强制 `userData` 落到 `%APPDATA%/WhaleTag/`。直接 `electron .` 不经 npm 时不调这条会让 `app.getPath('userData')` 退化为 `AppData/Roaming/Electron/`,跟打包应用分两套 userData,"无法保存"的错觉根因
+- **单实例锁**:紧跟其后 `app.requestSingleInstanceLock()`;拿不到锁的第二个进程 `app.quit()` 且**不进入** `bootstrap()`,避免重复注册 IPC handler、并发写同一个 `index.db` / `wsd.json`、抢 MCP 端口;持锁实例收到 `second-instance` 就把窗口 `restore/show/focus`(窗口已销毁则重建)。锁文件在 `userData` 内,所以必须在 `pinUserDataToProductName()` 之后取
 - **CSP**:`onHeadersReceived` 设 renderer CSP(`default-src 'self'; img-src 'self' https: http: data: blob: ...`;`whale-extension://` 响应跳过,见 §3)
 - **whale-file 网关**:`protocol.handle('whale-file')` 经 `assertWithinAllowedRoot` 后从磁盘 Range 读;Range 逻辑抽到 `protocol-range.ts`(`createFileRangeResponse`)
 - **冷启动惰性加载**:pdfjs-dist(~1MB+)与 ffmpeg-static **不在** main.ts 顶层 import——pdfjs 经 `nodeRequire`(`createRequire(__filename)`)在首次 PDF 缩略图 / 全文抽取时才 load([src/main/fulltext.ts](../src/main/fulltext.ts) 与 [src/main/thumbnail.ts](../src/main/thumbnail.ts) 的 `getPdfjs()`),ffmpeg-static 只为诊断日志惰性 `import()`([src/main/main.ts](../src/main/main.ts))。sharp / better-sqlite3 / @napi-rs/canvas 仍随 `./ipc` eager 加载(IPC handler 启动即要用)。

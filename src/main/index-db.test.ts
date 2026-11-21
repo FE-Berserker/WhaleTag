@@ -194,6 +194,42 @@ describe('index-db (SQLite + FTS5 trigram)', () => {
     }
   });
 
+  it('deletes rows outside the unreadable subtree while keeping that subtree (partial ingest)', async () => {
+    const root = await tmpRoot();
+    try {
+      await setup(root);
+      await ingestFiles(root, [
+        entry({ path: 'keep.txt', name: 'keep.txt' }),
+        entry({ path: 'locked/inside.txt', name: 'inside.txt' }),
+        entry({ path: 'gone.txt', name: 'gone.txt' }),
+      ]);
+
+      // Walk hit EACCES on `locked/` only: the walker reports it as an
+      // ABSOLUTE path while the index stores root-relative ones.
+      await ingestFiles(
+        root,
+        [entry({ path: 'keep.txt', name: 'keep.txt' })],
+        undefined,
+        { complete: false, unreadable: [path.join(root, 'locked')] }
+      );
+
+      assert.equal(
+        queryFiles(root, 'inside').length,
+        1,
+        'rows under the unreadable subtree survive'
+      );
+      assert.equal(
+        queryFiles(root, 'gone').length,
+        0,
+        'an unreadable sibling directory no longer freezes the delete pass'
+      );
+      assert.equal(indexStatus(root).count, 2, 'cached count matches the table');
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('escapes LIKE wildcards on the short-term (<3 chars) query path', async () => {
     const root = await tmpRoot();
     try {
@@ -316,6 +352,30 @@ describe('index-db (SQLite + FTS5 trigram)', () => {
     }
   });
 
+  it('hasFulltext reports true after an empty build (init marker)', async () => {
+    const root = await tmpRoot();
+    try {
+      await setup(root);
+      // Built, but there is nothing textual in it — this used to look exactly
+      // like "never built", so the watcher stopped rebuilding it for good.
+      await ingestFulltext(root, []);
+      assert.equal(hasFulltext(root), true);
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('hasFulltext reports false for a root with no index', async () => {
+    const root = await tmpRoot();
+    try {
+      assert.equal(hasFulltext(root), false);
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('incremental fulltext: insert / delete-by-path / prior-mtime-only (unchanged rows survive)', async () => {
     const root = await tmpRoot();
     try {
@@ -370,13 +430,30 @@ describe('index-db (SQLite + FTS5 trigram)', () => {
   it('indexStatus reports count and readiness', async () => {
     const root = await tmpRoot();
     try {
-      assert.deepEqual(indexStatus(root), { count: 0, ready: false });
+      assert.deepEqual(indexStatus(root), { count: 0, ready: false, exists: false });
       await setup(root);
       await ingestFiles(root, [
         entry({ path: 'a', name: 'a' }),
         entry({ path: 'b', name: 'b' }),
       ]);
-      assert.deepEqual(indexStatus(root), { count: 2, ready: true });
+      assert.deepEqual(indexStatus(root), { count: 2, ready: true, exists: true });
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('indexStatus.exists survives an emptied index (incremental watcher gate)', async () => {
+    const root = await tmpRoot();
+    try {
+      await setup(root);
+      await ingestFiles(root, [entry({ path: 'a', name: 'a' })]);
+      assert.equal(indexStatus(root).ready, true);
+      // Every file deleted: the index still EXISTS for this root. Gating the
+      // watcher on `ready` used to read as "never built", so files added after
+      // this point were never indexed again.
+      await ingestFiles(root, []);
+      assert.deepEqual(indexStatus(root), { count: 0, ready: false, exists: true });
     } finally {
       closeDb(root);
       await fsp.rm(root, { recursive: true, force: true });

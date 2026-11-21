@@ -8,7 +8,9 @@ import type { WebContents } from 'electron';
 const require_ = createRequire(__filename);
 
 /** Load main.ts without starting Electron or any of its long-lived services. */
-function loadMain(): typeof import('./main') {
+function loadMain(
+  options: { singleInstanceLock?: boolean; onQuit?: () => void } = {}
+): typeof import('./main') {
   const saved = new Map<string, NodeJS.Module | undefined>();
   const moduleNames = [
     'electron',
@@ -37,7 +39,15 @@ function loadMain(): typeof import('./main') {
       whenReady: () => neverReady,
       on() {},
       once() {},
-      quit() {},
+      requestSingleInstanceLock: () => {
+        // main.ts quits on its own when this returns false; recording the quit
+        // lets one test assert the second instance never bootstraps.
+        const granted = options.singleInstanceLock !== false;
+        return granted;
+      },
+      quit: () => {
+        options.onQuit?.();
+      },
       exit() {},
     },
     BrowserWindow: class {},
@@ -574,5 +584,21 @@ describe('application permissions — webContents binding', () => {
       ),
       false
     );
+  });
+});
+
+describe('single-instance lock', () => {
+  it('quits without bootstrapping when another instance holds the lock', () => {
+    let quits = 0;
+    loadMain({
+      singleInstanceLock: false,
+      onQuit: () => {
+        quits += 1;
+      },
+    });
+    // Two instances on one userData would double-write index.db / wsd.json and
+    // race the MCP port; the second launch must exit before bootstrap() runs
+    // (bootstrap would register duplicate IPC handlers and open the same DBs).
+    assert.equal(quits, 1);
   });
 });

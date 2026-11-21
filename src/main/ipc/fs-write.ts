@@ -10,7 +10,11 @@ import { invalidateRecursiveScan } from '../recursive-cache';
 import { atomicWriteBytes } from '../atomic-write';
 import { mapWithConcurrency } from '../concurrency';
 import { withLock } from '../dir-lock';
-import { assertWithinAllowedRoot } from '../allowed-roots';
+import {
+  assertNotLocationRoot,
+  assertWritable,
+  assertWithinAllowedRoot,
+} from '../allowed-roots';
 import { PYTHON_ZIP_SCRIPT, pythonZipPairs } from '../desktop-linux';
 
 /**
@@ -27,6 +31,7 @@ import { PYTHON_ZIP_SCRIPT, pythonZipPairs } from '../desktop-linux';
 /** Creates a directory (idempotent: no error if it already exists). */
 export async function createDirectory(dirPath: string): Promise<void> {
   assertWithinAllowedRoot(dirPath);
+  assertWritable(dirPath);
   await fsp.mkdir(dirPath, { recursive: true });
   // A new subfolder changes its ancestors' recursive listings — invalidate
   // them (best-effort, mirrors the cache cleanup in the other fs handlers).
@@ -39,6 +44,7 @@ export async function createDirectory(dirPath: string): Promise<void> {
  */
 export async function createTextFile(filePath: string, content: string): Promise<void> {
   assertWithinAllowedRoot(filePath);
+  assertWritable(filePath);
   try {
     // Atomic no-clobber create: an existsSync + writeFile pair would allow a
     // second process to create the file in between and then get overwritten.
@@ -54,6 +60,7 @@ export async function createTextFile(filePath: string, content: string): Promise
 /** Writes a base64-encoded file (e.g. exported chart image) to disk. */
 async function writeBinaryFile(filePath: string, base64: string): Promise<void> {
   assertWithinAllowedRoot(filePath);
+  assertWritable(filePath);
   await atomicWriteBytes(filePath, Buffer.from(base64, 'base64'));
 }
 
@@ -73,6 +80,11 @@ async function writeBinaryFile(filePath: string, base64: string): Promise<void> 
  */
 export async function deletePath(targetPath: string, useTrash = true): Promise<void> {
   assertWithinAllowedRoot(targetPath);
+  assertWritable(targetPath);
+  // Deleting a whole location would drop every file (and its metadata) that
+  // makes that location useful; the renderer treats roots as containers, so
+  // only an out-of-band renderer/MCP call could ever ask for it.
+  assertNotLocationRoot(targetPath);
   // App-internal metadata (sidecar entry + thumbnail) is removed best-effort —
   // it need not be recoverable the way user data is. Failures are logged (a
   // stale sidecar would otherwise resurrect tags for a deleted path on the
@@ -323,7 +335,12 @@ export async function runOsZip(
  */
 export function zipDirectory(dirPath: string): Promise<string> {
   assertWithinAllowedRoot(dirPath);
-  return runOsZip([dirPath], freeZipPath(dirPath));
+  // The archive lands NEXT TO the folder, so packaging a read-only location
+  // root would create a file inside it (when the parent is the location) —
+  // refuse that even though reading the folder itself is allowed.
+  const archivePath = freeZipPath(dirPath);
+  assertWritable(archivePath);
+  return runOsZip([dirPath], archivePath);
 }
 
 /**
@@ -339,6 +356,7 @@ export function zipEntries(paths: string[], zipPath: string): Promise<string> {
   // (`..\..\evil.zip` must not escape the configured locations). zipDirectory
   // stays exempt: its destination is derived in main from a source path.
   assertWithinAllowedRoot(zipPath);
+  assertWritable(zipPath);
   if (existsSync(zipPath)) {
     throw new Error(`A file already exists at: ${zipPath}`);
   }
@@ -353,6 +371,11 @@ export function zipEntries(paths: string[], zipPath: string): Promise<string> {
 export async function renameEntry(oldPath: string, newPath: string): Promise<void> {
   assertWithinAllowedRoot(oldPath);
   assertWithinAllowedRoot(newPath);
+  assertNotLocationRoot(oldPath);
+  // Renaming a file inside a read-only location rewrites that location's
+  // contents just as much as deleting would — refuse both ends.
+  assertWritable(oldPath);
+  assertWritable(newPath);
   // Serialize check+rename per destination folder: two concurrent renames into
   // the same folder could both pass the exists check and the loser would be
   // silently replaced (the renderer batches, and MCP clients parallelize calls).
@@ -391,6 +414,13 @@ export async function moveEntry(oldPath: string, newPath: string): Promise<void>
   // anywhere" primitive aimed at startup folders / ~/.ssh.
   assertWithinAllowedRoot(oldPath);
   assertWithinAllowedRoot(newPath);
+  assertNotLocationRoot(oldPath);
+  // A move INTO a root would replace the root path itself (the existence check
+  // catches it today, but the intent is the same whole-workspace action).
+  assertNotLocationRoot(newPath);
+  // Moving is a write on both sides — see renameEntry.
+  assertWritable(oldPath);
+  assertWritable(newPath);
   // Check+move is serialized per destination folder — see renameEntry.
   await withLock(path.dirname(newPath), async () => {
     if (existsSync(newPath)) {
@@ -438,6 +468,13 @@ export async function copyEntry(sourcePath: string, destPath: string): Promise<v
   // the same escape primitive (copy a payload into a startup folder).
   assertWithinAllowedRoot(sourcePath);
   assertWithinAllowedRoot(destPath);
+  // Copying a location root would duplicate the whole workspace (and its
+  // `.whale/` metadata) as a sibling; copying ONTO one would replace it.
+  assertNotLocationRoot(sourcePath);
+  assertNotLocationRoot(destPath);
+  // Copying FROM a read-only location is fine (it is a read); writing the
+  // copy INTO one is not.
+  assertWritable(destPath);
   // Serialized check+copy per destination folder. `force: false` is what makes
   // `errorOnExist` effective (Node defaults `force` to true and would silently
   // replace a file that appeared after the pre-check).
@@ -496,6 +533,7 @@ export function registerFsWriteHandlers(): void {
     destDir: string
   ): Promise<{ copied: number; errors: string[]; importedPaths: string[] }> {
     assertWithinAllowedRoot(destDir);
+    assertWritable(destDir); // dropping files in = writing the location
     // Seed the taken-name set from the directory so dropped names never clash
     // with existing files or with each other within this batch.
     const taken = new Set<string>(
@@ -525,8 +563,15 @@ export function registerFsWriteHandlers(): void {
             copyThumbnail(source, destPath),
             invalidateRecursiveScan(destPath),
           ]);
-        } catch {
-          // sidecar/thumbnail carry-over is non-critical
+        } catch (error) {
+          // Non-critical for the copy itself, but never silent: a failed
+          // sidecar carry-over means the imported file lost its tags/notes
+          // (every other sync site in this file warns for the same reason).
+          console.warn(
+            '[fs-write] importExternal sidecar/thumbnail sync failed:',
+            source,
+            error
+          );
         }
         return { destPath };
       } catch (e) {

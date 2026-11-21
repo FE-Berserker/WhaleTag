@@ -17,6 +17,7 @@ import RestoreIcon from '@mui/icons-material/Restore';
 import { useTranslation } from 'react-i18next';
 import { ipcApi } from '-/services/ipc-api';
 import { errorMessage } from '-/services/errors';
+import { useConfirmOptional } from './ConfirmDialogProvider';
 import type { RevisionInfo } from '../../shared/extension-types';
 
 interface RevisionHistoryDialogProps {
@@ -33,6 +34,12 @@ export default function RevisionHistoryDialog({
   onRestored,
 }: RevisionHistoryDialogProps) {
   const { t } = useTranslation();
+  // Confirmation is mandatory here: restoring used to be one unguarded click on
+  // a list row, which silently overwrote the current file (no undo, and the
+  // dialog closed right after, so the mistake only surfaced later on disk).
+  // The main process now snapshots the current content first, but the confirm
+  // still prevents accidental restores from ever reaching the filesystem.
+  const confirm = useConfirmOptional();
   const [revisions, setRevisions] = useState<RevisionInfo[]>([]);
   const [loading, setLoading] = useState(false);
   // A failed list used to render as "no revisions" and a failed delete as
@@ -57,9 +64,18 @@ export default function RevisionHistoryDialog({
       });
   }, [open, filePath, t]);
 
-  const handleRestore = async (revisionPath: string) => {
+  const handleRestore = async (revision: RevisionInfo) => {
+    const ok = await confirm({
+      title: t('revisionHistory'),
+      message: t('revisionRestoreConfirm', {
+        time: new Date(revision.timestamp).toLocaleString(),
+      }),
+      confirmLabel: t('restore'),
+      danger: true,
+    });
+    if (!ok) return;
     try {
-      await ipcApi.restoreRevision(filePath, revisionPath);
+      await ipcApi.restoreRevision(filePath, revision.path);
       onRestored();
       onClose();
     } catch (e) {
@@ -103,7 +119,7 @@ export default function RevisionHistoryDialog({
                     <Tooltip title={t('restore')}>
                       <IconButton
                         edge="end"
-                        onClick={() => handleRestore(rev.path)}
+                        onClick={() => handleRestore(rev)}
                       >
                         <RestoreIcon />
                       </IconButton>

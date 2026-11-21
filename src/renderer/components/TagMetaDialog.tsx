@@ -39,7 +39,9 @@ export default function TagMetaDialog({ open, tag, onClose }: TagMetaDialogProps
   );
   const description = descriptions[tag] ?? '';
 
-  const [color, setColor] = useState<string | null>(explicitColor ?? null);
+  // `||` (not `??`): an empty-string marker means "user cleared the color", and
+  // the dialog must open with no palette selection in that case.
+  const [color, setColor] = useState<string | null>(explicitColor || null);
   const [desc, setDesc] = useState(description);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -47,7 +49,7 @@ export default function TagMetaDialog({ open, tag, onClose }: TagMetaDialogProps
   // Re-sync local state each time the dialog opens (or the target tag changes).
   useEffect(() => {
     if (open) {
-      setColor(explicitColor ?? null);
+      setColor(explicitColor || null);
       setDesc(description);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -199,8 +199,9 @@ export default function TagGroups() {
     } else if (dialog.mode === 'addTag') {
       const tag = value.trim();
       dispatch(addTagToGroup(dialog.groupId, tag));
-      // Auto-assign a color the first time we see this tag.
-      if (tag && !tagColors[tag]) {
+      // Auto-assign a color the first time we see this tag. `in` (not truthy)
+      // so an explicitly cleared tag (empty-string marker) is left alone.
+      if (tag && !(tag in tagColors)) {
         dispatch(setTagColor(tag, pickTagColor(tag, tagColors)));
       }
     } else if (dialog.mode === 'renameGroup') {

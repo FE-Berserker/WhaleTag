@@ -217,7 +217,9 @@ export function TagMetaContextProvider({ children }: { children: ReactNode }) {
     const additions: Record<string, string> = {};
     const acc = { ...tagColors };
     for (const { tag } of allTags) {
-      if (!acc[tag]) {
+      // `tag in acc` (not `!acc[tag]`): a cleared tag keeps an empty-string
+      // marker so the user's explicit "no color" is not overwritten here.
+      if (!(tag in acc)) {
         const color = pickTagColor(tag, acc);
         additions[tag] = color;
         acc[tag] = color;

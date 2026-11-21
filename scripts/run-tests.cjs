@@ -76,6 +76,9 @@ const result = spawnSync(
   {
     cwd: ROOT,
     stdio: 'inherit',
+    // Without a timeout a hung test (or a wedged Electron child) makes CI wait
+    // forever; node:test has no built-in watchdog under this runner.
+    timeout: 30 * 60 * 1000,
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',
@@ -85,7 +88,12 @@ const result = spawnSync(
 );
 
 if (result.error) {
-  console.error('run-tests: failed to spawn electron:', result.error.message);
+  const timedOut = result.error.code === 'ETIMEDOUT';
+  console.error(
+    timedOut
+      ? 'run-tests: the suite exceeded the 30 minute limit and was killed.'
+      : `run-tests: failed to spawn electron: ${result.error.message}`
+  );
   process.exit(1);
 }
 

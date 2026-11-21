@@ -1,4 +1,5 @@
 import { ipcMain, nativeImage, BrowserWindow } from 'electron';
+import { assertWithinAllowedRoot } from '../allowed-roots';
 import { getCanvas } from '../lazy-native';
 
 /**
@@ -66,6 +67,19 @@ export function registerWindowHandlers(): void {
   // in-page HTML5 drag would not expose dataTransfer.files. Fire-and-forget
   // (ipcMain.on) because startDrag must run during the renderer's dragstart.
   ipcMain.on('drag:startFile', (event, filePath: string) => {
+    // Cross-boundary guard: this is the only fs-touching entry that used to
+    // skip allowed-roots entirely, so a compromised renderer could ask the
+    // main process to hand the OS a drag payload for any path on disk.
+    try {
+      assertWithinAllowedRoot(filePath);
+    } catch (error) {
+      console.warn(
+        '[window] refused to start a file drag outside the configured locations:',
+        filePath,
+        error
+      );
+      return;
+    }
     try {
       let icon = nativeImage.createFromPath(filePath);
       if (icon.isEmpty()) {

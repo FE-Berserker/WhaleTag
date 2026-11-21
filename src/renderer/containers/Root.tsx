@@ -92,7 +92,13 @@ export default function Root() {
   // bottom-up effect order races main's fail-closed empty-roots check
   // (notably `index:build` in TaskReminder).
   useEffect(() => {
-    void setAllowedRootsAndWait(locationItems.map((l) => l.path));
+    void setAllowedRootsAndWait(
+      locationItems.map((l) => l.path),
+      // Read-only locations travel with the root push: main refuses writes
+      // inside them (assertWritable), so the guard no longer lives only in
+      // the renderer's own command handlers.
+      locationItems.filter((l) => l.isReadOnly).map((l) => l.path)
+    );
   }, [locationItems]);
 
   // docs/04 §10: keep the dir-watcher's fulltext root set in sync so an

@@ -278,11 +278,21 @@ export function filesPrior(rootPath: string): Map<string, string> {
  * one multi-second freeze. The index is a rebuildable cache, so the loss of
  * single-transaction atomicity is acceptable.
  */
+/** True when `target` sits inside (or equals) one of the unreadable paths. */
+function isUnderAnyUnreadable(target: string, unreadable: string[]): boolean {
+  for (const dir of unreadable) {
+    if (target === dir) return true;
+    const prefix = dir.endsWith(path.sep) ? dir : dir + path.sep;
+    if (target.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
 export async function ingestFiles(
   rootPath: string,
   entries: IndexEntry[],
   onProgress?: (done: number, total: number) => void,
-  options: { complete?: boolean } = {}
+  options: { complete?: boolean; unreadable?: string[] } = {}
 ): Promise<void> {
   // `complete === false` means the walk could not read part of the tree
   // (EPERM/EACCES on a subdirectory). Entries missing from `entries` may
@@ -312,7 +322,28 @@ export async function ingestFiles(
   // Drop rows for files no longer on disk (in the db but not walked this run).
   const removed: string[] = [];
   for (const p of prior.keys()) if (!seen.has(p)) removed.push(p);
-  const toDelete = complete ? removed : [];
+  // A partial walk must not drop the subtree it could not read — but it CAN
+  // still drop everything else. The old all-or-nothing gate meant one
+  // permanently unreadable directory (a root-owned folder, a disconnected
+  // junction) froze the delete pass FOREVER: files deleted elsewhere stayed in
+  // the index and kept matching searches. Keep exactly the rows under the
+  // unreadable paths and delete the rest.
+  const unreadable = options.unreadable ?? [];
+  // Stored paths are root-relative; the walker reports unreadable directories
+  // as absolute paths. Resolve before comparing or the filter never matches
+  // and every row under an unreadable subtree would be deleted anyway.
+  //
+  // An incomplete walk with NO unreadable report (legacy callers) keeps every
+  // row: without knowing which subtree failed, "everything else vanished" is
+  // not evidence of deletion.
+  const toDelete =
+    complete || unreadable.length === 0
+      ? complete
+        ? removed
+        : []
+      : removed.filter(
+          (p) => !isUnderAnyUnreadable(path.resolve(rootPath, p), unreadable)
+        );
 
   // docs/04 §10 progress: one counter across the delete + upsert loops; the
   // worker throttles the events, so reporting every batch is fine.
@@ -553,6 +584,8 @@ export async function ingestFulltext(
   const db = getDb(rootPath);
   db.exec('DELETE FROM fulltext_fts');
   await insertFulltext(rootPath, records);
+  // Even an empty full-replace counts as "built" (see hasFulltext).
+  markFulltextInitialized(rootPath);
 }
 
 /**
@@ -577,22 +610,50 @@ export function queryFulltext(rootPath: string, q: string): FulltextHit[] {
   }));
 }
 
-/** True if the root has any full-text content indexed. O(1)-ish: stops at the
- *  first row instead of a `count(*)` over every fulltext segment. */
+/** True if the root has full-text content indexed, or had it built at least
+ *  once. `meta.fulltext_initialized` is the load-bearing half: a built index
+ *  that currently holds no rows (every text file removed) used to look exactly
+ *  like "never built", so the watcher stopped rebuilding it and new text files
+ *  never became searchable. The row probe stays for dbs built before the flag. */
 export function hasFulltext(rootPath: string): boolean {
   if (!existsSync(dbPath(rootPath))) return false;
   const db = getDb(rootPath);
+  const flag = prepareCached(
+    db,
+    "SELECT value FROM meta WHERE key = 'fulltext_initialized'"
+  ).get();
+  if (flag !== undefined) return true;
   const row = prepareCached(db, 'SELECT 1 FROM fulltext_fts LIMIT 1').get();
   return row !== undefined;
 }
 
+/** Records that the full-text index was built at least once, so an empty index
+ *  stays distinguishable from a never-built one (see `hasFulltext`). */
+export function markFulltextInitialized(rootPath: string): void {
+  const db = getDb(rootPath);
+  prepareCached(
+    db,
+    `INSERT INTO meta(key, value) VALUES('fulltext_initialized', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  ).run(1);
+}
+
 /** Index status: how many files are indexed, and whether one exists at all.
- *  O(1) via `meta.files_count` (see `getFileCount`). */
-export function indexStatus(rootPath: string): { count: number; ready: boolean } {
-  if (!existsSync(dbPath(rootPath))) return { count: 0, ready: false };
+ *  O(1) via `meta.files_count` (see `getFileCount`).
+ *
+ *  `ready` means "has content" (what the UI shows); `exists` means "an index
+ *  was built for this root" and is the flag the incremental watcher must gate
+ *  on — gating on `ready` made an EMPTY index look unbuilt, so a root whose
+ *  files were all deleted never picked up the ones added afterwards. */
+export function indexStatus(rootPath: string): {
+  count: number;
+  ready: boolean;
+  exists: boolean;
+} {
+  if (!existsSync(dbPath(rootPath))) return { count: 0, ready: false, exists: false };
   const db = getDb(rootPath);
   const count = getFileCount(db);
-  return { count, ready: count > 0 };
+  return { count, ready: count > 0, exists: true };
 }
 
 /** Best-effort removal of the legacy wsi.json (now superseded by index.db). */

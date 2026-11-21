@@ -40,7 +40,7 @@
 2. **Bearer token**:每次请求必带 `Authorization: Bearer <token>`,`timingSafeEqual` 比较;token 本地生成、**加密落盘**(见 §7),设置页可显隐 / 复制 / 再生成。
 3. **allowedRoots 硬约束**:所有工具的路径先过 `assertWithinAllowedRoot`;且 MCP 比渲染层 IPC **更严**——move/copy 的**目的地也必须在 roots 内**(`assertBothEndsInside`,渲染层的拖拽豁免不适用于外部客户端)。
 4. **写分级**:sidecar 级(标签/描述)免审批;文件级(move/copy/delete/zip/create)推 `mcp:approvalRequest` 到窗口,用户明确点"允许"才执行;无窗口 / 60s 超时 / 拒绝一律 fail-closed。审批**一次只弹一条**(FIFO):只有队首会被广播并开始计时,排队请求的 60s **从它被显示时**才开始(旧实现让第二条在看不见的队列里烧完超时 → 用户从未见过的对话框被自动拒绝);队列上限 `MAX_PENDING_APPROVALS = 8`,超出立即拒绝而不是无限堆积。
-5. **只读模式**(默认开):所有变更工具直接拒绝(含打标、描述、以及会写索引的 `whale_build_fulltext`),搜索与读取不受影响。闸门是两道:调用开始前查一次,审批等待(最长 60s)返回后**再查一次**——等待期间用户打开只读,已点过的"允许"也不能放行;切换只读为开时立即 `denyAllPending()`,不让无效对话框继续挂在屏幕上。
+5. **只读模式**(默认开):所有变更工具直接拒绝(含打标、描述、以及会写索引的 `whale_build_fulltext`),搜索与读取不受影响。闸门是两道:调用开始前查一次,审批等待(最长 60s)返回后**再查一次**——等待期间用户打开只读,已点过的"允许"也不能放行;切换只读为开时立即 `denyAllPending()`,不让无效对话框继续挂在屏幕上。**位置的只读标记同样生效**:MCP 的写入工具复用主进程 `fs-write` / `sidecar` 函数，其中已接入 `assertWritable`，目标落在用户标记为只读的位置时直接拒绝（即使 MCP 的全局只读开关是关的）。
 6. **数据神圣**:删除仅回收站;所有批量操作逐条收集错误、绝不静默吞,且**整批全失败时结果标 `isError`**(成功外壳 + errors 数组会让客户端误判);createTextFile 拒绝覆盖已存在文件。
 7. **位置 root 是容器,不是条目**:`assertNotLocationRoot` 拒绝把配置的 root 本身作为打标 / 写描述 / move / copy / delete 的目标——root 的 sidecar 会落在边界**上一层目录**,而整根删除只值一个泛化对话框。root 内的普通条目不受影响。
 8. **读上限 16 MiB**:`whale_read_text` 先 `stat()` 再整文件解码,非文件或超限直接报错并指向有 2 MB 读 / 200 KB 出上限的 `whale_extract_text`——避免客户端读一个多 GB 日志把主进程打爆。
@@ -50,6 +50,7 @@
 
 - 有状态 Streamable HTTP:端点**精确匹配** `/mcp`(与 `/mcp/`),其余路径 404——不再用 `startsWith('/mcp')` 放行 `/mcpfoo` 之类前缀。`POST /mcp` initialize 建会话,后续请求带 `mcp-session-id` 复用 transport;`DELETE /mcp` 终结会话;`GET` 405(无服务端主动流)。
 - **会话闲置回收**:每个会话记录 `lastSeen`(initialize 与每次复用请求都会刷新),后台 sweeper 每 60s 清一次,默认闲置 **30 分钟**回收(选项 `sessionIdleMs`,设 0 关闭;`sessionSweepMs` 控制扫描周期,定时器 `unref()`,不拖住进程退出)。回收/未知的 `mcp-session-id` 返回 **404**(协议语义:客户端应重新 initialize),不是 400。
+- **会话数上限 32**(选项 `maxSessions`):新建会话前若已满,先按 `lastSeen` 驱逐最久未用的一个再建,而不是拒绝新人——客户端不发 `DELETE` 时把上限做成硬拒绝会卡死 MCP;被驱逐方下次调用拿 404,按协议重新 initialize 即可。
 - **请求体上限 4 MiB**:按 UTF-8 字节数统计,超限返回 **413** 并在响应后 drain 剩余字节;不在读到一半时 `req.destroy()`(那会让客户端只看到连接重置)。
 - `initMcpServer()` 在 bootstrap 注册(配置 enabled 才监听);`before-quit` 时**等待** `shutdownMcpServer()`(拒绝未决审批、释放端口,最多 2s,避免退出时仍有工具调用落在没有窗口的进程上)。启动失败只打日志,绝不阻塞应用启动。
 - **关闭不挂在 keep-alive 上**:停止服务时先 `server.close()`,同一 Promise 内再 `closeAllConnections()`——外部客户端保持长连接也不会让设置页开关或退出卡住;监听成功后内部状态才发布,绑定失败不会泄漏半个 core(重试也不会留下孤儿实例)。

@@ -16,6 +16,8 @@ import {
 import {
   List as VirtualList,
   Grid as VirtualGrid,
+  type GridImperativeAPI,
+  type ListImperativeAPI,
 } from 'react-window';
 import { useDrop } from 'react-dnd';
 import { NativeTypes } from 'react-dnd-html5-backend';
@@ -451,6 +453,13 @@ export default function FileList() {
     setFocusIndexState(i);
   }, []);
 
+  // Keyboard focus must also SCROLL: `<Row>` focuses with
+  // `{ preventScroll: true }` and react-window only mounts visible rows, so
+  // arrowing past the viewport left focus on an unmounted index — no visible
+  // caret and no scrolling. These refs drive the imperative scrolls below.
+  const listRef = useRef<ListImperativeAPI | null>(null);
+  const gridRef = useRef<GridImperativeAPI | null>(null);
+
   // Back-compat shim: a few call sites (notably `useListCommands`) update
   // selection by passing an `updater: (prev) => Set<string>` callback. We
   // keep that contract by reading the current ref, computing `next`, and
@@ -474,7 +483,9 @@ export default function FileList() {
   // re-renders markers/tray, and it drops a stale `activeEntry` when the entry
   // leaves `entries`. No remount is needed.
   // Thumbnail data-URL cache (path|mtime -> url). Survives row unmount during
-  // scroll so re-mounts don't re-read from disk; cleared on directory change.
+  // scroll so re-mounts don't re-read from disk; cleared on directory change
+  // and bounded at the write site (`THUMB_CACHE_LIMIT` in ThumbIcon) so a long
+  // photo scroll can't retain every image for the session.
   const thumbCache = useRef(new Map<string, string>());
   useEffect(() => {
     thumbCache.current.clear();
@@ -1520,6 +1531,31 @@ export default function FileList() {
   );
   const gridColumnWidth = gridWidth > 0 ? Math.floor(gridWidth / gridColumns) : entrySize;
 
+  // Keep the keyboard-focused row/cell inside the viewport. `Row` focuses with
+  // `preventScroll: true` (it must not yank the page while clicking), and
+  // react-window unmounts off-screen rows — so without this the caret could
+  // walk past the last visible row and disappear.
+  useEffect(() => {
+    if (focusIndex === null) return;
+    if (viewMode === 'grid') {
+      gridRef.current?.scrollToCell({
+        rowIndex: Math.floor(focusIndex / gridColumns),
+        columnIndex: focusIndex % gridColumns,
+        rowAlign: 'smart',
+        columnAlign: 'smart',
+        behavior: 'auto',
+      });
+      return;
+    }
+    if (viewMode === 'list') {
+      listRef.current?.scrollToRow({
+        index: focusIndex,
+        align: 'smart',
+        behavior: 'auto',
+      });
+    }
+  }, [focusIndex, viewMode, gridColumns]);
+
   return (
     <Box
       ref={(node: HTMLDivElement | null) => {
@@ -1739,6 +1775,7 @@ export default function FileList() {
               />
             ) : viewMode === 'grid' ? (
               <VirtualGrid
+                gridRef={gridRef}
                 style={{ width: '100%', height: '100%' }}
                 columnCount={gridColumns}
                 columnWidth={gridColumnWidth}
@@ -1758,6 +1795,7 @@ export default function FileList() {
             ) : (
               <Box sx={{ flex: 1, minHeight: 0 }}>
                 <VirtualList
+                  listRef={listRef}
                   style={{ height: '100%' }}
                   rowCount={visible.length}
                   rowHeight={rowHeight}

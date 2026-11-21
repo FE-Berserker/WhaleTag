@@ -14,7 +14,12 @@ are kept terse and defer to here for the "why".
 - **Trigger:** a 5-second-delayed silent check on startup, plus a
   manual "Check for updates" button in **Settings → About / Updates**.
   The user controls the silent check via `autoUpdateCheck` (default
-  on); the manual button is always available.
+  on); the manual button is always available. The flag reaches the main
+  process through `app:update-set-auto-check` (the renderer pushes it on
+  mount and on every change, `UpdateSection`): main keeps the startup
+  check armed or cancels it, so turning the toggle off also suppresses a
+  check that has not fired yet. Before this the setting only changed the
+  UI and the startup request went out regardless.
 - **Download:** explicit user action — the renderer subscribes to
   `app:update-progress` and shows a determinate `LinearProgress`.
   `electron-updater` does *not* auto-download / auto-install.

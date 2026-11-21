@@ -4,6 +4,7 @@ import type { DirEntry } from '../../shared/ipc-types';
 import {
   addDays,
   addMonths,
+  addMonthsClamped,
   bucketByDate,
   calendarDays,
   dateTagDateKey,
@@ -69,6 +70,20 @@ describe('calendar date primitives', () => {
     const d = new Date(2026, 5, 28);
     assert.equal(addDays(d, 5).getMonth(), 6);
     assert.equal(addDays(d, 5).getDate(), 3);
+  });
+
+  it('addMonthsClamped keeps the cursor inside the target month', () => {
+    // `addMonths` overflows (Jan 31 + 1 = Mar 3), which made page-forward skip
+    // February entirely whenever "today" was the 29th–31st.
+    assert.equal(ymd(addMonthsClamped(new Date(2026, 0, 31), 1)), '2026-02-28');
+    assert.equal(ymd(addMonthsClamped(new Date(2026, 7, 31), 1)), '2026-09-30');
+    // Leap day in a year view (+12) lands on the 28th, not March.
+    assert.equal(ymd(addMonthsClamped(new Date(2024, 1, 29), 12)), '2025-02-28');
+    // Backwards still works when the target month is shorter than the source.
+    assert.equal(ymd(addMonthsClamped(new Date(2026, 2, 3), -1)), '2026-02-03');
+    // Ordinary days are unaffected — identical to plain calendar arithmetic.
+    assert.equal(ymd(addMonthsClamped(new Date(2026, 0, 15), 1)), '2026-02-15');
+    assert.equal(ymd(addMonthsClamped(new Date(2026, 11, 10), 1)), '2027-01-10');
   });
 
   it('isSameMonth respects year and month', () => {
@@ -227,6 +242,14 @@ describe('date tag extraction', () => {
   it('extracts day from date-time tags', () => {
     assert.equal(dateTagDayKey('20260628~1430'), '2026-06-28');
     assert.equal(dateTagDayKey('20260628T1430'), '2026-06-28');
+  });
+
+  it('extracts the Monday from week smart tags', () => {
+    // `resolveSmartTag('nextWeek', …)` emits week-YYYYMMDD carrying that week's
+    // Monday (smart-tags.ts `mondayOfWeek`); without this case a week-tagged
+    // file silently vanished from the calendar.
+    assert.equal(dateTagDayKey('week-20260629'), '2026-06-29');
+    assert.equal(dateTagDayKey('week-20260631'), null); // June has 30 days
   });
 
   it('extracts start day from period tags', () => {

@@ -13,7 +13,11 @@ import {
   setTagLibraryDescription,
   clearTagLibraryDescription,
 } from '../tag-library';
-import { assertWithinAllowedRoot } from '../allowed-roots';
+import {
+  assertNotLocationRoot,
+  assertWritable,
+  assertWithinAllowedRoot,
+} from '../allowed-roots';
 import type { SidecarMeta, FolderMeta } from '../../shared/whale-meta';
 import type { RecoverCorruptSidecarRequest } from '../../shared/ipc-types';
 
@@ -49,14 +53,24 @@ export function registerMetaHandlers(): void {
   // corrupt-issue action calls it. The service repeats all root/hash checks.
   ipcMain.handle(
     'sidecar:recoverCorrupt',
-    (_event, request: RecoverCorruptSidecarRequest) =>
-      recoverCorruptSidecar(request)
+    (_event, request: RecoverCorruptSidecarRequest) => {
+      assertWithinAllowedRoot(request.dirPath);
+      assertWritable(request.dirPath); // recovery rewrites <dir>/.whale/
+      return recoverCorruptSidecar(request);
+    }
   );
 
   ipcMain.handle(
     'sidecar:write',
     (_event, filePath: string, meta: SidecarMeta) => {
       assertWithinAllowedRoot(filePath); // writes <dir>/.whale/
+      // A sidecar for a location ROOT would land in `dirname(root)/.whale/` —
+      // one directory above the boundary, outside every configured location.
+      // Folders/tags on a root itself are not a thing the UI offers either.
+      assertNotLocationRoot(filePath);
+      // Read-only locations accept no metadata writes either: tags, folders
+      // and descriptions all live in `<dir>/.whale/`, inside the location.
+      assertWritable(filePath);
       return writeSidecar(filePath, meta);
     }
   );
@@ -73,6 +87,7 @@ export function registerMetaHandlers(): void {
     'folderMeta:write',
     (_event, dirPath: string, patch: Partial<FolderMeta>) => {
       assertWithinAllowedRoot(dirPath); // writes under <dir>/.whale/
+      assertWritable(dirPath);
       return writeFolderMeta(dirPath, patch);
     }
   );
@@ -92,6 +107,7 @@ export function registerMetaHandlers(): void {
       description: string
     ) => {
       assertWithinAllowedRoot(locationRoot);
+      assertWritable(locationRoot); // wtaglib lives under <root>/.whale/
       return setTagLibraryDescription(locationRoot, tag, description);
     }
   );
@@ -100,6 +116,7 @@ export function registerMetaHandlers(): void {
     'tagLibrary:clearDescription',
     (_event, locationRoot: string, tag: string) => {
       assertWithinAllowedRoot(locationRoot);
+      assertWritable(locationRoot);
       return clearTagLibraryDescription(locationRoot, tag);
     }
   );

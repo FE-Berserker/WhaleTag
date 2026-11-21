@@ -3,7 +3,15 @@ import assert from 'node:assert/strict';
 import path from 'path';
 import os from 'os';
 import { promises as fsp } from 'fs';
-import { assertWithinAllowedRoot, isConfiguredRoot, setAllowedRoots } from './allowed-roots';
+import {
+  assertNotLocationRoot,
+  assertWithinAllowedRoot,
+  assertWritable,
+  isConfiguredRoot,
+  isReadOnlyPath,
+  setAllowedRoots,
+  setReadOnlyRoots,
+} from './allowed-roots';
 import { CASE_INSENSITIVE_FS } from './path-fold';
 
 /** Per-test scratch directory under the OS temp root. */
@@ -224,6 +232,112 @@ describe('isConfiguredRoot', () => {
       setAllowedRoots([]);
       await fsp.rm(dir, { recursive: true, force: true });
       await fsp.rm(other, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('assertNotLocationRoot', () => {
+  it('refuses the configured root itself', async () => {
+    const dir = await tmpDir();
+    try {
+      setAllowedRoots([dir]);
+      assert.throws(() => assertNotLocationRoot(dir), /configured location root/);
+      // Trailing separator / `./` spellings must be caught too — the guard is
+      // what stops delete/move/copy of a whole workspace, and the renderer
+      // builds these paths by joining user-visible segments.
+      assert.throws(
+        () => assertNotLocationRoot(`${dir}${path.sep}`),
+        /configured location root/
+      );
+    } finally {
+      setAllowedRoots([]);
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('allows entries inside a root', async () => {
+    const dir = await tmpDir();
+    try {
+      setAllowedRoots([dir]);
+      assert.doesNotThrow(() => assertNotLocationRoot(path.join(dir, 'file.txt')));
+      assert.doesNotThrow(() =>
+        assertNotLocationRoot(path.join(dir, 'nested', 'deep.txt'))
+      );
+    } finally {
+      setAllowedRoots([]);
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('allows everything when no roots are configured (the within-root check rejects)', async () => {
+    setAllowedRoots([]);
+    // No locations configured is a "nothing is inside" state: this guard only
+    // answers the root question, and assertWithinAllowedRoot is what refuses.
+    assert.doesNotThrow(() => assertNotLocationRoot('/anywhere/file.txt'));
+  });
+});
+
+describe('read-only locations', () => {
+  it('refuses writes inside a read-only root, including the root itself', async () => {
+    const locked = await tmpDir();
+    const writable = await tmpDir();
+    try {
+      setAllowedRoots([locked, writable]);
+      setReadOnlyRoots([locked]);
+      assert.equal(isReadOnlyPath(locked), true);
+      assert.equal(isReadOnlyPath(path.join(locked, 'file.txt')), true);
+      assert.equal(isReadOnlyPath(path.join(writable, 'file.txt')), false);
+      assert.throws(
+        () => assertWritable(path.join(locked, 'file.txt')),
+        /read-only/
+      );
+      assert.throws(() => assertWritable(locked), /read-only/);
+      assert.throws(
+        () => assertWritable(path.join(locked, 'nested', 'deep.txt')),
+        /read-only/
+      );
+      assert.doesNotThrow(() => assertWritable(path.join(writable, 'file.txt')));
+    } finally {
+      setAllowedRoots([]);
+      setReadOnlyRoots([]);
+      await fsp.rm(locked, { recursive: true, force: true });
+      await fsp.rm(writable, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a path under a read-only location even when another root contains it', async () => {
+    const outer = await tmpDir();
+    const inner = path.join(outer, 'locked');
+    try {
+      await fsp.mkdir(inner);
+      // A read-only location nested inside a writable one: the containment
+      // check must refuse, not pick the first matching root.
+      setAllowedRoots([outer, inner]);
+      setReadOnlyRoots([inner]);
+      assert.throws(
+        () => assertWritable(path.join(inner, 'file.txt')),
+        /read-only/
+      );
+      assert.doesNotThrow(() => assertWritable(path.join(outer, 'other.txt')));
+    } finally {
+      setAllowedRoots([]);
+      setReadOnlyRoots([]);
+      await fsp.rm(outer, { recursive: true, force: true });
+    }
+  });
+
+  it('allows writes once the location is no longer read-only', async () => {
+    const dir = await tmpDir();
+    try {
+      setAllowedRoots([dir]);
+      setReadOnlyRoots([dir]);
+      assert.throws(() => assertWritable(path.join(dir, 'a.txt')), /read-only/);
+      setReadOnlyRoots([]);
+      assert.doesNotThrow(() => assertWritable(path.join(dir, 'a.txt')));
+    } finally {
+      setAllowedRoots([]);
+      setReadOnlyRoots([]);
+      await fsp.rm(dir, { recursive: true, force: true });
     }
   });
 });

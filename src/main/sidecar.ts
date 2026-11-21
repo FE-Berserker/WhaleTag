@@ -15,7 +15,11 @@ import {
 import { atomicWriteJson } from './atomic-write';
 import { withLock } from './dir-lock';
 import { mapWithConcurrency } from './concurrency';
-import { assertWithinAllowedRoot } from './allowed-roots';
+import {
+  assertWritable,
+  assertWithinAllowedRoot,
+  isReadOnlyPath,
+} from './allowed-roots';
 import type {
   RecoverCorruptSidecarRequest,
   RecoverCorruptSidecarResult,
@@ -357,6 +361,14 @@ async function migrateLegacySidecars(
 ): Promise<Record<string, SidecarMeta>> {
   const legacy = await readLegacySidecars(dirPath);
   if (legacy.paths.length === 0 && legacy.corrupt.length === 0) {
+    return legacy.files;
+  }
+
+  // A read-only location must not be modified by a READ: migration persists the
+  // merged map and renames/removes the legacy `.json` files. Hand the parsed
+  // tags back as-is instead — they stay visible in the UI, and the legacy files
+  // are simply never touched (they are re-parsed on each load, cheaply).
+  if (isReadOnlyPath(dirPath)) {
     return legacy.files;
   }
 
@@ -709,6 +721,9 @@ export async function writeSidecar(
   filePath: string,
   meta: SidecarMeta
 ): Promise<void> {
+  // Metadata is user-visible state stored inside the location — a read-only
+  // location accepts no tag/folder/description writes, from the UI or MCP.
+  assertWritable(filePath);
   const dir = path.dirname(filePath);
   const name = path.basename(filePath);
   await withLock(dir, async () => {
@@ -736,6 +751,7 @@ export async function mutateSidecar(
   filePath: string,
   mutator: (current: SidecarMeta) => SidecarMeta
 ): Promise<SidecarMeta> {
+  assertWritable(filePath);
   const dir = path.dirname(filePath);
   const name = path.basename(filePath);
   return withLock(dir, async () => {
@@ -771,6 +787,7 @@ export async function updateFileTags(
   filePath: string,
   mutator: (currentTags: string[]) => string[]
 ): Promise<{ before: string[]; after: string[] }> {
+  assertWritable(filePath);
   const dir = path.dirname(filePath);
   const name = path.basename(filePath);
   return withLock(dir, async () => {

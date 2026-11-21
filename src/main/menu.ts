@@ -40,10 +40,17 @@ export function buildMenu(): Menu {
     {
       label: 'View',
       submenu: [
-        { role: 'reload' },
-        { role: 'forceReload' },
-        { role: 'toggleDevTools' },
-        { type: 'separator' },
+        // Reload bypasses the renderer's close/flush handshake (persist flush,
+        // extension save prompts), so in a packaged build it silently drops
+        // unsaved work. Keep the dev-only shortcuts out of shipped menus.
+        ...(app.isPackaged
+          ? []
+          : ([
+              { role: 'reload' },
+              { role: 'forceReload' },
+              { role: 'toggleDevTools' },
+              { type: 'separator' },
+            ] as MenuItemConstructorOptions[])),
         { role: 'resetZoom' },
         { role: 'zoomIn' },
         { role: 'zoomOut' },

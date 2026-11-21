@@ -87,8 +87,17 @@ export const persistor = persistStore(store);
 // that content (editState is transient and the transform strips it).
 if (typeof window !== 'undefined' && window.whale?.onBeforeUnloadFlush) {
   window.whale.onBeforeUnloadFlush(async () => {
-    await Promise.all([persistor.flush(), flushExtensionEditors()]);
-    window.whale.flushComplete();
+    // `flushComplete` MUST run even when a flush rejects (disk full, EACCES,
+    // a hung extension iframe): main blocks the close for 8 s waiting for this
+    // ack, then force-kills the window. Without the `finally` a single storage
+    // failure turned every close into an 8 s hang and dropped the error.
+    try {
+      await Promise.all([persistor.flush(), flushExtensionEditors()]);
+    } catch (error) {
+      console.error('[persist] before-unload flush failed:', error);
+    } finally {
+      window.whale.flushComplete();
+    }
   });
 }
 

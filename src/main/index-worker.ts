@@ -151,7 +151,9 @@ async function dispatch(req: IndexWorkerRequest): Promise<void> {
           rootPath,
           entries,
           (d, t) => progress('ingest', d, t),
-          { complete: report.complete }
+          // `unreadable` tells the ingester exactly which subtrees to keep —
+          // everything else that vanished is a real deletion (docs/04).
+          { complete: report.complete, unreadable: report.unreadable }
         );
         db.removeLegacyWsi(rootPath);
         post({

@@ -10,8 +10,10 @@ import {
 } from '../revisions';
 import { atomicWriteText } from '../atomic-write';
 import {
+  assertWritable,
   assertWithinAllowedRoot,
   getAllowedRoots,
+  isReadOnlyPath,
 } from '../allowed-roots';
 import type { ExtensionRegistry } from '../../shared/extension-types';
 
@@ -27,6 +29,7 @@ export function registerExtensionHandlers(): void {
 
   ipcMain.handle('ext:backupRevision', (_event, filePath: string) => {
     assertWithinAllowedRoot(filePath); // writes <dir>/.whale/revisions/
+    assertWritable(filePath);
     return backupRevision(filePath);
   });
 
@@ -34,14 +37,20 @@ export function registerExtensionHandlers(): void {
     'ext:deleteRevision',
     (_event, filePath: string, revisionPath: string) => {
       assertWithinAllowedRoot(filePath);
+      assertWritable(filePath); // the revision list lives in the location
       return deleteRevision(filePath, revisionPath);
     }
   );
 
   ipcMain.handle(
     'ext:writeFile',
-    (_event, filePath: string, content: string) =>
-      writeFileWithRevision(filePath, content)
+    (_event, filePath: string, content: string) => {
+      // Editor saves are the most common write; confine them like every other
+      // fs mutation (writeFileWithRevision does its own root check).
+      assertWithinAllowedRoot(filePath);
+      assertWritable(filePath);
+      return writeFileWithRevision(filePath, content);
+    }
   );
 
   ipcMain.handle('ext:listRevisions', (_event, filePath: string) => {
@@ -53,6 +62,7 @@ export function registerExtensionHandlers(): void {
     'ext:restoreRevision',
     (_event, filePath: string, revisionPath: string) => {
       assertWithinAllowedRoot(filePath); // rewrites the file itself
+      assertWritable(filePath);
       return restoreRevision(filePath, revisionPath);
     }
   );
@@ -66,7 +76,9 @@ export function registerExtensionHandlers(): void {
       throw new Error('Invalid maxAgeDays: expected a finite non-negative number');
     }
     // The renderer passes the configured location roots; clean each one.
-    const roots = getAllowedRoots();
+    // Read-only locations are skipped: pruning their `.whale/revisions/` is
+    // still a write inside a location the user protected.
+    const roots = getAllowedRoots().filter((root) => !isReadOnlyPath(root));
     return Promise.all(
       roots.map((root) => cleanupRevisionsForLocation(root, maxAgeDays))
     );

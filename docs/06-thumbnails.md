@@ -48,6 +48,9 @@ type ThumbKind = 'image' | 'svg' | 'video' | 'pdf' | 'font';
 
 - `thumbPathFor(dir, basename)` → `<dir>/.whale/thumbs/<basename>.jpg`
 - 原子写 / mtime 缓存 / in-flight 去重 / delete/rename/move/copy 清理钩子**全部格式无关**
+- **复用判据是 mtime + size**(`generatedFrom` 上限 5000 条):同一进程内生成过的 thumb 只有源文件 `mtimeMs` 与字节数都没变才复用;进程重启后内存无记录,退回 `target.mtimeMs >= source.mtimeMs` 的旧启发式(代价是保存后同秒内改内容仍可能显示旧图,换来冷启动不额外 stat 源文件)
+- **ffmpeg 有超时**:`execFile` 带 `timeout: 10_000, killSignal: 'SIGKILL'`,损坏视频不再无限占住 worker 队列
+- **渲染层缓存有上界**:[ThumbIcon.tsx](../src/renderer/components/ThumbIcon.tsx) 的 data-URL `Map` 在写入端淘汰(`THUMB_CACHE_LIMIT = 800`,FIFO),单条 256px/q80 约 10–20KB → 上限约 8–16MB;此前只在目录切换时清空
 - `loadFolderThumbnail` / `loadFolderBackground` 以各自 target path 为 key,只合并同目录**尚未 settle** 的加载:同目录并发共享一次 copy/read,thumbnail 与 background 不混用,不同目录互不影响;成功或失败都在 `finally` 清除 Map,失败会传给所有等待方且下一次可立即重试。后续调用会重新读盘,不把结果持久缓存在 JS;空目录的 `null` 也不做跨批次缓存,因此新增首张可缩略文件后不会被旧空结果遮住,代价是分离的多次空目录加载仍可能各自扫描。
 - 失败一律静默回退类型图标(FileTypeIcon),不阻塞其它缩略图
 - **主进程并发闸门**([src/main/concurrency.ts](../src/main/concurrency.ts) 的 `Semaphore`):`thumbnailSemaphore` 限制同时进行的缩略图编码数(sharp / ffmpeg / pdfjs),只包住编码那一段,后续写盘不持锁。`setFolderBackground` 的 sharp 读取/旋转/缩放/JPEG 编码也进入同一个 4 路信号量,异常经 `finally` 释放许可;目标 `wsb.jpg` 的小型原子写不持锁。

@@ -160,6 +160,10 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
     x: number;
     y: number;
     path: string;
+    // File rows and folder rows share one menu, but most items are
+    // folder-only (Open = navigate, New folder/file, Package). Without this
+    // flag right-clicking a file offered "New folder inside a file".
+    isDirectory: boolean;
   } | null>(null);
   // Right-click on the empty area of the tree body (not on a folder row) —
   // surfaces a "New Folder" action that creates inside the current directory.
@@ -544,7 +548,12 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
       onContextMenu={(e) => {
         e.preventDefault();
         setEmptyCtxMenu(null);
-        setCtxMenu({ x: e.clientX, y: e.clientY, path: entry.path });
+        setCtxMenu({
+          x: e.clientX,
+          y: e.clientY,
+          path: entry.path,
+          isDirectory: false,
+        });
       }}
       title={t('dragIntoEditor')}
       sx={{ pl: depth * 1.25 + 0.5, py: 0.25, minHeight: 28, cursor: 'grab' }}
@@ -627,7 +636,7 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
           onContextMenu={(e) => {
             e.preventDefault();
             setEmptyCtxMenu(null); // close the empty-area menu if open
-            setCtxMenu({ x: e.clientX, y: e.clientY, path });
+            setCtxMenu({ x: e.clientX, y: e.clientY, path, isDirectory: true });
           }}
           // File rows always exist now (double-click to open), so the
           // "drag into editor" hint applies whenever an editor is open.
@@ -756,7 +765,20 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
           <>
             <MenuItem
               onClick={() => {
-                navigateTo(ctxMenu.path);
+                // A folder opens as the current directory; a file opens in a
+                // tab (same as its double-click). Navigating to a file path
+                // used to switch the list to a non-directory, showing "empty".
+                if (ctxMenu.isDirectory) {
+                  navigateTo(ctxMenu.path);
+                } else {
+                  const name =
+                    ctxMenu.path.split(/[\\/]/).pop() ?? ctxMenu.path;
+                  void openEntryInTab({
+                    path: ctxMenu.path,
+                    name,
+                    isDirectory: false,
+                  } as DirEntry);
+                }
                 setCtxMenu(null);
               }}
             >
@@ -784,44 +806,48 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
               </ListItemIcon>
               <ListItemText>{t('copyPath')}</ListItemText>
             </MenuItem>
-            <Divider />
-            <MenuItem
-              disabled={!!currentLocation?.isReadOnly}
-              onClick={() => {
-                setCreateKind({ kind: 'folder', parent: ctxMenu.path });
-                setCtxMenu(null);
-              }}
-            >
-              <ListItemIcon>
-                <CreateNewFolderIcon fontSize="small" />
-              </ListItemIcon>
-              <ListItemText>{t('newFolder')}</ListItemText>
-            </MenuItem>
-            <MenuItem
-              disabled={!!currentLocation?.isReadOnly}
-              onClick={() => {
-                setCreateKind({ kind: 'file', parent: ctxMenu.path });
-                setCtxMenu(null);
-              }}
-            >
-              <ListItemIcon>
-                <NoteAddIcon fontSize="small" />
-              </ListItemIcon>
-              <ListItemText>{t('newFile')}</ListItemText>
-            </MenuItem>
-            <Divider />
-            <MenuItem
-              onClick={() => {
-                const dirPath = ctxMenu.path;
-                setCtxMenu(null);
-                void handlePackage(dirPath);
-              }}
-            >
-              <ListItemIcon>
-                <FolderZipOutlinedIcon fontSize="small" />
-              </ListItemIcon>
-              <ListItemText>{t('package')}</ListItemText>
-            </MenuItem>
+            {ctxMenu.isDirectory ? (
+              <>
+                <Divider />
+                <MenuItem
+                  disabled={!!currentLocation?.isReadOnly}
+                  onClick={() => {
+                    setCreateKind({ kind: 'folder', parent: ctxMenu.path });
+                    setCtxMenu(null);
+                  }}
+                >
+                  <ListItemIcon>
+                    <CreateNewFolderIcon fontSize="small" />
+                  </ListItemIcon>
+                  <ListItemText>{t('newFolder')}</ListItemText>
+                </MenuItem>
+                <MenuItem
+                  disabled={!!currentLocation?.isReadOnly}
+                  onClick={() => {
+                    setCreateKind({ kind: 'file', parent: ctxMenu.path });
+                    setCtxMenu(null);
+                  }}
+                >
+                  <ListItemIcon>
+                    <NoteAddIcon fontSize="small" />
+                  </ListItemIcon>
+                  <ListItemText>{t('newFile')}</ListItemText>
+                </MenuItem>
+                <Divider />
+                <MenuItem
+                  onClick={() => {
+                    const dirPath = ctxMenu.path;
+                    setCtxMenu(null);
+                    void handlePackage(dirPath);
+                  }}
+                >
+                  <ListItemIcon>
+                    <FolderZipOutlinedIcon fontSize="small" />
+                  </ListItemIcon>
+                  <ListItemText>{t('package')}</ListItemText>
+                </MenuItem>
+              </>
+            ) : null}
             <Divider />
             <MenuItem
               disabled={

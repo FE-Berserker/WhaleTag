@@ -24,6 +24,12 @@ const MAX_BATCH_ELEMENTS = 32;
 const DEFAULT_SESSION_IDLE_MS = 30 * 60_000;
 /** How often the idle-session sweeper runs. */
 const DEFAULT_SESSION_SWEEP_MS = 60_000;
+/**
+ * Cap on live sessions. Idle sweeping alone still lets a client holding the
+ * token allocate one McpServer + transport per `initialize` (and never idle
+ * long enough to be reaped) — 32 covers every realistic editor/agent session.
+ */
+const DEFAULT_MAX_SESSIONS = 32;
 
 /** HTTP error carrying the status the request handler should answer with. */
 class HttpError extends Error {
@@ -54,6 +60,11 @@ export interface McpHttpCoreOptions {
   sessionIdleMs?: number;
   /** Sweeper cadence. Defaults to one minute. */
   sessionSweepMs?: number;
+  /**
+   * Maximum concurrent sessions; the least-recently-used one is closed when a
+   * new `initialize` would exceed it. Defaults to 32.
+   */
+  maxSessions?: number;
   /** Clock injection for tests. */
   now?: () => number;
 }
@@ -93,7 +104,26 @@ export function createMcpHttpCore(opts: McpHttpCoreOptions): McpHttpCore {
   const now = opts.now ?? Date.now;
   const idleMs = opts.sessionIdleMs ?? DEFAULT_SESSION_IDLE_MS;
   const sweepMs = opts.sessionSweepMs ?? DEFAULT_SESSION_SWEEP_MS;
+  const maxSessions = opts.maxSessions ?? DEFAULT_MAX_SESSIONS;
   const sessions = new Map<string, Session>();
+
+  /**
+   * Make room for one more session by closing the least recently used one.
+   * Eviction (rather than rejecting the new handshake) keeps a client that
+   * never sends DELETE from wedging MCP for everyone; the evicted client gets a
+   * 404 on its next call and re-initializes, per the Streamable HTTP contract.
+   */
+  async function evictLeastRecentlyUsed(): Promise<void> {
+    let oldestId: string | undefined;
+    let oldestSeen = Infinity;
+    for (const [id, session] of sessions) {
+      if (session.lastSeen < oldestSeen) {
+        oldestSeen = session.lastSeen;
+        oldestId = id;
+      }
+    }
+    if (oldestId !== undefined) await closeSession(oldestId);
+  }
 
   function newSessionServer(): McpServer {
     const server = new McpServer(opts.serverInfo, {
@@ -130,6 +160,7 @@ export function createMcpHttpCore(opts: McpHttpCoreOptions): McpHttpCore {
       // (Stateful pattern: the transport outlives this single response; it
       // is torn down by the DELETE branch / idle sweeper / close(), not by
       // res 'close'.)
+      if (sessions.size >= maxSessions) await evictLeastRecentlyUsed();
       const server = newSessionServer();
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),

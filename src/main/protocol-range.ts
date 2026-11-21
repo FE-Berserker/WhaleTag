@@ -135,14 +135,17 @@ export function createBackpressuredWebStream(
  * renderer.
  *
  * Assumes the caller has already validated the path (allowed-roots guard)
- * and that `filePath` exists and is a regular file.
+ * and that `filePath` exists and is a regular file. `knownSize` lets the
+ * caller pass the size from its own async stat so the protocol handler does
+ * not need a second (blocking) `statSync` on the main thread.
  */
 export function createFileRangeResponse(
   filePath: string,
   request: Request,
-  baseHeaders: Headers
+  baseHeaders: Headers,
+  knownSize?: number
 ): Response {
-  const stat = statSync(filePath);
+  const size = knownSize ?? statSync(filePath).size;
   const headers = new Headers(baseHeaders);
   headers.set('Accept-Ranges', 'bytes');
 
@@ -151,17 +154,17 @@ export function createFileRangeResponse(
   // Malformed ranges fall through to a 200 with the full file, matching how
   // nginx behaves.
   const rangeHeader = request.headers.get('range');
-  const range = rangeHeader ? parseRange(rangeHeader, stat.size) : null;
+  const range = rangeHeader ? parseRange(rangeHeader, size) : null;
 
   const nodeStream = range
     ? createReadStream(filePath, { start: range.start, end: range.end })
     : createReadStream(filePath);
   if (range) {
     const chunkSize = range.end - range.start + 1;
-    headers.set('Content-Range', `bytes ${range.start}-${range.end}/${stat.size}`);
+    headers.set('Content-Range', `bytes ${range.start}-${range.end}/${size}`);
     headers.set('Content-Length', String(chunkSize));
   } else {
-    headers.set('Content-Length', String(stat.size));
+    headers.set('Content-Length', String(size));
   }
 
   const webStream = createBackpressuredWebStream(nodeStream);

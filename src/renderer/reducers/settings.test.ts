@@ -11,6 +11,8 @@ import settingsReducer, {
   setKeybinding,
   resetKeybindings,
   setGalleryShowTags,
+  setTagColor,
+  setTagColors,
   MAX_VIEW_DEPTH,
   MIN_VIEW_DEPTH,
 } from './settings';
@@ -466,5 +468,23 @@ describe('settings.galleryShowTags', () => {
     const legacy = { ...initialState, galleryShowTags: undefined } as unknown as SettingsState;
     const next = settingsReducer(legacy, { type: 'no-op' });
     assert.equal(next.galleryShowTags, true);
+  });
+});
+
+describe('settings.tagColors', () => {
+  it('stores an explicit empty marker when a color is cleared', () => {
+    // Deleting the key made the clear button a no-op: the auto-assign effect in
+    // TagMetaContextProvider sees "no entry" and re-colors the tag immediately.
+    const colored = settingsReducer(initialState, setTagColor('trip', '#22c55e'));
+    assert.equal(colored.tagColors.trip, '#22c55e');
+    const cleared = settingsReducer(colored, setTagColor('trip', null));
+    assert.ok('trip' in cleared.tagColors, 'the cleared tag keeps a marker key');
+    assert.equal(cleared.tagColors.trip, '');
+  });
+
+  it('batch assignment still overwrites a cleared marker', () => {
+    const cleared = settingsReducer(initialState, setTagColor('trip', null));
+    const next = settingsReducer(cleared, setTagColors({ trip: '#3b82f6' }));
+    assert.equal(next.tagColors.trip, '#3b82f6');
   });
 });

@@ -47,6 +47,28 @@ export function addMonths(d: Date, n: number): Date {
   return r;
 }
 
+/**
+ * Add/subtract months, clamping the day to the target month's length.
+ *
+ * `addMonths` relies on `Date#setMonth`, which OVERFLOWS instead of clamping:
+ * Jan 31 + 1 month is Mar 3, so paging forward from the 29th–31st skipped the
+ * whole next month (the cursor keeps today's day-of-month). Month-by-month
+ * navigation uses this helper; `addMonths` stays for callers that want plain
+ * calendar arithmetic. Local time-of-day is preserved, like `addMonths`.
+ */
+export function addMonthsClamped(d: Date, n: number): Date {
+  // Day 1 first, so the month arithmetic can never overflow into the target.
+  const target = new Date(d.getFullYear(), d.getMonth() + n, 1);
+  const daysInTarget = new Date(
+    target.getFullYear(),
+    target.getMonth() + 1,
+    0
+  ).getDate();
+  target.setDate(Math.min(d.getDate(), daysInTarget));
+  target.setHours(d.getHours(), d.getMinutes(), d.getSeconds(), d.getMilliseconds());
+  return target;
+}
+
 /** Add/subtract days (preserves local time-of-day). */
 export function addDays(d: Date, n: number): Date {
   const r = new Date(d);
@@ -173,6 +195,9 @@ export function modifiedDateKey(entry: DirEntry): string | null {
  * Supports:
  * - Whale smart tags: `today-YYYYMMDD`, `yesterday-YYYYMMDD`, `tomorrow-YYYYMMDD`,
  *   `now-YYYYMMDDTHHMM`
+ * - Week smart tags: `week-YYYYMMDD` (the Monday of that ISO week — same token
+ *   `resolveSmartTag('nextWeek', …)` produces, so a week tag lands on its week
+ *   instead of vanishing from the calendar)
  * - TagSpaces-style bare day tags: `YYYYMMDD`
  * - Date-time tags: `YYYYMMDD~HHMM`, `YYYYMMDDTHHMM`
  * - Day-period start: `YYYYMMDD-YYYYMMDD`
@@ -186,6 +211,10 @@ export function dateTagDayKey(tag: string): string | null {
   // Whale smart tags that resolve to a specific day.
   const smart = /^(?:today|yesterday|tomorrow|now)-(\d{8})/.exec(tag);
   if (smart) return parseYyyymmdd(smart[1]);
+
+  // Week smart tag — carries the Monday's date (smart-tags.ts `mondayOfWeek`).
+  const week = /^week-(\d{8})$/.exec(tag);
+  if (week) return parseYyyymmdd(week[1]);
 
   // Bare day tag, or period start, or date-time prefix.
   const bare = parseYyyymmdd(tag);

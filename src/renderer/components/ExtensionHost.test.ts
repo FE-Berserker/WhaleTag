@@ -83,7 +83,7 @@ before(() => {
         extensions: { editState: Record<string, typeof hostEditState> };
       }) => unknown
     ) => selector({
-      extensions: { editState: { '/tmp/host.txt': hostEditState } },
+      extensions: { editState: { 'tab-1': hostEditState } },
     }),
   });
   injectMock('react-i18next', {

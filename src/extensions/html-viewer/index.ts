@@ -277,15 +277,67 @@ function stripRemoteCssRefs(css: string): string {
     );
 }
 
+// Confine one selector list to the preview root. `html` / `body` / `:root` do
+// not exist under `#content`, so map them onto it — a stylesheet written for a
+// whole document (`body { background: #fff }`) still styles the preview.
+function scopeSelectorText(selectors: string): string {
+ return selectors
+  .split(',')
+  .map((raw) => {
+   const sel = raw.trim();
+   if (!sel) return sel;
+   // A leading `html` / `body` / `:root` chain (optionally `>`-joined) is the
+   // preview root itself, not an element inside it: `html body .a` -> `.a`,
+   // which then becomes `#content .a` below.
+   const stripped = sel.replace(/^(?:(?:html|body|:root)\s*(?:>\s*)?)+/i, '');
+   if (!stripped) return '#content';
+   if (!stripped.startsWith('#content')) return `#content ${stripped}`;
+   if (stripped === sel) return `#content ${sel}`;
+   return stripped;
+  })
+  .join(', ');
+}
+
+// Rewrite `sheet` rule selectors in place, descending into @media / @supports.
+function scopeRules(rules: CSSRuleList): void {
+ for (const rule of Array.from(rules)) {
+  if (rule instanceof CSSStyleRule) {
+   rule.selectorText = scopeSelectorText(rule.selectorText);
+   continue;
+  }
+  // @media / @supports carry their own rule list; @keyframes children are not
+  // CSSStyleRule and simply fall through unchanged.
+  const grouping = rule as CSSGroupingRule;
+  if (grouping && 'cssRules' in grouping) {
+   try {
+    scopeRules(grouping.cssRules);
+   } catch {
+    // Unreadable sub-sheet (e.g. a cross-origin @import); leave it as-is.
+   }
+  }
+ }
+}
+
 function injectUserStyle(css: string) {
  if (!css) return;
  let el = document.getElementById('whale-user-style') as HTMLStyleElement | null;
  if (!el) {
- el = document.createElement('style');
- el.id = 'whale-user-style';
- document.head.appendChild(el);
+  el = document.createElement('style');
+  el.id = 'whale-user-style';
+  document.head.appendChild(el);
  }
  el.textContent = css;
+ // A <style> in <head> matches the whole extension page, so a document-level
+ // rule (`body { display: none }`, `* { ... }`) used to clobber the toolbar and
+ // status bar. Scope the parsed selectors to the preview through CSSOM; the
+ // element is attached, so `sheet` is available.
+ const sheet = el.sheet;
+ if (!sheet) return;
+ try {
+  scopeRules(sheet.cssRules);
+ } catch {
+  // Leave the unscoped text rather than dropping the user's whole stylesheet.
+ }
 }
 
 // --- DOMPurify config -----------------------------------------------------
@@ -349,6 +401,22 @@ function renderPreview(raw: string) {
  ALLOWED_ATTR: ALLOWED_ATTRS as string[],
  });
  contentEl.innerHTML = clean;
+
+ // Inline styles survive sanitization (`style` is allow-listed) and
+ // `style="background:url(https://tracker/…)"` still pings the network on
+ // render even when remote images are disabled — the <img> tags are gone and
+ // the user stylesheet is sanitized, but the attributes were not. Rewrite them
+ // through the same remote-reference filter (`data:` URLs stay).
+ if (!state.imagesEnabled) {
+ contentEl.querySelectorAll('[style]').forEach((el) => {
+ const style = el.getAttribute('style');
+ if (!style) return;
+ const stripped = stripRemoteCssRefs(style);
+ if (stripped === style) return;
+ if (stripped.trim()) el.setAttribute('style', stripped);
+ else el.removeAttribute('style');
+ });
+ }
 
  // Intercept link clicks so they open in the system browser (preserved from
  // the previous version).

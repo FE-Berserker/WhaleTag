@@ -1,5 +1,5 @@
 import path from 'path';
-import { statSync } from 'fs';
+import { promises as fsp } from 'fs';
 import { fileURLToPath } from 'url';
 import os from 'os';
 // Mapique map tiles require remote img-src in CSP (see index.html + below).
@@ -35,6 +35,7 @@ import { initMcpServer, shutdownMcpServer } from './mcp/mcp-server';
 import {
   initAutoUpdater,
   scheduleStartupCheck,
+  setAutoUpdateCheckEnabled,
   checkForUpdates,
   downloadUpdate,
   quitAndInstall,
@@ -540,6 +541,12 @@ function registerAutoUpdateHandlers(): void {
   ipcMain.handle('app:getVersion', () => getWhaleAppVersion());
   ipcMain.handle('app:update-check', () => checkForUpdates());
   ipcMain.handle('app:update-download', () => downloadUpdate());
+  // Settings → About pushes its `autoUpdateCheck` flag here. Without this the
+  // startup check always ran with its default (enabled) and ignoring the
+  // toggle; the value also (dis)arms an already-scheduled startup check.
+  ipcMain.handle('app:update-set-auto-check', (_event, enabled: boolean) => {
+    setAutoUpdateCheckEnabled(enabled === true);
+  });
   ipcMain.on('app:update-quit-and-install', () => quitAndInstall());
 
   // Renderer-side failures (boot watchdog, global handlers, the React error
@@ -646,6 +653,21 @@ function bootstrap(): void {
   registerExtensionProtocol();
   registerWhaleFileProtocol();
   createWindow();
+
+  // A second launch hands the lock to us and exits (see the single-instance
+  // guard at module scope). Surface THIS window instead of leaving the user
+  // staring at nothing — a hidden/minimized window can otherwise look like the
+  // app failed to launch. If the primary window is gone (closed to tray on
+  // some flows) build a fresh one.
+  app.on('second-instance', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    } else {
+      createWindow();
+    }
+  });
 
   // P0-2: tear down the index utilityProcess on quit. Graceful first:
   // `shutdownIndexWorker()` asks the worker to closeAllDbs (WAL checkpoints
@@ -811,6 +833,25 @@ function pinUserDataToProductName(): void {
 
 pinUserDataToProductName();
 
+/**
+ * Single-instance guard.
+ *
+ * Two instances on the same userData directory would write the same locations
+ * concurrently: two SQLite writers over `index.db` (WAL from two processes),
+ * two sidecar writers racing on `<dir>/.whale/wsd.json` (last write wins, and
+ * tags silently disappear), and two MCP listeners fighting for one port. The
+ * lock file lives inside userData, so it lines up with the directory pinned
+ * just above.
+ *
+ * The second launch must not touch user data even briefly — it quits before
+ * any window, IPC handler or scoped protocol comes up. The primary instance
+ * receives `second-instance` and brings its window forward (see bootstrap).
+ */
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+}
+
 // Last-line-of-defense handlers.
 //
 // `unhandledRejection`: the whale-file protocol handler was the first known
@@ -846,7 +887,27 @@ process.on('uncaughtException', (error) => {
   });
 });
 
-app.whenReady().then(bootstrap);
+// Never bootstrap a second instance: with the lock held elsewhere it would
+// register duplicate IPC handlers and open the same index/sidecars. `app.quit()`
+// above already asked this process to exit.
+if (hasSingleInstanceLock) {
+  app.whenReady()
+    .then(bootstrap)
+    .catch((error: unknown) => {
+      // Without this, a failing bootstrap left the process alive with no
+      // window and no visible cause (packaged builds have no console), which
+      // presents as "WhaleTag opens and nothing happens". Surface the failure
+      // and exit so a relaunch can retry.
+      console.error('[main] bootstrap failed:', error);
+      dialog.showErrorBox(
+        'WhaleTag failed to start',
+        error instanceof Error
+          ? `${error.message}\n\n${error.stack ?? ''}`
+          : String(error)
+      );
+      app.exit(1);
+    });
+}
 
 // Quit when all windows are closed, except on macOS (apps stay active).
 app.on('window-all-closed', () => {
@@ -926,19 +987,24 @@ function registerWhaleFileProtocol(): void {
       if (!filePath) {
         return new Response('Malformed whale-file URL', { status: 400 });
       }
+      // Stat asynchronously BEFORE the allowed-roots guard: for an unreachable
+      // SMB share or a stuck device node, a synchronous stat/realpath here
+      // would freeze the main thread (and with it every window) for seconds per
+      // <img> request. The guard's own realpath then runs on a path we just
+      // proved reachable.
+      const stat = await fsp.stat(filePath);
+      if (!stat.isFile()) {
+        return new Response('Not a regular file', { status: 404 });
+      }
       // Confine to configured locations — refuse if no roots, refuse if the
       // target isn't under any root. Symlink resolution happens inside the
       // guard via `realpath`, so a symlink pointing outside also gets rejected.
       assertWithinAllowedRoot(filePath);
-      const stat = statSync(filePath);
-      if (!stat.isFile()) {
-        return new Response('Not a regular file', { status: 404 });
-      }
       const headers = new Headers({
         'Content-Type': mimeForPath(filePath),
         'Cache-Control': 'no-cache',
       });
-      return createFileRangeResponse(filePath, request, headers);
+      return createFileRangeResponse(filePath, request, headers, stat.size);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       // Status code is the only signal the renderer gets before the stream

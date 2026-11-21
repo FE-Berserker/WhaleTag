@@ -21,6 +21,8 @@ let bulkSidecars: SidecarReadResult['sidecars'] = {};
 let issues: SidecarIssue[] = [];
 let depthCalls: unknown[][] = [];
 let bulkCalls: unknown[][] = [];
+/** When set, the depth-one sidecar read rejects with this error. */
+let sidecarsFailure: Error | null = null;
 /** Overridable so a test can hold one directory's listing pending. */
 let listDirectoryImpl: (dirPath: string) => Promise<DirEntry[]> = async () =>
   entries;
@@ -69,6 +71,7 @@ before(() => {
       listDirectory: (dirPath: string) => listDirectoryImpl(dirPath),
       readSidecarsDetailed: async (...args: unknown[]) => {
         depthCalls.push(args);
+        if (sidecarsFailure) throw sidecarsFailure;
         return { sidecars: depthSidecars, issues };
       },
       listDirectoryRecursive: async () => entries,
@@ -87,6 +90,11 @@ before(() => {
     useSelector: (selector: (state: unknown) => unknown) =>
       selector({ settings: { viewDepth: depth } }),
   });
+  // The provider now translates its sidecar-read failure notice, so the bare
+  // jsdom harness needs a `t` implementation instead of the real i18n context.
+  injectMock('react-i18next', {
+    useTranslation: () => ({ t: (key: string) => key }),
+  });
   const loaded = require_('./DirectoryContentContextProvider') as typeof import('./DirectoryContentContextProvider');
   Provider = loaded.DirectoryContentContextProvider;
   useContent = loaded.useDirectoryContentContext;
@@ -103,6 +111,7 @@ afterEach(() => {
   issues = [];
   depthCalls = [];
   bulkCalls = [];
+  sidecarsFailure = null;
   listDirectoryImpl = async () => entries;
 });
 
@@ -238,5 +247,24 @@ describe('DirectoryContentContextProvider sidecar issues', () => {
       false,
       'stale load must not clear the spinner'
     );
+  });
+
+  it('reports a sidecar read failure instead of rendering the folder as untagged', async () => {
+    entries = [entry(currentDir, 'a.txt')];
+    depthSidecars = { 'a.txt': { tags: ['trip'] } };
+    sidecarsFailure = new Error('EIO: sidecar read failed');
+    renderProvider();
+    await waitFor(() => assert.equal(observed?.sidecarIssues?.length, 1));
+    // The issue is recorded so the tag-health surface can show it...
+    const [issue] = observed?.sidecarIssues ?? [];
+    assert.equal(issue?.kind, 'unreadable');
+    assert.equal(issue?.dirPath, currentDir);
+    // ...and the entries are still listed (the failure is metadata-only).
+    assert.deepEqual(
+      observed?.entries.map((item) => item.name),
+      ['a.txt']
+    );
+    assert.equal(observed?.tagsByName.get(entries[0].path), undefined);
+    sidecarsFailure = null;
   });
 });

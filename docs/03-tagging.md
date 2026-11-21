@@ -57,12 +57,14 @@
 
 1. `isRatingTag(tag)` → `RATING_COLOR = '#ffcc24'`(永远统一金,**不允许覆盖**)
 2. `isPeriodTag(tag)` → `PERIOD_COLOR = '#8b5cf6'`(可被 per-tag / group 覆盖)
-3. `tagColors[tag]` —— 用户自定义 per-tag 色
+3. `tagColors[tag]` —— 用户自定义 per-tag 色(`''` = 用户显式清过色,见下)
 4. 组内 → 继承组色
 5. workflow / quadrant / geo → 各自专用色 / fallback
 6. `undefined` → 使用默认 outlined
 
 每条分支都有 `getTagColor.test.ts` 单测覆盖。
+
+**清色标记**:用户在 TagMetaDialog 里点「清除颜色」时,[appearance.ts](../src/renderer/reducers/settings/appearance.ts) 不再 `delete tagColors[tag]`,而是写入 `TAG_COLOR_CLEARED`(`''`,见 [tag-colors.ts](../src/renderer/domain/tag-colors.ts))。原因是自动上色用「这个 tag 有没有 key」判断新 tag:删 key 会被下一帧重新染色,清色按钮等于无效。`getTagColor` 对 `''` 仍按未上色处理(落到组色 / 内置色),展示端(TagMetaDialog / PropertiesTray)用 `||` 取值;两处自动上色(TagMetaContextProvider 的批量、TagGroups 加标签)改用 `tag in tagColors` 判定。
 
 **自动上色(M9)**:[TagMetaContextProvider](../src/renderer/hooks/TagMetaContextProvider.tsx) 发现未上色的新 tag 时,`pickTagColor` 选"最少用"的调色板色,并**攒成一个 `setTagColors` 批量 action 一次 dispatch**(累加着算 → 每个 tag 拿到不同色),而非逐个 `setTagColor` 各触发一次 persist 写 —— 打开多新 tag 的目录从 N 次 fsync → 1 次。
 

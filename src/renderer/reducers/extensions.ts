@@ -16,7 +16,13 @@ export interface ExtensionsState {
   userDefaults: Record<string, string>;
   /** User override: extension id -> enabled. */
   enabledOverrides: Record<string, boolean>;
-  /** Transient edit state per file path. Not persisted. */
+  /**
+   * Transient edit state per TAB id (`makeTabId(filePath, extensionId)`), not
+   * per file path: one file can be open in two extensions at once (text editor
+   * + JSON viewer), and a file-path key made each tab clobber the other's
+   * dirty/saving state — the second tab's `clearFileEditState` wiped the first
+   * tab's "unsaved changes" flag, hiding a real pending edit.
+   */
   editState: Record<string, EditState>;
 }
 
@@ -50,12 +56,12 @@ export interface SetExtensionEnabledAction extends AnyAction {
 
 export interface SetFileEditStateAction extends AnyAction {
   type: typeof SET_FILE_EDIT_STATE;
-  payload: { filePath: string; state: Partial<EditState> };
+  payload: { tabId: string; state: Partial<EditState> };
 }
 
 export interface ClearFileEditStateAction extends AnyAction {
   type: typeof CLEAR_FILE_EDIT_STATE;
-  payload: { filePath: string };
+  payload: { tabId: string };
 }
 
 export function loadExtensionRegistry(
@@ -82,16 +88,14 @@ export function setExtensionEnabled(
 }
 
 export function setFileEditState(
-  filePath: string,
+  tabId: string,
   state: Partial<EditState>
 ): SetFileEditStateAction {
-  return { type: SET_FILE_EDIT_STATE, payload: { filePath, state } };
+  return { type: SET_FILE_EDIT_STATE, payload: { tabId, state } };
 }
 
-export function clearFileEditState(
-  filePath: string
-): ClearFileEditStateAction {
-  return { type: CLEAR_FILE_EDIT_STATE, payload: { filePath } };
+export function clearFileEditState(tabId: string): ClearFileEditStateAction {
+  return { type: CLEAR_FILE_EDIT_STATE, payload: { tabId } };
 }
 
 export function getExtensionById(
@@ -157,12 +161,12 @@ export default function extensionsReducer(
       };
     }
     case SET_FILE_EDIT_STATE: {
-      const { filePath, state: patch } = (action as SetFileEditStateAction)
+      const { tabId, state: patch } = (action as SetFileEditStateAction)
         .payload;
-      // New files start stamped clean; an indexed read already has its own
+      // New tabs start stamped clean; an indexed read already has its own
       // dirty/saving flags. Spreading defaults before the prior entry keeps a
       // single specification per key (TS2783 under strict).
-      const prior = state.editState[filePath] ?? {
+      const prior = state.editState[tabId] ?? {
         dirty: false,
         saving: false,
       };
@@ -170,14 +174,14 @@ export default function extensionsReducer(
         ...state,
         editState: {
           ...state.editState,
-          [filePath]: { ...prior, ...patch },
+          [tabId]: { ...prior, ...patch },
         },
       };
     }
     case CLEAR_FILE_EDIT_STATE: {
-      const { filePath } = (action as ClearFileEditStateAction).payload;
+      const { tabId } = (action as ClearFileEditStateAction).payload;
       const next = { ...state.editState };
-      delete next[filePath];
+      delete next[tabId];
       return { ...state, editState: next };
     }
     default:

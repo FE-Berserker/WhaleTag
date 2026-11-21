@@ -74,6 +74,14 @@ export default function UpdateSection(): JSX.Element {
     void ipcApi.appGetVersion().then(setVersion).catch(() => undefined);
   }, []);
 
+  // Push the persisted flag to the main process on mount and on every change.
+  // Main's startup check used to ignore this setting entirely (it always ran
+  // with its "enabled" default), and it fires ~5s after boot — early enough
+  // that this push can still cancel it for a user who turned checking off.
+  useEffect(() => {
+    void ipcApi.appSetAutoUpdateCheck(autoUpdateCheck).catch(() => undefined);
+  }, [autoUpdateCheck]);
+
   // Subscribe to push events on mount; cleanup on unmount.
   useEffect(() => {
     const offAvailable = ipcApi.onAppUpdateEvent('available', (data) => {

@@ -23,7 +23,7 @@
 
 **位置来历(provenance)**:`fs:setAllowedRoots` 只接受主进程记录在案的目录——用户在原生文件夹对话框里选过的(处理器在返回路径前用 [known-roots.ts](../src/main/known-roots.ts) 的 `rememberPickedRoot` 记录,持久化到 `<userData>/known-roots.json`),或升级/首装后第一次推送时的一次性种子(TOFU,写入记录后再以记录为准)。未知目录记 `console.warn` 后丢弃,不进入 `allowedRoots`——渲染层即使被注入,也无法把 `/` 注册成位置。记录文件损坏或不可读时按"未 seed"重来,而不是把用户锁在门外(若该路径被目录占用,先把目录改名为 `known-roots.json.corrupt-<时间戳>` 再重新记录,否则之后每次写入都会失败);位置目录改名后旧路径不再是已知目录,需重新添加。
 
-**只读位置**:仍会注册进 `allowedRoots` 以允许读取；`allowedRoots` 只界定“哪些位置可访问”，不等同于只读权限。只读位置的写操作拦截在 renderer 的 IOActions / FileList / useListCommands 守卫，主进程写 IPC 不会仅凭 `isReadOnly` 拒绝。
+**只读位置**:仍会注册进 `allowedRoots` 以允许读取；`allowedRoots` 只界定“哪些位置可访问”，不等同于只读权限。**只读权限现在也由主进程强制**：`Root.tsx` 推送 `setAllowedRoots(roots, readOnlyRoots)`，`allowed-roots.ts` 的 `isReadOnlyPath` / `assertWritable` 在文件写入、建目录、删除、移动/复制目的端、打包、sidecar 写入、目录元数据、标签库描述、修订备份/恢复/清理等入口统一抛 ``Refused: the location containing this path is read-only``；MCP 变更工具复用同一批函数，因此同样被拒。渲染层 IOActions / FileList / useListCommands 守卫仍是第一道闸。**例外**：索引缓存(`.whale/index.db`)与缩略图缓存属可重建缓存，仍可写；legacy sidecar 迁移在只读位置直接跳过且不改名(`migrateLegacySidecars` 早返回)，避免"读一下就写盘"。
 
 修订历史 IPC(`ext:backupRevision` / `ext:listRevisions` / `ext:restoreRevision` / `ext:deleteRevision`)过同一闸;`deleteRevision` 额外把 revision 路径绑定到所属文件的 `<dir>/.whale/revisions/` 前缀(与 restore 相同)——`rm --force` 不进回收站,不做绑定就是任意路径强删。`ext:cleanupRevisions` 只接受有限、非负的 number，非法天数在删除前 reject。详见 [docs/07-extensions.md](./07-extensions.md)。
 
@@ -32,6 +32,8 @@
 `fs:importExternal`(从系统拖入文件)的**源路径**不做位置校验：拖拽 API 只给路径字符串，主进程无法验证"这确实是一次用户拖拽"，而要求源在位置内会直接废掉"从资源管理器拖进来"这个功能。**目标目录**仍过 `assertWithinAllowedRoot`。残余风险如实记录：被注入的渲染层可以把任意可读文件复制进某个位置，再经 `fs:readFile` 读回——消除它只能取消位置外拖入，属已知取舍。
 
 写入侧还有一条同等重要的边界：`fs:move` / `fs:copy` 的**目的地**此前只校验源路径（代码注释称"目的地可以是用户选的任意目录"），等于给注入的渲染层留了一条"把任意内容搬进 Startup / `~/.ssh`"的写逃逸；现在两端都过 `assertWithinAllowedRoot`（[fs-write.ts](../src/main/ipc/fs-write.ts)），与 `fs:rename` 对齐。`fs:importExternal` 的 `cp` 同时补 `force: false`——Node 默认 `force: true` 会静默覆盖 readdir 快照之后才出现的同名文件。
+
+**位置根本身不是条目**：[allowed-roots.ts](../src/main/allowed-roots.ts) 的 `assertNotLocationRoot` 拒绝把已配置的位置根当成待操作对象，IPC（`fs:delete` / `fs:rename` / `fs:move` / `fs:copy` / `sidecar:write`）与 MCP 工具共用这一检查——删除/移动/改名整块位置是界面从不提供的"整套工作区"动作，且根的 sidecar 会写到 `dirname(root)/.whale/`（边界外）。`fs:zipDirectory` 保持豁免：它把归档放在源的兄弟目录，正是"打包整个位置"的正常语义（见 [fs-write.ts](../src/main/ipc/fs-write.ts) 注释）。
 
 详见 [docs/02-file-io.md §6](./02-file-io.md)。
 
@@ -84,7 +86,7 @@
 - **`assertWithinAllowedRoot(targetPath)` 在 IPC 入口**(`shell:runCommand`,[shell.ts](../src/main/ipc/shell.ts))—— 拒配置位置外的路径 / symlink 逃逸 / 未注册根(fail-closed),对齐 `fs:rename` / `fs:delete`。
 - **模板白名单 + 主进程一次性授权**:渲染层在启动(`PersistGate` 之后)与设置变更时把 `settings.userCommands` 的模板串推给主进程(`shell:setCommandTemplates`,[UserCommandTemplateSync.tsx](../src/renderer/components/UserCommandTemplateSync.tsx));但"渲染层说这是用户配置的"**不构成**授权——被注入的渲染层可以推任意模板。因此 `shell:runCommand` 在真正 spawn 前由**主进程**弹原生对话框展示完整命令并等待用户 Allow;批准按模板串持久化到 `<userData>/approved-command-templates.json`(tmp + rename 原子写),同一模板只问一次,编辑模板即重新询问。拒绝或对话框不可用 → 抛 `COMMAND_NOT_APPROVED`(fail-closed,[shell-types.ts](../src/shared/shell-types.ts))。两层合起来:名单负责"不越出设置",对话框负责"用户真的点了同意"([shell.ts](../src/main/ipc/shell.ts))。`runUserCommand` 自身仍只执行名单内模板,其余抛 `COMMAND_NOT_ALLOWED`([shell-command.ts](../src/main/shell-command.ts))。
 - **Windows `%` 拒绝**:cmd 默认下 `"..."` 内的 `%VAR%` 仍展开(`%%` 只在 .bat 内有效,`cmd /k` 内不可靠转义)→ 路径含 `%` 直接拒,renderer toast 报 `commandPathBlocked`。`!`(delayed expansion 关)放行。详见 [docs/09 §22](./09-known-issues.md)。
-- **`spawn` + `detached` + `child.unref()`**(fire-and-forget,新终端窗口归用户);永不 `exec`。macOS 走 `osascript`,脚本字符串**先双写 `\` 再转义 `"`**(顺序反了会让命令里的反斜杠吃掉转义);终端进程 spawn 失败(`error` 事件)现在 reject 到渲染层,不再 `console.warn` 后返回 `{ ok: true }` 假装启动成功。
+- **`spawn` + `detached` + `child.unref()`**(fire-and-forget,新终端窗口归用户);永不 `exec`。macOS 走 `osascript`,脚本字符串**先双写 `\` 再转义 `"`**(顺序反了会让命令里的反斜杠吃掉转义);终端进程 spawn 失败(`error` 事件)现在 reject 到渲染层,不再 `console.warn` 后返回 `{ ok: true }` 假装启动成功。**macOS 还等真实退出码**:Automation 权限被拒 / 终端缺失 / AppleScript 报错都发生在 spawn 之后,非 0 退出现在 reject 并附 stderr 末尾(最多 4KB);Windows 的 `cmd /k` 窗口常驻不退出,仍只等 `spawn`。
 - **不按只读位置拒绝**:命令是用户显式 opt-in 的外部进程(可能只读分析),只保留 `assertWithinAllowedRoot` 这道基础闸。
 
 ## 9. 已知不在范围
