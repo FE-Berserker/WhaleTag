@@ -1,6 +1,14 @@
-import { after, before, describe, it } from 'node:test';
+import globalJsdom from 'global-jsdom';
+import { after, afterEach, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'module';
+import { createElement } from 'react';
+import { act, cleanup, render } from '@testing-library/react';
+import type {
+  ExtensionManifest,
+  ExtensionMessage,
+  HostMessage,
+} from '../../shared/extension-types';
 
 const require_ = createRequire(__filename);
 const IPC_API_MODULE = '-/services/ipc-api';
@@ -13,6 +21,18 @@ let base64Calls: string[];
 let legacyReadCalls: number;
 let btoaCalls: number;
 let originalBtoa: typeof globalThis.btoa | undefined;
+let ExtensionHostComponent: typeof import('./ExtensionHost').default;
+let jsdomCleanup: (() => void) | null = null;
+let writeFileWithRevisionImpl: (filePath: string, content: string) => Promise<void>;
+type SaveCurrent = () => Promise<boolean>;
+const registeredSaveHandlers = new Map<string, SaveCurrent>();
+const hostNotices: string[] = [];
+type HostAction = {
+  type: string;
+  payload?: { state?: { dirty?: boolean; saving?: boolean } };
+};
+const dispatchedActions: HostAction[] = [];
+const hostEditState = { dirty: true, saving: false };
 
 const savedCache = new Map<string, NodeJS.Module | undefined>();
 
@@ -31,10 +51,12 @@ function injectMock(moduleName: string, exports: unknown): void {
 }
 
 before(() => {
+  jsdomCleanup = globalJsdom() as unknown as () => void;
   base64Calls = [];
   legacyReadCalls = 0;
   btoaCalls = 0;
   readFileBase64Impl = async () => BINARY_BASE64;
+  writeFileWithRevisionImpl = async () => {};
   injectMock(IPC_API_MODULE, {
     ipcApi: {
       readFileBase64: (filePath: string) => readFileBase64Impl(filePath),
@@ -42,14 +64,64 @@ before(() => {
         legacyReadCalls += 1;
         throw new Error('legacy byte-array read must not be used');
       },
+      writeFileWithRevision: (filePath: string, content: string) =>
+        writeFileWithRevisionImpl(filePath, content),
     },
+  });
+  injectMock('-/services/app-notice', {
+    notifyApp: (message: string) => {
+      hostNotices.push(message);
+    },
+  });
+  injectMock('react-redux', {
+    useDispatch: () => (action: HostAction) => {
+      dispatchedActions.push(action);
+      return action;
+    },
+    useSelector: (
+      selector: (state: {
+        extensions: { editState: Record<string, typeof hostEditState> };
+      }) => unknown
+    ) => selector({
+      extensions: { editState: { '/tmp/host.txt': hostEditState } },
+    }),
+  });
+  injectMock('react-i18next', {
+    useTranslation: () => ({
+      t: (key: string, options?: { message?: string }) =>
+        options?.message ? `${key}: ${options.message}` : key,
+      i18n: { language: 'en' },
+    }),
+  });
+  injectMock('-/hooks/ExtensionContextProvider', {
+    useExtensionContext: () => ({
+      openWithExtension: () => {},
+      requestCloseCurrent: () => {},
+      registerSaveCurrent: (tabId: string, handler: SaveCurrent | null) => {
+        if (handler) registeredSaveHandlers.set(tabId, handler);
+        else registeredSaveHandlers.delete(tabId);
+      },
+    }),
+  });
+  injectMock('-/hooks/DirectoryContentContextProvider', {
+    useDirectoryUI: () => ({ refresh: () => {} }),
+  });
+  injectMock('-/hooks/DirectoryTreeRefreshContextProvider', {
+    useDirectoryTreeRefresh: () => ({ refreshTree: () => {} }),
+  });
+  injectMock('./extension-host/rpc-cases', {
+    createRpcHandler: () => () => false,
+  });
+  injectMock('-/components/PromptDialog', {
+    __esModule: true,
+    default: () => null,
   });
   try {
     delete require_.cache[require_.resolve(HOST_MODULE)];
   } catch {
     // The host has not been loaded yet.
   }
-  ({ readImageFileAsDataUrl } = require_(HOST_MODULE));
+  ({ readImageFileAsDataUrl, default: ExtensionHostComponent } = require_(HOST_MODULE));
 
   originalBtoa = globalThis.btoa;
   globalThis.btoa = () => {
@@ -58,7 +130,17 @@ before(() => {
   };
 });
 
+afterEach(() => {
+  cleanup();
+  dispatchedActions.length = 0;
+  hostNotices.length = 0;
+  registeredSaveHandlers.clear();
+  writeFileWithRevisionImpl = async () => {};
+});
+
 after(() => {
+  cleanup();
+  jsdomCleanup?.();
   if (originalBtoa) globalThis.btoa = originalBtoa;
   else delete (globalThis as { btoa?: typeof globalThis.btoa }).btoa;
   for (const [modulePath, original] of savedCache.entries()) {
@@ -116,5 +198,259 @@ describe('ExtensionHost image embed base64 transport', () => {
     await assert.rejects(readImageFileAsDataUrl('/root/pixel.png'), /read denied/);
     assert.equal(legacyReadCalls, 0);
     assert.equal(btoaCalls, 0);
+  });
+});
+
+describe('ExtensionHost revision protocol', () => {
+  const filePath = '/tmp/host.txt';
+  const manifest: ExtensionManifest = {
+    id: 'text-editor',
+    name: 'Text Editor',
+    type: 'editor',
+    color: '#000000',
+    fileTypes: ['txt'],
+    entryPoint: 'index.html',
+    enabled: true,
+    isDefault: true,
+  };
+
+  function renderHost(overrides: { readOnly?: boolean } = {}) {
+    const props = {
+      tabId: 'tab-1',
+      manifest,
+      filePath,
+      fileContent: 'disk',
+      encoding: 'utf8' as const,
+      readOnly: overrides.readOnly ?? false,
+      theme: 'light' as const,
+      onRequestRevisionHistory: () => {},
+    };
+    const view = render(createElement(ExtensionHostComponent, props));
+    const iframe = document.querySelector('iframe');
+    assert.ok(iframe);
+    const posted: HostMessage[] = [];
+    Object.defineProperty(iframe.contentWindow, 'postMessage', {
+      configurable: true,
+      value: (envelope: { message: HostMessage }) => {
+        posted.push(envelope.message);
+      },
+    });
+    const emit = (message: ExtensionMessage) => {
+      act(() => {
+        window.dispatchEvent(new window.MessageEvent('message', {
+          source: iframe.contentWindow,
+          data: { protocolVersion: 1, source: 'extension', message },
+        }));
+      });
+    };
+    emit({ type: 'ready' });
+    const saveCurrent = () => {
+      const handler = registeredSaveHandlers.get(props.tabId);
+      assert.ok(handler, 'host must register its close-save handler');
+      return handler();
+    };
+    return { view, props, posted, emit, saveCurrent };
+  }
+
+  it('sends only setReadOnly when view permissions change', () => {
+    const { view, props, posted } = renderHost();
+    assert.equal(posted.filter((msg) => msg.type === 'fileContent').length, 1);
+    posted.length = 0;
+
+    view.rerender(createElement(ExtensionHostComponent, { ...props, readOnly: true }));
+
+    assert.deepEqual(posted, [{ type: 'setReadOnly', readOnly: true }]);
+    assert.equal(posted.some((msg) => msg.type === 'fileContent'), false);
+  });
+
+  it('keeps dirty and resolves false when an older save ack follows a newer edit', async () => {
+    const { posted, emit, saveCurrent } = renderHost();
+    let finishWrite: (() => void) | undefined;
+    writeFileWithRevisionImpl = () => new Promise<void>((resolve) => {
+      finishWrite = resolve;
+    });
+
+    let pending!: Promise<boolean>;
+    act(() => {
+      pending = saveCurrent();
+    });
+    emit({ type: 'contentChangedInEditor', path: filePath, dirty: true, revision: 1 });
+    emit({
+      type: 'parentSaveDocument',
+      path: filePath,
+      content: 'version one',
+      revision: 1,
+    });
+    emit({ type: 'contentChangedInEditor', path: filePath, dirty: true, revision: 2 });
+    assert.ok(finishWrite, 'save must be pending while revision 2 arrives');
+
+    let ok: boolean | undefined;
+    await act(async () => {
+      finishWrite?.();
+      ok = await pending;
+    });
+
+    assert.equal(ok, false);
+    assert.deepEqual(hostNotices, [
+      'extensionSaveError: extensionSaveOutdated',
+    ]);
+    assert.deepEqual(
+      posted.filter((msg) => msg.type === 'savingFile'),
+      [{ type: 'savingFile', path: filePath, revision: 1 }]
+    );
+    const ackAction = dispatchedActions.filter(
+      (action) => action.type === 'extensions/SET_FILE_EDIT_STATE'
+    ).at(-1);
+    assert.deepEqual(ackAction?.payload?.state, { saving: false });
+    assert.equal(
+      ackAction?.payload?.state && 'dirty' in ackAction.payload.state,
+      false,
+      'stale ack must not dispatch dirty:false'
+    );
+  });
+
+  it('reports a concurrent save as in progress and resolves false', async () => {
+    let finishWrite: (() => void) | undefined;
+    let writes = 0;
+    writeFileWithRevisionImpl = () => {
+      writes += 1;
+      return new Promise<void>((resolve) => {
+        finishWrite = resolve;
+      });
+    };
+    const { emit, saveCurrent } = renderHost();
+    let pending!: Promise<boolean>;
+    act(() => {
+      pending = saveCurrent();
+    });
+    emit({
+      type: 'parentSaveDocument',
+      path: filePath,
+      content: 'first content',
+      revision: 1,
+    });
+    emit({
+      type: 'parentSaveDocument',
+      path: filePath,
+      content: 'concurrent content',
+      revision: 2,
+    });
+
+    let ok: boolean | undefined;
+    await act(async () => {
+      ok = await pending;
+    });
+    assert.equal(ok, false);
+    assert.equal(writes, 1);
+    assert.deepEqual(hostNotices, [
+      'extensionSaveError: extensionSaveInProgress',
+    ]);
+
+    await act(async () => {
+      finishWrite?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  });
+
+  it('reports a real rejected write once and resolves the close save as false', async () => {
+    writeFileWithRevisionImpl = async () => {
+      throw new Error('disk full');
+    };
+    const { posted, emit, saveCurrent } = renderHost();
+    let pending!: Promise<boolean>;
+    act(() => {
+      pending = saveCurrent();
+    });
+    assert.equal(
+      posted.filter((msg) => msg.type === 'requestSave').length,
+      1
+    );
+
+    emit({
+      type: 'parentSaveDocument',
+      path: filePath,
+      content: 'latest edits',
+      revision: 1,
+    });
+    let ok: boolean | undefined;
+    await act(async () => {
+      ok = await pending;
+    });
+
+    assert.equal(ok, false);
+    assert.deepEqual(hostNotices, ['extensionSaveError: disk full']);
+    const failureAction = dispatchedActions
+      .filter((action) => action.type === 'extensions/SET_FILE_EDIT_STATE')
+      .at(-1);
+    assert.deepEqual(failureAction?.payload?.state, {
+      dirty: true,
+      saving: false,
+    });
+  });
+
+  it('reports readOnly once without requesting content from the extension', async () => {
+    const { posted, saveCurrent } = renderHost({ readOnly: true });
+    let ok: boolean | undefined;
+    await act(async () => {
+      ok = await saveCurrent();
+    });
+
+    assert.equal(ok, false);
+    assert.deepEqual(hostNotices, [
+      'extensionSaveError: readOnlyLocation',
+    ]);
+    assert.equal(posted.some((msg) => msg.type === 'requestSave'), false);
+  });
+
+  it('reports a readOnly switch between requestSave and parentSaveDocument once', async () => {
+    const { view, props, emit, saveCurrent } = renderHost();
+    let pending!: Promise<boolean>;
+    act(() => {
+      pending = saveCurrent();
+    });
+
+    view.rerender(createElement(ExtensionHostComponent, { ...props, readOnly: true }));
+    emit({
+      type: 'parentSaveDocument',
+      path: filePath,
+      content: 'edits made before the permission change',
+      revision: 1,
+    });
+    let ok: boolean | undefined;
+    await act(async () => {
+      ok = await pending;
+    });
+
+    assert.equal(ok, false);
+    assert.deepEqual(hostNotices, [
+      'extensionSaveError: readOnlyLocation',
+    ]);
+  });
+
+  it('reports a close-save timeout once and resolves false', async (context) => {
+    // Electron's Node supports the options-object API; the bundled @types
+    // still exposes the older Timer[] signature.
+    context.mock.timers.enable({ apis: ['setTimeout'] } as unknown as Parameters<
+      typeof context.mock.timers.enable
+    >[0]);
+    const { posted, saveCurrent } = renderHost();
+    let pending!: Promise<boolean>;
+    act(() => {
+      pending = saveCurrent();
+    });
+    assert.equal(
+      posted.filter((msg) => msg.type === 'requestSave').length,
+      1
+    );
+
+    act(() => {
+      context.mock.timers.tick(15000);
+    });
+
+    assert.equal(await pending, false);
+    assert.deepEqual(hostNotices, [
+      'extensionSaveError: extensionSaveTimeout',
+    ]);
   });
 });

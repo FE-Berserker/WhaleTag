@@ -14,7 +14,7 @@
 |---|---|
 | [src/main/mcp/mcp-config.ts](../src/main/mcp/mcp-config.ts) | 配置(`<userData>/mcp-config.json`,原子落盘,主进程所有):`enabled` / `port` / `token` / `readOnly`。token 经 `safeStorage` 加密落盘(无可用密钥库时回退明文,见 §7);默认**关 + 只读** |
 | [src/main/mcp/mcp-http.ts](../src/main/mcp/mcp-http.ts) | **无 Electron 依赖**的协议核心:Bearer 鉴权(定时安全比较)、JSON body 读取、有状态 Streamable HTTP 会话(每 `mcp-session-id` 一个 `McpServer` + `StreamableHTTPServerTransport`)。可被官方客户端 SDK 端到端测试 |
-| [src/main/mcp/mcp-tools.ts](../src/main/mcp/mcp-tools.ts) | 18 个工具的注册与实现,直接调用 `sidecar.ts` / `index-worker-host` / `ipc/fs-read` / `ipc/fs-write` / `fulltext.ts` |
+| [src/main/mcp/mcp-tools.ts](../src/main/mcp/mcp-tools.ts) | 18 个工具的注册与实现,直接调用 `sidecar.ts` / `index-worker-host` / `ipc/fs-read` / `ipc/fs-write`;全文抽取走 worker RPC(`fulltext:extract`),PDF 上限常量取自 `fulltext-limits.ts` |
 | [src/main/mcp/mcp-approval.ts](../src/main/mcp/mcp-approval.ts) | 写操作审批闸:fail-closed(无窗口 / 60s 超时 / 拒绝 = 全部视为拒绝) |
 | [src/main/mcp/mcp-server.ts](../src/main/mcp/mcp-server.ts) | Electron 壳:监听 127.0.0.1(配置端口被占则回退随机端口)、生命周期(`initMcpServer` / `shutdownMcpServer`)、审批推送、状态快照 |
 | [src/main/mcp/ipc-mcp.ts](../src/main/mcp/ipc-mcp.ts) | `mcp:*` IPC:设置 UI 轮询状态 / 推开关 / 审批作答 |
@@ -28,7 +28,7 @@
 
 **发现(只读)**:`whale_roots`(位置 + 索引状态,客户端第一个该调的)、`whale_search`(FTS trigram 名/路径/标签)、`whale_advanced_search`(SearchQuery 结构化过滤)、`whale_fulltext_search`(正文搜索 + snippet)、`whale_build_fulltext`(增量建正文索引)、`whale_list_tags`(distinct 标签 + 标签库描述)、`whale_list_directory`。
 
-**读取(归纳的输入)**:`whale_read_text`(编码自适应读文本,offset/limit 分页)、`whale_extract_text`(单文件抽取:`fulltext.ts` 的 `extractText`,支持 PDF/HTML/文本类;**office 不支持**;PDF 超过 128 MiB 直接报错,不再整文件读进内存)、`whale_get_meta`(≤200 路径批量读 sidecar)。
+**读取(归纳的输入)**:`whale_read_text`(编码自适应读文本,offset/limit 分页)、`whale_extract_text`(单文件抽取:经 `fulltext:extract` RPC 在 index worker 里调 `fulltext.ts` 的 `extractText`(pdfjs 解析不占主进程;主进程侧勿直接 import `fulltext.ts`,会连带 `index-db.ts` 触发 worker 守卫),支持 PDF/HTML/文本类;**office 不支持**;PDF 超过 128 MiB(常量在 `fulltext-limits.ts`)直接报错,不再整文件读进内存)、`whale_get_meta`(≤200 路径批量读 sidecar)。
 
 **整理——元数据级(免审批,不碰用户文件)**:`whale_apply_tags`(加/移标签,`updateFileTags` 加锁合并,写入前经 `normalizeSmartTags` 规范化——与 UI 打标行为同源,外部客户端写不出 UI 不会产生的标签形态)、`whale_write_description`(写 sidecar description——**归纳结果的推荐落点**,可搜索、UI 可见)。
 

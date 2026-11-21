@@ -226,7 +226,7 @@ try {
 
 **构建(§8)**
 
-- echarts 按需注册(`echarts/core`,共享 [services/echarts-setup.ts](../src/renderer/services/echarts-setup.ts))。`GraphicComponent`(FolderViz 中心标签 `graphic:` 元素)与 `TreeChart`(FolderViz tree / radial 模式)容易漏注册,已踩过;`echarts-wordcloud` 经 `echarts/lib/echarts` 深路径与 `echarts/core` 共享注册表,实例同一性无问题。
+- echarts 按需注册(`echarts/core`,共享 [services/echarts-setup.ts](../src/renderer/services/echarts-setup.ts))。`GraphicComponent`(FolderViz 中心标签 `graphic:` 元素)与 `TreeChart`(FolderViz tree / radial 模式)容易漏注册,已踩过;`echarts-wordcloud` 经 `echarts/lib/echarts` 深路径与 `echarts/core` 共享注册表,实例同一性无问题。当前对齐 `echarts@^5.6.0`:`echarts-wordcloud@2.1.0` 的 peer 仅支持 `^5.0.1`,升到 6.x 会得到 npm invalid 依赖树;两者必须共享同一 5.x 实例,不能只给 wordcloud 嵌套另一版本。
 
 **重渲染(§12)**
 
@@ -251,8 +251,8 @@ try {
 
 **崩溃日志**
 
-- 每次崩溃追加一行到 `<userData>/crash.log`:`[ISO 时间] renderer|main crash: <详情>`,主进程异常写入完整 stack。`appendCrashLog` 首次写入时创建目录(`mkdirSync(recursive)`),只追加不截断。
-- 日志写入是 best-effort:目录不可写 / 磁盘满时只吞掉异常,不阻断 reload 或退出——崩溃处理路径自己再抛异常会把一次崩溃变成"无响应进程"。
+- 每次崩溃追加一条完整记录到 `<userData>/crash.log`:`[ISO 时间] renderer|main crash: <详情>`;主进程 stack 与 renderer 上报都先过 `sanitizeErrorDetail`(控制字符清洗、4000 字截断、原生与正斜杠 home 路径替换为 `~`),保留诊断堆栈但不泄露账号路径。`appendCrashLog` 首次写入时创建目录(`mkdirSync(recursive)`),追加会使活动文件超过 1 MiB 时先轮换为唯一 `crash.log.1` 备份;单条记录不截断,rotation/stat/备份失败会警告并继续保留当前记录。POSIX 上先打开 fd、写前 `fchmodSync(fd, 0o600)` 再追加,修正历史宽权限文件。
+- 日志写入是 best-effort:目录不可写 / 磁盘满 / chmod 失败时只吞掉异常,不阻断 reload 或退出——崩溃处理路径自己再抛异常会把一次崩溃变成"无响应进程";chmod 失败时本次敏感内容不会追加。
 
 **主进程未捕获异常**
 
@@ -269,6 +269,7 @@ try {
 
 **测试**
 
-- [crash-guard.test.ts](../src/main/crash-guard.test.ts) 15 例:reload 预算递增 / 窗口边界(恰好 60 秒仍算窗口内)/ 超窗重置 / `clean-exit` 不动作、日志格式与追加不截断、致命路径的调用顺序(`log → append → box → exit`)以及日志与弹窗同时失败时仍然 `exit(1)`、`sanitizeErrorDetail` 的类型归一 / 控制字符 / 截断。
+- [crash-guard.test.ts](../src/main/crash-guard.test.ts) 24 例:reload 预算递增 / 窗口边界(恰好 60 秒仍算窗口内)/ 超窗重置 / `clean-exit` 不动作、日志格式与追加、小阈值轮换与唯一备份、恰好阈值不轮换、rotation 失败仍保留当前记录并警告、POSIX 写前 0600 与 chmod 失败不追加、致命路径的调用顺序(`log → append → box → exit`)、日志与弹窗同时失败时仍然 `exit(1)`、`sanitizeErrorDetail` 的类型归一 / 控制字符 / 截断与主进程 detail/summary 脱敏。
 - [boot-guard.test.ts](../src/renderer/services/boot-guard.test.ts) 18 例:错误详情归一、滑动窗口限流与窗口回填、覆盖层的标题/详情/Reload/幂等与移除、`error` 与 `unhandledrejection` 的就绪前上报+遮罩、`markReady` 后只上报不遮罩、看门狗超时触发、就绪后不触发、`dispose` 后静默。
+- [main.test.ts](../src/main/main.test.ts):权限只绑定当前主窗口与预期顶层/frame origin;主界面/json-viewer 剪贴板写、image-viewer fullscreen 放行,其余及异常 fail closed。
 

@@ -7,7 +7,13 @@ import type {} from '../shared/whale-ext';
 import App from './app';
 
 type HostListener = (msg: HostMessage) => void;
-type PostedMessage = { type: string; path?: string; content?: string };
+type PostedMessage = {
+  type: string;
+  path?: string;
+  content?: string;
+  dirty?: boolean;
+  revision?: number;
+};
 
 describe('drawio App in-flight lifecycle', () => {
   let jsdomCleanup: (() => void) | null = null;
@@ -75,8 +81,117 @@ describe('drawio App in-flight lifecycle', () => {
 
     loadFile();
     act(() => emitDrawio({ event: 'init' }));
-    return { view, posted, drawioActions, emitHost, emitDrawio, loadFile };
+    return { view, iframe, posted, drawioActions, emitHost, emitDrawio, loadFile };
   }
+
+  it('keeps edits made while a save is pending dirty until their own ack', async () => {
+    const { posted, drawioActions, emitHost, emitDrawio } = setup();
+
+    act(() => emitDrawio({ event: 'autosave', xml: '<mxfile>one</mxfile>' }));
+    assert.equal(posted.at(-1)?.dirty, true);
+    assert.equal(posted.at(-1)?.revision, 1);
+
+    emitHost({ type: 'requestSave', path: '/tmp/lifecycle.drawio' } as HostMessage);
+    const postedBeforeExport = posted.length;
+    await act(async () => {
+      emitDrawio({ event: 'export', xml: '<mxfile>one</mxfile>' });
+      await Promise.resolve();
+    });
+    const save = posted.find((msg) => msg.type === 'parentSaveDocument');
+    assert.equal(save?.revision, 1);
+    assert.equal(posted.length, postedBeforeExport + 1, 'export itself is not dirty');
+
+    act(() => emitDrawio({ event: 'autosave', xml: '<mxfile>two</mxfile>' }));
+    assert.equal(posted.at(-1)?.revision, 2);
+    emitHost({
+      type: 'savingFile',
+      path: '/tmp/lifecycle.drawio',
+      revision: 1,
+    } as HostMessage);
+    assert.equal(posted.at(-1)?.dirty, true, 'stale ack must not clear revision 2');
+    assert.equal(
+      drawioActions.filter((msg) => msg.action === 'modified').length,
+      0
+    );
+
+    emitHost({
+      type: 'savingFile',
+      path: '/tmp/lifecycle.drawio',
+      revision: 2,
+    } as HostMessage);
+    assert.equal(posted.at(-1)?.dirty, false);
+    assert.equal(posted.at(-1)?.revision, 2);
+    assert.deepEqual(
+      drawioActions.filter((msg) => msg.action === 'modified').at(-1),
+      { action: 'modified', modified: false }
+    );
+  });
+
+  it('does not let an autosave answer a pending export or acknowledge newer edits', async () => {
+    const { posted, drawioActions, emitHost, emitDrawio } = setup();
+    act(() => emitDrawio({ event: 'autosave', xml: '<mxfile>one</mxfile>' }));
+    emitHost({ type: 'requestSave', path: '/tmp/lifecycle.drawio' } as HostMessage);
+    assert.equal(drawioActions.filter((msg) => msg.action === 'export').length, 1);
+
+    await act(async () => {
+      emitDrawio({ event: 'autosave', xml: '<mxfile>two</mxfile>' });
+      await Promise.resolve();
+    });
+    assert.equal(
+      posted.filter((msg) => msg.type === 'parentSaveDocument').length,
+      0,
+      'autosave is an edit notification, not the pending export response'
+    );
+    assert.equal(posted.at(-1)?.revision, 2);
+
+    await act(async () => {
+      emitDrawio({ event: 'export', xml: '<mxfile>one</mxfile>' });
+      await Promise.resolve();
+    });
+    const save = posted.find((msg) => msg.type === 'parentSaveDocument');
+    assert.equal(save?.revision, 1, 'revision is captured before awaiting export');
+
+    emitHost({
+      type: 'savingFile',
+      path: '/tmp/lifecycle.drawio',
+      revision: 1,
+    } as HostMessage);
+    const lastDirty = posted.filter((msg) => msg.type === 'contentChangedInEditor').at(-1);
+    assert.equal(lastDirty?.dirty, true);
+    assert.equal(lastDirty?.revision, 2);
+  });
+
+  it('blocks drawio interaction without reloading the iframe in read-only mode', async () => {
+    const { view, iframe, posted, drawioActions, emitHost, emitDrawio } = setup();
+    const initialSrc = iframe.getAttribute('src');
+    const initialPosted = posted.length;
+
+    emitHost({ type: 'setReadOnly', readOnly: true } as HostMessage);
+    assert.equal(iframe.inert, true);
+    assert.equal(iframe.hasAttribute('inert'), true);
+    assert.equal(iframe.getAttribute('src'), initialSrc);
+    assert.ok(view.getByTestId('drawio-readonly-guard'));
+
+    const actionCount = drawioActions.length;
+    act(() => emitDrawio({ event: 'autosave', xml: '<mxfile>blocked</mxfile>' }));
+    emitHost({
+      type: 'externalDrag',
+      active: true,
+      path: '/tmp/blocked.png',
+      name: 'blocked.png',
+      isImage: true,
+    });
+    emitHost({
+      type: 'fileEmbed',
+      path: '/tmp/blocked.png',
+      name: 'blocked.png',
+      thumbnailDataUrl: 'data:image/png;base64,AA==',
+    });
+    await act(async () => Promise.resolve());
+
+    assert.equal(posted.length, initialPosted, 'read-only input cannot create dirty state');
+    assert.equal(drawioActions.length, actionCount, 'read-only embed is ignored');
+  });
 
   it('finishes an in-flight save when file props refresh before XML arrives', async () => {
     const { posted, emitHost, emitDrawio, loadFile } = setup();

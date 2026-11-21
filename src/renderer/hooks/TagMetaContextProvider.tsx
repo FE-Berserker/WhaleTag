@@ -31,7 +31,56 @@ export interface TagCount {
   count: number;
 }
 
-interface TagMetaContextValue {
+export interface TagMetaSaveManyError extends Error {
+  updatedCount: number;
+  errors: string[];
+}
+
+/**
+ * Attempt every sidecar write, always reconcile the directory once, and retain
+ * partial outcomes on the rejected Error without changing saveMany's contract.
+ */
+export async function saveManyTagSidecars(
+  updates: readonly { entry: DirEntry; meta: SidecarMeta }[],
+  writeSidecar: (path: string, meta: SidecarMeta) => Promise<void>,
+  refreshDirectory: () => Promise<void>
+): Promise<void> {
+  const results = await Promise.allSettled(
+    updates.map((update) => writeSidecar(update.entry.path, update.meta))
+  );
+  let updatedCount = 0;
+  const errors: string[] = [];
+  results.forEach((result, index) => {
+    if (result.status === 'fulfilled') {
+      updatedCount += 1;
+      return;
+    }
+    const reason = result.reason;
+    errors.push(
+      `${updates[index].entry.name}: ${reason instanceof Error ? reason.message : String(reason)}`
+    );
+  });
+  try {
+    await refreshDirectory();
+  } catch (error) {
+    if (errors.length === 0) throw error;
+    // Preserve write and refresh failures; Error.message is display-bounded,
+    // while the complete errors array remains available to structured callers.
+    errors.push(error instanceof Error ? error.message : String(error));
+  }
+  if (errors.length > 0) {
+    const message = errors.length > 3
+      ? `${errors.slice(0, 3).join('; ')}; …`
+      : errors.join('; ');
+    const failure = new Error(message) as TagMetaSaveManyError;
+    failure.name = 'TagMetaSaveManyError';
+    failure.updatedCount = updatedCount;
+    failure.errors = errors;
+    throw failure;
+  }
+}
+
+export interface TagMetaContextValue {
   /** All tags in the current directory with counts (desc by count). */
   allTags: TagCount[];
   activeTag: string | null;
@@ -192,10 +241,11 @@ export function TagMetaContextProvider({ children }: { children: ReactNode }) {
 
   const saveMany = useCallback(
     async (updates: { entry: DirEntry; meta: SidecarMeta }[]) => {
-      await Promise.all(
-        updates.map((u) => ipcApi.writeSidecar(u.entry.path, u.meta))
+      await saveManyTagSidecars(
+        updates,
+        (path, meta) => ipcApi.writeSidecar(path, meta),
+        refreshDirectory
       );
-      await refreshDirectory();
     },
     [refreshDirectory]
   );

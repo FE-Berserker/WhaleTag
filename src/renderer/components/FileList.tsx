@@ -247,6 +247,7 @@ export default function FileList() {
     geoByName,
   } = useDirectoryContentContext();
   const {
+    refreshTree,
     renameEntry,
     moveEntry,
     copyEntry,
@@ -597,6 +598,15 @@ export default function FileList() {
     [entries, activeTag, tagsByName, nowTick]
   );
 
+  // Keep both playlist identities stable across unrelated FileList renders.
+  // MediaLightbox also memoizes its filtered playlist, so this completes the
+  // chain instead of rebuilding `mediaPlaylist(visible)` in the JSX body.
+  const lightboxPlaylist = useMemo(() => mediaPlaylist(visible), [visible]);
+  const lightboxFallbackPlaylist = useMemo(
+    () => (lightboxEntry ? [lightboxEntry] : []),
+    [lightboxEntry]
+  );
+
   const selectedEntries = useMemo(
     () => {
       // `selectedPathsRef` is mutated in place; `selectedTick` is the revision
@@ -823,6 +833,7 @@ export default function FileList() {
       currentDirectoryPath,
       deleteToTrash,
       refresh,
+      refreshTree,
       setPackageOpen,
       setCreateKind,
       setCreateWithTag,
@@ -849,6 +860,7 @@ export default function FileList() {
       selectedEntries,
       deleteToTrash,
       refresh,
+      refreshTree,
       currentLocation,
       // H.23 P3-1: deps mirror of the inline object — P3-1 hook
       // implementation mutates the ref directly + bumps the tick once
@@ -2041,7 +2053,7 @@ export default function FileList() {
       {/* Full-screen media lightbox for double-clicking media in list/grid. */}
       {lightboxEntry !== null
         ? (() => {
-            const playlist = mediaPlaylist(visible);
+            const playlist = lightboxPlaylist;
             const idx = playlist.findIndex(
               (e) => e.path === lightboxEntry.path
             );
@@ -2054,7 +2066,7 @@ export default function FileList() {
                 return (
                   <MediaLightbox
                     open
-                    entries={[lightboxEntry]}
+                    entries={lightboxFallbackPlaylist}
                     initialIndex={0}
                     onClose={() => setLightboxEntry(null)}
                     thumbCache={thumbCache.current}

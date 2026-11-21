@@ -267,6 +267,7 @@ function renderKanban(
   stages: WorkflowStage[] = DEFAULT_STAGES
 ) {
   const ioStub: IOActionsContextValue = {
+    refreshTree: () => undefined,
     renameEntry: () => Promise.resolve(),
     moveEntry: () => Promise.resolve(),
     copyEntry: () => Promise.resolve(),

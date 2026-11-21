@@ -22,9 +22,11 @@ import type { DirEntry } from '../../shared/ipc-types';
 import {
   ExtensionMessage,
   HostMessage,
+  isSaveAckCurrent,
   isValidEnvelope,
 } from '../../shared/extension-types';
 import { ipcApi } from '-/services/ipc-api';
+import { notifyApp } from '-/services/app-notice';
 import { basename, parentDir } from '-/services/path-util';
 import { isImageFile } from '../../shared/whale-meta';
 import { useExtensionContext } from '-/hooks/ExtensionContextProvider';
@@ -144,6 +146,14 @@ export default function ExtensionHost({
   const { refresh } = useDirectoryUI();
   const { refreshTree } = useDirectoryTreeRefresh();
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  // Latest value for the initial fileContent envelope without making readOnly
+  // a reason to resend the document on every permission toggle.
+  const fileContentReadOnlyRef = useRef(readOnly);
+  fileContentReadOnlyRef.current = readOnly;
+  // Latest document version reported by revision-aware extensions. A ref is
+  // required here: an async save must compare against edits made after its
+  // handler's React closure was created.
+  const latestRevisionRef = useRef<number | undefined>(undefined);
   const [ready, setReady] = useState(false);
   // Boot watchdog: the iframe must post `ready` within READY_TIMEOUT_MS of
   // mount, else show a retry-able failure instead of a permanent blank area
@@ -196,13 +206,17 @@ export default function ExtensionHost({
   ]);
 
   useEffect(() => {
+    latestRevisionRef.current = undefined;
+  }, [filePath]);
+
+  useEffect(() => {
     if (ready) {
       postToExtension({
         type: 'fileContent',
         path: filePath,
         content: fileContent,
         encoding,
-        readOnly,
+        readOnly: fileContentReadOnlyRef.current,
         size: fileSize,
         // §18.2.3 — supply the file's directory so the extension can
         // resolve `<img src="./relative.png">` into streamable
@@ -213,7 +227,16 @@ export default function ExtensionHost({
         dirPath: parentDir(filePath),
       });
     }
-  }, [ready, filePath, fileContent, encoding, readOnly, fileSize, postToExtension]);
+  }, [ready, filePath, fileContent, encoding, fileSize, postToExtension]);
+
+  // Read-only is view state, not a new document. Sending fileContent again on
+  // this transition would make editors reload the last disk snapshot and wipe
+  // edits that are still being saved (or edited).
+  useEffect(() => {
+    if (ready) {
+      postToExtension({ type: 'setReadOnly', readOnly });
+    }
+  }, [ready, readOnly, postToExtension]);
 
   // Sibling list (image-viewer's prev/next target set). Sent on every file
   // change so the extension can light up its navigation UI immediately. Only
@@ -248,14 +271,40 @@ export default function ExtensionHost({
   }, [dispatch, filePath]);
 
   const handleSave = useCallback(
-    async (content: string): Promise<boolean> => {
-      if (readOnly || saving) return false;
+    async (content: string, revision?: number): Promise<boolean> => {
+      if (readOnly) {
+        notifyApp(
+          t('extensionSaveError', { message: t('readOnlyLocation') })
+        );
+        return false;
+      }
+      if (saving) {
+        notifyApp(
+          t('extensionSaveError', { message: t('extensionSaveInProgress') })
+        );
+        return false;
+      }
       setSaving(true);
       try {
         await ipcApi.writeFileWithRevision(filePath, content);
-        postToExtension({ type: 'savingFile', path: filePath });
-        dispatch(setFileEditState(filePath, { dirty: false, saving: false }));
-        return true;
+        postToExtension({ type: 'savingFile', path: filePath, revision });
+        const ackCurrent = isSaveAckCurrent(revision, latestRevisionRef.current);
+        dispatch(
+          setFileEditState(filePath, {
+            // An older write still completed successfully, but it must not
+            // clear dirty for edits reported while that write was pending.
+            ...(ackCurrent ? { dirty: false } : {}),
+            saving: false,
+          })
+        );
+        if (!ackCurrent) {
+          // The bytes on disk are already outdated. Report the save as failed
+          // so a close or window flush cannot discard the newer editor state.
+          notifyApp(
+            t('extensionSaveError', { message: t('extensionSaveOutdated') })
+          );
+        }
+        return ackCurrent;
       } catch (e) {
         dispatch(
           setFileEditState(filePath, {
@@ -263,7 +312,7 @@ export default function ExtensionHost({
             saving: false,
           })
         );
-        alert(
+        notifyApp(
           t('extensionSaveError', {
             message: e instanceof Error ? e.message : String(e),
           })
@@ -288,7 +337,12 @@ export default function ExtensionHost({
   // read-only, timeout (15s — covers large-file writes + revision backup), or
   // write failure; the caller then keeps the view open.
   const saveCurrent = useCallback(async (): Promise<boolean> => {
-    if (readOnly) return false;
+    if (readOnly) {
+      notifyApp(
+        t('extensionSaveError', { message: t('readOnlyLocation') })
+      );
+      return false;
+    }
     return new Promise<boolean>((resolve) => {
       const resolver = (ok: boolean) => {
         clearTimeout(timer);
@@ -298,6 +352,11 @@ export default function ExtensionHost({
         if (saveResolverRef.current === resolver) {
           saveResolverRef.current = null;
         }
+        // This host owns the failure notice; the close provider only restores
+        // focus for a registered handler that returned false.
+        notifyApp(
+          t('extensionSaveError', { message: t('extensionSaveTimeout') })
+        );
         resolve(false);
       }, 15000);
       saveResolverRef.current = resolver;
@@ -308,7 +367,7 @@ export default function ExtensionHost({
         postToExtension({ type: 'requestSave', path: filePath });
       }
     });
-  }, [postToExtension, filePath, readOnly, saving]);
+  }, [postToExtension, filePath, readOnly, saving, t]);
 
   // Register this tab's saveCurrent into the context so closeTab(tabId) can
   // trigger a save before closing. Keyed by tab id; cleared on unmount.
@@ -465,7 +524,7 @@ export default function ExtensionHost({
           setLoadFailed(false);
           break;
         case 'parentSaveDocument':
-          handleSave(msg.content)
+          handleSave(msg.content, msg.revision)
             .then((ok) => {
               saveResolverRef.current?.(ok);
               saveResolverRef.current = null;
@@ -490,6 +549,9 @@ export default function ExtensionHost({
           }
           break;
         case 'contentChangedInEditor':
+          if (typeof msg.revision === 'number') {
+            latestRevisionRef.current = msg.revision;
+          }
           dispatch(setFileEditState(filePath, { dirty: msg.dirty }));
           break;
         case 'openLinkExternally':

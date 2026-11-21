@@ -3,9 +3,17 @@ import assert from 'node:assert/strict';
 import os from 'os';
 import path from 'path';
 import { existsSync, promises as fsp } from 'fs';
+import type { ExecFileOptions } from 'child_process';
 
 import { setAllowedRoots } from '../allowed-roots';
-import { commonParentDir, copyEntry, createTextFile, moveEntry } from './fs-write';
+import {
+  commonParentDir,
+  copyEntry,
+  createTextFile,
+  moveEntry,
+  runOsZip,
+  type OsZipRunner,
+} from './fs-write';
 
 describe('fs-write createTextFile', () => {
   it('rejects an existing file without changing its bytes', async () => {
@@ -150,5 +158,198 @@ describe('fs-write commonParentDir', () => {
 
   it('rejects an empty selection', () => {
     assert.throws(() => commonParentDir([]), /at least one path/);
+  });
+});
+
+describe('fs-write bounded OS zip processes', () => {
+  function assertProcessLimits(options: ExecFileOptions): void {
+    assert.equal(options.timeout, 120_000);
+    assert.equal(options.killSignal, 'SIGKILL');
+    assert.equal(options.maxBuffer, 1024 * 1024);
+  }
+
+  function invocationArchive(file: string, args: string[]): string {
+    if (file === 'zip') return args[2];
+    if (file === 'python3') return args[3];
+    const match = / -DestinationPath '((?:[^']|'')+)'$/.exec(args[3]);
+    assert.ok(match, 'PowerShell invocation contains a staging destination');
+    return match[1].replace(/''/g, "'");
+  }
+
+  it('applies the limits to PowerShell and resolves only after creating the archive', async () => {
+    const scratch = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-os-zip-'));
+    try {
+      const source = path.join(scratch, "O'Brien.txt");
+      const archive = path.join(scratch, 'out.zip');
+      const calls: Array<{ file: string; args: string[]; options: ExecFileOptions }> = [];
+      const runner: OsZipRunner = async (file, args, options) => {
+        calls.push({ file, args, options });
+        await fsp.writeFile(invocationArchive(file, args), 'PK\u0003\u0004');
+      };
+
+      assert.equal(await runOsZip([source], archive, runner, 'win32'), archive);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].file, 'powershell.exe');
+      assert.ok(calls[0].args[3].includes("O''Brien.txt'"));
+      assertProcessLimits(calls[0].options);
+      const staging = invocationArchive(calls[0].file, calls[0].args);
+      assert.notEqual(staging, archive, 'OS tool never writes the final path directly');
+      assert.ok(staging.endsWith('.zip'), 'PowerShell staging name keeps a .zip suffix');
+      assert.equal(existsSync(staging), false, 'successful rename leaves no staging file');
+      assert.equal(existsSync(archive), true);
+    } finally {
+      await fsp.rm(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it('surfaces a PowerShell timeout instead of resolving without an archive', async () => {
+    const scratch = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-os-zip-'));
+    try {
+      const expected = new Error('PowerShell process timed out');
+      const archive = path.join(scratch, 'out.zip');
+      let staging = '';
+      const runner: OsZipRunner = async (file, args, options) => {
+        assertProcessLimits(options);
+        staging = invocationArchive(file, args);
+        await fsp.writeFile(staging, 'partial archive');
+        throw expected;
+      };
+      await assert.rejects(
+        runOsZip([path.join(scratch, 'input')], archive, runner, 'win32'),
+        (error: unknown) => {
+          assert.equal(error, expected);
+          return true;
+        }
+      );
+      assert.ok(staging.includes('out.zip.tmp-'));
+      assert.equal(existsSync(staging), false, 'failed attempt removes its partial archive');
+      assert.equal(existsSync(archive), false, 'failed attempt never publishes the final path');
+    } finally {
+      await fsp.rm(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it('bounds zip and python3 while preserving the relative archive layout', async () => {
+    const scratch = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-os-zip-'));
+    try {
+      const sources = [
+        path.join(scratch, 'a', 'x.txt'),
+        path.join(scratch, 'b', 'y.txt'),
+      ];
+      const archive = path.join(scratch, 'out.zip');
+      const calls: Array<{ file: string; args: string[]; options: ExecFileOptions }> = [];
+      const runner: OsZipRunner = async (file, args, options) => {
+        calls.push({ file, args, options });
+        if (file === 'zip') {
+          throw Object.assign(new Error('zip is unavailable'), { code: 'ENOENT' });
+        }
+        await fsp.writeFile(invocationArchive(file, args), 'PK\u0003\u0004');
+      };
+
+      assert.equal(await runOsZip(sources, archive, runner, 'linux'), archive);
+      assert.deepEqual(calls.map((call) => call.file), ['zip', 'python3']);
+      for (const call of calls) {
+        assertProcessLimits(call.options);
+        assert.equal(call.options.cwd, scratch);
+      }
+      const staging = invocationArchive(calls[0].file, calls[0].args);
+      assert.deepEqual(calls[0].args, [
+        '-r',
+        '-q',
+        staging,
+        path.join('a', 'x.txt'),
+        path.join('b', 'y.txt'),
+      ]);
+      assert.deepEqual(JSON.parse(calls[1].args[2]), [
+        [sources[0], path.join('a', 'x.txt')],
+        [sources[1], path.join('b', 'y.txt')],
+      ]);
+      assert.equal(calls[1].args[3], staging);
+      assert.notEqual(staging, archive);
+      assert.equal(existsSync(staging), false);
+      assert.equal(existsSync(archive), true);
+    } finally {
+      await fsp.rm(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a timed-out python3 fallback with the underlying detail', async () => {
+    const scratch = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-os-zip-'));
+    try {
+      const runner: OsZipRunner = async (file, _args, options) => {
+        assertProcessLimits(options);
+        if (file === 'zip') {
+          throw Object.assign(new Error('zip is unavailable'), { code: 'ENOENT' });
+        }
+        throw new Error('python3 process timed out');
+      };
+      await assert.rejects(
+        runOsZip([path.join(scratch, 'input')], path.join(scratch, 'out.zip'), runner, 'linux'),
+        /python3 fallback failed: python3 process timed out/
+      );
+      assert.equal(existsSync(path.join(scratch, 'out.zip')), false);
+    } finally {
+      await fsp.rm(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it('maps process-limit errors without echoing source paths and cleans staging', async () => {
+    const scratch = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-os-zip-'));
+    try {
+      const source = path.join(scratch, 'private-input.txt');
+      const archive = path.join(scratch, 'out.zip');
+      const cases = [
+        {
+          error: Object.assign(new Error(`Command failed with ${source}`), {
+            killed: true,
+            signal: 'SIGKILL',
+          }),
+          message: 'ZIP packaging timed out after 120 seconds.',
+        },
+        {
+          error: Object.assign(new Error(`stdout maxBuffer length exceeded ${source}`), {
+            code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
+          }),
+          message: 'ZIP packaging output exceeded the 1 MiB limit.',
+        },
+      ];
+      for (const testCase of cases) {
+        const runner: OsZipRunner = async (file, args) => {
+          await fsp.writeFile(invocationArchive(file, args), 'partial');
+          throw testCase.error;
+        };
+        await assert.rejects(runOsZip([source], archive, runner, 'win32'), (error: unknown) => {
+          assert.ok(error instanceof Error);
+          assert.equal(error.message, testCase.message);
+          assert.equal(error.message.includes(source), false, 'user error hides raw argv');
+          return true;
+        });
+        assert.equal(existsSync(archive), false);
+      }
+      assert.deepEqual(
+        (await fsp.readdir(scratch)).filter((name) => name.includes('.tmp-')),
+        [],
+        'both limit failures clean their staging files'
+      );
+    } finally {
+      await fsp.rm(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it('creates a real short archive through the default bounded runner', async () => {
+    const scratch = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-os-zip-'));
+    try {
+      const source = path.join(scratch, 'source');
+      const archive = path.join(scratch, 'out.zip');
+      await fsp.mkdir(source);
+      await fsp.writeFile(path.join(source, 'hello.txt'), 'hello', 'utf8');
+
+      assert.equal(await runOsZip([source], archive), archive);
+      const bytes = await fsp.readFile(archive);
+      assert.ok(bytes.length > 4);
+      assert.equal(bytes.subarray(0, 2).toString(), 'PK');
+    } finally {
+      await fsp.rm(scratch, { recursive: true, force: true });
+    }
   });
 });

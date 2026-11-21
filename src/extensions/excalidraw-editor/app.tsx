@@ -12,6 +12,13 @@ import {
   linkToRelative,
   rewriteExcalidrawJsonToRelative,
 } from './excalidraw-links';
+import {
+  beginExcalidrawSave,
+  createExcalidrawSaveState,
+  observeExcalidrawJson,
+  resetObservedJson,
+  resolveExcalidrawSaveAck,
+} from './save-state';
 
 // Excalidraw's imperative API is typed in a deep subpath that doesn't resolve
 // cleanly under this project's `moduleResolution: node`; this is glue code in a
@@ -22,7 +29,7 @@ export default function App() {
   const apiRef = useRef<AnyApi>(null);
   const pathRef = useRef<string | null>(null);
   const lastSavedRef = useRef<string>('');
-  const pendingSaveRef = useRef<string | null>(null);
+  const saveStateRef = useRef(createExcalidrawSaveState());
   const baselinePendingRef = useRef(false);
   const dirtyRef = useRef(false);
   const pendingContentRef = useRef<{ path: string; content: string } | null>(
@@ -53,14 +60,15 @@ export default function App() {
     );
   }, []);
 
-  const setDirty = useCallback((dirty: boolean) => {
-    if (dirtyRef.current === dirty) return;
+  const setDirty = useCallback((dirty: boolean, force = false) => {
+    if (!force && dirtyRef.current === dirty) return;
     dirtyRef.current = dirty;
     if (pathRef.current) {
       window.whaleExt.postMessage({
         type: 'contentChangedInEditor',
         path: pathRef.current,
         dirty,
+        revision: saveStateRef.current.revision,
       });
     }
   }, []);
@@ -69,6 +77,7 @@ export default function App() {
    *  yet (the host may send fileContent before Excalidraw mounts). */
   const applyScene = useCallback((path: string, content: string) => {
     pathRef.current = path;
+    saveStateRef.current = createExcalidrawSaveState();
     const api = apiRef.current;
     if (!api) {
       pendingContentRef.current = { path, content };
@@ -95,28 +104,33 @@ export default function App() {
     if (!api || !pathRef.current) return;
     // docs/20: links are stored relative. New inserts are already relative
     // (see insertFileEmbed); this pass also migrates any still-absolute links
-    // from older files to relative. pendingSaveRef is the runtime JSON
-    // (relative), which is what handleChange compares against.
+    // from older files to relative. The pending baseline stays in runtime form,
+    // which is what handleChange compares against.
     const absJson = computeJson();
-    pendingSaveRef.current = absJson;
+    const save = beginExcalidrawSave(saveStateRef.current, absJson);
+    saveStateRef.current = save.state;
     const content = rewriteExcalidrawJsonToRelative(absJson, pathRef.current);
     window.whaleExt.postMessage({
       type: 'parentSaveDocument',
       path: pathRef.current,
       content,
+      revision: save.snapshot.revision,
     });
   }, [computeJson]);
 
   const handleChange = useCallback(() => {
+    const currentJson = computeJson();
     // The first onChange after loading establishes the saved baseline so a fresh
-    // load isn't reported as dirty.
+    // load isn't reported as dirty or assigned a spurious edit revision.
     if (baselinePendingRef.current) {
       baselinePendingRef.current = false;
-      lastSavedRef.current = computeJson();
+      lastSavedRef.current = currentJson;
+      saveStateRef.current = resetObservedJson(saveStateRef.current, currentJson);
       setDirty(false);
       return;
     }
-    setDirty(computeJson() !== lastSavedRef.current);
+    saveStateRef.current = observeExcalidrawJson(saveStateRef.current, currentJson);
+    setDirty(currentJson !== lastSavedRef.current);
   }, [computeJson, setDirty]);
 
   const handleApi = useCallback(
@@ -223,11 +237,29 @@ export default function App() {
         case 'requestSave':
           doSave();
           break;
-        case 'savingFile':
-          lastSavedRef.current = pendingSaveRef.current ?? computeJson();
-          pendingSaveRef.current = null;
-          setDirty(false);
+        case 'savingFile': {
+          const pending = saveStateRef.current.pendingSave;
+          if (
+            msg.path !== pathRef.current ||
+            !pending ||
+            (msg.revision !== undefined && msg.revision !== pending.revision)
+          ) {
+            break;
+          }
+          const currentJson = computeJson();
+          saveStateRef.current = observeExcalidrawJson(
+            saveStateRef.current,
+            currentJson
+          );
+          const resolved = resolveExcalidrawSaveAck(pending, currentJson);
+          saveStateRef.current = { ...saveStateRef.current, pendingSave: null };
+          // Always advance the baseline to the write that actually completed.
+          // A stale ack therefore preserves newer edits without leaving the
+          // baseline permanently behind; edit-then-undo can still become clean.
+          lastSavedRef.current = resolved.baselineJson;
+          setDirty(resolved.dirty, true);
           break;
+        }
         case 'externalDrag':
           // Only react to drag-start (active:true). Starting a native OS drag
           // makes the source's HTML5 dragend fire immediately, so a drag-end

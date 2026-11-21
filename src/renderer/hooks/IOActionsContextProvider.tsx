@@ -26,11 +26,34 @@ import { useDirectoryTreeRefresh } from './DirectoryTreeRefreshContextProvider';
  * Must sit BELOW both CurrentLocationContextProvider and
  * DirectoryContentContextProvider in the tree.
  */
+export interface IOActionOptions {
+  /** Batch callers suppress per-item refreshes and refresh once themselves. */
+  refresh?: boolean;
+  /** Batch callers suppress per-item tree refreshes and reconcile once themselves. */
+  treeRefresh?: boolean;
+}
+
+/** Apply the two independent post-IO refresh policies; defaults preserve single-item behavior. */
+export async function refreshAfterIOAction(
+  refresh: () => Promise<void>,
+  refreshTrees: (() => void) | undefined,
+  options?: IOActionOptions
+): Promise<void> {
+  if (options?.treeRefresh !== false) refreshTrees?.();
+  if (options?.refresh !== false) await refresh();
+}
+
 export interface IOActionsContextValue {
+  /** Stable bridge supplied by the real provider for all consumers. */
+  refreshTree: (path: string) => void;
   renameEntry: (oldPath: string, newName: string) => Promise<void>;
-  moveEntry: (oldPath: string, destDirPath: string) => Promise<void>;
+  moveEntry: (
+    oldPath: string,
+    destDirPath: string,
+    options?: IOActionOptions
+  ) => Promise<void>;
   copyEntry: (sourcePath: string, newName: string) => Promise<void>;
-  deleteEntry: (targetPath: string) => Promise<void>;
+  deleteEntry: (targetPath: string, options?: IOActionOptions) => Promise<void>;
   createFolder: (name: string, parentDir?: string) => Promise<void>;
   createFile: (name: string, content?: string, parentDir?: string) => Promise<void>;
   createTaggedEntry: (
@@ -140,13 +163,17 @@ export function IOActionsContextProvider({
   );
 
   const runAndRefresh = useCallback(
-    async (op: () => Promise<void>) => {
+    async (
+      op: () => Promise<void>,
+      options?: IOActionOptions,
+      refreshTrees?: () => void
+    ) => {
       // Read-only locations short-circuit every write — never a silent no-op.
       if (currentLocation?.isReadOnly) {
         throw new Error(t('readOnlyLocation'));
       }
       await op(); // rejects on failure -> caller shows error, no optimistic update
-      await refresh();
+      await refreshAfterIOAction(refresh, refreshTrees, options);
     },
     [refresh, currentLocation, t]
   );
@@ -161,12 +188,17 @@ export function IOActionsContextProvider({
   );
 
   const moveEntry = useCallback(
-    (oldPath: string, destDirPath: string) =>
-      runAndRefresh(async () => {
-        await ipcApi.move(oldPath, joinPath(destDirPath, basename(oldPath)));
-        refreshTree(parentDir(oldPath));
-        refreshTree(destDirPath);
-      }),
+    (oldPath: string, destDirPath: string, options?: IOActionOptions) =>
+      runAndRefresh(
+        async () => {
+          await ipcApi.move(oldPath, joinPath(destDirPath, basename(oldPath)));
+        },
+        options,
+        () => {
+          refreshTree(parentDir(oldPath));
+          refreshTree(destDirPath);
+        }
+      ),
     [runAndRefresh, refreshTree]
   );
 
@@ -180,33 +212,36 @@ export function IOActionsContextProvider({
   );
 
   const deleteEntry = useCallback(
-    (targetPath: string) =>
-      runAndRefresh(async () => {
-        try {
-          await ipcApi.deletePath(targetPath, deleteToTrash);
-        } catch (e) {
-          // shell.trashItem fails on UNC/network shares (Windows has no local
-          // Recycle Bin for them) and other trash-unsupported locations. The
-          // main process intentionally re-throws instead of silently escalating
-          // to a permanent delete — but the user asked for recoverable removal
-          // and it isn't available here, so offer a permanent delete with an
-          // explicit confirm (still user-consented, never silent).
-          if (!deleteToTrash) throw e;
-          if (
-            !(await confirm({
-              message: t('confirmDeleteTrashFailed', {
-                name: basename(targetPath),
-              }),
-              confirmLabel: t('delete'),
-              danger: true,
-            }))
-          ) {
-            throw e;
+    (targetPath: string, options?: IOActionOptions) =>
+      runAndRefresh(
+        async () => {
+          try {
+            await ipcApi.deletePath(targetPath, deleteToTrash);
+          } catch (e) {
+            // shell.trashItem fails on UNC/network shares (Windows has no local
+            // Recycle Bin for them) and other trash-unsupported locations. The
+            // main process intentionally re-throws instead of silently escalating
+            // to a permanent delete — but the user asked for recoverable removal
+            // and it isn't available here, so offer a permanent delete with an
+            // explicit confirm (still user-consented, never silent).
+            if (!deleteToTrash) throw e;
+            if (
+              !(await confirm({
+                message: t('confirmDeleteTrashFailed', {
+                  name: basename(targetPath),
+                }),
+                confirmLabel: t('delete'),
+                danger: true,
+              }))
+            ) {
+              throw e;
+            }
+            await ipcApi.deletePath(targetPath, false);
           }
-          await ipcApi.deletePath(targetPath, false);
-        }
-        refreshTree(parentDir(targetPath));
-      }),
+        },
+        options,
+        () => refreshTree(parentDir(targetPath))
+      ),
     [runAndRefresh, deleteToTrash, refreshTree, t, confirm]
   );
 
@@ -304,6 +339,7 @@ export function IOActionsContextProvider({
 
   const value = useMemo(
     () => ({
+      refreshTree,
       renameEntry,
       moveEntry,
       copyEntry,
@@ -315,6 +351,7 @@ export function IOActionsContextProvider({
       openNative,
     }),
     [
+      refreshTree,
       renameEntry,
       moveEntry,
       copyEntry,

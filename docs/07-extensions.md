@@ -53,7 +53,7 @@ src/extensions/
 | 消息 | 用途 |
 |---|---|
 | `fileContent` | 文件内容(含可选 `size`)|
-| `savingFile` | 正在保存,UI 反馈 |
+| `savingFile` | 写盘完成回执,UI 反馈；revision-aware 编辑器回显内容版本 |
 | `setTheme` / `setReadOnly` / `setLocale` | 主题 / 只读 / 语言切换 |
 | `requestSave` | 触发扩展保存 |
 | `heicWasm` | HEIC wasm 经 host IPC 供给(绕 iframe CSP) |
@@ -104,6 +104,11 @@ src/extensions/
 
 - `ExtensionHost.tsx` iframe 宿主,管理加载 / 消息桥 / 保存流程 / 工具栏;**启动看门狗**(2026-07-22):iframe 12s 内未 post `ready` → 显示可重试失败态(此前崩溃/CSP 拦截 = 永久白屏),ready 前显示加载遮罩,重试经 `retryKey` 重挂 iframe
 - 编辑器脏状态经 `contentChangedInEditor` 上报;Save 触发 `parentSaveDocument` → `writeFileWithRevision`
+- text / drawio / Excalidraw 的保存消息带内容 `revision`，宿主在 `savingFile` 回显实际写盘版本；旧回执不能清除写盘期间新产生的 dirty，stale 写盘即使已落盘也返回 false 并明确提示最新编辑仍未保存。并发保存会提示先等待当前写入；宿主报告成功后 provider 还会从 store 复查权威 dirty，仍有新编辑就取消关闭并恢复焦点。Excalidraw 每次完成写入都把比较基线推进到实际快照，再按当前 scene 重算 dirty，编辑后撤销回该快照也可正确变干净；缺省 revision 的旧扩展保留原行为
+- `fileContent` 用于真实文件切换/外部刷新，只读切换走独立 `setReadOnly`；text 同路径仍有未保存修改时不重灌旧磁盘内容，drawio 只读用 iframe `inert` 阻止继续编辑
+- 多标签记录所属 `locationId`，位置只读状态变化只同步该位置的标签，其他位置的后台标签保持原权限与对象身份；关闭前直接从 store 读取权威 dirty，不依赖 effect 镜像。后台脏标签的确认框会临时聚焦目标，取消、保存失败或保存/放弃成功关闭后都恢复此前活动标签（目标已关闭时自然不再选中它）
+- 写盘异常、初始或请求后切换的只读状态、15 秒未收到保存响应都由 ExtensionHost 各通知一次；普通保存统一使用通用保存错误并附上具体原因，超时会明确较晚写盘仍可能完成，关闭/重试前需确认标签状态。provider 在已注册 handler 返回 false 时只恢复焦点，handler 缺失或保存成功后权威 dirty 仍为 true 时才发关闭专用通知，不再叠加 blocking alert 与 snackbar。工具栏 Save 与关闭保存交叠时可能保守地取消关闭并提示保存进行中，不会把未确认内容视为已保存
+- 外部刷新优先精确路径，只有大小写/分隔符归一化后唯一匹配才回退，大小写不同且结果有歧义时绝不重载错误标签；未保存编辑仍优先于磁盘重载
 - 编辑器保存前**自动备份**到 `.whale/revisions/<basename>/<timestamp>.<ext>`；文件名用单调毫秒时间戳(同毫秒的两次保存各留一份,不互相覆盖),列表按源文件自身扩展名还原时间戳(无扩展名文件不再被最后一个点截断)。备份与恢复按**字节**读写(`Buffer` + `atomicWriteBytes`,不经过 utf8 解码):GBK / 二进制文件若按 utf8 往返,非法序列会被替换成 U+FFFD,恢复时就把损坏内容写回原文件;清理遍历的根 / 子目录失败只 warn,不再让一个坏目录 reject 整批。
 - 启动清理 30 天前的旧 revision(`Root.tsx` 调 `cleanupRevisions(30)`)；IPC 只接受有限、非负的 number，非法或负天数会在任何删除发生前 reject
 
@@ -150,13 +155,17 @@ src/extensions/
 3. build 第三方 webapp 时**不要**过滤子目录;drawio `App.main` 同步等子资源 200,失败不发 `init`
 4. 第三方 webapp 的 embed 协议经常"遗留字符串握手"+"结构化 JSON"两套;drawio 是 `proto=json` URL 参数切换
 
+Draw.io 的本地 Link/Lightbox 会请求 `drawio-assets` 目录 URL。`extension-protocol.ts` 仅把 `drawio-editor/drawio-assets` 精确根路径（含尾斜杠变体）映射到该目录的 `index.html`,其他扩展目录仍保持 EISDIR/404,不开放通用目录索引。构建时 base/lightbox 使用无尾斜杠 URL,viewer/base/lightbox 都由独立赋值固定到本地,避免 vendor `PreConfig.js` 重置与赋值顺序影响。
+
+上游 `drawio-offline` 包不包含 `embed-static.min.js` 或 `embed.js`(只有 `embed.dev.js`),所以 `EditorUi.getHtml` 的 HTML-embed 仍有上游资源缺口；本地 Link/Lightbox 与 viewer-static 可服务不等于 HTML-embed 已修复。不要简单把 `embed.dev.js` 改名冒充正式 bundle。
+
 **excalidraw**:直接 `@excalidraw/excalidraw` 嵌入,scene restore + dirty 跟踪 + 从目录树拖文件嵌入(图片经原生嵌入;非图片插入带链接的缩略图,点击用系统程序打开)。
 
 **drawio**(`useWhaleBridge.ts` + `drawio-bridge.ts`):
 
 - `drawio-offline` webapp + `?proto=json` 结构化协议
 - `EMPTY_DRAWIO` 单行占位符(`<diagram>` 紧跟 `<mxGraphModel>`,零空白),避免 `parseDiagramNode` children 分支失败
-- Drawio 保存实测走 `export` action event(不是 `autosave`/`save`);bridge `dispatchDrawioMessage` 必须识别 3 种 event 统一映射到 `{kind: 'xml', xml}`
+- Drawio 保存实测走 `export` action event(不是 `autosave`/`save`);bridge 只对 `export` 调用 `getXml` 并映射为 `{kind:'xml',xml}`，`autosave`/`save` 仅触发 `onChange`，不额外生成 XML 保存消息
 - drawio `editor.modified` 默认 false(画了 shape + 1.5s autosave timer 后才翻 true),工具栏 Save 不依赖 dirty 直接允许(未修改 = no-op 写盘)
 - unmount 会注销 save/message handler、清 XML timer 并 reject pending requests；销毁后不再 postMessage，异步保存与图片插入也不得继续更新已卸载组件。`fileContent` 刷新只重绑 handler，不取消已经开始的保存或图片插入；若切换到另一文档，尚未完成的图片插入会在写 XML 前中止，避免把旧文档的拖入内容写进新文档。图片插入是 read→append→loadXml 的读改写：**读不到当前图表时中止并提示，不加载任何替换文档**（旧兜底会用一个单 cell 文档覆盖整张图）。并发拖入改走 promise 链**串行**：旧实现的 in-flight 早退会静默丢掉第二个文件（调用方收不到错误，文件就是不出现）。非图片 drop 的标签在 `html=1` 下按 HTML 渲染，文件名先做 HTML 转义再做 XML 转义（双层是刻意的：XML 解码后仍是 `&lt;…&gt;` 文本），否则名为 `<img src=x onerror=…>` 的文件会被 drawio 当标记渲染。
 
@@ -171,7 +180,7 @@ src/extensions/
 
 - `BINARY_EXT` 误加 `drawio` / `dio` → host 按 base64 注入 → `loadXml` 报 "Start tag expected"(mxfile 是 UTF-8 文本)
 - drawio `readFirstDiagramXml` 对无 `%` 前缀的 body 盲目 inflate → "invalid bit length repeat"
-- drawio `export` action event(不是 `autosave`/`save`)→ bridge 必须三事件统一映射
+- drawio `export` action event(不是 `autosave`/`save`)才调用 `getXml`；`autosave`/`save` 只触发 `onChange`
 - drawio `editor.modified` 默认 false → Save 按钮不能依赖 dirty
 - drawio embed 默认 `parent.postMessage('ready', '*')` 字符串握手 → 加 `?proto=json` 切到结构化协议
 - `pdfjs-dist` `cMapUrl` / `standardFontDataUrl` 必须是**纯文件系统路径 + 结尾 `/`**(主进程路径,不是 `file://` URL;缩略图 / 全文索引管线同样适用)

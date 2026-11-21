@@ -104,6 +104,53 @@ describe('atomic write helpers', () => {
     }
   });
 
+  it('applies a restrictive mode to the final file (POSIX)', async (t) => {
+    if (process.platform === 'win32') {
+      t.skip('POSIX mode bits are not observable on Windows');
+      return;
+    }
+    const dir = await tmpDir();
+    try {
+      const file = path.join(dir, 'mcp-config.json');
+      await atomicWriteJson(file, { token: 'secret' }, { mode: 0o600 });
+      const stat = await fsp.stat(file);
+      assert.equal(
+        stat.mode & 0o777,
+        0o600,
+        'token documents must not be group/world readable'
+      );
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects mode hardening failures without replacing the target', async (t) => {
+    const dir = await tmpDir();
+    try {
+      const file = path.join(dir, 'mcp-config.json');
+      await fsp.writeFile(file, 'original');
+      const probe = await fsp.open(file, 'r');
+      const fileHandlePrototype = Object.getPrototypeOf(probe) as fsp.FileHandle;
+      await probe.close();
+      t.mock.method(fileHandlePrototype, 'chmod', async () => {
+        throw new Error('EPERM: chmod failed');
+      });
+
+      await assert.rejects(
+        atomicWriteJson(file, { token: 'secret' }, { mode: 0o600 }),
+        /EPERM: chmod failed/
+      );
+      assert.equal(await fsp.readFile(file, 'utf8'), 'original');
+      assert.deepEqual(
+        (await fsp.readdir(dir)).filter((name) => name.endsWith('.tmp')),
+        [],
+        'failed permission hardening cleans up its unpublished temp'
+      );
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('does not remove temp files belonging to other targets', async () => {
     const dir = await tmpDir();
     try {

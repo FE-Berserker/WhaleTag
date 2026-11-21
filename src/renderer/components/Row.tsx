@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Checkbox,
   ListItemButton,
@@ -27,7 +27,7 @@ import {
 import ThumbIcon from '-/components/ThumbIcon';
 import EntryTagChips from '-/components/EntryTagChips';
 import { EMPTY_ARR } from '-/constants';
-import type { FileCellData } from '-/components/file-cell';
+import { buildFileDragItem, type FileCellData } from '-/components/file-cell';
 import { stripTagsFromName } from '-/services/tags';
 import { formatSize, formatDate } from '-/services/format';
 
@@ -129,35 +129,16 @@ export default function Row(props: RowComponentProps<FileCellData>) {
     }
   }, [isFocused]);
 
-  // Drag item: either the dragged entry alone, or (if it's selected) the whole
-  // current selection. Iterate the parent-pushed `selectedPaths` Set (P0-4) and
-  // resolve each path through `resolveEntry` — O(k) where k = selection.size,
-  // instead of the prior O(n) walk over every visible entry. Only visible
-  // selected entries resolve (matches the pre-fix scope: `entries` is `visible`).
-  const dragItem = useMemo<FileDragItem>(() => {
-    if (selectedPaths && selectedPaths.has(entry.path)) {
-      const paths: string[] = [];
-      const names: string[] = [];
-      selectedPaths.forEach((p) => {
-        const e = resolveEntry?.(p);
-        if (e) {
-          paths.push(p);
-          names.push(e.name);
-        }
-      });
-      return { paths, names };
-    }
-    return { paths: [entry.path], names: [entry.name] };
-  }, [selectedPaths, resolveEntry, entry.path, entry.name]);
-
+  // Resolve the selection lazily when the drag begins. selectedPaths is mutated
+  // in place by FileList; a render-time memo keyed by Set identity is stale.
   const [{ isDragging }, dragRef] = useDrag(
     () => ({
       type: DND_TYPE_FILE,
-      item: dragItem,
+      item: () => buildFileDragItem(entry, selectedPaths, resolveEntry),
       collect: (monitor) => ({ isDragging: monitor.isDragging() }),
       canDrag: () => !readOnly,
     }),
-    [dragItem, readOnly]
+    [entry, selectedPaths, resolveEntry, readOnly]
   );
 
   // Period-tag drop: opened via context (Phase 5 / §8). We don't write the

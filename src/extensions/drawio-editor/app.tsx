@@ -9,14 +9,13 @@ import {
   uniqueCellId,
 } from './drop-xml';
 import { getMessages } from './locales';
+import { isSaveAckCurrent } from '../../shared/extension-types';
 
 export default function App() {
   const {
     file,
     locale,
     readOnly,
-    setDirty,
-    save,
     onRequestSave,
     externalDragRef,
     requestFileEmbed,
@@ -70,9 +69,27 @@ export default function App() {
   // expression and re-adding `theme: whaleTheme` to the destructure above.
   const drawioTheme: DrawioTheme = 'kennedy';
 
+  const revisionRef = useRef(0);
+  const readOnlyRef = useRef(readOnly);
+  useLayoutEffect(() => {
+    readOnlyRef.current = readOnly;
+  }, [readOnly]);
+
+  const postDirty = useCallback((dirty: boolean) => {
+    if (!file?.path) return;
+    window.whaleExt.postMessage({
+      type: 'contentChangedInEditor',
+      path: file.path,
+      dirty,
+      revision: revisionRef.current,
+    });
+  }, [file]);
+
   const handleChange = useCallback(() => {
-    setDirty(true);
-  }, [setDirty]);
+    if (readOnlyRef.current) return;
+    revisionRef.current += 1;
+    postDirty(true);
+  }, [postDirty]);
 
   const handleError = useCallback((message: string) => {
     setError(message);
@@ -99,6 +116,20 @@ export default function App() {
     handleError,
     handleOpenLink
   );
+
+  // `inert` blocks pointer AND keyboard focus inside the inner editor. The
+  // transparent guard below also covers browsers/embedded frames that do not
+  // fully honour inert. Do not encode readOnly in the iframe URL: changing src
+  // would recreate drawio and reload an older document snapshot.
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+    iframe.inert = readOnly;
+    iframe.toggleAttribute('inert', readOnly);
+    if (readOnly) {
+      iframe.blur();
+    }
+  }, [readOnly, iframeRef]);
 
   // Safety net: if drawio's embed never sends 'init' within 15s, show an
   // explicit error in the panel instead of an indefinite "Loading…".
@@ -129,8 +160,9 @@ export default function App() {
     const xml = rewriteDrawioLinksToAbsolute(decoded, file.path);
     bridge.loadXml(xml);
     lastSavedRef.current = xml;
-    setDirty(false);
-  }, [file, bridge, setDirty]);
+    revisionRef.current = 0;
+    postDirty(false);
+  }, [file, bridge, postDirty]);
 
   // Theme is passed via `ui=...` in the URL when the iframe is created.
   // The drawio embed API has no `setTheme` action — calling it just
@@ -150,12 +182,28 @@ export default function App() {
         // decoded document — no re-compression (see the note in drop-xml.ts:
         // the on-disk format is consumed only by our own decodeDrawioDiagram,
         // and raw is readable by the external drawio app too).
+        const documentPath = file.path;
+        // Capture before the asynchronous export: edits may arrive while
+        // drawio is producing the snapshot. An older revision is conservative
+        // (it can leave dirty set), whereas a newer one could falsely clean
+        // edits that are not in the exported XML.
+        const saveRevision = revisionRef.current;
         const compressed = await bridge.getXml();
-        if (!mountedRef.current) return;
+        if (
+          !mountedRef.current ||
+          currentFilePathRef.current !== documentPath
+        ) {
+          return;
+        }
         const decoded = decodeDrawioDiagram(compressed) ?? compressed;
-        const xml = rewriteDrawioLinksToRelative(decoded, file.path);
+        const xml = rewriteDrawioLinksToRelative(decoded, documentPath);
         lastSavedRef.current = xml;
-        save(xml);
+        window.whaleExt.postMessage({
+          type: 'parentSaveDocument',
+          path: documentPath,
+          content: xml,
+          revision: saveRevision,
+        });
       } catch (err) {
         if (mountedRef.current) {
           handleError(err instanceof Error ? err.message : String(err));
@@ -165,19 +213,23 @@ export default function App() {
       }
     });
     return unregister;
-  }, [bridge, file, handleError, onRequestSave, save]);
+  }, [bridge, file, handleError, onRequestSave]);
 
-  // Clear dirty state when host confirms save.
+  // Clear dirty only when the acknowledged write covers the latest edit.
   useEffect(() => {
     if (!file) return;
     const off = window.whaleExt.onMessage((msg) => {
-      if (msg.type === 'savingFile' && msg.path === file.path) {
-        setDirty(false);
+      if (
+        msg.type === 'savingFile' &&
+        msg.path === file.path &&
+        isSaveAckCurrent(msg.revision, revisionRef.current)
+      ) {
+        postDirty(false);
         bridge.setModified(false);
       }
     });
     return off;
-  }, [bridge, file, setDirty]);
+  }, [bridge, file, postDirty]);
 
   // External-drag overlay lifecycle. The host fires `externalDrag {active:true}`
   // on dragstart. A matching `active:false` arrives from the host's window
@@ -338,6 +390,10 @@ useEffect(() => {
         window.clearTimeout(dragTimerRef.current);
         dragTimerRef.current = null;
       }
+      if (readOnlyRef.current) {
+        clearExternalDrag();
+        return;
+      }
       const drag = externalDragRef.current;
       if (!drag) {
         return;
@@ -370,7 +426,11 @@ useEffect(() => {
 
       // A file-content refresh must not cancel the insert, but switching from
       // document A to B must not write A's dragged cell into B's diagram.
-      if (!mountedRef.current || currentFilePathRef.current !== documentPath) return;
+      if (
+        !mountedRef.current ||
+        readOnlyRef.current ||
+        currentFilePathRef.current !== documentPath
+      ) return;
       void bridge
         .insertLinkedThumbnail({
           filePath: drag.path,
@@ -388,7 +448,7 @@ useEffect(() => {
           // without touching the document when it cannot read the current
           // diagram, so a failed insert must not flag unsaved changes.
           if (mountedRef.current && currentFilePathRef.current === documentPath) {
-            setDirty(true);
+            handleChange();
           }
         })
         .catch((err) => {
@@ -414,7 +474,7 @@ useEffect(() => {
     clearExternalDrag,
     externalDragRef,
     messages.insertFailed,
-    setDirty,
+    handleChange,
   ]);
 
   const handleDropOverlay = useCallback(
@@ -426,17 +486,21 @@ useEffect(() => {
       e.stopPropagation();
       const drag = externalDragRef.current;
       if (!drag) return;
+      if (readOnlyRef.current) {
+        clearExternalDrag();
+        return;
+      }
       // Ask the host for a thumbnail; the `fileEmbed` handler above does
       // the merge once the answer arrives.
       requestFileEmbed(drag.path, drag.isDirectory);
     },
-    [externalDragRef, requestFileEmbed]
+    [clearExternalDrag, externalDragRef, requestFileEmbed]
   );
 
   const handleDragOverOverlay = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    e.dataTransfer.dropEffect = 'copy';
+    e.dataTransfer.dropEffect = readOnlyRef.current ? 'none' : 'copy';
   }, []);
 
   // NOTE: there used to be a window-level `dragend` listener here that tried
@@ -448,9 +512,9 @@ useEffect(() => {
   // `externalDrag {active:false}` to this iframe via postMessage. The
   // externalDrag listener above handles that signal.
 
-  const url = file
-    ? getDrawioUrl(drawioTheme, readOnly, locale)
-    : getDrawioUrl(drawioTheme, false, locale);
+  // Read-only is enforced locally without changing src; a new URL would
+  // reload drawio and could discard unsaved in-memory edits.
+  const url = getDrawioUrl(drawioTheme, false, locale);
 
   if (error) {
     return (
@@ -535,6 +599,15 @@ useEffect(() => {
           {messages.dropHint}
         </span>
       </div>
+      {readOnly && (
+        <div
+          data-testid="drawio-readonly-guard"
+          aria-hidden="true"
+          style={{ position: 'absolute', inset: 0, zIndex: 3 }}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => event.preventDefault()}
+        />
+      )}
     </div>
   );
 }

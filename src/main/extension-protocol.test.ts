@@ -52,6 +52,13 @@ before(async () => {
     path.join(EXT_ROOT, 'text-editor', 'data.json'),
     '{"ok":true}'
   );
+  await fsp.mkdir(path.join(EXT_ROOT, 'drawio-editor', 'drawio-assets'), {
+    recursive: true,
+  });
+  await fsp.writeFile(
+    path.join(EXT_ROOT, 'drawio-editor', 'drawio-assets', 'index.html'),
+    '<!doctype html><script src="js/PreConfig.js"></script><script src="js/app.min.js"></script>'
+  );
   await fsp.writeFile(
     path.join(EXT_ROOT, 'text-editor', 'sub', 'dir', 'nested.txt'),
     'nested-ok'
@@ -115,6 +122,19 @@ describe('resolveExtensionRequest — happy path', () => {
     assert.equal(r.ok, true);
     if (!r.ok) return;
     assert.equal(r.buf.toString('utf-8'), 'nested-ok');
+  });
+
+  it('maps only the Draw.io assets root to its index for local Link/Lightbox URLs', async () => {
+    for (const suffix of ['drawio-assets', 'drawio-assets/', 'drawio-assets//?client=1']) {
+      const r = await resolveExtensionRequest(
+        `whale-extension://drawio-editor/${suffix}`,
+        EXT_ROOT
+      );
+      assert.equal(r.ok, true, suffix);
+      if (!r.ok) continue;
+      assert.match(r.mime, /^text\/html/);
+      assert.match(r.buf.toString('utf-8'), /js\/app\.min\.js/);
+    }
   });
 });
 

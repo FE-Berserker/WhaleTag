@@ -11,7 +11,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { MAX_TABS, makeTabId, pickLruEvict } from './extension-tabs';
+import {
+  MAX_TABS,
+  findTabForFile,
+  makeTabId,
+  pickLruEvict,
+  sameFile,
+  syncLocationReadOnly,
+} from './extension-tabs';
 
 describe('extension-tabs', () => {
   describe('makeTabId', () => {
@@ -99,6 +106,73 @@ describe('extension-tabs', () => {
       const before = tabs.map((t) => ({ ...t }));
       pickLruEvict(tabs, 'new', new Set());
       assert.deepEqual(tabs, before);
+    });
+  });
+
+  describe('sameFile', () => {
+    it('matches watcher paths across separators and casing', () => {
+      assert.equal(sameFile('C:\\Root\\Photo.md', 'c:/root/photo.MD'), true);
+      assert.equal(sameFile('/root/photo.md', '/root/photo.md/'), true);
+    });
+
+    it('does not confuse a sibling or descendant with the file', () => {
+      assert.equal(sameFile('/root/photo.md', '/root/photo.md.backup'), false);
+      assert.equal(sameFile('/root/photo.md', '/root/photo.md/copy'), false);
+    });
+  });
+
+  describe('findTabForFile', () => {
+    const tabs = [{ filePath: '/root/Photo.md' }, { filePath: '/root/photo.md' }];
+
+    it('prefers exact identity when case-distinct tabs coexist', () => {
+      assert.equal(findTabForFile(tabs, '/root/photo.md'), tabs[1]);
+      assert.equal(findTabForFile(tabs, '/root/Photo.md'), tabs[0]);
+    });
+
+    it('uses normalized watcher identity only when it is unambiguous', () => {
+      assert.equal(findTabForFile(tabs, '/ROOT/PHOTO.MD'), undefined);
+      assert.equal(findTabForFile([tabs[0]], '/ROOT/PHOTO.MD'), tabs[0]);
+    });
+
+    it('does not reload a sibling or descendant path', () => {
+      assert.equal(findTabForFile(tabs, '/root/photo.md.backup'), undefined);
+      assert.equal(findTabForFile(tabs, '/root/photo.md/copy'), undefined);
+    });
+  });
+
+  describe('syncLocationReadOnly', () => {
+    const tabs = [
+      { id: 'a', locationId: 'one', readOnly: false },
+      { id: 'b', locationId: 'two', readOnly: false },
+      { id: 'c', locationId: 'one', readOnly: true },
+    ];
+
+    it('updates only existing tabs from the affected location', () => {
+      const next = syncLocationReadOnly(tabs, 'one', true);
+      assert.deepEqual(
+        next.map((tab) => [tab.id, tab.readOnly]),
+        [
+          ['a', true],
+          ['b', false],
+          ['c', true],
+        ]
+      );
+      assert.notEqual(next[0], tabs[0]);
+      assert.equal(next[1], tabs[1]);
+      assert.equal(next[2], tabs[2]);
+      assert.equal(tabs[0].readOnly, false, 'input remains immutable');
+    });
+
+    it('can make the matching location writable without touching others', () => {
+      const next = syncLocationReadOnly(tabs, 'one', false);
+      assert.equal(next[0].readOnly, false);
+      assert.equal(next[1].readOnly, false);
+      assert.equal(next[2].readOnly, false);
+    });
+
+    it('returns the original array when no tab needs changing', () => {
+      assert.equal(syncLocationReadOnly(tabs, 'two', false), tabs);
+      assert.equal(syncLocationReadOnly(tabs, 'missing', true), tabs);
     });
   });
 

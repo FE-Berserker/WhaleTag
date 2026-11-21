@@ -34,7 +34,7 @@ import {
  replaceAll,
  gotoLine,
 } from '@codemirror/search';
-import type { HostMessage } from '../../shared/extension-types';
+import { isSaveAckCurrent, type HostMessage } from '../../shared/extension-types';
 
 import {
  STATUS_NO_VALUE,
@@ -57,6 +57,20 @@ import {
 let view: EditorView | null = null;
 let currentPath: string | null = null;
 let currentEncoding: 'utf8' | 'base64' = 'utf8';
+let revision = 0;
+let dirty = false;
+let applyingFileContent = false;
+
+function postDirty(nextDirty: boolean) {
+ if (!currentPath) return;
+ dirty = nextDirty;
+ window.whaleExt.postMessage({
+ type: 'contentChangedInEditor',
+ path: currentPath,
+ dirty,
+ revision,
+ });
+}
 
 const themeCompartment = new Compartment();
 const readOnlyCompartment = new Compartment();
@@ -499,12 +513,9 @@ function makeUpdateListener() {
  // Dirty marker: only fire on real doc changes. Compartment reconfigures
  // (font-size, wrap, theme, lang switch) produce transactions with
  // docChanged === false, so they don't trigger spurious dirty bits.
- if (update.docChanged && currentPath) {
- window.whaleExt.postMessage({
- type: 'contentChangedInEditor',
- path: currentPath,
- dirty: true,
- });
+ if (update.docChanged && currentPath && !applyingFileContent) {
+ revision += 1;
+ postDirty(true);
  }
  // Replace-all toast (catches replace-alls triggered from the search
  // panel itself, not just the toolbar button). CM's replaceAll uses
@@ -541,6 +552,7 @@ const saveKeymap = keymap.of([
  type: 'parentSaveDocument',
  path: currentPath,
  content: view.state.doc.toString(),
+ revision,
  });
  return true;
  },
@@ -620,7 +632,10 @@ function createEditor(container: HTMLElement, filePath: string) {
  themeCompartment.of(initialTheme === 'dark' ? oneDark : []),
 
  // --- read-only toggle ---
- readOnlyCompartment.of(EditorView.editable.of(true)),
+ readOnlyCompartment.of([
+ EditorState.readOnly.of(false),
+ EditorView.editable.of(true),
+ ]),
 
  // --- dirty tracking + status bar ---
  makeUpdateListener(),
@@ -648,18 +663,26 @@ function createEditor(container: HTMLElement, filePath: string) {
 function setReadOnly(readOnly: boolean) {
  if (!view) return;
  view.dispatch({
- effects: readOnlyCompartment.reconfigure(EditorView.editable.of(!readOnly)),
+ effects: readOnlyCompartment.reconfigure([
+ EditorState.readOnly.of(readOnly),
+ EditorView.editable.of(!readOnly),
+ ]),
  });
 }
 
 function setContent(content: string) {
  if (!view) return;
+ applyingFileContent = true;
+ try {
  view.dispatch({
  changes: { from: 0, to: view.state.doc.length, insert: content },
  // Host-driven loads are not user edits: keep them out of the undo stack so
  // Ctrl+Z can never "undo the open" into an empty/previous document.
  annotations: Transaction.addToHistory.of(false),
  });
+ } finally {
+ applyingFileContent = false;
+ }
 }
 
 function setLanguageFor(filePath: string) {
@@ -738,7 +761,14 @@ function handleMessage(msg: HostMessage) {
  effects: historyCompartment.reconfigure(history()),
  });
  }
+ // A same-path fileContent may be a legacy host's readOnly refresh. Never
+ // replace unsaved editor text with that older disk snapshot.
+ const shouldLoadContent = switchedFile || !dirty;
+ if (shouldLoadContent) {
+ revision = 0;
  setContent(msg.content);
+ postDirty(false);
+ }
  setReadOnly(msg.readOnly);
  // Apply the host's current theme (in case it switched between file
  // opens). On first file open this is a no-op (applyTheme already
@@ -757,12 +787,11 @@ function handleMessage(msg: HostMessage) {
  setReadOnly(msg.readOnly);
  break;
  case 'savingFile':
- if (currentPath) {
- window.whaleExt.postMessage({
- type: 'contentChangedInEditor',
- path: currentPath,
- dirty: false,
- });
+ if (
+ msg.path === currentPath &&
+ isSaveAckCurrent(msg.revision, revision)
+ ) {
+ postDirty(false);
  }
  break;
  case 'requestSave':
@@ -771,6 +800,7 @@ function handleMessage(msg: HostMessage) {
  type: 'parentSaveDocument',
  path: currentPath,
  content: view.state.doc.toString(),
+ revision,
  });
  }
  break;

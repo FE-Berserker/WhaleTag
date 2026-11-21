@@ -5,7 +5,9 @@ import { useConfirm } from '-/components/ConfirmDialogProvider';
 
 import type { DirEntry } from '../../shared/ipc-types';
 import { ipcApi } from '-/services/ipc-api';
-import { joinPath, isSameOrDescendant } from '-/services/path-util';
+import { joinPath, isSameOrDescendant, parentDir } from '-/services/path-util';
+import type { IOActionOptions } from './IOActionsContextProvider';
+import type { TagMetaSaveManyError } from './TagMetaContextProvider';
 import {
   resolveSmartTag,
   type SmartFunctionality,
@@ -34,9 +36,13 @@ type NewEntryHook = {
 export interface ListCommandsDeps {
   // —— IO ——
   renameEntry: (path: string, name: string) => Promise<void>;
-  moveEntry: (path: string, dest: string) => Promise<void>;
+  moveEntry: (
+    path: string,
+    dest: string,
+    options?: IOActionOptions
+  ) => Promise<void>;
   copyEntry: (path: string, name: string) => Promise<void>;
-  deleteEntry: (path: string) => Promise<void>;
+  deleteEntry: (path: string, options?: IOActionOptions) => Promise<void>;
   createFolder: (name: string) => Promise<void>;
   createFile: (name: string) => Promise<void>;
   createTaggedEntry: (
@@ -85,6 +91,7 @@ export interface ListCommandsDeps {
     v: { kind: 'folder' | 'file'; tag: string } | null
   ) => void;
   refresh: () => Promise<void>;
+  refreshTree: (path: string) => void;
   // —— Location / settings ——
   currentLocation?: { isReadOnly?: boolean } | null;
   currentDirectoryPath: string;
@@ -127,7 +134,8 @@ export interface ListCommands {
   handleDropTag: (
     entry: DirEntry,
     tag: string,
-    functionality?: string
+    functionality?: string,
+    targets?: readonly DirEntry[]
   ) => Promise<void>;
   handleDropFiles: (target: DirEntry, sources: DirEntry[]) => Promise<void>;
   // —— Bulk (multi-select) ——
@@ -147,6 +155,184 @@ export interface ListCommands {
   handleNewDrawio: () => Promise<void>;
 }
 
+export interface BatchOperationOutcome<T> {
+  succeeded: T[];
+  errors: string[];
+}
+
+/** Keep notices bounded without losing the complete diagnostics in the log. */
+export function summarizeBatchErrors(
+  errors: readonly string[],
+  andMore: (count: number) => string,
+  logError: (...data: unknown[]) => void = console.error
+): string {
+  logError('[files] Batch operation errors:', errors);
+  const visible = errors.slice(0, 3);
+  if (errors.length > 3) visible.push(andMore(errors.length - 3));
+  return visible.join('; ');
+}
+
+export interface BatchNotice {
+  message: string;
+  severity: 'success' | 'warning' | 'error';
+}
+
+/** Compose one truthful notice while keeping full diagnostics in the log. */
+export function composeBatchNotice(
+  successCount: number,
+  successText: string,
+  errors: readonly string[],
+  translations: {
+    andMore: (count: number) => string;
+    operationFailed: (message: string) => string;
+    partialFailure: (success: string, failure: string) => string;
+  },
+  successSeverity: 'success' | 'warning' = 'success',
+  logError: (...data: unknown[]) => void = console.error
+): BatchNotice | null {
+  if (errors.length === 0) {
+    return successCount > 0
+      ? { message: successText, severity: successSeverity }
+      : null;
+  }
+  const failureText = translations.operationFailed(
+    summarizeBatchErrors(errors, translations.andMore, logError)
+  );
+  if (successCount === 0) return { message: failureText, severity: 'error' };
+  return {
+    message: translations.partialFailure(successText, failureText),
+    severity: 'warning',
+  };
+}
+
+/** Read the partial outcome attached by TagMetaContextProvider.saveMany. */
+export function tagMetaSaveManyFailure(
+  error: unknown
+): TagMetaSaveManyError | null {
+  if (!(error instanceof Error)) return null;
+  const candidate = error as Partial<TagMetaSaveManyError>;
+  if (
+    typeof candidate.updatedCount !== 'number' ||
+    !Number.isSafeInteger(candidate.updatedCount) ||
+    candidate.updatedCount < 0 ||
+    !Array.isArray(candidate.errors) ||
+    candidate.errors.length === 0 ||
+    !candidate.errors.every((detail) => typeof detail === 'string')
+  ) {
+    return null;
+  }
+  return error as TagMetaSaveManyError;
+}
+
+/** Reject self/descendant moves as item errors so mixed batches stay truthful. */
+export function moveValidationError(
+  source: DirEntry,
+  targetPath: string,
+  message: string
+): string | null {
+  return source.path === targetPath || isSameOrDescendant(source.path, targetPath)
+    ? message
+    : null;
+}
+
+/**
+ * Run every item even after a failure, then reconcile the listing once. Both
+ * item and refresh failures are returned to the caller for one truthful notice.
+ */
+export async function runBatchWithRefresh<T>(
+  items: readonly T[],
+  operation: (item: T) => Promise<void>,
+  refresh: (succeeded: readonly T[]) => Promise<void>,
+  label: (item: T) => string,
+  refreshLabel: string
+): Promise<BatchOperationOutcome<T>> {
+  const succeeded: T[] = [];
+  const errors: string[] = [];
+  for (const item of items) {
+    try {
+      await operation(item);
+      succeeded.push(item);
+    } catch (error) {
+      errors.push(
+        `${label(item)}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+  try {
+    await refresh(succeeded);
+  } catch (error) {
+    errors.push(
+      `${refreshLabel}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  return { succeeded, errors };
+}
+
+/**
+ * Tree paths affected by successful deletes, or moves when destinationDir is
+ * supplied. Failed items contribute nothing; Set preserves first-use order.
+ */
+export function affectedTreePathsAfterBatch(
+  succeeded: readonly DirEntry[],
+  destinationDir?: string
+): string[] {
+  const paths = new Set<string>();
+  for (const entry of succeeded) {
+    paths.add(parentDir(entry.path));
+    if (destinationDir !== undefined) paths.add(destinationDir);
+  }
+  return [...paths];
+}
+
+/** Remove only paths whose IO actually succeeded; failed/unrelated paths stay selected. */
+export function selectionAfterBatch(
+  previous: Set<string>,
+  succeeded: readonly DirEntry[]
+): Set<string> {
+  if (succeeded.length === 0) return previous;
+  const paths = new Set(succeeded.map((entry) => entry.path));
+  const next = new Set(previous);
+  let changed = false;
+  for (const path of paths) {
+    if (next.delete(path)) changed = true;
+  }
+  return changed ? next : previous;
+}
+
+/** Build and persist one logical tag drop, using saveMany for a multi-target drop. */
+export async function saveTagToEntries(
+  targets: readonly DirEntry[],
+  resolvedTag: string,
+  deps: Pick<
+    ListCommandsDeps,
+    'save' | 'saveMany' | 'tagsByName' | 'descByName' | 'normalize'
+  >
+): Promise<number> {
+  const updates: {
+    entry: DirEntry;
+    meta: { tags: string[]; description?: string };
+  }[] = [];
+  for (const entry of targets) {
+    const current = deps.tagsByName.get(entry.path) ?? [];
+    if (current.includes(resolvedTag)) continue;
+    const description = deps.descByName.get(entry.path);
+    updates.push({
+      entry,
+      meta: {
+        tags: deps.normalize([...current, resolvedTag]),
+        ...(description ? { description } : {}),
+      },
+    });
+  }
+  if (updates.length === 0) return 0;
+  if (targets.length === 1) {
+    await deps.save(updates[0].entry, updates[0].meta);
+  } else {
+    await deps.saveMany(updates);
+  }
+  return updates.length;
+}
+
 /**
  * Build the action bundle. Memoized on the deps reference so callers can
  * hand a stable deps after P0-2 (e.g. wrapped in `useMemo`).
@@ -157,6 +343,32 @@ export function useListCommands(deps: ListCommandsDeps): ListCommands {
 
   return useMemo<ListCommands>(() => {
     const d = deps;
+
+    const finishBatch = (
+      successCount: number,
+      successText: string,
+      errors: string[],
+      successSeverity: 'success' | 'warning' = 'success',
+      opts?: { openTrash?: boolean }
+    ) => {
+      const notice = composeBatchNotice(
+        successCount,
+        successText,
+        errors,
+        {
+          andMore: (count) => t('andMoreFailures', { count }),
+          operationFailed: (message) => t('operationFailed', { message }),
+          partialFailure: (success, failure) =>
+            t('partialFailure', { success, failure }),
+        },
+        successSeverity
+      );
+      if (notice) d.showNotice(notice.message, notice.severity, opts);
+    };
+
+    const retainFailedSelection = (succeeded: readonly DirEntry[]) => {
+      d.setSelected((previous) => selectionAfterBatch(previous, succeeded));
+    };
 
     const handleDelete: ListCommands['handleDelete'] = async (entry) => {
       const msg = d.deleteToTrash
@@ -256,7 +468,8 @@ export function useListCommands(deps: ListCommandsDeps): ListCommands {
     const handleDropTag: ListCommands['handleDropTag'] = async (
       entry,
       tag,
-      functionality
+      functionality,
+      targets
     ) => {
       // P0 (Gallery 打标入口补齐,2026-07-02):守 readOnly,与兄弟
       // handleDropFiles/handleAddTag/handleRemoveTag/handleDeleteSelected 同型。
@@ -267,16 +480,21 @@ export function useListCommands(deps: ListCommandsDeps): ListCommands {
         ? resolveSmartTag(functionality as SmartFunctionality, new Date()) ??
           tag
         : tag;
-      const current = d.tagsByName.get(entry.path) ?? [];
-      if (current.includes(resolved)) return;
+      const dropTargets = targets ?? [entry];
+      if (dropTargets.length === 0) return;
       try {
-        const description = d.descByName.get(entry.path);
-        await d.save(entry, {
-          tags: d.normalize([...current, resolved]),
-          ...(description ? { description } : {}),
-        });
-        d.showNotice(t('tagsApplied', { count: 1 }), 'success');
+        const count = await saveTagToEntries(dropTargets, resolved, d);
+        if (count > 0) d.showNotice(t('tagsApplied', { count }), 'success');
       } catch (e) {
+        const failure = tagMetaSaveManyFailure(e);
+        if (failure) {
+          finishBatch(
+            failure.updatedCount,
+            t('tagsApplied', { count: failure.updatedCount }),
+            failure.errors
+          );
+          return;
+        }
         d.showNotice(e instanceof Error ? e.message : String(e));
       }
     };
@@ -287,24 +505,38 @@ export function useListCommands(deps: ListCommandsDeps): ListCommands {
     ) => {
       if (!target.isDirectory || sources.length === 0) return;
       if (d.currentLocation?.isReadOnly) return;
-      let ok = 0;
-      for (const src of sources) {
-        if (
-          src.path === target.path ||
-          isSameOrDescendant(src.path, target.path)
-        )
-          continue;
-        try {
-          await d.moveEntry(src.path, target.path);
-          ok += 1;
-        } catch (e) {
-          d.showNotice(e instanceof Error ? e.message : String(e));
-        }
-      }
-      if (ok > 0) {
-        d.showNotice(t('movedItems', { count: ok }), 'success');
-        d.clearSelection();
-      }
+      const outcome = await runBatchWithRefresh(
+        sources,
+        async (src) => {
+          const validationError = moveValidationError(
+            src,
+            target.path,
+            t('moveIntoSelfOrDescendant')
+          );
+          if (validationError) throw new Error(validationError);
+          await d.moveEntry(src.path, target.path, {
+            refresh: false,
+            treeRefresh: false,
+          });
+        },
+        async (succeeded) => {
+          for (const path of affectedTreePathsAfterBatch(
+            succeeded,
+            target.path
+          )) {
+            d.refreshTree(path);
+          }
+          await d.refresh();
+        },
+        (src) => src.name,
+        t('refresh')
+      );
+      retainFailedSelection(outcome.succeeded);
+      finishBatch(
+        outcome.succeeded.length,
+        t('movedItems', { count: outcome.succeeded.length }),
+        outcome.errors
+      );
     };
 
     const handleBulkDelete: ListCommands['handleBulkDelete'] = async () => {
@@ -318,23 +550,30 @@ export function useListCommands(deps: ListCommandsDeps): ListCommands {
         }))
       )
         return;
-      let ok = 0;
-      for (const entry of targets) {
-        try {
-          await d.deleteEntry(entry.path);
-          ok += 1;
-        } catch (e) {
-          d.showNotice(e instanceof Error ? e.message : String(e));
-        }
-      }
-      if (ok > 0) {
-        if (d.deleteToTrash) {
-          d.showNotice(t('movedToTrash'), 'success', { openTrash: true });
-        } else {
-          d.showNotice(t('deletedPermanently'), 'warning');
-        }
-      }
-      d.clearSelection();
+      const outcome = await runBatchWithRefresh(
+        targets,
+        (entry) =>
+          d.deleteEntry(entry.path, { refresh: false, treeRefresh: false }),
+        async (succeeded) => {
+          for (const path of affectedTreePathsAfterBatch(succeeded)) {
+            d.refreshTree(path);
+          }
+          await d.refresh();
+        },
+        (entry) => entry.name,
+        t('refresh')
+      );
+      retainFailedSelection(outcome.succeeded);
+      const successText = d.deleteToTrash
+        ? t('trashedItems', { count: outcome.succeeded.length })
+        : t('deletedItems', { count: outcome.succeeded.length });
+      finishBatch(
+        outcome.succeeded.length,
+        successText,
+        outcome.errors,
+        d.deleteToTrash ? 'success' : 'warning',
+        d.deleteToTrash ? { openTrash: true } : undefined
+      );
     };
 
     // H.23 P3-1: invert the selection against a candidate list. Each entry
@@ -364,21 +603,44 @@ export function useListCommands(deps: ListCommandsDeps): ListCommands {
 
     const handleBulkMove: ListCommands['handleBulkMove'] = async () => {
       const targets = d.selectedEntries;
-      if (targets.length === 0) return;
+      if (targets.length === 0 || d.currentLocation?.isReadOnly) return;
+      let dest: string | null;
       try {
-        const dest = await ipcApi.openDirectoryDialog();
-        if (!dest) return;
-        for (const entry of targets) {
-          try {
-            await d.moveEntry(entry.path, dest);
-          } catch (e) {
-            d.showNotice(e instanceof Error ? e.message : String(e));
-          }
-        }
-        d.clearSelection();
+        dest = await ipcApi.openDirectoryDialog();
       } catch (e) {
-        d.showNotice(e instanceof Error ? e.message : String(e));
+        d.showNotice(e instanceof Error ? e.message : String(e), 'error');
+        return;
       }
+      if (!dest) return;
+      const outcome = await runBatchWithRefresh(
+        targets,
+        async (entry) => {
+          const validationError = moveValidationError(
+            entry,
+            dest,
+            t('moveIntoSelfOrDescendant')
+          );
+          if (validationError) throw new Error(validationError);
+          await d.moveEntry(entry.path, dest, {
+            refresh: false,
+            treeRefresh: false,
+          });
+        },
+        async (succeeded) => {
+          for (const path of affectedTreePathsAfterBatch(succeeded, dest)) {
+            d.refreshTree(path);
+          }
+          await d.refresh();
+        },
+        (entry) => entry.name,
+        t('refresh')
+      );
+      retainFailedSelection(outcome.succeeded);
+      finishBatch(
+        outcome.succeeded.length,
+        t('movedItems', { count: outcome.succeeded.length }),
+        outcome.errors
+      );
     };
 
     const handlePackageConfirm: ListCommands['handlePackageConfirm'] =
@@ -465,7 +727,6 @@ export function useListCommands(deps: ListCommandsDeps): ListCommands {
     // Suppress unused warnings on deps we're referencing only as types.
     void d.renameEntry;
     void d.copyEntry;
-    void d.saveMany;
 
     return {
       handleDelete,

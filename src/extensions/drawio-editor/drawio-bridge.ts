@@ -68,7 +68,7 @@ export function dispatchDrawioMessage(
   data: DrawioMessage
 ):
   | { kind: 'init' }
-  | { kind: 'xml'; xml: string }
+  | { kind: 'xml'; xml: string; source: 'autosave' | 'save' | 'export' }
   | { kind: 'error'; message: string }
   | { kind: 'openLink'; href: string; target?: string }
   | null {
@@ -81,7 +81,7 @@ export function dispatchDrawioMessage(
     data.event === 'export'
   ) {
     const xml = data.xml as string | undefined;
-    if (xml) return { kind: 'xml', xml };
+    if (xml) return { kind: 'xml', xml, source: data.event };
     return null;
   }
   if (data.event === 'error' || data.action === 'error') {
@@ -310,20 +310,21 @@ export function useDrawioBridge(
       }
 
       if (result.kind === 'xml') {
-        // drawio's `export` action (which is what `getXml` posts) returns its
-        // response as `{event: 'export', xml: '...'}` — see drawio
-        // `createLoadMessage('export')` + the `export` action handler in
-        // `installMessageHandler`. We accept all three event names so the
-        // bridge works whether drawio is in autosave mode or we're
-        // requesting XML on demand. Without this, the `getXml` queue never
-        // resolves and the 5-second timeout fires with "draw.io save timeout".
-        const queue = requestQueueRef.current;
-        requestQueueRef.current = [];
-        queue.forEach((request) => {
-          clearRequestTimer(request);
-          request.resolve(result.xml);
-        });
-        onChange();
+        if (result.source === 'export') {
+          // Only an export response resolves getXml. An autosave can arrive
+          // while that request is in flight; treating it as the response would
+          // save an unrelated snapshot and leave the real export unanswered.
+          const queue = requestQueueRef.current;
+          requestQueueRef.current = [];
+          queue.forEach((request) => {
+            clearRequestTimer(request);
+            request.resolve(result.xml);
+          });
+        } else {
+          // Autosave/save are drawio's own modification notifications, not
+          // responses to a read snapshot requested by save/insert.
+          onChange();
+        }
         return;
       }
 

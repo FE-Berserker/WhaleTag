@@ -13,6 +13,9 @@ import {
   moveThumbnail,
   copyThumbnail,
   thumbPathFor,
+  setFolderBackground,
+  folderBackgroundPathFor,
+  loadFolderBackground,
 } from './thumbnail';
 import { THUMBS_DIR } from '../shared/whale-meta';
 
@@ -71,6 +74,31 @@ async function makePdf(filePath: string): Promise<void> {
   const page = doc.addPage([100, 100]);
   page.drawText('Whale', { x: 10, y: 50, size: 20, color: rgb(0, 0.5, 1) });
   await fsp.writeFile(filePath, await doc.save());
+}
+
+async function waitFor(
+  condition: () => boolean,
+  description: string,
+  timeoutMs = 2000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() >= deadline) assert.fail(`timed out waiting for ${description}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+type ReadFileAsBuffer = (
+  file: string | Buffer | URL,
+  options?: BufferEncoding | null
+) => Promise<Buffer>;
+
+function readAsBuffer(
+  read: typeof fsp.readFile,
+  file: string | Buffer | URL,
+  options?: BufferEncoding | null
+): Promise<Buffer> {
+  return (read as unknown as ReadFileAsBuffer)(file, options);
 }
 
 describe('image thumbnails (.whale/thumbs/<file>.jpg)', () => {
@@ -302,6 +330,54 @@ describe('Folder thumbnails (.whale/wst.jpg)', () => {
     }
   });
 
+  it('coalesces same-folder loads into one copy and one read', async (t) => {
+    const dir = await tmpDir();
+    try {
+      const img = path.join(dir, 'a.png');
+      await makePng(img);
+      // Seed the source thumbnail so the test isolates folder copy + read work.
+      await generateThumbnail(img);
+      const { loadFolderThumbnail, folderThumbPathFor } = await import('./thumbnail');
+      const target = folderThumbPathFor(dir);
+      const originalCopy = fsp.copyFile;
+      const originalRead = fsp.readFile;
+      let copies = 0;
+      let reads = 0;
+      t.mock.method(
+        fsp,
+        'copyFile',
+        async (
+          source: string | Buffer | URL,
+          destination: string | Buffer | URL,
+          mode?: number
+        ) => {
+          if (path.resolve(String(destination)) === target) copies += 1;
+          await originalCopy(source, destination, mode);
+        }
+      );
+      const read: ReadFileAsBuffer = async (file, options) => {
+        if (path.resolve(String(file)) === target) reads += 1;
+        return readAsBuffer(originalRead, file, options);
+      };
+      t.mock.method(fsp, 'readFile', read);
+
+      const pending = Array.from({ length: 8 }, () => loadFolderThumbnail(dir));
+      const results = await Promise.all(pending);
+
+      assert.equal(copies, 1, 'only the first caller generates/copies the thumbnail');
+      assert.equal(reads, 1, 'all concurrent callers share the same read');
+      assert.ok(results[0]?.startsWith('data:image/jpeg;base64,'));
+      assert.ok(results.every((result) => result === results[0]));
+
+      // Settlement clears only the in-flight entry; this is not a data cache.
+      assert.equal(await loadFolderThumbnail(dir), results[0]);
+      assert.equal(copies, 1);
+      assert.equal(reads, 2);
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('clears a folder thumbnail', async () => {
     const dir = await tmpDir();
     try {
@@ -397,6 +473,255 @@ describe('Folder thumbnails (.whale/wst.jpg)', () => {
     } finally {
       await fsp.rm(srcDir, { recursive: true, force: true });
       await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('Folder backgrounds (.whale/wsb.jpg)', () => {
+  it('coalesces same-folder background reads without caching the result', async (t) => {
+    const dir = await tmpDir();
+    const target = folderBackgroundPathFor(dir);
+    const contents = 'folder background';
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    await fsp.writeFile(target, contents, 'utf8');
+    const originalRead = fsp.readFile;
+    let reads = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const read: ReadFileAsBuffer = async (file, options) => {
+      if (path.resolve(String(file)) === target) {
+        reads += 1;
+        await gate;
+      }
+      return readAsBuffer(originalRead, file, options);
+    };
+    t.mock.method(fsp, 'readFile', read);
+    const pending = Array.from({ length: 6 }, () => loadFolderBackground(dir));
+    try {
+      await waitFor(() => reads === 1, 'the shared background read');
+      assert.equal(reads, 1, 'concurrent callers start only one underlying read');
+      release();
+      const expected = `data:image/jpeg;base64,${Buffer.from(contents).toString('base64')}`;
+      const results = await Promise.all(pending);
+      assert.deepEqual(results, Array.from({ length: 6 }, () => expected));
+
+      // A later call must read again rather than reuse a persistent data URL.
+      assert.equal(await loadFolderBackground(dir), expected);
+      assert.equal(reads, 2);
+    } finally {
+      release();
+      await Promise.allSettled(pending);
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps in-flight background loads isolated by directory', async (t) => {
+    const root = await tmpDir();
+    const dirA = path.join(root, 'a');
+    const dirB = path.join(root, 'b');
+    const targetA = folderBackgroundPathFor(dirA);
+    const targetB = folderBackgroundPathFor(dirB);
+    await fsp.mkdir(path.dirname(targetA), { recursive: true });
+    await fsp.mkdir(path.dirname(targetB), { recursive: true });
+    await fsp.writeFile(targetA, 'background A');
+    await fsp.writeFile(targetB, 'background B');
+    const originalRead = fsp.readFile;
+    const reads: string[] = [];
+    const releases = new Map<string, () => void>();
+    const read: ReadFileAsBuffer = async (file, options) => {
+      const resolved = path.resolve(String(file));
+      if (resolved === targetA || resolved === targetB) {
+        reads.push(resolved);
+        await new Promise<void>((resolve) => releases.set(resolved, resolve));
+      }
+      return readAsBuffer(originalRead, file, options);
+    };
+    t.mock.method(fsp, 'readFile', read);
+    const pending = [loadFolderBackground(dirA), loadFolderBackground(dirB)];
+    try {
+      await waitFor(() => reads.length === 2, 'both directories to read independently');
+      assert.deepEqual(reads.sort(), [targetA, targetB].sort());
+      for (const release of releases.values()) release();
+      assert.deepEqual(await Promise.all(pending), [
+        `data:image/jpeg;base64,${Buffer.from('background A').toString('base64')}`,
+        `data:image/jpeg;base64,${Buffer.from('background B').toString('base64')}`,
+      ]);
+    } finally {
+      for (const release of releases.values()) release();
+      await Promise.allSettled(pending);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('propagates a shared background read failure and permits a retry', async (t) => {
+    const dir = await tmpDir();
+    const target = folderBackgroundPathFor(dir);
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    await fsp.writeFile(target, 'recovered background');
+    const originalRead = fsp.readFile;
+    let attempts = 0;
+    const read: ReadFileAsBuffer = async (file, options) => {
+      if (path.resolve(String(file)) === target) {
+        attempts += 1;
+        if (attempts === 1) throw new Error('transient background read failure');
+      }
+      return readAsBuffer(originalRead, file, options);
+    };
+    t.mock.method(fsp, 'readFile', read);
+    try {
+      const pending = [loadFolderBackground(dir), loadFolderBackground(dir)];
+      const rejected = await Promise.allSettled(pending);
+      assert.equal(attempts, 1, 'the failed read is shared');
+      for (const result of rejected) {
+        assert.equal(result.status, 'rejected');
+        if (result.status === 'rejected') {
+          assert.match(String(result.reason), /transient background read failure/);
+        }
+      }
+
+      const url = await loadFolderBackground(dir);
+      assert.equal(attempts, 2, 'failure is evicted and the next call retries');
+      assert.equal(
+        url,
+        `data:image/jpeg;base64,${Buffer.from('recovered background').toString('base64')}`
+      );
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('bounds sharp background encodes to the shared four-permit limit', async () => {
+    const root = await tmpDir();
+    let started = 0;
+    let active = 0;
+    let maxActive = 0;
+    let allowCompletion = false;
+    const releases: Array<() => void> = [];
+    const releaseAll = () => {
+      for (const release of releases.splice(0)) release();
+    };
+    const fakeSharp = (() => {
+      const pipeline = {
+        rotate: () => pipeline,
+        resize: () => pipeline,
+        jpeg: () => pipeline,
+        toBuffer: () => {
+          started += 1;
+          active += 1;
+          maxActive = Math.max(maxActive, active);
+          if (allowCompletion) {
+            active -= 1;
+            return Promise.resolve(Buffer.from('background'));
+          }
+          return new Promise<Buffer>((resolve) => {
+            releases.push(() => {
+              active -= 1;
+              resolve(Buffer.from('background'));
+            });
+          });
+        },
+      };
+      return pipeline;
+    }) as unknown as typeof sharp;
+
+    const targets: string[] = [];
+    const pending = Array.from({ length: 10 }, (_, i) => {
+      const dir = path.join(root, `folder-${i}`);
+      targets.push(folderBackgroundPathFor(dir));
+      return setFolderBackground(dir, path.join(root, `source-${i}.png`), () => fakeSharp);
+    });
+    try {
+      await waitFor(() => started === 4, 'the first four background encodes');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      assert.equal(started, 4, 'no encode starts without a global permit');
+
+      allowCompletion = true;
+      releaseAll();
+      await Promise.all(pending);
+      assert.equal(started, 10);
+      assert.equal(maxActive, 4);
+      assert.equal(active, 0);
+      assert.ok(targets.every((target) => existsSync(target)));
+    } finally {
+      allowCompletion = true;
+      releaseAll();
+      await Promise.allSettled(pending);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('releases a permit after an encode error so a queued encode can run', async () => {
+    const root = await tmpDir();
+    let started = 0;
+    let active = 0;
+    const releases: Array<() => void> = [];
+    const releaseAll = () => {
+      for (const release of releases.splice(0)) release();
+    };
+    const fakeSharp = ((sourcePath: string) => {
+      const shouldFail = path.basename(sourcePath) === 'source-0.png';
+      const pipeline = {
+        rotate: () => pipeline,
+        resize: () => pipeline,
+        jpeg: () => pipeline,
+        toBuffer: () => {
+          const id = ++started;
+          active += 1;
+          if (shouldFail) {
+            active -= 1;
+            return Promise.reject(new Error('intentional background encode failure'));
+          }
+          if (id <= 4) {
+            return new Promise<Buffer>((resolve) => {
+              releases.push(() => {
+                active -= 1;
+                resolve(Buffer.from('background'));
+              });
+            });
+          }
+          active -= 1;
+          return Promise.resolve(Buffer.from('recovered'));
+        },
+      };
+      return pipeline;
+    }) as unknown as typeof sharp;
+
+    const pending = Array.from({ length: 4 }, (_, i) =>
+      setFolderBackground(
+        path.join(root, `folder-${i}`),
+        path.join(root, `source-${i}.png`),
+        () => fakeSharp
+      )
+    );
+    const firstRejected = pending[0].then(
+      () => assert.fail('the first background encode should reject'),
+      (error: unknown) => {
+        assert.match(String(error), /intentional background encode failure/);
+      }
+    );
+    let fifth: Promise<void> | undefined;
+    try {
+      await waitFor(() => started === 4, 'all four permits to be occupied');
+      await firstRejected;
+      fifth = setFolderBackground(
+        path.join(root, 'folder-4'),
+        path.join(root, 'source-4.png'),
+        () => fakeSharp
+      );
+      // The other three encodes remain blocked. Only the failed operation's
+      // released permit can let this fifth call reach sharp.
+      await waitFor(() => started === 5, 'a queued encode after the failure');
+      assert.equal(active, 3);
+      releaseAll();
+      await Promise.all([...pending.slice(1), fifth]);
+      assert.ok(existsSync(folderBackgroundPathFor(path.join(root, 'folder-4'))));
+    } finally {
+      releaseAll();
+      await Promise.allSettled(pending);
+      if (started === 5 && fifth) await Promise.allSettled([fifth]);
+      await fsp.rm(root, { recursive: true, force: true });
     }
   });
 });

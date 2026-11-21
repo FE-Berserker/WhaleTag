@@ -2,7 +2,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, promises as fsp } from 'fs';
 import { ipcMain, shell } from 'electron';
-import { execFile } from 'child_process';
+import { execFile, type ExecFileOptions } from 'child_process';
 import { nextAvailableName } from '../../shared/dedupe-name';
 import { removeSidecar, moveSidecar, copySidecar } from '../sidecar';
 import { removeThumbnail, moveThumbnail, copyThumbnail } from '../thumbnail';
@@ -184,84 +184,135 @@ export function commonParentDir(sources: string[]): string {
   return common[common.length - 1];
 }
 
+/** Injectable process runner used by the bounded ZIP implementation and tests. */
+export type OsZipRunner = (
+  file: string,
+  args: string[],
+  options: ExecFileOptions
+) => Promise<void>;
+
+const OS_ZIP_PROCESS_OPTIONS = {
+  timeout: 120_000,
+  killSignal: 'SIGKILL',
+  maxBuffer: 1024 * 1024,
+} satisfies ExecFileOptions;
+
+function normalizeOsZipProcessError(error: unknown): unknown {
+  if (!error || typeof error !== 'object') return error;
+  const processError = error as NodeJS.ErrnoException & {
+    killed?: boolean;
+    signal?: string;
+  };
+  if (processError.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+    return new Error('ZIP packaging output exceeded the 1 MiB limit.');
+  }
+  if (processError.killed && processError.signal) {
+    return new Error('ZIP packaging timed out after 120 seconds.');
+  }
+  return error;
+}
+
+const execFileRunner: OsZipRunner = (file, args, options) =>
+  new Promise<void>((resolve, reject) => {
+    execFile(file, args, options, (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+
 /**
  * Runs the OS's built-in zip tool (no bundled dependency): PowerShell's
  * Compress-Archive on Windows, the `zip` CLI elsewhere. `sources` are absolute
  * paths to files/folders inside configured locations; on POSIX the archive is
  * built from their deepest common parent so entries keep relative names.
- * Resolves once the archive exists; rejects (surfacing stderr) otherwise.
+ *
+ * The OS tool writes a unique staging archive beside the destination. Only a
+ * complete success renames it to the user-visible path; timeout, output-limit
+ * and tool failures clean the staging file instead of leaving a partial ZIP
+ * that would block retry. The staging name still ends in .zip for PowerShell.
  */
-function runOsZip(sources: string[], zipPath: string): Promise<string> {
+export async function runOsZip(
+  sources: string[],
+  zipPath: string,
+  runner: OsZipRunner = execFileRunner,
+  platform: NodeJS.Platform = process.platform
+): Promise<string> {
   const archive = path.resolve(zipPath);
-  return new Promise<string>((resolve, reject) => {
-    const done = (err: Error | null) => {
-      if (err) return reject(err);
-      if (!existsSync(archive)) {
-        return reject(new Error('Archive was not created'));
-      }
-      resolve(zipPath);
-    };
+  const staging = `${archive}.tmp-${process.pid}-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2)}.zip`;
+  const options = { ...OS_ZIP_PROCESS_OPTIONS };
 
-    if (process.platform === 'win32') {
+  try {
+    if (platform === 'win32') {
       // -LiteralPath: treat names verbatim (no wildcard globbing). Single quotes
       // are PowerShell string delimiters; escape by doubling. Multiple sources
       // are passed as a comma-separated list.
       const psQuote = (s: string) => `'${s.replace(/'/g, "''")}'`;
       const literal = sources.map(psQuote).join(',');
       const command = `Compress-Archive -LiteralPath ${literal} -DestinationPath ${psQuote(
-        archive
+        staging
       )}`;
-      execFile(
+      await runner(
         'powershell.exe',
         ['-NoProfile', '-NonInteractive', '-Command', command],
-        (err) => done(err)
+        options
       );
     } else {
       // `zip -r` from the shared parent so entries are stored by relative name
       // (extract back to the same folder layout, not loose/absolute paths).
       const cwd = commonParentDir(sources);
-      execFile(
-        'zip',
-        ['-r', '-q', archive, ...sources.map((s) => path.relative(cwd, s))],
-        { cwd },
-        (err) => {
-          if (!err) {
-            done(null);
-            return;
-          }
-          if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-            done(err);
-            return;
-          }
-          // `zip` is not installed by default on several distributions
-          // (Ubuntu Desktop included); `python3` is. The fallback writes the
-          // same relative layout (dirs walked, empty dirs skipped) so the
-          // user still gets an archive instead of "打包失败" (docs/16 C-2).
-          console.warn(
-            '[fs-write] the zip CLI is not installed; falling back to python3 zipfile'
-          );
-          execFile(
+      try {
+        await runner(
+          'zip',
+          ['-r', '-q', staging, ...sources.map((s) => path.relative(cwd, s))],
+          { ...options, cwd }
+        );
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        // `zip` is not installed by default on several distributions
+        // (Ubuntu Desktop included); `python3` is. The fallback writes the
+        // same relative layout (dirs walked, empty dirs skipped) so the
+        // user still gets an archive instead of "打包失败" (docs/16 C-2).
+        console.warn(
+          '[fs-write] the zip CLI is not installed; falling back to python3 zipfile'
+        );
+        try {
+          await runner(
             'python3',
             [
               '-c',
               PYTHON_ZIP_SCRIPT,
               JSON.stringify(pythonZipPairs(sources, cwd)),
-              archive,
+              staging,
             ],
-            { cwd },
-            (pythonError) =>
-              done(
-                pythonError
-                  ? new Error(
-                      `zip is not installed and the python3 fallback failed: ${pythonError.message}`
-                    )
-                  : null
-              )
+            { ...options, cwd }
+          );
+        } catch (pythonError) {
+          const normalized = normalizeOsZipProcessError(pythonError);
+          if (normalized !== pythonError) {
+            console.warn('[fs-write] the python3 ZIP process failed:', pythonError);
+          }
+          const detail =
+            normalized instanceof Error ? normalized.message : String(normalized);
+          throw new Error(
+            `zip is not installed and the python3 fallback failed: ${detail}`
           );
         }
-      );
+      }
     }
-  });
+
+    if (!existsSync(staging)) throw new Error('Archive was not created');
+    await fsp.rename(staging, archive);
+    return zipPath;
+  } catch (error) {
+    await fsp.rm(staging, { force: true }).catch((cleanupError: unknown) => {
+      console.warn('[fs-write] could not remove the staging archive:', cleanupError);
+    });
+    const normalized = normalizeOsZipProcessError(error);
+    if (normalized !== error) console.warn('[fs-write] the OS ZIP process failed:', error);
+    throw normalized;
+  }
 }
 
 /**

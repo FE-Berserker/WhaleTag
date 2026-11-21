@@ -46,9 +46,22 @@ module.exports = {
     'tools/',
     'Test/',
   ],
+  overrides: [
+    {
+      // CLI build / verification scripts print progress and PASS/FAIL
+      // summaries to stdout by design; the app-level no-console policy covers
+      // src/ only.
+      files: ['scripts/**/*.js', 'scripts/**/*.ts'],
+      rules: { 'no-console': 'off' },
+    },
+  ],
   rules: {
     'react/react-in-jsx-scope': 'off',
     'react/prop-types': 'off',
+    // Warnings and errors are diagnostics users may need to see; `log` / `info`
+    // / `debug` are the ones that leaked into production. Informational lines
+    // go through `src/main/log.ts` so this rule catches future strays.
+    'no-console': ['error', { allow: ['warn', 'error'] }],
     '@typescript-eslint/no-explicit-any': 'off',
     '@typescript-eslint/no-unused-vars': [
       'warn',

@@ -66,9 +66,10 @@
 - [x] runOsZip linux 兜底
 
 ### C-3. 图标资源(构建)
-- **现状**:[resources/](../resources/) 只有 `icon.ico` + png,无 `.icns`。[builder.json](../resources/builder.json) 顶层 `icon` 指向 `.ico`,mac / linux 会忽略各自原生图标需求,fallback 到 Electron 默认图标(能跑,只是丑,且 electron-builder 会 warning)。`png-to-ico` / `png2icns` 两个 devDep 是**死依赖**(无任何脚本 import)。
-- **修法**:用 `logo.svg` / `logo-512.png` 生成 `.icns`(更推荐在 mac 上用 `iconutil`,比无人维护的 `png2icns` 0.0.1 可靠);补 `mac.icon`;清掉死 devDep 或写 `scripts/gen-icons.js` 把它们用起来。~1-2 小时。
+- **现状**:[resources/](../resources/) 只有 `icon.ico` + png,无 `.icns`。[builder.json](../resources/builder.json) 顶层 `icon` 指向 `.ico`,mac / linux 会忽略各自原生图标需求,fallback 到 Electron 默认图标(能跑,只是丑,且 electron-builder 会 warning)。未接入任何构建脚本的 `png-to-ico` / `png2icns` 死 devDep 已移除。
+- **剩余修法**:用 `logo.svg` / `logo-512.png` 生成 `.icns`(更推荐在 mac 上用 `iconutil`,比无人维护的 `png2icns` 0.0.1 可靠)并补 `mac.icon`;这不依赖刚移除的两个包。~1 小时。
 
+- [x] 清理无脚本引用的图标转换 devDep
 - [ ] 生成 `.icns` + 补 `mac.icon`
 
 ### C-4. mac 架构(可选)

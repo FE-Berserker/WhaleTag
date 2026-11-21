@@ -11,7 +11,12 @@ import {
 } from '../allowed-roots';
 import { readSidecardsForPaths, updateFileTags, mutateSidecar } from '../sidecar';
 import { readTagLibrary } from '../tag-library';
-import { extractText, MAX_PDF_BYTES } from '../fulltext';
+// IMPORTANT: do not import from '../fulltext' here. That module pulls in
+// index-db.ts, whose production guard ("must be required from the index
+// utilityProcess worker") crashes the PACKAGED app at startup when bundled
+// into the main process. Extraction goes through request() below; only the
+// size cap comes from this dependency-free module.
+import { MAX_PDF_BYTES } from '../fulltext-limits';
 import { readTextFile, listDirectory } from '../ipc/fs-read';
 import {
   moveEntry,
@@ -420,7 +425,15 @@ export function registerMcpTools(server: McpServer): void {
             isError: true,
           };
         }
-        const text = await extractText(filePath, ext, info.size);
+        // Extraction runs in the index utilityProcess: pdfjs work is
+        // CPU-heavy (must stay off the main event loop) and importing
+        // fulltext.ts directly would pull index-db.ts into the main bundle
+        // (crashes the packaged app — see the import note at the top).
+        const text = await request('fulltext:extract', {
+          fullPath: filePath,
+          ext,
+          size: info.size,
+        });
         if (text === null) {
           return {
             content: [

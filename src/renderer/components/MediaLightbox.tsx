@@ -21,6 +21,7 @@ import { isImageFile, isVideoFile } from '../../shared/whale-meta';
 import { mediaPlaylist, wrapIndex } from '../domain/gallery';
 import { encodeWhaleFileUrl } from '../../shared/whale-file-url';
 import { ipcApi } from '-/services/ipc-api';
+import { bindWindowPan } from './media-pan';
 
 interface MediaLightboxProps {
   open: boolean;
@@ -334,31 +335,53 @@ export default function MediaLightbox({
   // anywhere on the image (so the cursor doesn't have to be over a specific
   // pixel) and ends on mouse-up at the window level so a release outside
   // the image still terminates the gesture cleanly.
-  const dragStateRef = useRef<{ startX: number; startY: number; panX: number; panY: number } | null>(null);
+  const dragStateRef = useRef<{
+    startX: number;
+    startY: number;
+    panX: number;
+    panY: number;
+  } | null>(null);
+  const panCleanupRef = useRef<() => void>(() => undefined);
+  const stopPan = useCallback(() => {
+    panCleanupRef.current();
+    dragStateRef.current = null;
+  }, []);
+
+  // Closing or changing media can happen before mouseup. The same disposer is
+  // safe to call from the mouseup handler, effect teardown and unmount.
+  useEffect(() => {
+    stopPan();
+    return stopPan;
+  }, [open, currentPath, stopPan]);
+
   const handleImgMouseDown = useCallback(
     (e: React.MouseEvent<HTMLImageElement>) => {
-      if (zoom <= 1) return; // no pan at fit-zoom
+      if (zoom <= 1) {
+        stopPan();
+        return;
+      }
       e.preventDefault();
+      stopPan(); // a second mousedown must not orphan the first gesture
       dragStateRef.current = {
         startX: e.clientX,
         startY: e.clientY,
         panX: pan.x,
         panY: pan.y,
       };
-      const onMove = (ev: MouseEvent) => {
-        const s = dragStateRef.current;
-        if (!s) return;
-        setPan({ x: s.panX + (ev.clientX - s.startX), y: s.panY + (ev.clientY - s.startY) });
-      };
-      const onUp = () => {
-        dragStateRef.current = null;
-        window.removeEventListener('mousemove', onMove);
-        window.removeEventListener('mouseup', onUp);
-      };
-      window.addEventListener('mousemove', onMove);
-      window.addEventListener('mouseup', onUp);
+      panCleanupRef.current = bindWindowPan(
+        window,
+        (ev) => {
+          const s = dragStateRef.current;
+          if (!s) return;
+          setPan({
+            x: s.panX + (ev.clientX - s.startX),
+            y: s.panY + (ev.clientY - s.startY),
+          });
+        },
+        stopPan
+      );
     },
-    [zoom, pan.x, pan.y]
+    [zoom, pan.x, pan.y, stopPan]
   );
 
   // Double-click toggles between fit (1x) and 2x — a common photo-viewer
@@ -373,6 +396,7 @@ export default function MediaLightbox({
     if (!open) return;
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        stopPan();
         // If zoomed in, Esc first resets the view; a second Esc closes the
         // lightbox. Matches how Apple Preview and Photos behave — Escape
         // doesn't always mean "close", it means "step back".
@@ -407,7 +431,7 @@ export default function MediaLightbox({
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [open, onClose, goPrev, goNext, zoom, isVideo]);
+  }, [open, onClose, goPrev, goNext, zoom, isVideo, stopPan]);
 
   if (!current) return null;
 
@@ -643,6 +667,44 @@ export default function MediaLightbox({
   );
 }
 
+/** Clamp an explicitly requested page so previous/next-window controls can
+ * reach any playlist cell without rendering the full playlist. */
+export function filmstripPage(
+  length: number,
+  requestedStart: number,
+  radius = 20
+): { start: number; end: number } {
+  const safeLength = Math.max(0, Math.floor(length));
+  if (safeLength === 0) return { start: 0, end: 0 };
+  const safeRadius = Math.max(0, Math.floor(radius));
+  const size = Math.min(safeLength, safeRadius * 2 + 1);
+  const desired = Number.isFinite(requestedStart)
+    ? Math.floor(requestedStart)
+    : 0;
+  const start = Math.max(0, Math.min(desired, safeLength - size));
+  return { start, end: start + size };
+}
+
+/** Return a bounded, half-open index window centered on the active item. */
+export function filmstripWindow(
+  length: number,
+  currentIndex: number,
+  radius = 20
+): { start: number; end: number } {
+  const safeLength = Math.max(0, Math.floor(length));
+  if (safeLength === 0) return { start: 0, end: 0 };
+  const safeRadius = Math.max(0, Math.floor(radius));
+  const size = Math.min(safeLength, safeRadius * 2 + 1);
+  const safeIndex = Number.isFinite(currentIndex)
+    ? Math.min(safeLength - 1, Math.max(0, Math.floor(currentIndex)))
+    : 0;
+  const start = Math.max(
+    0,
+    Math.min(safeIndex - safeRadius, safeLength - size)
+  );
+  return { start, end: start + size };
+}
+
 /**
  * P2-4 subcomponent: horizontal filmstrip rendered at the bottom of the
  * lightbox. Each cell is a fixed-size thumbnail (48px) with a name label;
@@ -671,14 +733,34 @@ function LightboxFilmstrip({
 }) {
   const stripRef = useRef<HTMLDivElement | null>(null);
   const cellRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const { t } = useTranslation();
+  const [startOverride, setStartOverride] = useState<number | null>(null);
+  const automaticWindow = filmstripWindow(playlist.length, currentIndex);
+  const { start, end } =
+    startOverride === null
+      ? automaticWindow
+      : filmstripPage(playlist.length, startOverride);
+  const pageSize = Math.max(1, end - start);
+  const visibleEntries = playlist.slice(start, end);
+
+  // A manual page only browses the strip. Choosing a cell (or keyboard
+  // navigation) returns the bounded window to the active item.
+  useEffect(() => {
+    setStartOverride(null);
+  }, [currentIndex, playlist]);
 
   // Auto-scroll the active cell into view on index change. `inline: 'center'`
   // keeps the current item visually centered rather than hugging an edge,
   // which feels better when navigating via ←/→.
   useEffect(() => {
     const el = cellRefs.current[currentIndex];
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-  }, [currentIndex]);
+    if (el)
+      el.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+        inline: 'center',
+      });
+  }, [currentIndex, start]);
 
   return (
     <Box
@@ -708,7 +790,32 @@ function LightboxFilmstrip({
         },
       }}
     >
-      {playlist.map((entry, i) => {
+      <IconButton
+        size="small"
+        aria-label={t('previous')}
+        title={t('previous')}
+        data-testid="filmstrip-previous-window"
+        disabled={start === 0}
+        onClick={() =>
+          setStartOverride(
+            filmstripPage(playlist.length, start - pageSize).start
+          )
+        }
+        sx={{
+          flex: '0 0 auto',
+          position: 'sticky',
+          left: 0,
+          zIndex: 2,
+          width: 32,
+          height: 48,
+          color: 'common.white',
+          background: 'rgba(0,0,0,0.55)',
+        }}
+      >
+        <ChevronLeftIcon />
+      </IconButton>
+      {visibleEntries.map((entry, offset) => {
+        const i = start + offset;
         const cacheKey = `${entry.path}|${entry.modified}`;
         const thumb = thumbCache?.get(cacheKey);
         const active = i === currentIndex;
@@ -720,7 +827,10 @@ function LightboxFilmstrip({
               cellRefs.current[i] = el;
             }}
             type="button"
-            onClick={() => onSelect(i)}
+            onClick={() => {
+              setStartOverride(null);
+              onSelect(i);
+            }}
             title={entry.name}
             sx={{
               flex: '0 0 auto',
@@ -773,6 +883,30 @@ function LightboxFilmstrip({
           </Box>
         );
       })}
+      <IconButton
+        size="small"
+        aria-label={t('next')}
+        title={t('next')}
+        data-testid="filmstrip-next-window"
+        disabled={end >= playlist.length}
+        onClick={() =>
+          setStartOverride(
+            filmstripPage(playlist.length, start + pageSize).start
+          )
+        }
+        sx={{
+          flex: '0 0 auto',
+          position: 'sticky',
+          right: 0,
+          zIndex: 2,
+          width: 32,
+          height: 48,
+          color: 'common.white',
+          background: 'rgba(0,0,0,0.55)',
+        }}
+      >
+        <ChevronRightIcon />
+      </IconButton>
     </Box>
   );
 }

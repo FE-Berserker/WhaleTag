@@ -5,6 +5,21 @@
 
 export const EXT_PROTOCOL_VERSION = 1;
 
+/**
+ * Whether a save acknowledgement covers the editor's latest document version.
+ * Missing revisions are the legacy protocol and retain its original behaviour.
+ */
+export function isSaveAckCurrent(
+  ackRevision: number | undefined,
+  currentRevision: number | undefined
+): boolean {
+  return (
+    ackRevision === undefined ||
+    currentRevision === undefined ||
+    ackRevision >= currentRevision
+  );
+}
+
 export type ExtensionType = 'viewer' | 'editor';
 
 export interface ExtensionManifest {
@@ -62,6 +77,8 @@ export interface FileContentMessage {
 export interface SavingFileMessage {
   type: 'savingFile';
   path: string;
+  /** Document version accepted by the host. Omitted by legacy hosts. */
+  revision?: number;
 }
 
 export interface SetThemeMessage {
@@ -176,12 +193,16 @@ export interface ParentSaveDocumentMessage {
   type: 'parentSaveDocument';
   path: string;
   content: string;
+  /** Version of `content`, echoed back by `savingFile`. Legacy editors omit it. */
+  revision?: number;
 }
 
 export interface ContentChangedMessage {
   type: 'contentChangedInEditor';
   path: string;
   dirty: boolean;
+  /** Latest editor document version. Legacy editors omit it. */
+  revision?: number;
 }
 
 export interface EditDocumentMessage {

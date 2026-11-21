@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useRef } from 'react';
 import {
   Box,
   Card,
@@ -20,7 +20,7 @@ import {
   type FileDragItem,
 } from '-/services/dnd';
 import { usePeriodTagDialog } from './PeriodTagDialog';
-import type { FileCellData } from './file-cell';
+import { buildFileDragItem, type FileCellData } from './file-cell';
 import ThumbIcon from './ThumbIcon';
 import EntryTagChips from './EntryTagChips';
 import { EMPTY_ARR } from '-/constants';
@@ -160,38 +160,17 @@ export default function GridCell({
     [targetPath, resolveEntry, onDropTag, onDropFiles]
   );
 
-  // H.23 P0-4 + P0-5 (mirror of Row's dragItem useMemo): iterate the
-  // parent-owned `selectedPaths` Set and resolve each path through
-  // `resolveEntry` — O(k) where k = selection.size, instead of an O(n) walk
-  // over every visible entry. Only visible selected entries resolve
-  // (matches the prior scope: `entries` is `visible`). Memoized so identity
-  // doesn't churn parent rerenders.
-  const dragItem = useMemo<FileDragItem>(() => {
-    if (!entry) {
-      return { paths: [], names: [] };
-    }
-    if (selectedPaths && selectedPaths.has(entry.path)) {
-      const paths: string[] = [];
-      const names: string[] = [];
-      selectedPaths.forEach((p) => {
-        const e = resolveEntry?.(p);
-        if (e) {
-          paths.push(p);
-          names.push(e.name);
-        }
-      });
-      return { paths, names };
-    }
-    return { paths: [entry.path], names: [entry.name] };
-  }, [selectedPaths, resolveEntry, entry]);
+  // Resolve the selection lazily when the drag begins. selectedPaths is mutated
+  // in place by FileList; a render-time memo keyed by Set identity is stale.
   const [{ isDragging }, dragRef] = useDrag(
     () => ({
       type: DND_TYPE_FILE,
-      item: dragItem,
+      item: () =>
+        entry ? buildFileDragItem(entry, selectedPaths, resolveEntry) : null,
       collect: (monitor) => ({ isDragging: monitor.isDragging() }),
       canDrag: () => !!entry && !readOnly,
     }),
-    [dragItem, readOnly]
+    [entry, selectedPaths, resolveEntry, readOnly]
   );
 
   // Trailing cells in the last row have no entry — keep the grid shape intact.

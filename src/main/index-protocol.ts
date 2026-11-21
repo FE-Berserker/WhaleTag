@@ -4,7 +4,7 @@
  * process child (`index-worker.ts`).
  *
  * See `docs/15-perf-audit.md` §P0-2 for the design rationale. The plan is
- * minimum viable: 11 ops, lazy spawn, no progress push (deferred).
+ * minimum viable: 15 ops, lazy spawn, no progress push (deferred).
  */
 
 import type {
@@ -32,6 +32,7 @@ export type IndexWorkerOp =
   | 'fulltext:build'
   | 'fulltext:search'
   | 'fulltext:has'
+  | 'fulltext:extract'
   // exif cache
   | 'exif:load-processed'
   | 'exif:mark-processed'
@@ -53,6 +54,10 @@ export type IndexWorkerArg =
   | { op: 'fulltext:build'; arg: { rootPath: string } }
   | { op: 'fulltext:search'; arg: { rootPath: string; q: string } }
   | { op: 'fulltext:has'; arg: { rootPath: string } }
+  | {
+      op: 'fulltext:extract';
+      arg: { fullPath: string; ext: string; size: number };
+    }
   | { op: 'exif:load-processed'; arg: { rootPath: string } }
   | {
       op: 'exif:mark-processed';
@@ -76,6 +81,7 @@ export type IndexWorkerResult =
   | { op: 'fulltext:build'; result: { count: number } }
   | { op: 'fulltext:search'; result: FulltextHit[] }
   | { op: 'fulltext:has'; result: boolean }
+  | { op: 'fulltext:extract'; result: string | null }
   | { op: 'exif:load-processed'; result: ExifProcessedRecord[] }
   | { op: 'exif:mark-processed'; result: void }
   | { op: 'exif:mark-processed-many'; result: void }

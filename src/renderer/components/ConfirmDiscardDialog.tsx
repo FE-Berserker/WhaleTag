@@ -22,7 +22,7 @@ interface ConfirmDiscardDialogProps {
  * ExtensionContextProvider). Mirrors VSCode / Typora:
  *   - Save       → write the document, then close
  *   - Don't Save → close, dropping the edits
- *   - Cancel     → stay in the document
+ *   - Cancel     → keep the tab open (restore the prior view for a background tab)
  *
  * The `Dialog` `onClose` (fired by ESC + backdrop click) is routed to
  * `cancel` — without that, MUI hides the dialog internally while the

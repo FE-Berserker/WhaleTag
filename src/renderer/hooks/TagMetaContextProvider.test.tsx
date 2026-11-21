@@ -6,8 +6,14 @@ import { act, cleanup, render } from '@testing-library/react';
 import { Provider as ReduxProvider } from 'react-redux';
 import { createStore, type AnyAction, type Store } from 'redux';
 
+import type { DirEntry } from '../../shared/ipc-types';
 import { setTagColors } from '-/reducers/settings';
-import { TagMetaContextProvider, useTagMetaContext } from './TagMetaContextProvider';
+import {
+  TagMetaContextProvider,
+  saveManyTagSidecars,
+  useTagMetaContext,
+  type TagMetaSaveManyError,
+} from './TagMetaContextProvider';
 import * as directoryContextModule from './DirectoryContentContextProvider';
 import * as locationContextModule from './CurrentLocationContextProvider';
 import * as nowModule from './useNow';
@@ -169,5 +175,99 @@ describe('TagMetaContextProvider conditional now subscription', () => {
     view.unmount();
     assert.equal(unsubscribeCalls, 2);
     assert.equal(listeners.size, 0);
+  });
+});
+
+describe('saveManyTagSidecars', () => {
+  const file = (path: string): DirEntry => ({
+    path,
+    name: path.slice(path.lastIndexOf('/') + 1),
+    isDirectory: false,
+    isFile: true,
+    size: 1,
+    modified: '2026-01-01T00:00:00.000Z',
+    extension: 'jpg',
+  });
+  const updates = ['/a.jpg', '/b.jpg', '/c.jpg'].map((path) => ({
+    entry: file(path),
+    meta: { tags: ['new'] },
+  }));
+
+  it('refreshes once and rejects with the real count and every write error', async () => {
+    const attempted: string[] = [];
+    let refreshCount = 0;
+    await assert.rejects(
+      saveManyTagSidecars(
+        updates,
+        async (path) => {
+          attempted.push(path);
+          if (path === '/b.jpg') throw new Error('sidecar read-only');
+          if (path === '/c.jpg') throw new Error('disk full');
+        },
+        async () => {
+          refreshCount += 1;
+        }
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        const failure = error as TagMetaSaveManyError;
+        assert.equal(failure.updatedCount, 1);
+        assert.deepEqual(failure.errors, [
+          'b.jpg: sidecar read-only',
+          'c.jpg: disk full',
+        ]);
+        assert.equal(
+          failure.message,
+          'b.jpg: sidecar read-only; c.jpg: disk full'
+        );
+        return true;
+      }
+    );
+    assert.deepEqual(attempted, ['/a.jpg', '/b.jpg', '/c.jpg']);
+    assert.equal(refreshCount, 1);
+  });
+
+  it('bounds the error message while retaining every failure detail', async () => {
+    const manyUpdates = ['/a.jpg', '/b.jpg', '/c.jpg', '/d.jpg'].map((path) => ({
+      entry: file(path),
+      meta: { tags: ['new'] },
+    }));
+    await assert.rejects(
+      saveManyTagSidecars(
+        manyUpdates,
+        async (path) => {
+          throw new Error(`failed ${path}`);
+        },
+        async () => undefined
+      ),
+      (error: unknown) => {
+        const failure = error as TagMetaSaveManyError;
+        assert.equal(failure.updatedCount, 0);
+        assert.equal(failure.errors.length, 4);
+        assert.equal(
+          failure.message,
+          'a.jpg: failed /a.jpg; b.jpg: failed /b.jpg; c.jpg: failed /c.jpg; …'
+        );
+        return true;
+      }
+    );
+  });
+
+  it('keeps the successful saveMany contract and refreshes once', async () => {
+    const attempted: string[] = [];
+    let refreshCount = 0;
+    const result = await saveManyTagSidecars(
+      updates,
+      async (path) => {
+        attempted.push(path);
+      },
+      async () => {
+        refreshCount += 1;
+      }
+    );
+
+    assert.equal(result, undefined);
+    assert.deepEqual(attempted, ['/a.jpg', '/b.jpg', '/c.jpg']);
+    assert.equal(refreshCount, 1);
   });
 });

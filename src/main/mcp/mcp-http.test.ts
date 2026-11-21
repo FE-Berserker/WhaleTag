@@ -6,6 +6,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import Module from 'node:module';
+import { EventEmitter } from 'node:events';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { setAllowedRoots } from '../allowed-roots';
@@ -21,7 +22,9 @@ import { createMcpHttpCore, type McpHttpCore } from './mcp-http';
  * (ipcMain/shell/utilityProcess via fs-write/fs-read/index-worker-host) that
  * only destructure at import time; under `ELECTRON_RUN_AS_NODE` the electron
  * require resolves to the binary path, so we stub it BEFORE the dynamic
- * import below. No stubbed API is actually invoked by this test's paths.
+ * import below. `utilityProcess.fork` is stubbed with an in-process fake
+ * worker (see below) that `whale_extract_text` actually exercises; the other
+ * stubbed APIs are never invoked by this suite.
  */
 
 const TMP_USER_DATA = path.join(os.tmpdir(), 'whaletag-mcp-test');
@@ -41,9 +44,46 @@ const electronStub: any = {
       await fs.promises.rm(target, { recursive: true, force: true });
     },
   },
+  // In-process stand-in for the index utilityProcess, so tools that route
+  // through index-worker-host (whale_extract_text → request('fulltext:
+  // extract')) work in tests. Implements the exact surface the host uses:
+  // postMessage + the 'spawn'/'message'/'exit' EventEmitter contract
+  // (index-worker-host.ts). Only the ops MCP tests can reach are handled;
+  // anything else resolves undefined.
   utilityProcess: {
     fork: () => {
-      throw new Error('utilityProcess is not available in tests');
+      const worker = new EventEmitter();
+      (worker as any).postMessage = (msg: unknown) => {
+        const req = msg as { reqId?: string; op?: string; arg?: unknown };
+        if (!req || typeof req.reqId !== 'string') return;
+        void (async () => {
+          let result: unknown = undefined;
+          if (req.op === 'fulltext:extract') {
+            // Real extraction, run in-process. Importing fulltext.ts here is
+            // safe in tests: index-db's "must run in the worker" guard only
+            // throws when NODE_ENV === 'production'.
+            const { fullPath, ext, size } = req.arg as {
+              fullPath: string;
+              ext: string;
+              size: number;
+            };
+            const { extractText } = await import('../fulltext');
+            result = await extractText(fullPath, ext, size);
+          } else if (req.op === 'fulltext:has') {
+            result = false;
+          } else if (req.op === 'index:status') {
+            result = { count: 0, ready: false };
+          }
+          worker.emit('message', { reqId: req.reqId, ok: true, result });
+        })();
+      };
+      (worker as any).kill = () => undefined;
+      // Boot signals, deferred so the host attaches its listeners first.
+      queueMicrotask(() => {
+        worker.emit('spawn');
+        worker.emit('message', { kind: 'ready' });
+      });
+      return worker;
     },
   },
   BrowserWindow: { getAllWindows: () => [] },

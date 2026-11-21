@@ -7,6 +7,7 @@ import { promises as fsp } from 'fs';
 import {
   isMetaPath,
   isSameOrDescendantPath,
+  isFulltextRootTouched,
   syncWatchedRoots,
   setFulltextRoots,
   closeAllWatchers,
@@ -78,6 +79,22 @@ describe('isSameOrDescendantPath', () => {
       true
     );
     assert.equal(isSameOrDescendantPath('C:/Data', 'C:/Other'), false);
+  });
+});
+
+describe('isFulltextRootTouched', () => {
+  it("treats [''] as a blanket marker for every nested full-text root", () => {
+    assert.equal(isFulltextRootTouched('C:/Data', 'C:/Data', ['']), true);
+    assert.equal(isFulltextRootTouched('C:/Data', 'C:/Data/notes', ['']), true);
+    assert.equal(isFulltextRootTouched('C:/Data', 'C:/Data/a/b', ['']), true);
+    assert.equal(isFulltextRootTouched('C:/Data', 'C:/Other', ['']), false);
+  });
+
+  it('keeps path-scoped matching and the defensive empty-batch fallback', () => {
+    assert.equal(isFulltextRootTouched('C:/Data', 'C:/Data/notes', []), true);
+    assert.equal(isFulltextRootTouched('C:/Data', 'C:/Data/notes', ['notes/a.txt']), true);
+    assert.equal(isFulltextRootTouched('C:/Data', 'C:/Data/notes', ['notes-old/a.txt']), false);
+    assert.equal(isFulltextRootTouched('C:/Data', 'C:/Other', []), false);
   });
 });
 

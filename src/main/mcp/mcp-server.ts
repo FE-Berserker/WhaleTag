@@ -16,6 +16,7 @@ import {
 } from './mcp-approval';
 import { registerMcpTools, watchRawRoots } from './mcp-tools';
 import { getWhaleAppVersion } from '../app-version';
+import { logInfo } from '../log';
 import type { McpStatus } from '../../shared/mcp-types';
 
 /**
@@ -88,7 +89,7 @@ async function doStartListening(): Promise<void> {
     server.on('error', (e) => {
       console.error('[mcp] server error:', e);
     });
-    console.log(`[mcp] listening on http://127.0.0.1:${boundPort}/mcp`);
+    logInfo('mcp', `listening on http://127.0.0.1:${boundPort}/mcp`);
   } catch (error) {
     await newCore.close().catch(() => undefined);
     throw error;

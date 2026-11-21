@@ -1,6 +1,7 @@
 import fs, { promises as fsp } from 'fs';
 import path from 'path';
 import { request } from './index-worker-host';
+import { logInfo } from './log';
 
 /**
  * External-change watcher for configured locations (docs/04 §10): one
@@ -76,6 +77,26 @@ export function isSameOrDescendantPath(ancestor: string, candidate: string): boo
   return c === a || c.startsWith(`${a}/`);
 }
 
+/** Does a flushed watcher batch require this full-text root to rebuild?
+ * `['']` (not just `[]`) is the real null-filename blanket marker: the empty
+ * string lives INSIDE the batch, so checking only array length loses changes
+ * for every full-text root below the location root. */
+export function isFulltextRootTouched(
+  rootPath: string,
+  fulltextRoot: string,
+  flushPaths: readonly string[]
+): boolean {
+  if (!isSameOrDescendantPath(rootPath, fulltextRoot)) return false;
+  return (
+    flushPaths.length === 0 ||
+    flushPaths.some(
+      (rel) =>
+        rel === '' ||
+        isSameOrDescendantPath(fulltextRoot, `${rootPath}/${rel}`)
+    )
+  );
+}
+
 interface RootWatch {
   /** `recursive`: one watcher keyed by the root. `per-dir`: one per folder. */
   mode: 'recursive' | 'per-dir';
@@ -147,7 +168,7 @@ function scheduleReconnect(rootPath: string, reason: string): void {
     if (w) {
       watches.set(rootPath, w);
       reconnectAttempts.delete(rootPath);
-      console.info(`[dir-watcher] watcher restored for ${rootPath}`);
+      logInfo('dir-watcher', `watcher restored for ${rootPath}`);
       return;
     }
     // Root still missing / unwatchable — keep backing off.
@@ -311,14 +332,9 @@ function scheduleFulltextRootReindex(
 
 function scheduleFulltextReindex(rootPath: string, flushPaths: string[]): void {
   for (const fp of fulltextRoots) {
-    if (!isSameOrDescendantPath(rootPath, fp)) continue; // FP not under this location
-    const touched =
-      flushPaths.length === 0 || // watch buffer overflow — conservative match
-      flushPaths.some((rel) =>
-        isSameOrDescendantPath(fp, `${rootPath}/${rel}`)
-      );
-    if (!touched) continue;
-    scheduleFulltextRootReindex(fp);
+    if (isFulltextRootTouched(rootPath, fp, flushPaths)) {
+      scheduleFulltextRootReindex(fp);
+    }
   }
 }
 

@@ -117,8 +117,14 @@ describe('useDrawioBridge lifecycle', () => {
       '<mxfile/>',
       '<mxfile/>',
     ]);
-    assert.equal(changes, 1);
+    assert.equal(changes, 0, 'reading a save snapshot is not an edit');
     assert.deepEqual(timers.cleared, timers.scheduled);
+
+    window.dispatchEvent(new window.MessageEvent('message', {
+      source: iframe.contentWindow,
+      data: JSON.stringify({ event: 'autosave', xml: '<mxfile>edit</mxfile>' }),
+    }));
+    assert.equal(changes, 1, 'autosave still reports a real editor change');
   });
 
   it('rejects pending requests and clears their timers on unmount', async () => {

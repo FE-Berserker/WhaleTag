@@ -1,5 +1,6 @@
 import path from 'path';
 import { statSync } from 'fs';
+import { fileURLToPath } from 'url';
 import os from 'os';
 // Mapique map tiles require remote img-src in CSP (see index.html + below).
 import {
@@ -11,6 +12,7 @@ import {
   protocol,
   session,
   shell,
+  type WebContents,
 } from 'electron';
 import windowStateKeeper from 'electron-window-state';
 import { registerIpcHandlers } from './ipc';
@@ -42,6 +44,7 @@ import { buildMenu } from './menu';
 import { assertWithinAllowedRoot } from './allowed-roots';
 import { initKnownRoots } from './known-roots';
 import { getWhaleAppVersion } from './app-version';
+import { logInfo } from './log';
 import { decodeWhaleFileUrl } from '../shared/whale-file-url';
 import { createFileRangeResponse } from './protocol-range';
 import {
@@ -175,7 +178,7 @@ function createWindow(): void {
     // large diagram. 8s leaves room for that while still force-closing a
     // hung renderer; when nothing is dirty the ack lands immediately.
     closeFallback = setTimeout(() => {
-      console.log('[main] flush fallback timeout');
+      logInfo('main', 'flush fallback timeout');
       finishMainWindowClose();
     }, 8000);
   });
@@ -183,7 +186,7 @@ function createWindow(): void {
   // Belt-and-suspenders: if the window is destroyed without going through our
   // graceful path (e.g. a forced OS close), make sure our bookkeeping is reset.
   mainWindow.on('closed', () => {
-    console.log('[main] main window closed');
+    logInfo('main', 'main window closed');
     if (mainWindow && (mainWindow.isDestroyed() || closingMainWindow === mainWindow)) {
       mainWindow = null;
     }
@@ -244,7 +247,9 @@ function attachRendererCrashGuard(win: BrowserWindow): void {
         crashLogPath(),
         formatCrashEntry(
           'renderer',
-          `${details.reason} (exitCode=${details.exitCode})`
+          sanitizeErrorDetail(
+            `${details.reason} (exitCode=${details.exitCode})`
+          )
         )
       );
     } catch {
@@ -270,7 +275,7 @@ function attachRendererCrashGuard(win: BrowserWindow): void {
         title: 'WhaleTag crashed',
         message: 'The interface process stopped unexpectedly.',
         detail:
-          `Reason: ${details.reason} (exit code ${details.exitCode})\n\n` +
+          `Reason: ${sanitizeErrorDetail(details.reason)} (exit code ${details.exitCode})\n\n` +
           'Restarting the interface usually recovers; if it crashes again, quit and reopen WhaleTag.',
         buttons: ['Restart interface', 'Quit'],
         defaultId: 0,
@@ -339,6 +344,182 @@ function configureCsp(): void {
       },
     });
   });
+}
+
+interface ApplicationPermissionDetails {
+  isMainFrame: boolean;
+  requestingUrl?: string;
+  embeddingOrigin?: string;
+}
+
+const EXTENSION_PERMISSION_FRAMES: Readonly<Record<string, string>> = {
+  // JSON viewer has a navigator.clipboard fast path (with a legacy fallback).
+  'clipboard-sanitized-write': 'json-viewer',
+  // Image viewer's F-key calls documentElement.requestFullscreen().
+  fullscreen: 'image-viewer',
+};
+
+function isApplicationUrl(rawUrl: string, development: boolean): boolean {
+  try {
+    const url = new URL(rawUrl);
+    if (development) return url.origin === DEV_SERVER_URL;
+    return (
+      url.protocol === 'file:' &&
+      fileURLToPath(url) ===
+        path.resolve(__dirname, '..', 'renderer', 'index.html')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isApplicationOrigin(origin: string, development: boolean): boolean {
+  if (!development) return origin === 'file://';
+  try {
+    return new URL(origin).origin === DEV_SERVER_URL;
+  } catch {
+    return false;
+  }
+}
+
+function parseExtensionUrl(rawUrl: string): URL | null {
+  try {
+    const url = new URL(rawUrl);
+    if (
+      url.protocol !== 'whale-extension:' ||
+      url.username ||
+      url.password ||
+      url.port
+    ) {
+      return null;
+    }
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+function extensionDocumentId(rawUrl: string): string | null {
+  const url = parseExtensionUrl(rawUrl);
+  return url?.pathname === '/index.html' ? url.hostname : null;
+}
+
+function extensionOriginId(origin: string): string | null {
+  const url = parseExtensionUrl(origin);
+  return url && (url.pathname === '' || url.pathname === '/')
+    ? url.hostname
+    : null;
+}
+
+function isAllowedApplicationFrame(
+  permission: string,
+  requestingOrigin: string,
+  details: ApplicationPermissionDetails,
+  development: boolean
+): boolean {
+  if (
+    permission !== 'clipboard-sanitized-write' &&
+    permission !== 'fullscreen'
+  ) {
+    return false;
+  }
+  // A cross-origin extension check must still be embedded in our app shell.
+  if (
+    details.embeddingOrigin !== undefined &&
+    !isApplicationOrigin(details.embeddingOrigin, development)
+  ) {
+    return false;
+  }
+
+  if (details.isMainFrame) {
+    // The app shell needs clipboard writes, but not programmatic fullscreen
+    // (the native View menu owns that). All other main-frame permissions deny.
+    if (permission !== 'clipboard-sanitized-write') return false;
+    return details.requestingUrl
+      ? isApplicationUrl(details.requestingUrl, development)
+      : isApplicationOrigin(requestingOrigin, development);
+  }
+
+  // Extension iframes get only the capability their current code uses. Do not
+  // broaden this to a scheme check: the exact bundled document/origin and its
+  // containing main-window webContents are both part of the trust decision.
+  const expectedId = EXTENSION_PERMISSION_FRAMES[permission];
+  const actualId = details.requestingUrl
+    ? extensionDocumentId(details.requestingUrl)
+    : extensionOriginId(requestingOrigin);
+  return actualId === expectedId;
+}
+
+/**
+ * Create both Electron permission callbacks around one fail-closed policy.
+ * Same-webContents is required because iframe requests share the main window's
+ * webContents; origin alone must never grant a different window or webview.
+ */
+export function createApplicationPermissionHandlers(
+  getMainWebContents: () => WebContents | null,
+  development = isDev
+): {
+  request: (
+    webContents: WebContents,
+    permission: string,
+    callback: (permissionGranted: boolean) => void,
+    details: ApplicationPermissionDetails
+  ) => void;
+  check: (
+    webContents: WebContents | null,
+    permission: string,
+    requestingOrigin: string,
+    details: ApplicationPermissionDetails
+  ) => boolean;
+} {
+  const allow = (
+    webContents: WebContents | null,
+    permission: string,
+    requestingOrigin: string,
+    details: ApplicationPermissionDetails
+  ): boolean => {
+    try {
+      const mainWebContents = getMainWebContents();
+      if (
+        !webContents ||
+        webContents !== mainWebContents ||
+        webContents.isDestroyed() ||
+        !isApplicationUrl(webContents.getURL(), development)
+      ) {
+        return false;
+      }
+      return isAllowedApplicationFrame(
+        permission,
+        requestingOrigin,
+        details,
+        development
+      );
+    } catch {
+      // A disappearing webContents or malformed URL is always a denial.
+      return false;
+    }
+  };
+
+  return {
+    request: (webContents, permission, callback, details) => {
+      callback(allow(webContents, permission, '', details));
+    },
+    check: (webContents, permission, requestingOrigin, details) =>
+      allow(webContents, permission, requestingOrigin, details),
+  };
+}
+
+/**
+ * Whale is an offline file manager: deny every permission by default. The only
+ * exceptions are clipboard-sanitized-write in the app/JSON viewer and
+ * fullscreen in the image viewer, constrained above to trusted app frames.
+ */
+function configurePermissions(): void {
+  const handlers = createApplicationPermissionHandlers(
+    () => mainWindow?.webContents ?? null
+  );
+  session.defaultSession.setPermissionRequestHandler(handlers.request);
+  session.defaultSession.setPermissionCheckHandler(handlers.check);
 }
 
 /**
@@ -461,6 +642,7 @@ function bootstrap(): void {
   });
 
   configureCsp();
+  configurePermissions();
   registerExtensionProtocol();
   registerWhaleFileProtocol();
   createWindow();
@@ -507,14 +689,15 @@ function bootstrap(): void {
   // isn't pulled into the startup critical path — it backs only this diagnostic.
   void import('ffmpeg-static')
     .then(({ default: p }) => {
-      console.log(
+      logInfo(
+        'main',
         p
           ? `FFMPEG_ELECTRON_OK ${p}`
           : 'FFMPEG_ELECTRON_MISSING (video thumbnails disabled)'
       );
     })
     .catch(() => {
-      console.log('FFMPEG_ELECTRON_MISSING (video thumbnails disabled)');
+      logInfo('main', 'FFMPEG_ELECTRON_MISSING (video thumbnails disabled)');
     });
 
   // macOS: re-create a window when the dock icon is clicked with no windows open.
@@ -535,7 +718,10 @@ function finishMainWindowClose(): void {
     return;
   }
 
-  console.log(`[main] finishMainWindowClose destroyed=${closingMainWindow.isDestroyed()}`);
+  logInfo(
+    'main',
+    `finishMainWindowClose destroyed=${closingMainWindow.isDestroyed()}`
+  );
 
   if (!closingMainWindow.isDestroyed()) {
     closingMainWindow.destroy();

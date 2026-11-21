@@ -82,16 +82,25 @@ function copyExtensionStaticFiles(id) {
   }
 }
 
+const MANIFEST_PLACEHOLDER = '/* MANIFEST_INJECTED_BY_BUILD */ {}';
+
+function replaceManifestPlaceholder(content, id, manifest) {
+  if (!content.includes(MANIFEST_PLACEHOLDER)) {
+    throw new Error(`Extension ${id}: manifest placeholder not found`);
+  }
+  return content.replace(MANIFEST_PLACEHOLDER, () => JSON.stringify(manifest));
+}
+
 function injectManifestIntoApi(id, manifest) {
   const apiPath = path.join(DIST_EXTENSIONS, id, 'extension-api.js');
   if (!fs.existsSync(apiPath)) return;
 
-  let content = fs.readFileSync(apiPath, 'utf8');
-  content = content.replace(
-    '/* MANIFEST_INJECTED_BY_BUILD */ {}',
-    JSON.stringify(manifest)
+  const content = fs.readFileSync(apiPath, 'utf8');
+  fs.writeFileSync(
+    apiPath,
+    replaceManifestPlaceholder(content, id, manifest),
+    'utf8'
   );
-  fs.writeFileSync(apiPath, content, 'utf8');
 }
 
 function fixHtmlAssetPaths(id) {
@@ -106,6 +115,63 @@ function fixHtmlAssetPaths(id) {
   content = content.replace(bundlePattern, '$1./bundle.js$2');
   content = content.replace(cssPattern, '$1./styles.css$2');
   fs.writeFileSync(htmlPath, content, 'utf8');
+}
+
+/**
+ * Keep the drawio webapp runtime, not the unused drawio-desktop distribution.
+ * These exclusions are based on the loaded index.html/app.min.js references:
+ * open.html stays because OPEN_FORM/OpenDialog still references it.
+ * The copied index pins both lazy viewer URLs to viewer-static.min.js below;
+ * viewer.min.js is the separate standalone viewer. The active service worker imports
+ * workbox-f163abaa; workbox-9fe249eb is an orphaned older bundle.
+ */
+function shouldCopyDrawioAsset(relativePath) {
+  const rel = relativePath.replace(/\\/g, '/');
+  if (rel === 'META-INF' || rel.startsWith('META-INF/')) return false;
+  if (rel === 'electron.js' || rel === 'electronFilesWorker.js') return false;
+  if (rel === 'node_modules' || rel.startsWith('node_modules/')) return false;
+  if (rel.endsWith('.map')) return false;
+  if (rel === 'js/viewer.min.js' || rel === 'workbox-9fe249eb.js') return false;
+  return true;
+}
+
+const DRAWIO_OFFLINE_VIEWER_MARKER = '<!-- whale-offline-viewer -->';
+
+/** Pin both lazy HTML-viewer paths to the packaged asset instead of the CDN. */
+function configureDrawioOfflineViewer(html) {
+  if (html.includes(DRAWIO_OFFLINE_VIEWER_MARKER)) return html;
+  if (!html.includes('<head>')) {
+    throw new Error('drawio-editor: <head> not found in drawio-assets/index.html');
+  }
+  const config = `${DRAWIO_OFFLINE_VIEWER_MARKER}\n<script>\n` +
+    "window.DRAWIO_VIEWER_URL = new URL('js/viewer-static.min.js', window.location.href).href;\n" +
+    'window.VIEWER_URL = window.DRAWIO_VIEWER_URL;\n' +
+    '</script>';
+  return html.replace('<head>', () => `<head>\n${config}`);
+}
+
+const DRAWIO_OFFLINE_PRECONFIG_MARKER = '/* whale-offline-preconfig */';
+
+/** PreConfig runs after index.html and resets the viewer globals to null. */
+function configureDrawioPreConfig(source) {
+  if (source.includes(DRAWIO_OFFLINE_PRECONFIG_MARKER)) return source;
+  const baseNeedle = 'window.DRAWIO_BASE_URL = null;';
+  const viewerNeedle = 'window.DRAWIO_VIEWER_URL = null;';
+  if (!source.includes(baseNeedle) || !source.includes(viewerNeedle)) {
+    throw new Error('drawio-editor: expected offline URL resets not found in js/PreConfig.js');
+  }
+  return source
+    .replace(
+      baseNeedle,
+      () => `${DRAWIO_OFFLINE_PRECONFIG_MARKER}\n` +
+        "window.DRAWIO_BASE_URL = new URL('.', window.location.href).href.replace(/\\/$/, '');"
+    )
+    .replace(
+      viewerNeedle,
+      () => "window.DRAWIO_VIEWER_URL = new URL('js/viewer-static.min.js', window.location.href).href;\n" +
+        'window.VIEWER_URL = window.DRAWIO_VIEWER_URL;\n' +
+        "window.DRAWIO_LIGHTBOX_URL = new URL('.', window.location.href).href.replace(/\\/$/, '');"
+    );
 }
 
 /**
@@ -150,20 +216,27 @@ function copyExtensionRuntimeAssets(id) {
     fs.cpSync(drawioSrc, assetsDest, {
       recursive: true,
       filter: (srcPath) => {
-        // Skip Maven metadata and Electron desktop files that are not needed
-        // for the iframe-based webapp.
         const rel = path.relative(drawioSrc, srcPath);
-        if (rel === 'META-INF') return false;
-        if (rel === 'electron.js' || rel === 'electronFilesWorker.js') return false;
-        if (rel.startsWith('open.html')) return false;
         // NOTE: do NOT skip math/jax/ — drawio's App.main() blocks on
         // loading math/jax/output/SVG/fonts/TeX/fontdata.js before posting
         // its `init` message. Skipping the subtree produces a 404 that
         // prevents the bridge from ever seeing `init`. The earlier EPERM
         // errors were a Windows file-locking flake, not a permanent issue.
-        return true;
+        return shouldCopyDrawioAsset(rel);
       },
     });
+    const drawioIndex = path.join(assetsDest, 'index.html');
+    fs.writeFileSync(
+      drawioIndex,
+      configureDrawioOfflineViewer(fs.readFileSync(drawioIndex, 'utf8')),
+      'utf8'
+    );
+    const preConfigPath = path.join(assetsDest, 'js', 'PreConfig.js');
+    fs.writeFileSync(
+      preConfigPath,
+      configureDrawioPreConfig(fs.readFileSync(preConfigPath, 'utf8')),
+      'utf8'
+    );
     return;
   }
 
@@ -299,11 +372,20 @@ function watchSources() {
   console.log(`[extensions] watching ${SRC_EXTENSIONS} for changes...`);
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : error);
-  process.exit(1);
-}
+module.exports = {
+  replaceManifestPlaceholder,
+  shouldCopyDrawioAsset,
+  configureDrawioOfflineViewer,
+  configureDrawioPreConfig,
+};
 
-if (process.argv.includes('--watch')) watchSources();
+if (require.main === module) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  }
+
+  if (process.argv.includes('--watch')) watchSources();
+}

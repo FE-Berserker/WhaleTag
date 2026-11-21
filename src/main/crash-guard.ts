@@ -14,7 +14,17 @@
  * window it replaces.
  */
 
-import { appendFileSync, mkdirSync } from 'fs';
+import {
+  closeSync,
+  fchmodSync,
+  mkdirSync,
+  openSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'fs';
+import { homedir } from 'os';
 import path from 'path';
 
 export interface RendererGoneDetails {
@@ -74,10 +84,70 @@ export function formatCrashEntry(
   return `[${now.toISOString()}] ${kind} crash: ${detail}\n`;
 }
 
-/** Append one crash entry, creating the log's directory on first use. */
-export function appendCrashLog(filePath: string, entry: string): void {
+const DEFAULT_CRASH_LOG_MAX_BYTES = 1024 * 1024;
+
+export interface CrashLogRetentionOptions {
+  /** Rotate before this append would make the active log exceed this size. */
+  maxBytes?: number;
+}
+
+function warnRotationFailure(error: unknown): void {
+  console.warn(
+    `[crash-guard] Could not rotate crash log; appending to the existing file: ${sanitizeErrorDetail(error)}`
+  );
+}
+
+function rotateCrashLog(filePath: string, incomingBytes: number, maxBytes: number): void {
+  let currentBytes: number;
+  try {
+    currentBytes = statSync(filePath).size;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    warnRotationFailure(error);
+    return;
+  }
+
+  if (currentBytes + incomingBytes <= maxBytes) return;
+
+  try {
+    const backupPath = `${filePath}.1`;
+    // Removing the retired backup first also works on Windows, where renaming
+    // over an existing file can fail. If a later step fails, the active log is
+    // still intact and the caller continues by appending the new crash entry.
+    rmSync(backupPath, { force: true });
+    renameSync(filePath, backupPath);
+  } catch (error) {
+    warnRotationFailure(error);
+  }
+}
+
+/** Append one complete crash entry, retaining at most one rotated backup. */
+export function appendCrashLog(
+  filePath: string,
+  entry: string,
+  options: CrashLogRetentionOptions = {}
+): void {
   mkdirSync(path.dirname(filePath), { recursive: true });
-  appendFileSync(filePath, entry, 'utf8');
+  // Never truncate an individual crash record. An entry larger than the limit
+  // is kept intact and becomes the active log until the following append.
+  rotateCrashLog(
+    filePath,
+    Buffer.byteLength(entry, 'utf8'),
+    options.maxBytes ?? DEFAULT_CRASH_LOG_MAX_BYTES
+  );
+  // Append-only open preserves earlier crash evidence. Harden the descriptor
+  // BEFORE writing the new stack trace: if chmod fails, no sensitive bytes from
+  // this entry may reach an existing, potentially world-readable log. Windows
+  // has no useful POSIX mode bits, so retain its normal append path.
+  const fd = openSync(filePath, 'a', 0o600);
+  try {
+    if (process.platform !== 'win32') {
+      fchmodSync(fd, 0o600);
+    }
+    writeFileSync(fd, entry, { encoding: 'utf8' });
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /**
@@ -89,7 +159,11 @@ export function appendCrashLog(filePath: string, entry: string): void {
  * Newlines are kept: stack traces are the most useful part of the entry and
  * main-process entries already span multiple lines.
  */
-export function sanitizeErrorDetail(value: unknown, maxLength = 4_000): string {
+export function sanitizeErrorDetail(
+  value: unknown,
+  maxLength = 4_000,
+  homeDirectory = homedir()
+): string {
   const raw =
     typeof value === 'string'
       ? value
@@ -102,8 +176,21 @@ export function sanitizeErrorDetail(value: unknown, maxLength = 4_000): string {
     // control-character class is the point of this line, hence the disable.
     // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
-  if (cleaned.length <= maxLength) return cleaned;
-  return `${cleaned.slice(0, maxLength)}… (truncated)`;
+  // Crash reports leave the machine when a user files an issue. Replace both
+  // native and slash-normalized home prefixes (renderer stacks often use
+  // file:///C:/... URLs). Never treat the filesystem root itself as a prefix.
+  let redacted = cleaned;
+  if (homeDirectory.length > 1) {
+    const needles = new Set([
+      homeDirectory,
+      homeDirectory.replace(/\\/g, '/'),
+    ]);
+    for (const needle of needles) {
+      redacted = redacted.split(needle).join('~');
+    }
+  }
+  if (redacted.length <= maxLength) return redacted;
+  return `${redacted.slice(0, maxLength)}… (truncated)`;
 }
 
 export interface FatalErrorDeps {
@@ -127,12 +214,14 @@ export function handleFatalError(error: unknown, deps: FatalErrorDeps): void {
     error instanceof Error
       ? error.stack ?? `${error.name}: ${error.message}`
       : String(error);
-  const summary = error instanceof Error ? error.message : String(error);
+  const summary = sanitizeErrorDetail(
+    error instanceof Error ? error.message : String(error)
+  );
 
   deps.log('[main] uncaughtException:', error);
 
   try {
-    deps.appendCrashLog(formatCrashEntry('main', detail));
+    deps.appendCrashLog(formatCrashEntry('main', sanitizeErrorDetail(detail)));
   } catch {
     // Best-effort: an unwritable log must not block the exit below.
   }

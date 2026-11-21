@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fsp } from 'fs';
+import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
@@ -102,6 +103,116 @@ describe('crash log', () => {
       await fsp.rm(dir, { recursive: true, force: true });
     }
   });
+
+  it('rotates at a small byte threshold and retains only one backup', async (t) => {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-crash-'));
+    const file = path.join(dir, 'crash.log');
+    const backup = `${file}.1`;
+    t.after(() => fsp.rm(dir, { recursive: true, force: true }));
+    await fsp.writeFile(file, 'first\n', 'utf8');
+
+    appendCrashLog(file, 'second\n', { maxBytes: 12 });
+    assert.equal(await fsp.readFile(file, 'utf8'), 'second\n');
+    assert.equal(await fsp.readFile(backup, 'utf8'), 'first\n');
+
+    // This second rotation must replace the existing backup on Windows too.
+    appendCrashLog(file, 'third\n', { maxBytes: 12 });
+    assert.equal(await fsp.readFile(file, 'utf8'), 'third\n');
+    assert.equal(await fsp.readFile(backup, 'utf8'), 'second\n');
+
+    appendCrashLog(file, 'fourth\n', { maxBytes: 12 });
+    assert.equal(await fsp.readFile(file, 'utf8'), 'fourth\n');
+    assert.equal(await fsp.readFile(backup, 'utf8'), 'third\n');
+    assert.deepEqual((await fsp.readdir(dir)).sort(), ['crash.log', 'crash.log.1']);
+  });
+
+  it('does not rotate when the new entry reaches the limit exactly', async (t) => {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-crash-'));
+    const file = path.join(dir, 'crash.log');
+    t.after(() => fsp.rm(dir, { recursive: true, force: true }));
+    await fsp.writeFile(file, '123456', 'utf8');
+
+    appendCrashLog(file, 'abc', { maxBytes: 9 });
+
+    assert.equal(await fsp.readFile(file, 'utf8'), '123456abc');
+    assert.equal(fs.existsSync(`${file}.1`), false);
+  });
+
+  it('warns and still appends the current crash when rotation fails', async (t) => {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-crash-'));
+    const file = path.join(dir, 'crash.log');
+    t.after(() => fsp.rm(dir, { recursive: true, force: true }));
+    await fsp.writeFile(file, 'old\n', 'utf8');
+    await fsp.writeFile(`${file}.1`, 'retired\n', 'utf8');
+    t.mock.method(fs, 'renameSync', () => {
+      throw new Error('rotation denied');
+    });
+    const warn = t.mock.method(console, 'warn', () => {});
+
+    appendCrashLog(file, 'current crash\n', { maxBytes: 4 });
+
+    assert.equal(
+      await fsp.readFile(file, 'utf8'),
+      'old\ncurrent crash\n',
+      'rotation failure must not discard the new crash record'
+    );
+    assert.equal(warn.mock.callCount(), 1);
+    const warning = String(warn.mock.calls[0].arguments[0]);
+    assert.match(warning, /Could not rotate crash log/);
+    assert.match(warning, /rotation denied/);
+  });
+
+  it('does not append sensitive detail when descriptor chmod fails', async (t) => {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-crash-'));
+    const file = path.join(dir, 'crash.log');
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', {
+      value: 'linux',
+      configurable: true,
+    });
+    t.after(() => {
+      Object.defineProperty(process, 'platform', {
+        value: originalPlatform,
+        configurable: true,
+      });
+    });
+    t.after(() => fsp.rm(dir, { recursive: true, force: true }));
+    await fsp.writeFile(file, 'existing\n', { encoding: 'utf8', mode: 0o666 });
+
+    const sensitive = '/home/alice/private/secret.txt\n';
+    t.mock.method(fs, 'fchmodSync', (fd: number, mode: number) => {
+      assert.equal(typeof fd, 'number');
+      assert.equal(mode, 0o600);
+      throw new Error('EPERM: chmod failed');
+    });
+
+    assert.throws(
+      () => appendCrashLog(file, sensitive),
+      /EPERM: chmod failed/
+    );
+    assert.equal(
+      await fsp.readFile(file, 'utf8'),
+      'existing\n',
+      'the failed permission hardening must happen before any new bytes'
+    );
+  });
+
+  it('applies owner-only mode before writing on POSIX', async (t) => {
+    if (process.platform === 'win32') {
+      t.skip('POSIX mode bits are not available on Windows');
+      return;
+    }
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-crash-'));
+    const file = path.join(dir, 'crash.log');
+    t.after(() => fsp.rm(dir, { recursive: true, force: true }));
+    await fsp.writeFile(file, 'existing\n', { mode: 0o666 });
+    await fsp.chmod(file, 0o666);
+
+    appendCrashLog(file, 'next\n');
+
+    assert.equal((await fsp.stat(file)).mode & 0o777, 0o600);
+    assert.equal(await fsp.readFile(file, 'utf8'), 'existing\nnext\n');
+  });
 });
 
 describe('handleFatalError', () => {
@@ -156,6 +267,18 @@ describe('handleFatalError', () => {
     assert.deepEqual(rec.exits, [1]);
   });
 
+  it('sanitizes both the persisted detail and the user-facing summary', () => {
+    const rec = recorder();
+    const home = os.homedir();
+    const privatePath = path.join(home, 'Documents', 'secret.txt');
+    handleFatalError(new Error(`cannot open ${privatePath}`), rec.deps);
+
+    assert.equal(rec.entries[0].includes(home), false, 'crash log home removed');
+    assert.equal(rec.boxes[0].content.includes(home), false, 'dialog home removed');
+    assert.match(rec.entries[0], /~[\\/]Documents[\\/]secret\.txt/);
+    assert.match(rec.boxes[0].content, /~[\\/]Documents[\\/]secret\.txt/);
+  });
+
   it('still exits when the log and the dialog both fail', () => {
     const rec = recorder();
     rec.deps.appendCrashLog = () => {
@@ -195,5 +318,27 @@ describe('sanitizeErrorDetail', () => {
     const long = sanitizeErrorDetail('x'.repeat(50), 10);
     assert.equal(long, `${'x'.repeat(10)}… (truncated)`);
     assert.equal(sanitizeErrorDetail('x'.repeat(4_000)).length, 4_000);
+  });
+
+  it('replaces the home directory with ~ before the report leaves the machine', () => {
+    const home = os.homedir();
+    const detail = `ENOENT: open '${path.join(home, 'Documents', 'a.txt')}'`;
+    const sanitized = sanitizeErrorDetail(detail);
+    assert.equal(sanitized.includes(home), false, 'home prefix removed');
+    assert.match(sanitized, /~[\\/]Documents/);
+  });
+
+  it('redacts slash-normalized home paths in renderer file URLs', () => {
+    const home = os.homedir();
+    const urlHome = home.replace(/\\/g, '/');
+    const sanitized = sanitizeErrorDetail(
+      `Error at file:///${urlHome}/Documents/a.txt`
+    );
+    assert.equal(sanitized.includes(urlHome), false, 'URL home prefix removed');
+    assert.match(sanitized, /~\/Documents\/a\.txt/);
+  });
+
+  it('does not treat a root home directory as a replace-all prefix', () => {
+    assert.equal(sanitizeErrorDetail('/etc/passwd', 4_000, '/'), '/etc/passwd');
   });
 });

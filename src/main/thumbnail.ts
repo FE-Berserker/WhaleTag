@@ -438,32 +438,53 @@ export async function clearFolderThumbnail(dirPath: string): Promise<void> {
 }
 
 /**
+ * Coalesce only active loads of the same folder asset. The target path is the
+ * key so a folder's thumbnail and background never share each other's result.
+ * No result is retained after settlement: later calls always observe the file
+ * again, and a failed load can be retried immediately.
+ */
+const folderLoadInflight = new Map<string, Promise<string | null>>();
+
+function coalesceFolderLoad(
+  targetPath: string,
+  load: () => Promise<string | null>
+): Promise<string | null> {
+  const existing = folderLoadInflight.get(targetPath);
+  if (existing) return existing;
+  const run = load().finally(() => {
+    folderLoadInflight.delete(targetPath);
+  });
+  folderLoadInflight.set(targetPath, run);
+  return run;
+}
+
+/**
  * Loads a directory's thumbnail as a data URL. If no `wst.jpg` exists yet, this
  * auto-generates one from the first thumbnailable file in the directory.
  * Returns null for an empty/unthumbnailable directory.
  */
-export async function loadFolderThumbnail(
-  dirPath: string
-): Promise<string | null> {
+export function loadFolderThumbnail(dirPath: string): Promise<string | null> {
   const targetPath = folderThumbPathFor(dirPath);
-  if (!existsSync(targetPath)) {
-    await generateFolderThumbnail(dirPath);
-  }
-  if (!existsSync(targetPath)) return null;
-
-  // Windows may briefly lock the file after generation/copy; retry on EBUSY.
-  let lastError: Error | undefined;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    try {
-      const buf = await fsp.readFile(targetPath);
-      return `data:image/jpeg;base64,${buf.toString('base64')}`;
-    } catch (e) {
-      lastError = e as Error;
-      if ((e as NodeJS.ErrnoException).code !== 'EBUSY') break;
-      await new Promise((r) => setTimeout(r, 50 * 2 ** attempt));
+  return coalesceFolderLoad(targetPath, async () => {
+    if (!existsSync(targetPath)) {
+      await generateFolderThumbnail(dirPath);
     }
-  }
-  throw lastError;
+    if (!existsSync(targetPath)) return null;
+
+    // Windows may briefly lock the file after generation/copy; retry on EBUSY.
+    let lastError: Error | undefined;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        const buf = await fsp.readFile(targetPath);
+        return `data:image/jpeg;base64,${buf.toString('base64')}`;
+      } catch (e) {
+        lastError = e as Error;
+        if ((e as NodeJS.ErrnoException).code !== 'EBUSY') break;
+        await new Promise((r) => setTimeout(r, 50 * 2 ** attempt));
+      }
+    }
+    throw lastError;
+  });
 }
 
 /**
@@ -472,20 +493,23 @@ export async function loadFolderThumbnail(
  */
 export async function setFolderBackground(
   dirPath: string,
-  sourcePath: string
+  sourcePath: string,
+  loadSharp: () => ReturnType<typeof getSharp> = getSharp
 ): Promise<void> {
   const targetPath = folderBackgroundPathFor(dirPath);
   await fsp.mkdir(path.dirname(targetPath), { recursive: true });
-  const buf = await getSharp()(sourcePath)
-    .rotate()
-    .resize({
-      width: 1024,
-      height: 1024,
-      fit: 'inside',
-      withoutEnlargement: true,
-    })
-    .jpeg({ quality: THUMB_QUALITY, mozjpeg: true })
-    .toBuffer();
+  const buf = await thumbnailSemaphore.run(() =>
+    loadSharp()(sourcePath)
+      .rotate()
+      .resize({
+        width: 1024,
+        height: 1024,
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
+      .jpeg({ quality: THUMB_QUALITY, mozjpeg: true })
+      .toBuffer()
+  );
   await atomicWriteBytes(targetPath, buf);
 }
 
@@ -498,11 +522,11 @@ export async function clearFolderBackground(dirPath: string): Promise<void> {
  * Loads a directory's background as a data URL. Does not auto-generate;
  * backgrounds are manual-only.
  */
-export async function loadFolderBackground(
-  dirPath: string
-): Promise<string | null> {
+export function loadFolderBackground(dirPath: string): Promise<string | null> {
   const targetPath = folderBackgroundPathFor(dirPath);
-  if (!existsSync(targetPath)) return null;
-  const buf = await fsp.readFile(targetPath);
-  return `data:image/jpeg;base64,${buf.toString('base64')}`;
+  return coalesceFolderLoad(targetPath, async () => {
+    if (!existsSync(targetPath)) return null;
+    const buf = await fsp.readFile(targetPath);
+    return `data:image/jpeg;base64,${buf.toString('base64')}`;
+  });
 }

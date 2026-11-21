@@ -6,6 +6,7 @@
  */
 
 import { getExifr } from './lazy-native';
+import { logDebug } from './log';
 
 /**
  * P3-7: a small, render-friendly subset of EXIF metadata shown in the
@@ -165,7 +166,7 @@ export async function getExifSummary(filePath: string): Promise<ExifSummary> {
     });
     return buildExifSummary(raw);
   } catch (err) {
-    console.debug(`[exif] summary unavailable for ${filePath}:`, err);
+    logDebug('exif', `summary unavailable for ${filePath}`, err);
     return {
       dateTaken: null,
       camera: null,

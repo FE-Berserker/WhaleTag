@@ -10,12 +10,12 @@ describe('drawio-bridge.dispatchDrawioMessage', () => {
 
   it('returns xml for {event:"autosave", xml}', () => {
     const r = dispatchDrawioMessage({ event: 'autosave', xml: '<mxfile/>' });
-    assert.deepEqual(r, { kind: 'xml', xml: '<mxfile/>' });
+    assert.deepEqual(r, { kind: 'xml', xml: '<mxfile/>', source: 'autosave' });
   });
 
   it('returns xml for {event:"save", xml}', () => {
     const r = dispatchDrawioMessage({ event: 'save', xml: '<mxfile/>' });
-    assert.deepEqual(r, { kind: 'xml', xml: '<mxfile/>' });
+    assert.deepEqual(r, { kind: 'xml', xml: '<mxfile/>', source: 'save' });
   });
 
   // Regression (2026-06-30): drawio's `action: 'export', format: 'xml'`
@@ -33,6 +33,7 @@ describe('drawio-bridge.dispatchDrawioMessage', () => {
     assert.deepEqual(r, {
       kind: 'xml',
       xml: '<mxfile><diagram name="Page-1"/></mxfile>',
+      source: 'export',
     });
   });
 

@@ -77,16 +77,33 @@ async function removeStaleTempsFor(filePath: string): Promise<void> {
  * `tmp` lives next to the target (same volume), so the final rename never hits
  * a cross-device (EXDEV) error.
  */
+/** Extra knobs shared by the three atomic-write helpers. */
+export interface AtomicWriteOptions {
+  /**
+   * POSIX permission bits for the final file (e.g. `0o600` for documents that
+   * hold a bearer token). Omitted means Node's default 0o666 & ~umask.
+   * Windows ignores the mode; the option is a no-op there.
+   */
+  mode?: number;
+}
+
 async function atomicWriteNow(
   filePath: string,
-  write: (fd: fsp.FileHandle) => Promise<void>
+  write: (fd: fsp.FileHandle) => Promise<void>,
+  mode?: number
 ): Promise<void> {
   const tmp = tmpPathFor(filePath);
   let fd: fsp.FileHandle | undefined;
   try {
     await removeStaleTempsFor(filePath);
-    fd = await fsp.open(tmp, 'w');
+    fd = await fsp.open(tmp, 'w', mode);
     await write(fd);
+    if (mode !== undefined) {
+      // Harden the same open descriptor before publishing the temp file. A
+      // chmod failure must abort the rename instead of silently exposing a
+      // token document with permissions wider than the caller requested.
+      await fd.chmod(mode);
+    }
     await fd.datasync();
     await fd.close();
     fd = undefined;
@@ -107,13 +124,14 @@ async function atomicWriteNow(
  */
 async function atomicWrite(
   filePath: string,
-  write: (fd: fsp.FileHandle) => Promise<void>
+  write: (fd: fsp.FileHandle) => Promise<void>,
+  options: AtomicWriteOptions = {}
 ): Promise<void> {
   const key = targetKey(filePath);
   const previous = pendingWrites.get(key) ?? Promise.resolve();
   const run = previous
     .catch(() => undefined)
-    .then(() => atomicWriteNow(filePath, write));
+    .then(() => atomicWriteNow(filePath, write, options.mode));
   pendingWrites.set(key, run);
   try {
     await run;
@@ -131,17 +149,19 @@ async function atomicWrite(
  */
 export async function atomicWriteText(
   filePath: string,
-  data: string
+  data: string,
+  options?: AtomicWriteOptions
 ): Promise<void> {
-  return atomicWrite(filePath, (fd) => fd.writeFile(data, 'utf8'));
+  return atomicWrite(filePath, (fd) => fd.writeFile(data, 'utf8'), options);
 }
 
 /** Atomic write of a JSON value (pretty-printed with 2-space indent). */
 export async function atomicWriteJson(
   filePath: string,
-  value: unknown
+  value: unknown,
+  options?: AtomicWriteOptions
 ): Promise<void> {
-  await atomicWriteText(filePath, JSON.stringify(value, null, 2));
+  await atomicWriteText(filePath, JSON.stringify(value, null, 2), options);
 }
 
 /**
@@ -151,10 +171,11 @@ export async function atomicWriteJson(
  */
 export async function atomicWriteBytes(
   filePath: string,
-  data: Buffer
+  data: Buffer,
+  options?: AtomicWriteOptions
 ): Promise<void> {
   // Buffer hits a TS 5.9 + @types/node 20 friction: Buffer.slice().buffer is
   // ArrayBufferLike but writeFile's overload wants ArrayBuffer. Node accepts
   // Buffer at runtime, so assert past the type-only mismatch.
-  return atomicWrite(filePath, (fd) => fd.writeFile(data as never));
+  return atomicWrite(filePath, (fd) => fd.writeFile(data as never), options);
 }

@@ -48,8 +48,9 @@ type ThumbKind = 'image' | 'svg' | 'video' | 'pdf' | 'font';
 
 - `thumbPathFor(dir, basename)` → `<dir>/.whale/thumbs/<basename>.jpg`
 - 原子写 / mtime 缓存 / in-flight 去重 / delete/rename/move/copy 清理钩子**全部格式无关**
+- `loadFolderThumbnail` / `loadFolderBackground` 以各自 target path 为 key,只合并同目录**尚未 settle** 的加载:同目录并发共享一次 copy/read,thumbnail 与 background 不混用,不同目录互不影响;成功或失败都在 `finally` 清除 Map,失败会传给所有等待方且下一次可立即重试。后续调用会重新读盘,不把结果持久缓存在 JS;空目录的 `null` 也不做跨批次缓存,因此新增首张可缩略文件后不会被旧空结果遮住,代价是分离的多次空目录加载仍可能各自扫描。
 - 失败一律静默回退类型图标(FileTypeIcon),不阻塞其它缩略图
-- **主进程并发闸门**([src/main/concurrency.ts](../src/main/concurrency.ts) 的 `Semaphore`):`thumbnailSemaphore` 限制同时进行的缩略图编码数(sharp / ffmpeg / pdfjs),只包住编码那一段,后续写盘不持锁。
+- **主进程并发闸门**([src/main/concurrency.ts](../src/main/concurrency.ts) 的 `Semaphore`):`thumbnailSemaphore` 限制同时进行的缩略图编码数(sharp / ffmpeg / pdfjs),只包住编码那一段,后续写盘不持锁。`setFolderBackground` 的 sharp 读取/旋转/缩放/JPEG 编码也进入同一个 4 路信号量,异常经 `finally` 释放许可;目标 `wsb.jpg` 的小型原子写不持锁。
 - **ffmpeg 路径**:`ffmpegPath()` 取 `ffmpeg-static` 自带二进制,打包态把路径里的 `app.asar` 换成 `app.asar.unpacked`;缺失时返回 `null`,视频缩略图直接回退类型图标(不做 PATH 探测)。
 - **pdfjs 惰性**:PDF 缩略图用的 pdfjs-dist 经 `getPdfjs()`(`nodeRequire`)在首次 PDF 缩略图时才 load,不在启动顶层(见 [docs/01 §4](./01-architecture.md))
 

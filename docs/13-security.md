@@ -116,3 +116,18 @@
 - 写操作分级:sidecar 级(标签/描述)免审批;文件级(move/copy/delete/zip/create)推送审批弹窗,**无窗口 / 60s 超时 / 拒绝一律视为拒绝**(fail-closed)。
 - 只读模式(默认开)拒绝一切变更工具;删除仅回收站,不提供永久删除。
 - JSON-RPC batch 元素数上限 32(`MAX_BATCH_ELEMENTS`,[mcp-http.ts](../src/main/mcp/mcp-http.ts)):4 MiB body 上限单独不足以阻止单请求塞入十万条小调用串行占用主线程;超限 413。
+- MCP 配置在 POSIX 上以 `0o600` 落盘(见 §12):无可用密钥库时该文件含明文 bearer token,不能让同机其他用户读到。
+
+## 12. 进程权限与敏感文件模式(2026-11)
+
+- **权限默认拒绝、按真实用途精确放行**:[main.ts](../src/main/main.ts) 的 permission request / check 共用 fail-closed 策略。只有主界面与 `json-viewer` 的 `clipboard-sanitized-write`、`image-viewer` 的 `fullscreen` 可放行,而且必须同时满足:请求来自当前主窗口的 `webContents`、顶层页面是开发服务器或打包后的精确 renderer URL、frame URL / origin 与主界面或对应扩展精确匹配;扩展 iframe 还校验 `embeddingOrigin`。摄像头 / 麦克风 / 定位 / 通知 / MIDI、外站与相似域、任意 `file://`、其他扩展及异常路径一律拒绝。
+- **敏感文件 0600 与日志保留上界**:`<userData>/crash.log` 与 MCP 配置(`mcp-config.json`,可能含明文 bearer token)在 POSIX 上以 `0o600` 落盘([crash-guard.ts](../src/main/crash-guard.ts)、[mcp-config.ts](../src/main/mcp/mcp-config.ts) 经 [atomic-write.ts](../src/main/atomic-write.ts) 新增的 `AtomicWriteOptions.mode`)。crash.log 先打开 fd,**写前** `fchmodSync(fd, 0o600)` 修正历史 0644 文件,再追加并关闭;chmod 失败时不写入本次敏感内容,外层 best-effort 崩溃处理仍继续。活动日志追加后若将超过 1 MiB 会先轮换为唯一 `crash.log.1`,不截断单条记录;轮换失败会警告并继续保留当前记录。MCP 配置经 atomic-write 在同一 fd 上 `chmod(mode)`,并于 datasync、close 与 rename 前完成;权限强化失败会上抛、清理 tmp 且不替换原文件,不再静默以宽权限发布。Windows 跳过 POSIX mode。
+- **崩溃日志脱敏**:主进程致命异常与 renderer 上报都先过 `sanitizeErrorDetail` 再写盘 / 弹窗:任意详情归一为字符串、去控制字符、截断到 4000 字符,并把 home 目录前缀替换成 `~`——崩溃报告常被贴进 issue,原始 stack 的绝对路径会把账号名一起带出去。
+- **已接受取舍**:① CSP `img-src` 保留 `http(s)`(§3)——Mapique 地图瓦片从 OSM / 用户自建瓦片服务器加载,去掉即废地图;HTML 仍过 DOMPurify,扩展 iframe 另受自身 CSP 约束。② 目录缩略图 / 背景的 source 图片可位于位置外(§2 末)——来自原生选择框,服务只读源、只写目标 `.whale/`;残余风险是被注入的渲染层可绕过对话框把任意图片路径当 source(结果只落成缩略图 jpg),随"位置外选图"能力接受,记录于 [boundary-guards.test.ts](../src/main/ipc/boundary-guards.test.ts)。
+
+## 13. 第三方依赖审计与残余告示(2026-11)
+
+- 直接补丁升级为 `electron@42.11.18`、`electron-builder@26.18.0`、`concurrently@9.2.5`、`rimraf@6.1.4`、`webpack-dev-server@5.2.7`，再执行不带 `--force` 的 `npm audit fix` 更新兼容的传递补丁。完整审计从 49 项（3 critical）降为 27 项（0 critical），`--omit=dev` 从 20 项降为 12 项（0 critical）；审计数量按受影响依赖节点计，不等于 12 个独立漏洞。
+- 剩余运行时节点全部位于 Excalidraw 的 Mermaid 传递链与 ECharts 5。`@excalidraw/excalidraw@0.18.1` 已是当前上游版本，其固定传递依赖没有同版本线内的完整修复；不通过降级 Excalidraw、跨 major 覆盖 nanoid/KaTeX 或强升 Mermaid 适配器来制造“审计归零”。
+- ECharts 6 的升级与 `echarts-wordcloud@2.1.0` 的 `^5.0.1` peer 和深路径注册方式不兼容，因此保留 `echarts@^5.6.0`。当前所有 HTML tooltip 的用户名称都在 sink 经 `escapeHtml`（§1 与 `escape-html.test.ts`），这是已知上游告示下的应用层缓解，不声称替代未来兼容升级。
+- 其余完整树节点来自 drawio-offline 的旧 electron-updater、electron-builder / typescript-eslint 的 minimatch、webpack-dev-server / sockjs 的 uuid 等开发或构建链。它们不进入运行时白名单；对构建配置受信、dev server 仅本机使用的当前模型，不采用跨 major 降级或强制 overrides。后续上游出现同线修复时再收敛。

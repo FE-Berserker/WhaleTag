@@ -287,6 +287,22 @@ async function dispatch(req: IndexWorkerRequest): Promise<void> {
       post({ reqId: req.reqId, ok: true, result: has });
       return;
     }
+    case 'fulltext:extract': {
+      // On-demand single-file extraction for the MCP `whale_extract_text`
+      // tool. Runs here rather than in main because PDF extraction loads
+      // pdfjs and can burn CPU for seconds — exactly what this worker
+      // exists for (docs/15 §P0-2); importing fulltext.ts from the main
+      // process would also pull index-db.ts into the main bundle and trip
+      // its production guard.
+      const { fullPath, ext, size } = req.arg as {
+        fullPath: string;
+        ext: string;
+        size: number;
+      };
+      const text = await fulltext.extractText(fullPath, ext, size);
+      post({ reqId: req.reqId, ok: true, result: text });
+      return;
+    }
     case 'exif:load-processed': {
       const { rootPath } = req.arg as { rootPath: string };
       post({

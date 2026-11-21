@@ -73,7 +73,14 @@ export async function resolveExtensionRequest(
   }
   const relPath = url.pathname.replace(/^\//, '');
   const extRoot = path.resolve(extensionsRoot, extId);
-  const fullPath = path.resolve(extRoot, relPath);
+  // Draw.io constructs local Link/Lightbox URLs as drawHost + '/?…'.
+  // Unlike a normal web server, this protocol does not generally map
+  // directories to index.html. Opt in only for the exact packaged webapp
+  // root; every other extension directory keeps the existing 404 behavior.
+  const isDrawioAssetsRoot =
+    extId === 'drawio-editor' && relPath.replace(/\/+$/, '') === 'drawio-assets';
+  const resourcePath = isDrawioAssetsRoot ? path.join(relPath, 'index.html') : relPath;
+  const fullPath = path.resolve(extRoot, resourcePath);
   // First-line guard: after URL-parser `..` normalization, the
   // string-level resolved path MUST stay inside extRoot. (URL
   // normalization already collapses `..`, so this catches the rare

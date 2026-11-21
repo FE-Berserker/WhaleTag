@@ -29,7 +29,7 @@
 | 移动 | `fs:move` 优先 rename;**跨卷 EXDEV** 回退 `fs.copyFile + fs.rm`(确保不静默失败) |
 | 复制 | `fs:copyFile` 二进制复制;sidecar 单独 follow-up 写 |
 | 删除 | 默认走 **`shell.trashItem`**(系统回收站);设置 `deleteToTrash: false` 走 `fs.rm` 永久删除;toast 附"打开回收站"按钮 |
-| 打包 | `zipEntries` → Windows 用 PowerShell `Compress-Archive`,其余平台用 `zip -r`。POSIX 从**所有源的最近公共父目录**执行(`commonParentDir`),多选跨目录时条目仍保留相对路径(旧实现只取第一个源的目录,其余源被静默丢弃/重复);`zip` 未安装(Ubuntu Desktop 默认不装)时退回 `python3` + 内置 `zipfile` 脚本,布局相同(空目录不入包);目标已存在则拒绝,不覆盖 |
+| 打包 | `zipEntries` → Windows 用 PowerShell `Compress-Archive`,其余平台用 `zip -r`。三种外部进程统一 `timeout=120s`、`killSignal=SIGKILL`、`maxBuffer=1MiB`,超时/失败直接上抛,不再让主进程永久等待或无限收集输出。OS 工具先写目标旁唯一 `.tmp-….zip` staging,完整成功后 `rename` 到最终路径;失败清理 staging,不留下阻断同名重试的半个 ZIP,超时/输出上限错误不回显整段 argv 与源路径。POSIX 从**所有源的最近公共父目录**执行(`commonParentDir`),多选跨目录时条目仍保留相对路径;`zip` 未安装时退回 `python3` + 内置 `zipfile` 脚本,布局相同(空目录不入包),fallback 失败保留简洁底层 detail;目标已存在则拒绝,不覆盖 |
 | 新建 | `createTextFile` / `createDirectory` —— **不覆盖已有**(不可变偏好);文本创建用 `writeFile(..., { flag: 'wx' })` 原子拒绝已存在目标,不靠 `existsSync` 预检查 |
 | 打开 | 优先内置扩展(dispatch 选 `selectExtension`);无匹配走 `shell.openPath` |
 
@@ -41,6 +41,7 @@
 
 - `readTextFile`:chardet 只采样前 256KB(不扫整个 buffer);替换字符计数用 `indexOf` 循环(不建百万级 `match` 数组)。多 MB 老编码文件不再冻 UI 数百 ms
 - `readFileBase64`:Main 用 `Buffer.toString('base64')` 一次编码,供扩展嵌图;避免 Renderer 对大 `Uint8Array` 逐字节转字符串。入口同样过 `assertWithinAllowedRoot`
+- `readFile` / `readTextFile` / `readFileBase64` 仍是**无统一字节上限的整文件读取**:合法大 TIFF / 图片与任意扩展二进制都依赖这条兼容路径,不能用一个武断的小阈值把它们一并拒绝。超大日志应使用 `openNative`;大小限制由具体消费者定义(例如 MCP 文本 16 MiB、全文 PDF 128 MiB),不在这里假装有全局流式保护
 
 ## 4. 右键菜单
 
@@ -85,8 +86,9 @@
 
 ```
 writeFileAtomic(path, write):
-  fd = open(path.tmp, 'w')
+  fd = open(path.tmp, 'w', mode?)
   await write(fd)        # 调用方通过 fd.writeFile / fd.write 写入
+  if mode: fd.chmod(mode) # 敏感文件先强化权限;失败则中止,不发布 tmp
   fd.datasync()          # fsync
   fd.close()
   rename(tmp, path)      # atomic on same fs

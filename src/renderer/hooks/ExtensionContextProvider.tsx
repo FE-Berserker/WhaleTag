@@ -8,6 +8,7 @@ import {
   useState,
   ReactNode,
 } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { DirEntry } from '../../shared/ipc-types';
 import type {
   ExtensionManifest,
@@ -15,6 +16,7 @@ import type {
   ExtensionEncoding,
 } from '../../shared/extension-types';
 import { ipcApi } from '-/services/ipc-api';
+import { notifyApp } from '-/services/app-notice';
 import { registerExtensionSaveFlush } from '-/services/extension-save-flush';
 import ConfirmDiscardDialog, {
   ConfirmDiscardChoice,
@@ -22,7 +24,7 @@ import ConfirmDiscardDialog, {
 import { basename, isSameOrDescendant, joinPath } from '-/services/path-util';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { selectExtension } from '-/services/extension-dispatch';
-import { useDispatch, useSelector } from 'react-redux';
+import { useDispatch, useSelector, useStore } from 'react-redux';
 import { RootState } from '-/reducers';
 import {
   loadExtensionRegistry,
@@ -30,7 +32,15 @@ import {
 } from '-/reducers/extensions';
 
 import { isBinaryExtension, isImageFile } from '../../shared/whale-meta';
-import { MAX_TABS, makeTabId, pickLruEvict } from './extension-tabs';
+import {
+  MAX_TABS,
+  findTabForFile,
+  makeTabId,
+  pickLruEvict,
+  sameFile,
+  syncLocationReadOnly,
+} from './extension-tabs';
+import { saveForExtensionClose } from './extension-save-close';
 
 export interface ActiveExtensionView {
   manifest: ExtensionManifest;
@@ -51,6 +61,8 @@ export interface ActiveExtensionView {
 export interface ExtensionTab {
   /** `${filePath}::${manifestId}` — dedup key + React key. */
   id: string;
+  /** Location whose permissions governed this tab when it was opened. */
+  locationId: string | null;
   filePath: string;
   manifestId: string;
   manifest: ExtensionManifest;
@@ -126,17 +138,12 @@ function extOf(filePath: string): string {
   return dot > 0 ? filePath.slice(dot + 1).toLowerCase() : '';
 }
 
-/** Path equality under separator + case normalization (both directions of the
- *  descendant check collapsing to equality). Used to match an fs.watch changed
- *  path against an open tab's filePath. */
-function sameFile(a: string, b: string): boolean {
-  return isSameOrDescendant(a, b) && isSameOrDescendant(b, a);
-}
-
 export function ExtensionContextProvider({
   children,
 }: ExtensionContextProviderProps) {
   const dispatch = useDispatch();
+  const store = useStore<RootState>();
+  const { t } = useTranslation();
   const { currentLocation } = useCurrentLocationContext();
   const registry = useSelector((s: RootState) => s.extensions.registry);
   const userDefaults = useSelector((s: RootState) => s.extensions.userDefaults);
@@ -154,6 +161,15 @@ export function ExtensionContextProvider({
   useEffect(() => {
     tabsRef.current = tabs;
   }, [tabs]);
+
+  // A permission change belongs to one location only. Tabs from other roots
+  // can remain open in the background and must keep their own readOnly state.
+  useEffect(() => {
+    const locationId = currentLocation?.id ?? null;
+    const readOnly = currentLocation?.isReadOnly ?? false;
+    setTabs((prev) => syncLocationReadOnly(prev, locationId, readOnly));
+  }, [currentLocation?.id, currentLocation?.isReadOnly]);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -312,7 +328,8 @@ export function ExtensionContextProvider({
       if (closeInProgressRef.current) return 'cancelled';
       const tab = tabsRef.current.find((t) => t.id === tabId);
       if (!tab) return 'closed';
-      const dirty = editStateMapRef.current[tab.filePath]?.dirty ?? false;
+      const previousActiveTabId = activeTabId;
+      const dirty = store.getState().extensions.editState[tab.filePath]?.dirty ?? false;
       if (dirty) {
         closeInProgressRef.current = true;
         try {
@@ -320,11 +337,40 @@ export function ExtensionContextProvider({
           // they're being asked to save.
           setActiveTabId(tabId);
           const choice = await confirmDiscard(basename(tab.filePath));
-          if (choice === 'cancel') return 'cancelled';
+          if (choice === 'cancel') {
+            // Confirmation temporarily focused the dirty tab. Cancelling must
+            // return the user to the document they were actually viewing.
+            setActiveTabId(previousActiveTabId);
+            return 'cancelled';
+          }
           if (choice === 'save') {
             const save = saveHandlersRef.current.get(tabId);
-            const ok = (await save?.()) ?? false;
-            if (!ok) return 'cancelled'; // save failed / timed out / read-only
+            const ok = await saveForExtensionClose(
+              save,
+              () => {
+                // Only a missing handler lacks a host that can report why the
+                // save could not run. A registered handler owns its own notice.
+                notifyApp(t('extensionSaveCloseFailed'));
+              },
+              {
+                // Read the store, not the effect-mirrored ref: a successful
+                // host dispatch may not have rendered through useSelector yet.
+                isDirty: () =>
+                  store.getState().extensions.editState[tab.filePath]?.dirty ??
+                  false,
+                notifyStillDirty: () => {
+                  // The host returned success, so this post-save race is owned
+                  // by the provider and needs exactly one close-specific notice.
+                  notifyApp(t('extensionSaveCloseFailed'));
+                },
+              }
+            );
+            if (!ok) {
+              // Restoring focus is independent from notification ownership:
+              // registered failures already notified in ExtensionHost.
+              setActiveTabId(previousActiveTabId);
+              return 'cancelled';
+            }
           }
           // 'discard' or successful save — fall through to close.
         } finally {
@@ -342,6 +388,15 @@ export function ExtensionContextProvider({
       setActiveTabId((prev) => {
         if (prev !== tabId) return prev; // closed a background tab — keep focus
         if (remaining.length === 0) return null;
+        // A dirty background tab was focused only for its confirmation. After
+        // a successful Save/Discard, return to the document the user had been
+        // viewing instead of unexpectedly selecting the closed tab's neighbor.
+        if (
+          previousActiveTabId !== tabId &&
+          remaining.some((t) => t.id === previousActiveTabId)
+        ) {
+          return previousActiveTabId;
+        }
         // Favor the tab that took the closed tab's slot (right neighbor),
         // else the left neighbor.
         const nextIdx = Math.min(idx, remaining.length - 1);
@@ -349,7 +404,7 @@ export function ExtensionContextProvider({
       });
       return 'closed';
     },
-    [confirmDiscard, dispatch]
+    [activeTabId, confirmDiscard, dispatch, store, t]
   );
 
   const openWithExtension = useCallback(
@@ -369,6 +424,7 @@ export function ExtensionContextProvider({
         const { content, encoding, size } = await readFileContent(entry.path);
         const newTab: ExtensionTab = {
           id: tabId,
+          locationId: currentLocation?.id ?? null,
           filePath: entry.path,
           manifestId: manifest.id,
           manifest,
@@ -477,11 +533,12 @@ export function ExtensionContextProvider({
    *  user's work is never clobbered. No-op if no open tab matches `filePath`. */
   const reloadTabByPath = useCallback(
     async (filePath: string) => {
-      const t = tabsRef.current.find((x) => x.filePath === filePath);
+      const t = findTabForFile(tabsRef.current, filePath);
       if (!t) return;
       // Don't clobber unsaved editor edits — the user's in-progress work wins
-      // over a stale-on-disk reload.
-      if (editStateMapRef.current[filePath]?.dirty) return;
+      // over a stale-on-disk reload. Query the matched tab's actual path: the
+      // watcher may use different casing or separators from the open tab.
+      if (editStateMapRef.current[t.filePath]?.dirty) return;
       try {
         const { content, encoding, size } = await readFileContent(t.filePath);
         setTabs((prev) =>

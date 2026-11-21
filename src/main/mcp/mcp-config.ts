@@ -253,7 +253,11 @@ export function loadMcpConfig(): McpConfig {
 async function persist(): Promise<void> {
   if (!cached) return;
   try {
-    await atomicWriteJson(configPath(), toPersistedDoc(cached, currentCipher()));
+    // The document may hold a plaintext bearer token (machines without a
+    // usable keyring). Keep it owner-only on POSIX; Windows ignores the mode.
+    await atomicWriteJson(configPath(), toPersistedDoc(cached, currentCipher()), {
+      mode: 0o600,
+    });
   } catch (e) {
     console.error('[mcp] failed to persist config:', e);
     // Re-throw so the settings IPC call fails loudly: resolving here makes the

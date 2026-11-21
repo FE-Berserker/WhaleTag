@@ -198,8 +198,76 @@ P1-23 复核把三项「门禁看起来绿、实际拦不住」的缺陷记为�
 - **strict**：`npx tsc --noEmit --strict` 基线 112 错，其中 [useGanttTagFilter.test.tsx](../src/renderer/components/gantt/useGanttTagFilter.test.tsx) 的 `mountProbe` 返回可空 ref 独占 50 条（TS18047）。先让该 helper 返回非空句柄（`handleRef` + 一次性 `assert.ok`）把 112 降到 62；生产代码按错误类型逐条收窄：[fs-write.ts](../src/main/ipc/fs-write.ts) 的 import outcome 用 `typeof destPath === 'string'` 代替 `in`、[sidecar.ts](../src/main/sidecar.ts) 的损坏备份写 `Uint8Array` 视图、[CalendarView.tsx](../src/renderer/components/CalendarView.tsx) 的菜单回调改可选并在调用点 `?.`、[FileList.tsx](../src/renderer/components/FileList.tsx) 的列宽表用 `keyof` 收窄、[FileListHeader.tsx](../src/renderer/components/FileListHeader.tsx) / [PropertiesTray.tsx](../src/renderer/components/PropertiesTray.tsx) 的 `NonNullable<typeof ref.current>` 在 strict 下塌成 `never`，改用显式拖拽类型、[GalleryView.tsx](../src/renderer/components/GalleryView.tsx) 用 `useRef<GridImperativeAPI | null>` + 空表单例稳定 cell props、[configureStore.ts](../src/renderer/store/configureStore.ts) 的 `migrate` 返回 `Promise<Record<string, unknown>>`、[KnowledgeGraphView.tsx](../src/renderer/components/KnowledgeGraphView.tsx) 的 MiniMap 回退色、[folderviz.ts](../src/renderer/domain/folderviz.ts) 给 `child` 显式注解打断推断环、[reducers/extensions.ts](../src/renderer/reducers/extensions.ts) 的 `prior` 展开。测试侧统一：`as NodeJS.Module` 走 `unknown`、GanttEntryMenu 用 `{ value }` 盒子避开「回调内赋值不被流分析跟踪」、GanttView 先 `assert.ok` 收窄、[auto-update.ts](../src/main/auto-update.ts) 的 `subscribe` 按 channel 重载消掉 7 处隐式 any、`piexifjs` 补最小 `.d.ts`。最终 strict 0 错。
 - **scripts 进 tsc**：`tsconfig.json` 的 include 增加 `scripts/**/*.ts`，随即暴露 [verify-settings-persist.ts](../scripts/verify-settings-persist.ts) 5 处（`ProcessEnv` 注解、Buffer 回调、可空 exit code），修完后 `npm run type-check` 同时覆盖 `src/` 与 `scripts/`。
 - **lint 零容忍**：先清 29 条 `react-hooks/exhaustive-deps`（选择修订号 `selectedTick` 用 `void selectedTick` 说明「它只用于失效、不参与计算」；[FileList.tsx](../src/renderer/components/FileList.tsx) 十处 handler 补 `showNotice`；[MapiqueView.tsx](../src/renderer/components/MapiqueView.tsx) 的 `recordPrev` 改 `useCallback`；[MediaLightbox.tsx](../src/renderer/components/MediaLightbox.tsx) 卸载清理先取 map 的局部引用；[DirectoryTree.tsx](../src/renderer/components/DirectoryTree.tsx) 用 path 局部量替代 `currentLocation` 对象依赖）。随后 lint 脚本加 `--max-warnings 0` 与 `--report-unused-disable-directives`，`eslint --fix` 移除 88 条针对已关闭规则（`no-console` / `no-explicit-any`）的死抑制指令——它们永远不会生效，却会在未来重启规则时假装「已评估」。
-- **仍不启用**：`no-console`（主进程用带模块前缀的 `console.warn/error` 当结构化日志，正确治理是日志分区而非禁用）；`@typescript-eslint/no-explicit-any` 仍 off（现存 26 处 `as any` 留待专项）；`taglibrary.renameGroup` 缺 UI 入口（产品决策）。
+- **仍不启用**：`no-console`（主进程用带模块前缀的 `console.warn/error` 当结构化日志，正确治理是日志分区而非禁用；已在 P1-26 以 allow `warn`/`error` + 单一入口启用）；`@typescript-eslint/no-explicit-any` 仍 off（现存 26 处 `as any` 留待专项）；`taglibrary.renameGroup` 缺 UI 入口（产品决策）。
 - 回归：`npm run type-check` 0 错（strict，覆盖 src + scripts）；`npm run lint` 0 error / 0 warning（warning 即失败）；`npm test` 1829/1829、419 suites 全绿。
+
+### P1-26. 2026-11 安全收尾：权限一律拒绝 + 敏感文件 0600 + 日志单一入口 ✅
+P1-23 的安全通道留下四条 P2 记录（进程无 permission handler、`crash.log` 默认 0644、MCP 配置 0644、`no-console` 未启用）。逐条处理；另两条记录项复核后确认属「已接受取舍」：
+- **权限一律拒绝**：[main.ts](../src/main/main.ts) 新增 `configurePermissions()`，`setPermissionRequestHandler` 一律 `callback(false)`、`setPermissionCheckHandler` 一律 `false`。离线文件管理器不需要摄像头 / 麦克风 / 定位 / 通知 / MIDI，被注入的渲染层或扩展 iframe 也无法借原生弹窗骗取设备权限。
+- **敏感文件 0600**：[atomic-write.ts](../src/main/atomic-write.ts) 新增 `AtomicWriteOptions.mode`（`fsp.open(tmp,'w',mode)`，rename 前再 `chmod`），[mcp-config.ts](../src/main/mcp/mcp-config.ts) 以 `0o600` 写含 token 的文档；[crash-guard.ts](../src/main/crash-guard.ts) 的 `appendCrashLog` 走 `mode: 0o600` 并 chmod 修正历史文件，`sanitizeErrorDetail` 把 home 前缀替换成 `~`——崩溃报告常被贴进 issue，绝对路径会带出账号名。
+- **日志单一入口**：新增 [log.ts](../src/main/log.ts)（唯一 `eslint-disable no-console` 的文件），9 处 `console.log/info/debug` 改为 `logInfo` / `logDebug`；[.eslintrc.js](../.eslintrc.js) 启用 `no-console: ['error', { allow: ['warn', 'error'] }]`，`scripts/**` 用 override 关闭（CLI 构建 / 校验脚本本来就要打印 stdout）。
+- **复核后不改**：① 目录缩略图 / 背景的 source 图片可位于位置外——来自原生选择框，服务只读源、只写目标 `.whale/`，[boundary-guards.test.ts](../src/main/ipc/boundary-guards.test.ts) 明确断言这一行为；② CSP `img-src` 保留 `http(s)`——Mapique 地图瓦片从 OSM / 用户自建瓦片服务器加载。两条取舍写入 [docs/13 §12](./13-security.md)。
+- 回归：`npm run type-check` 0 错（strict）；`npm run lint` 0 error / 0 warning（`no-console` 生效）；`npm test` 1835 tests / 1834 pass / 0 fail / 1 skipped（POSIX 0600 用例在 Windows 上 skip）、420 suites 全绿。
+
+### P1-27. 2026-11 后续审计：正确性、资源边界与发布门禁 ✅
+- ✅ **选择 / 批量 IO / Lightbox**：拖拽在 react-dnd drag-start 读取当前选择；批量 move/delete 只 refresh 一次、聚合并报告真实失败且只清成功项选择，Gallery 多目标走 `saveMany`；playlist memo 化，胶片条窗口化但保留远程翻页（[docs/10 §13](./10-ui.md)）。
+- ✅ **编辑器保存协议**：text / drawio / Excalidraw 保存带 revision，stale ack 不清后续编辑；readOnly 不再触发旧 `fileContent` 重灌，drawio 只读禁输入；Excalidraw 旧回执先推进实际写盘 baseline 再重算当前 dirty（[docs/07 §6](./07-extensions.md)）。
+- ✅ **全文 / watcher**：首建每 100 条批写，失败批回滚、成功批保留下轮可恢复；PDF 全局 2 路、超时停止页循环、异常 destroy 1 秒有界等待避免许可永久泄漏、精确视图免二次复制；watcher `['']` 对所有相关全文根保守重建（[docs/04](./04-search-index.md)）。
+- ✅ **权限 / 崩溃日志**：P1-26 的全拒策略收窄为主界面/json-viewer 剪贴板写与 image-viewer fullscreen 的精确白名单，其余仍拒绝；主进程崩溃堆栈也脱敏并覆盖正反斜杠 home，POSIX 在追加前按 fd 强化 0600；atomic-write 的 mode chmod 失败上抛且不发布 tmp（[docs/13](./13-security.md)、[docs/02 §7](./02-file-io.md)）。
+- ✅ **工程门禁**：扩展 manifest 占位符未命中即失败；新增 Windows lint/type-check/test CI 与手动 fresh unpacked packaged-smoke workflow，冒烟隔离 userData 并覆盖真实全文 worker（[docs/14](./14-packaging.md)）。
+- 回归：`npm run lint`、`npm run type-check` 通过；137 个测试文件、1889 tests / 1887 pass / 0 fail / 2 skipped（POSIX mode 用例在 Windows 预期跳过）；当前源码 fresh unpacked 构建与 `node scripts/packaged-smoke.js` 通过。
+
+### P1-28. 2026-11 后续资源边界、依赖一致性与 GUI 发布冒烟 ✅
+- ✅ **ZIP 子进程 / 原子发布**：[fs-write.ts](../src/main/ipc/fs-write.ts) 为 PowerShell / zip / python3 统一 120 秒、SIGKILL 与 1 MiB 输出边界；归档先写唯一 staging，成功才 rename，失败清理半成品；timeout / maxBuffer 映射为不回显源路径的简洁错误。python fallback 与 POSIX 相对布局不变（[docs/02 §5](./02-file-io.md)）。
+- ✅ **目录背景并发**：[thumbnail.ts](../src/main/thumbnail.ts) 的 sharp 读取、变换与 JPEG 编码纳入共享 4 路 `thumbnailSemaphore`，异常释放许可；目录创建和原子写不持锁（[docs/06](./06-thumbnails.md)）。
+- ✅ **依赖一致性**：`echarts-wordcloud@2.1.0` 的 peer 仅支持 ECharts 5，应用由 6.1.0 对齐到 `echarts@^5.6.0`；`npm ls echarts --all` 与 `npm ci --dry-run --ignore-scripts` 通过，不新增 overrides。
+- ✅ **真实 GUI 冒烟**：新增 `scripts/packaged-gui-smoke.js`，在隔离一次性应用实例中走真实 Add Location → Copy Path 剪贴板 → Image Viewer fullscreen → Text Editor Ctrl+S 落盘链路；只在测试主进程替换原生目录选择器返回，不改生产桥接或权限边界。手动 packaged workflow 同时运行主进程/worker 与 GUI 两条冒烟（[docs/14 §3](./14-packaging.md)）。
+- ✅ **通用读取边界复核**：readFile/readTextFile/readFileBase64 的无上限整读服务于合法大 TIFF、图片与扩展二进制，不引入破坏兼容的小阈值；该边界已写入 [docs/02 §6](./02-file-io.md)。
+- 回归：`npm run lint`、`npm run type-check` 通过；137 个测试文件、1897 tests / 1895 pass / 0 fail / 2 skipped（POSIX mode 用例在 Windows 预期跳过）；ZIP 定向 15/15、目录背景定向 26/26。当前源码 fresh unpacked 构建、主进程/全文 worker smoke 与真实 GUI smoke 均通过（[docs/14 §3](./14-packaging.md)）。
+
+### P1-29. 2026-11 依赖安全审计与最小兼容升级 ✅
+- ✅ **直接与传递补丁**：`electron@42.11.18`、`electron-builder@26.18.0`、`concurrently@9.2.5`、`rimraf@6.1.4`、`webpack-dev-server@5.2.7` 修复直接 pinned 版本告示；不带 `--force` 的 `npm audit fix` 再更新 18 个兼容传递包，消除 critical proxy-addr、shell-quote 与 high body-parser 等节点。
+- ✅ **量化结果**：完整 `npm audit` 从 49 项（3 critical / 31 high）降为 27 项（0 critical / 17 high），`--omit=dev` 从 20 项（1 critical / 10 high）降为 12 项（0 critical / 8 high）。`npm ci --dry-run --ignore-scripts` 与直接依赖 `npm ls` 通过，Electron 本地二进制已核对为 42.11.18。
+- ✅ **不以强制升级掩盖残余**：剩余运行时节点仅是 Excalidraw/Mermaid 固定传递链和 ECharts 5；前者当前 Excalidraw 已为上游最新，后者所有 HTML tooltip 的用户名称已有 `escapeHtml` sink 与测试，不能为审计计数破坏 wordcloud 兼容。开发/构建面残余及接受理由记录在 [docs/13 §13](./13-security.md)。
+- ✅ **新安装排坑**：Electron 42.11 npm 包可能按需下载二进制；文档补充 install.js 校验与一次性镜像方法，不把 npm 包版本号误当作 `electron/dist` 已更新（[docs/14 §2](./14-packaging.md)）。
+- 回归：`npm run lint`、`npm run type-check` 通过；137 个测试文件、1897 tests / 1895 pass / 0 fail / 2 skipped（POSIX mode 用例在 Windows 预期跳过）。当前源码以 Electron 42.11.18 / electron-builder 26.18.0 fresh unpacked 构建成功，主进程/全文 worker 与真实 GUI 两条 smoke 均通过；未覆盖 NSIS 安装包与 GitHub Actions 远端运行。
+
+### P1-30. 2026-11 扩展关闭边界、Lightbox 清理与崩溃日志上界 ✅
+- ✅ **扩展多标签状态**：[ExtensionContextProvider.tsx](../src/renderer/hooks/ExtensionContextProvider.tsx) 在取消关闭或保存失败后恢复此前活动标签；标签记录所属 location，只同步该位置的 readOnly 变化。保存失败不再静默，readOnly 拒写显示对应位置名称；路径刷新优先精确匹配，仅在归一化结果唯一时兼容 watcher 的大小写/分隔符差异（[extension-tabs.ts](../src/renderer/hooks/extension-tabs.ts)、[docs/07](./07-extensions.md)）。
+- ✅ **Lightbox 全局监听**：[media-pan.ts](../src/renderer/components/media-pan.ts) 返回幂等 disposer；新拖拽、关闭、Esc、当前媒体变化及 unmount 都清理 window mousemove/mouseup，旧 disposer 不能误删新手势监听（[docs/10 §13](./10-ui.md)）。
+- ✅ **崩溃日志上界**：[crash-guard.ts](../src/main/crash-guard.ts) 在追加前按 UTF-8 字节将 1 MiB 上限之外的旧日志轮换为唯一 crash.log.1；Windows 先移除退役备份再 rename，轮换失败告警并仍保留当前完整记录，POSIX fd 写前 0600 与主/渲染脱敏不变（[docs/01 §9](./01-architecture.md)、[docs/13 §6](./13-security.md)）。
+- ✅ **依赖与真实 GUI 验收**：删除无源码/构建脚本引用的 png-to-ico、png2icns，共减少 10 个安装包；不把它与尚未完成的 mac .icns 混为一谈。packaged GUI 新增后台脏标签关闭确认期间的焦点断言、取消后恢复、再次保存；剪贴板对可安全恢复格式单次结构化写入并读回校验，无法安全恢复时在任何写入前拒绝，MUI modal 的 aria-hidden 背景用 CSS role 定位，不放宽断言（[docs/14 §3](./14-packaging.md)、[docs/16 C-3](./16-cross-platform.md)）。
+- 回归：`npm run lint`、`npm run type-check` 通过；138 个测试文件、1911 tests / 1909 pass / 0 fail / 2 skipped（POSIX mode 用例在 Windows 预期跳过）。当前源码以 Electron 42.11.18 / electron-builder 26.18.0 fresh unpacked 构建成功，主进程/全文 worker 与真实 GUI 两条 smoke 均通过；真实 GUI 额外覆盖后台脏标签取消关闭和焦点恢复，未覆盖 NSIS 安装包与 GitHub Actions 远端运行。
+
+### P1-31. 2026-11 扩展保存最终一致性与 Draw.io 离线资源闭环 ✅
+- ✅ **保存一致性**：ExtensionHost 单点通知写异常、初始/动态 readOnly、15 秒无响应、concurrent saving 和 stale ack；stale 不清 dirty 或向关闭方返回成功，保存后仍 dirty 会取消关闭并恢复先前焦点。普通/后台关闭成功也恢复此前活动标签。工具栏 Save 与 close 请求的极窄交叠仍可能保守取消并提示，但不会误报已保存。
+- ✅ **Draw.io 离线资源**：构建只保守剔除无引用资源（共 138 文件 / 3,050,820 bytes），恢复 `open.html`，manifest 用函数替换；同时 patch `index.html` 与 `PreConfig.js`，修复 vendor 将 viewer/base 重置 null 后回退公网 CDN 的离线路径。真实包断言 viewer/base/lightbox 同源、bundle 可加载及 init/render/label edit。
+- ✅ **冒烟清理可靠性**：两个 packaged smoke 的清理异常不覆盖原错误；GUI 剪贴板只对空或单独 `text/plain` 执行 Copy Path，单次结构化恢复 + 有界严格 read-back；遇格式化文本、图片、FileNameW、URI 等不触碰剪贴板并明确跳过该项，干净 CI 仍执行完整 clipboard 断言。
+- 回归：`npm run lint`、`npm run type-check`、`npm test` 通过（139 文件，1927 tests / 1925 pass / 0 fail / 2 skipped，POSIX mode 用例在 Windows 预期跳过）；当前源码 fresh unpacked 的主进程/worker、真实 GUI（含 Copy Path）和 Draw.io viewer/Lightbox 三条冒烟全部通过。第八轮随后补齐 Draw.io 宿主 Save 与磁盘读回；HTML-embed 正式 bundle 是上游缺口，未覆盖 NSIS 安装包与 GitHub Actions 远端运行。
+
+### P1-32. 2026-11 全文提取调度与目录加载在飞行合并 ✅
+- ✅ **全文提取不再按目录叠乘**：[fulltext.ts](../src/main/fulltext.ts) 的 `buildFulltextIndex` 对非 PDF 实际提取使用 worker 级 `Semaphore(8)`，各目录原有 8 路 walk 不再造成递归并发乘积；PDF 不占通用许可，只走原有 2 路专用闸门，避免 PDF 队列饿死文本，直接 MCP 路径不变。4 个嵌套目录 × 4 文件验证全局 `maxActive=8` 且 16 行全部可搜索；另一回归强制文本目录等 8 个 PDF 全部进入队列后才运行，确定性证明文本仍能前进。
+- ✅ **同目录加载只算一次**：[thumbnail.ts](../src/main/thumbnail.ts) 以 thumbnail/background 各自 target path 为 key，只合并未 settle 的同目录加载；同目录 8 路 thumbnail 只做一次 copy/read、6 路 background 只做一次 read，不同目录互不影响。Promise settle 后必清 Map，失败传播给全部等待方且下次可重试，不持久缓存结果或 `null`，因此不会用旧空目录遮蔽新增文件；既有 generate in-flight、mtime、4 路 background 编码限制与 IPC 不变（[docs/04](./04-search-index.md)、[docs/06](./06-thumbnails.md)）。
+- 回归：`npm run lint`、`npm run type-check` 通过；139 个测试文件、1933 tests / 1931 pass / 0 fail / 2 skipped（POSIX mode 用例在 Windows 预期跳过），fulltext 定向 17/17、thumbnail 定向 30/30。包含最终 PDF/文本隔离修正的当前源码 fresh unpacked 构建成功，主进程/持久化/全文 worker、真实 GUI（含 Copy Path）与 Draw.io viewer/Lightbox 三条冒烟全部通过；未覆盖 NSIS 安装包与 GitHub Actions 远端运行。
+
+### P1-33. 2026-11 可复现性能基线与参数停止条件 ✅
+- ✅ **隔离基准工具**：新增 [bench-performance.js](../scripts/bench-performance.js)，全文使用真实 app.asar utilityProcess，目录缩略图使用真实 renderer `window.whale.loadFolderThumbnail` → preload IPC → packaged main；3 轮中位数并校验索引命中/陈旧清理、JPEG 产物与同目录结果一致性。测量前排空真实 per-root 索引队列并断言所有缩略图不存在，报告 `coldVerified`；内存明确为 phase 后 resident 与共享 worker 累计 peak，不吞缺失值。新增 [bench-fulltext-phases.js](../scripts/bench-fulltext-phases.js) 与 [bench-fulltext-batches.js](../scripts/bench-fulltext-batches.js) 分离读取归因和真实 `insertFulltext` 事务批次；[bench-stats.js](../scripts/bench-stats.js) 统一统计，加载主进程源码的脚本显式 `NODE_ENV=test`，清理失败隔离且报告 `tempRootRemoved`。核心 fulltext/thumbnail/cold validator 与统计共 6/6 测试通过，临时 fixture 全部清理。
+- ✅ **按证据停止而非盲调**：最终自检版的 1000×4KiB 文本基线为 cold 1235.507ms、no-op 11.882ms、1% 增量 21.727ms、查询 0.567ms；24 目录缩略图 cold 152.7ms、warm 4.3ms、8 路同目录 burst 11.8ms（只证明结果一致，单次生成由单元测试证明）。阶段探针断言 synthetic 每轮真实执行 1000 次，并按每轮配对差报告归因；事务探针按 10 组各 100 行证明全部 1000 行写入。最新批次对照波动大且无稳定排序，不支持为微小/不稳定差异扩大大文本驻留，因此保留生产参数。合成小样本、现有 unpacked、未清 OS page cache 与 phase 后内存快照均不作普遍性能或泄漏结论；跨 harness 的绝对耗时不直接比较（[docs/15](./15-perf-audit.md)）。
+- 回归：`npm run lint`、`npm run type-check`、`npm test` 全通过；140 个测试文件，1939 tests / 1937 pass / 0 fail / 2 skipped；当前源码 fresh unpacked 构建及主进程/worker、真实 GUI、Draw.io viewer/Lightbox 三条冒烟通过。本轮无产品行为参数变更，仅新增基准工具与文档。
+
+### P1-34. 2026-11 批量目录树刷新与 Draw.io 保存验收 ✅
+- ✅ **批量刷新去重**：IOActionOptions 将 `refresh` 与 `treeRefresh` 分离；批量移动/删除抑制逐项刷新，批后只对成功项的源 parentDir 和移动目标目录去重刷新，再做一次 listing。失败项不刷新其目录且保留选择；单文件及旧 `{refresh:false}` 语义不变。真实 Provider 始终提供稳定 `refreshTree`，FileList 复用 IOActions context。定向 22/22 通过。
+- ✅ **Draw.io 保存读回**：packaged smoke 点击当前 iframe 所属宿主 toolbar 的真实 Save，再由 Node 轮询磁盘，验证新 label 存在、旧 label 消失、XML 改变且 mtime 不倒退；既有离线 viewer/base/lightbox、Lightbox 文档和 init/render/edit 断言保留。
+- ✅ **基准与清理收尾**：batches 的 `--output` 缺值报错并创建父目录，phases 不再误称 byte-for-byte，performance 在强制 kill 后有界等待进程退出。GUI 只对空或单独 `text/plain` 剪贴板执行 Copy Path，其余格式保持原样并明确跳过，避免 Windows 组合格式恢复风险。
+- 回归：`npm run lint`、`npm run type-check`、`npm test` 全通过；140 个测试文件，1941 tests / 1939 pass / 0 fail / 2 skipped。包含本轮产品改动的当前源码 fresh unpacked 构建成功；最终主进程/worker、真实 GUI（实际执行 Copy Path）与 Draw.io 三条 smoke 全部通过，Draw.io 包含宿主 Save 和磁盘读回。未覆盖 NSIS 安装包与 GitHub Actions 远端运行。
+
+### P1-35. 2026-11 批量失败反馈与自动化可靠性收尾 ✅
+- ✅ **批量错误与目录树依赖**：批量通知只显示前 3 条错误并以五语言 `andMoreFailures` 汇总剩余数量，完整错误数组通过 console.error 保留；成功/部分失败/全失败、refresh 错误、失败项选择和 treeRefresh 去重不变。`IOActionsContextValue.refreshTree` 改必填，FileList 删除 no-op 兜底，Kanban 测试替身显式补齐；聚焦 36/36、locale/type-check/scoped lint 通过。
+- ✅ **自动化诊断与报告**：Draw.io watchdog 提至 300 秒并在错误中携带当前阶段，真实 Save 与磁盘读回保留。phase/batch benchmark 严格拒绝未知参数和缺值、限制 rounds，成功/失败报告带 generatedAt/completedAt，指定 --output 时失败覆盖旧报告；CLI/报告及核心统计契约聚焦 9/9，一轮与异常参数实测通过。
+- ✅ **复审收口**：`composeBatchNotice` 统一全成功/部分成功/全失败文案与级别，部分失败由五语言 `partialFailure` 单模板组合，批量删除通过 `trashedItems` / `deletedItems` 带真实成功 count；移除无用 saveMany 表达式。phase/batch 导出 `runCli(argv)` 并测试真实失败报告链，严格十进制 rounds；清理失败使报告 `ok:false`、带 `cleanupError` 且不覆盖原错误，Drawio Save 图标取首个匹配并验证 mtime 严格前进。聚焦通知/locale 25/25、benchmark 10/10 通过。
+- ✅ **最后两项 minor 闭环**：多目标 sidecar 写入改为 allSettled 后统一刷新，失败仍 reject 并携带真实 `updatedCount` 与完整 `errors`，多选打标复用统一通知；聚焦 provider/hook 19/19。phase/batch 将测量异常与清理汇入同一报告，双失败也保留原错误、cleanupError、tempRootRemoved 和时间戳；聚焦 CLI/报告 10/10。TagMetaSaveManyError.message 统一限制为前三条加省略号，完整 errors 数组不变，避免其他 saveMany 调用点出现超长 Snackbar。
+- 回归：diff/LF、`npm run lint`、`npm run type-check`、`npm test` 全通过；140 个测试文件，1954 tests / 1952 pass / 0 fail / 2 skipped。当前源码 fresh unpacked 与主进程/worker、GUI、Draw.io 三条 smoke 通过；本次本机 GUI 因已有 text/plain+text/html 按安全策略明确跳过 Copy Path，未触碰该剪贴板，干净 CI 仍执行完整 clipboard 断言。未做人为 300 秒超时/清理故障注入以外的生产故障演练，双失败基准报告路径已由受控 hook 实测；未覆盖 NSIS 与远端 Actions。
+
 ---
 
 ## 🟡 P2 — 类型逃逸

@@ -3,6 +3,7 @@ import { promises as fsp, createReadStream } from 'fs';
 import { pathToFileURL } from 'url';
 import { createRequire } from 'module';
 import { META_DIR } from '../shared/whale-meta';
+import { MAX_PDF_BYTES } from './fulltext-limits';
 import type { FulltextHit } from '../shared/ipc-types';
 import {
   queryFulltext,
@@ -11,7 +12,7 @@ import {
   insertFulltext,
   deleteFulltextPaths,
 } from './index-db';
-import { mapWithConcurrency } from './concurrency';
+import { mapWithConcurrency, Semaphore } from './concurrency';
 
 // pdfjs-dist (Mozilla's official PDF library). We use the legacy build because
 // it runs in Node/Electron-main without DOM APIs. The library is kept as a
@@ -68,14 +69,21 @@ const MAX_FULLTEXT_BYTES = 2 * 1024 * 1024;
 /** Per-file content stored uncapped here would bloat the index; cap the record. */
 const MAX_TEXT_PER_FILE = 200 * 1024;
 
-/**
- * Refuse PDFs larger than this before `readFile` — pdfjs needs the whole file
- * in memory (plus its own parse buffers), so an unbounded read can OOM the
- * index worker. Text extraction from a 128 MiB PDF is already pathological and
- * the 10 s per-file timeout would usually kill it. Files above the cap keep
- * whatever row they already had instead of disappearing from the index.
- */
-export const MAX_PDF_BYTES = 128 * 1024 * 1024;
+/** Keep only a small, bounded number of extracted bodies waiting for SQLite.
+ * At the per-file cap this is at most ~20 MiB of queued text (plus one batch
+ * inside the writer), rather than the whole first-build corpus. */
+const FULLTEXT_UPSERT_BATCH = 100;
+
+// Each directory has its own mapWithConcurrency(8), so nested walks would
+// otherwise multiply non-PDF extractor pressure. Share one worker-wide bound
+// across the tree; direct MCP extraction intentionally does not use this limit.
+const nonPdfExtractionSemaphore = new Semaphore(8);
+
+/** A pdfjs document can hold the source bytes plus substantial parser/worker
+ * state. Bound that lifetime across ALL callers, not just the walk's width. */
+const pdfExtractionSemaphore = new Semaphore(2);
+const PDF_EXTRACT_TIMEOUT_MS = 10_000;
+const PDF_DESTROY_TIMEOUT_MS = 1_000;
 
 interface FulltextRecord {
   /** Path relative to the index root, '/'-separated (portable). */
@@ -147,52 +155,101 @@ function readCappedText(
  * separate thread; text extraction is I/O bound and per-file capped by a 10s
  * timeout.
  */
-async function extractPdfText(filePath: string): Promise<string | null> {
-  const data = new Uint8Array(await fsp.readFile(filePath));
-  let loadingTask: import('pdfjs-dist/legacy/build/pdf.mjs').PDFDocumentLoadingTask | null = null;
-  let settled = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
+export async function extractPdfText(
+  filePath: string,
+  loadPdfjs: () => Pick<PdfjsLib, 'getDocument'> = getPdfjs,
+  timeoutMs = PDF_EXTRACT_TIMEOUT_MS,
+  destroyTimeoutMs = PDF_DESTROY_TIMEOUT_MS
+): Promise<string | null> {
+  return pdfExtractionSemaphore.run(async () => {
+    // pdfjs 6 rejects Buffer and transfers data.buffer to its worker. Present a
+    // plain Uint8Array view instead: an exactly-owned buffer is used without a
+    // second copy, while getDataProp copies partial views (including Buffers
+    // backed by Node's shared pool) BEFORE that transfer can detach a slab.
+    const bytes = await fsp.readFile(filePath);
+    const data = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    let loadingTask: import('pdfjs-dist/legacy/build/pdf.mjs').PDFDocumentLoadingTask | null = null;
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-  return new Promise((resolve) => {
-    const done = (text: string | null) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      loadingTask?.destroy?.().catch(() => undefined);
-      resolve(text);
-    };
-
-    // Guard against pdfjs hanging on malformed or tricky PDFs.
-    timer = setTimeout(() => {
-      done(null);
-    }, 10000);
-
-    loadingTask = getPdfjs().getDocument({
-      data,
-      useSystemFonts: true,
-      standardFontDataUrl,
-    });
-    loadingTask.promise
-      .then(async (doc) => {
-        const parts: string[] = [];
-        for (let i = 1; i <= doc.numPages; i += 1) {
-          const page = await doc.getPage(i);
-          try {
-            const content = await page.getTextContent();
-            const pageText = content.items
-              .map((item: unknown) => (item as { str?: string }).str ?? '')
-              .join(' ');
-            if (pageText.trim()) parts.push(pageText);
-          } finally {
-            page.cleanup?.();
-          }
+    return new Promise((resolve) => {
+      let destroyTimer: ReturnType<typeof setTimeout> | undefined;
+      const done = (text: string | null, abnormal = false) => {
+        if (settled) return;
+        settled = true;
+        if (timer) {
+          clearTimeout(timer);
+          timer = undefined;
         }
-        const text = parts.join('\n').trim();
-        done(text || null);
-      })
-      .catch(() => {
-        done(null);
-      });
+        const finish = () => {
+          if (destroyTimer) {
+            clearTimeout(destroyTimer);
+            destroyTimer = undefined;
+          }
+          resolve(text);
+        };
+        try {
+          const destroying = loadingTask?.destroy?.();
+          if (destroying) {
+            // Normal completion keeps waiting for pdfjs to release its worker
+            // and parser buffers. On timeout/failure, a broken destroy must not
+            // strand either this caller or one of the two global permits.
+            if (abnormal) destroyTimer = setTimeout(finish, destroyTimeoutMs);
+            void destroying.catch(() => undefined).then(finish);
+          } else {
+            finish();
+          }
+        } catch {
+          finish();
+        }
+      };
+
+      // Guard against pdfjs hanging on malformed or tricky PDFs.
+      timer = setTimeout(() => {
+        done(null, true);
+      }, timeoutMs);
+
+      try {
+        loadingTask = loadPdfjs().getDocument({
+          data,
+          useSystemFonts: true,
+          standardFontDataUrl,
+        });
+      } catch (error) {
+        // A synchronous loader failure must not leave its timeout alive.
+        if (timer) clearTimeout(timer);
+        settled = true;
+        throw error;
+      }
+      loadingTask.promise
+        .then(async (doc) => {
+          const parts: string[] = [];
+          for (let i = 1; i <= doc.numPages; i += 1) {
+            // The 10 s timeout settles the caller AND terminates this loop.
+            // Merely resolving the outer promise used to leave every remaining
+            // page running in the background, retaining the PDF and CPU work.
+            if (settled) return;
+            const page = await doc.getPage(i);
+            try {
+              if (settled) return;
+              const content = await page.getTextContent();
+              if (settled) return;
+              const pageText = content.items
+                .map((item: unknown) => (item as { str?: string }).str ?? '')
+                .join(' ');
+              if (pageText.trim()) parts.push(pageText);
+            } finally {
+              page.cleanup?.();
+            }
+          }
+          if (settled) return;
+          const text = parts.join('\n').trim();
+          done(text || null);
+        })
+        .catch(() => {
+          done(null, true);
+        });
+    });
   });
 }
 
@@ -294,19 +351,53 @@ export async function extractTextDetailed(
  */
 export async function buildFulltextIndex(
   rootPath: string,
-  onProgress?: (processed: number) => void
+  onProgress?: (processed: number) => void,
+  extract: typeof extractTextDetailed = extractTextDetailed
 ): Promise<{ count: number }> {
   await fsp.mkdir(path.join(rootPath, META_DIR), { recursive: true });
   // prior is path → mtime ONLY (no content). Unchanged files' content stays in
   // the DB and is never loaded into JS memory — that is the win over the old
   // DELETE-all + re-INSERT-all strategy, which had to carry every document body.
   const prior = fulltextPrior(rootPath);
-  const upserts: FulltextRecord[] = []; // changed + new files (with content)
-  const changedPaths: string[] = []; // existed in prior → delete stale row first
+  const upserts: FulltextRecord[] = []; // bounded changed + new write queue
   const seen = new Set<string>(); // every path that should remain indexed
   /** Relative paths (files or directories) we could not examine; rows survive. */
   const skipped: string[] = [];
   let count = 0;
+
+  // Flush DURING the walk so a first build never accumulates every document
+  // body. All producers apply backpressure at the high-water mark, and only
+  // one batch is in SQLite at a time. insertFulltext performs delete+insert in
+  // one transaction, so changed rows cannot be lost between separate phases.
+  let activeUpsertFlush: Promise<void> | null = null;
+  let upsertFailure: unknown = null;
+  async function flushUpserts(force = false): Promise<void> {
+    while (
+      activeUpsertFlush !== null ||
+      upserts.length >= FULLTEXT_UPSERT_BATCH ||
+      (force && upserts.length > 0)
+    ) {
+      // Promise.all rejects as soon as one walk worker fails; other workers
+      // may still finish reads. Never let those stragglers commit more batches
+      // after the build has already reported failure.
+      if (upsertFailure) throw upsertFailure;
+      if (activeUpsertFlush) {
+        await activeUpsertFlush;
+        continue;
+      }
+      const batch = upserts.splice(0, FULLTEXT_UPSERT_BATCH);
+      const write = insertFulltext(rootPath, batch);
+      activeUpsertFlush = write;
+      try {
+        await write;
+      } catch (error) {
+        upsertFailure ??= error;
+        throw error;
+      } finally {
+        if (activeUpsertFlush === write) activeUpsertFlush = null;
+      }
+    }
+  }
 
   async function walk(dir: string): Promise<void> {
     let names: string[];
@@ -326,12 +417,11 @@ export async function buildFulltextIndex(
     // Process a directory's entries with bounded concurrency (was a serial
     // `for` loop), so subdir recursion AND text extraction overlap instead of
     // running one entry at a time. The shared accumulators (seen / count /
-    // upserts / changedPaths) are only ever mutated synchronously between
-    // awaits, so concurrent workers share them safely — JS async only
-    // interleaves at await boundaries, never mid-statement (so `count += 1`
-    // can't lose an increment). Insertion order is non-deterministic, which is
-    // fine: the FTS5 delta (delete changed → insert upserts → delete removed)
-    // is order-independent.
+    // upserts) are only ever mutated synchronously between awaits, so
+    // concurrent workers share them safely — JS async only interleaves at
+    // await boundaries, never mid-statement (so `count += 1` can't lose an
+    // increment). Insertion order is non-deterministic, which is fine: each
+    // upsert batch is self-contained and `removed` is applied only at the end.
     await mapWithConcurrency(names, 8, async (name) => {
       const full = path.join(dir, name);
       let stat;
@@ -374,33 +464,38 @@ export async function buildFulltextIndex(
           return;
         }
 
-        const extracted = await extractTextDetailed(full, ext, stat.size);
+        // PDF has its own worker-wide two-permit bound inside extractPdfText.
+        // Do not occupy non-PDF permits while a PDF is queued behind that bound.
+        const extracted =
+          ext === 'pdf'
+            ? await extract(full, ext, stat.size)
+            : await nonPdfExtractionSemaphore.run(() => extract(full, ext, stat.size));
         if (extracted.unreadable) {
           skipped.push(rel);
           return;
         }
         if (!extracted.text) return; // no extractable text → not indexed
-        if (prevMtime !== undefined) changedPaths.push(rel);
         upserts.push({ path: rel, name, mtime: stat.mtimeMs, content: extracted.text });
         seen.add(rel);
         count += 1;
         onProgress?.(count);
+        if (upserts.length >= FULLTEXT_UPSERT_BATCH) await flushUpserts();
       }
     });
   }
 
   await walk(rootPath);
+  await flushUpserts(true);
 
   // Files indexed before but not seen this walk (deleted from disk) drop out.
   // Anything covered by `skipped` is exempt: we could not examine it, so the
   // old row is stale-but-searchable rather than silently gone.
   const removed = selectRemoved(prior.keys(), seen, skipped);
 
-  // Incremental apply: clear stale rows for changed files, insert changed + new,
-  // drop removed. Unchanged rows (the common case on re-index) are never
-  // touched and their content is never loaded into memory.
-  await deleteFulltextPaths(rootPath, changedPaths);
-  await insertFulltext(rootPath, upserts);
+  // Deletion is deliberately LAST and only runs after a successful walk and
+  // final flush. If extraction or any upsert batch throws, earlier committed
+  // batches remain valid incremental progress, the failed transaction keeps
+  // its prior rows, and removed/stale paths are not deleted on a partial walk.
   await deleteFulltextPaths(rootPath, removed);
 
   return { count };

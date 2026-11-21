@@ -49,7 +49,12 @@ export interface GalleryCellData {
   onSelect?: (entry: DirEntry, mods: { shift: boolean; toggle: boolean }) => void;
   onOpen?: (entry: DirEntry) => void;
   /** Drop a tag chip onto the tile (single entry or batch when multi-selected). */
-  onDropTag?: (entry: DirEntry, tag: string, functionality?: string) => void;
+  onDropTag?: (
+    entry: DirEntry,
+    tag: string,
+    functionality?: string,
+    targets?: readonly DirEntry[]
+  ) => void;
   /** Right-click → the generic entry context menu (same as list/grid). */
   onContextEntry?: (entry: DirEntry, x: number, y: number) => void;
   /** When true, tile-level write actions are disabled. */
@@ -133,7 +138,7 @@ export default function GalleryCell({
             onConfirm: (period) => {
               const t = dropPeriodFor.current;
               dropPeriodFor.current = null;
-              if (t) for (const target of t) onDropTag(target, period, undefined);
+              if (t) onDropTag(entry, period, undefined, t);
             },
           });
           return;
@@ -141,9 +146,7 @@ export default function GalleryCell({
         // Batch rule: dropping on a selected tile tags every selected media entry.
         if (selected.has(entry.path) && selected.size > 1) {
           const targets = entries.filter((e) => selected.has(e.path));
-          for (const target of targets) {
-            onDropTag(target, item.tag, item.functionality);
-          }
+          onDropTag(entry, item.tag, item.functionality, targets);
         } else {
           onDropTag(entry, item.tag, item.functionality);
         }

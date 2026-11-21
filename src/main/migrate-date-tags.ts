@@ -39,6 +39,7 @@ import path from 'path';
 import { promises as fsp } from 'fs';
 import { META_DIR, FOLDER_SIDECAR_FILE, FOLDER_META_FILE, MIGRATION_STATE_FILE } from '../shared/whale-meta';
 import { atomicWriteJson } from './atomic-write';
+import { logInfo } from './log';
 import { withLock } from './dir-lock';
 import {
   isAnyDateShapeTag,
@@ -373,8 +374,9 @@ export function triggerStartupMigration(
   if (startupMigration || allowedRoots.length === 0) return null;
   startupMigration = runMigration(allowedRoots)
     .then((res) => {
-      console.log(
-        `[migrate-date-tags] scanned=${res.totalScanned} ` +
+      logInfo(
+        'migrate-date-tags',
+        `scanned=${res.totalScanned} ` +
           `migrated=${res.totalMigrated} backups=${res.totalBackups} ` +
           `errors=${res.totalErrors}`
       );

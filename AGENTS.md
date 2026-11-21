@@ -18,14 +18,14 @@ Whale：本地优先、离线、隐私安全的 Electron 文件管理与打标�
 | `npm run build` | 产出 main + extensions + renderer | |
 | `npm run package:win` | Windows 打包（electron-builder） | 打包排坑见 docs/14 |
 
-**本仓库没有 CI**——`lint` / `type-check` / `test` 就是全部质量门禁，任何代码改动在宣布完成前必须三件套通过（由 test-runner / lint-guard 执行）。
+任何代码改动在宣布完成前必须通过 `lint` / `type-check` / `test` 三件套（由 test-runner / lint-guard 执行）；GitHub Actions 的 `ci.yml` 在 PR/main push 跑同样的 Windows 门禁，`packaged-smoke.yml` 提供手动 fresh 打包与三条冒烟。
 
 ## 测试约定
 
 - 框架：Node 内建 `node:test`（`import { describe, it } from 'node:test'`），断言用 `node:assert/strict`，经 Electron `--test` 执行。
 - **共置**：测试文件 `foo.test.ts` 放在被测文件旁边，不集中建 tests/ 目录。
 - **自动发现**：`scripts/run-tests.cjs` 扫描 `src/` 与 `scripts/` 下所有 `*.test.ts(x)`，新增测试文件**无需登记清单**（旧的手工清单曾漏 8 个文件，勿走回头路）。
-- 现状约 128 个测试文件，覆盖 main/renderer/shared/extensions 四层。
+- 现状约 140 个测试文件，覆盖 main/renderer/shared/extensions 四层。
 
 ## 目录职责
 

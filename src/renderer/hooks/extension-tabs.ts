@@ -4,6 +4,8 @@
  * extension registry). See `useUndoStack-impl.ts` for the same pattern.
  */
 
+import { isSameOrDescendant } from '-/services/path-util';
+
 /** Maximum number of concurrently-open tabs. Opening a (MAX_TABS+1)th evicts
  *  the least-recently-used non-dirty tab (see `pickLruEvict`). Dirty tabs are
  *  never silently evicted — if every tab is dirty the limit is temporarily
@@ -15,6 +17,40 @@ export const MAX_TABS = 8;
  *  extension is a separate tab. Also serves as the React list key. */
 export function makeTabId(filePath: string, manifestId: string): string {
   return `${filePath}::${manifestId}`;
+}
+
+/** Path equality with the same separator/case normalization used by the file
+ * watcher. A watcher path need not be byte-for-byte identical to the path that
+ * opened the tab. */
+export function sameFile(a: string, b: string): boolean {
+  return isSameOrDescendant(a, b) && isSameOrDescendant(b, a);
+}
+
+/** Resolve a watcher/reload path without confusing two case-distinct files on
+ * a case-sensitive filesystem. Exact identity always wins; the normalized
+ * fallback is used only when it identifies one unambiguous open tab. */
+export function findTabForFile<T extends { filePath: string }>(
+  tabs: readonly T[],
+  filePath: string
+): T | undefined {
+  const exact = tabs.find((tab) => tab.filePath === filePath);
+  if (exact) return exact;
+  const normalized = tabs.filter((tab) => sameFile(tab.filePath, filePath));
+  return normalized.length === 1 ? normalized[0] : undefined;
+}
+
+/** Synchronize readOnly only for tabs opened from the affected location.
+ * Untouched tabs (and an unchanged tab array) retain their identities. */
+export function syncLocationReadOnly<
+  T extends { locationId: string | null; readOnly: boolean },
+>(tabs: T[], locationId: string | null, readOnly: boolean): T[] {
+  let changed = false;
+  const next = tabs.map((tab) => {
+    if (tab.locationId !== locationId || tab.readOnly === readOnly) return tab;
+    changed = true;
+    return { ...tab, readOnly };
+  });
+  return changed ? next : tabs;
 }
 
 /** Minimal shape `pickLruEvict` inspects. */

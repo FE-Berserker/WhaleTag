@@ -37,7 +37,12 @@ interface GalleryViewProps {
   tagsByName?: Map<string, string[]>;
   tagColors?: Record<string, string>;
   groups?: TagGroup[];
-  onDropTag?: (entry: DirEntry, tag: string, functionality?: string) => void;
+  onDropTag?: (
+    entry: DirEntry,
+    tag: string,
+    functionality?: string,
+    targets?: readonly DirEntry[]
+  ) => void;
   /** Right-click a tile → the generic entry context menu (same as list/grid).
    *  Without this the event bubbles to FileList's blank-area handler and the
    *  user gets the "new folder/file" background menu for a real file. */

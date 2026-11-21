@@ -1,6 +1,32 @@
 import type { TFunction } from 'i18next';
 import type { DirEntry } from '../../shared/ipc-types';
 import type { TagGroup } from '../domain/tag-library';
+import type { FileDragItem } from '../services/dnd';
+
+/**
+ * Build the drag payload at drag-start time, not at render time. FileList
+ * mutates its selected-path Set in place, so memoizing this object on Set
+ * identity leaves a multi-select drag with an old list of paths.
+ */
+export function buildFileDragItem(
+  entry: DirEntry,
+  selectedPaths?: ReadonlySet<string>,
+  resolveEntry?: (path: string) => DirEntry | undefined
+): FileDragItem {
+  if (selectedPaths?.has(entry.path)) {
+    const paths: string[] = [];
+    const names: string[] = [];
+    selectedPaths.forEach((path) => {
+      const selected = resolveEntry?.(path);
+      if (selected) {
+        paths.push(path);
+        names.push(selected.name);
+      }
+    });
+    return { paths, names };
+  }
+  return { paths: [entry.path], names: [entry.name] };
+}
 
 /**
  * Everything a single file cell needs to render and act — shared by the list
