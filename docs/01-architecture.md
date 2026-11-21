@@ -168,7 +168,7 @@ try {
 
 ## 10. 测试命令
 
-`electron --test`(Node test runner,经 ts-node)跑 `src` + `scripts` 下所有 `*.test.ts(x)`(实测 108 个文件 / 1605 用例)。
+`electron --test`(Node test runner,经 ts-node)跑 `src` + `scripts` 下所有 `*.test.ts(x)`;规模随迭代增长,以 `npm test` 输出的 suites / tests 计数为准(不在此处写死数字,免得过期)。
 
 - **自动发现**:[scripts/run-tests.cjs](../scripts/run-tests.cjs) 用 glob 枚举全部测试文件交给 `electron --test`——**新增测试无需改 package.json**。
 - **`pretest` 闸门**:`npm test` 先跑 `tsc --noEmit`;类型回归当场红。`build:*` 都带 `transpileOnly`,pretest 是唯一的类型校验点。

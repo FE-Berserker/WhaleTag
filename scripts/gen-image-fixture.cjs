@@ -1,8 +1,7 @@
 /**
- * Stress fixture for the Gallery "no IPC storm" checklist
- * (docs/12-frontend-checklist.md:84). Lays down N small valid PNGs in one flat
- * directory so the Gallery view has thousands of thumbnailable entries to
- * fast-scroll through.
+ * Stress fixture for Gallery fast-scroll / "no IPC storm" checks (docs/10 §13).
+ * Lays down N small valid PNGs in one flat directory so the Gallery view has
+ * thousands of thumbnailable entries to fast-scroll through.
  *
  * Output: Test/压测图库/img-000001.png … (hue varies by index so cells look
  * distinct — easier to eyeball skeleton→img swaps and flicker).

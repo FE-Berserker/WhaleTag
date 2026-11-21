@@ -78,7 +78,7 @@
 - `setAllowedRootsAndWait(roots)` — `Root.tsx` 用它替代裸的 `ipcApi.setAllowedRoots`,记下 in-flight promise
 - `waitForAllowedRoots()` — 子组件在发写 IPC / 列目录前 `await` 它;没有 in-flight 注册时先让出一个 microtask,让同一轮 commit 里父 effect 的注册先落地(Root 的 effect 在子之后同步执行)
 
-不要新增同步 IPC(`sendSync`);`await` 的是已经 in-flight 的同一个 promise,不增加 round trip。完整原因 + 替代方案评估见 [docs/09-known-issues.md §16](./09-known-issues.md)。
+不要新增同步 IPC(`sendSync`);`await` 的是已经 in-flight 的同一个 promise,不增加 round trip。完整原因 + 替代方案评估见 [docs/09-known-issues.md §14](./09-known-issues.md)。
 
 ## 7. 原子写
 

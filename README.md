@@ -168,8 +168,9 @@ Output lands in `release/build/`.
 ### Documentation
 
 The `docs/` folder describes **current code behavior** per module (not changelogs).
-Start at [plan.md](plan.md) — it is the entry index into `docs/01-*.md` … `docs/21-*.md`
-plus [docs/UI.md](docs/UI.md).
+Start at [plan.md](plan.md) — it is the entry index into `docs/01-*.md` … `docs/21-*.md`.
+The design language (layout sizes, component specs, palette intent) lives in
+[docs/10-ui.md §14](docs/10-ui.md).
 
 ### License
 
@@ -268,7 +269,8 @@ npm run package:linux  # Linux (AppImage)
 ### 文档
 
 `docs/` 下按模块描述**当前代码行为**(不是变更记录)。入口是 [plan.md](plan.md),
-它索引了 `docs/01-*.md` … `docs/21-*.md` 各模块文档以及 [docs/UI.md](docs/UI.md)。
+它索引了 `docs/01-*.md` … `docs/21-*.md` 各模块文档;设计语言(布局尺寸、组件规格、配色意图)在
+[docs/10-ui.md §14](docs/10-ui.md)。
 
 ### 许可证
 

@@ -145,45 +145,11 @@ Gallery 拖拽打标已实现 P0。
 - FolderViz 自带的 hidden / filter 等局部状态不受全局 viewDepth 影响
 - 9 视角共用 `sort.key + sort.order`,但 TagCloud / KG 无 sort UI
 
-## 9. Gantt 测试与工程债索引
+## 9. 历史与取舍存档
 
-> 2026-07-05 立项的 Gantt P0(泳道 / 视觉状态 / 空态 / 键盘 / 双筛选器)+ P1(快捷区间、PNG 导出)已于 2026-07-05/06 全部实现,行为细节收进 §2c;tag 派生柱色方案撤销(结论见 §2c「柱颜色」)。P2(依赖箭头 / 里程碑节点 / 撤销重做 / 资源泳道分组 / 打印视图)整体搁置,未立项。
+> 本节只留结论；过程、测试清单与当时的参数都在 git 历史与共置测试里。
 
-**测试覆盖**:
-
-- [src/renderer/domain/gantt.test.ts](../src/renderer/domain/gantt.test.ts):`groupRowsByWorkflow` 4 个单测(203-262)+ `periodStatus` 边界 case(`overdue` / `inProgress` / `normal` 及包含边界)
-- [src/renderer/components/GanttView.test.tsx](../src/renderer/components/GanttView.test.tsx):`#18 swim lanes` 4 case(按 stages 排序 + 分隔线数 = lane 数 - 1 / 单 lane 不分隔 / `stages=[]` 不分隔)、`#6.5 quick-range presets` 5 case(渲染 4 按钮 / 持久化 / 清除 / 跨度变化 / hydrate)、`#19 PNG export toolbar` 4 case(3 按钮 testid / inner chart-content 存在 / 空态不渲染 / 初始 enabled)
-- [useGanttKeyboardNavigation.test.tsx](../src/renderer/components/gantt/useGanttKeyboardNavigation.test.tsx):14 case(5 键 × 2 路径 + wrap-around + readOnly + modifier guards + tabIndex 派生 + 空 paths 安全)
-- [useGanttTagFilter.test.tsx](../src/renderer/components/gantt/useGanttTagFilter.test.tsx):23 case(默认值 / toggle / setAll / 持久化 round-trip / auto-include / passes 边界 / tag-less 中性 vs narrow / 中文 tag 值匹配与持久化)
-- [GanttEntryMenu.test.tsx](../src/renderer/components/GanttEntryMenu.test.tsx):2 case("disables write sections when hasFilteredSource is true" / "leaves Open enabled even when hasFilteredSource is true")
-- [useGanttRange.test.ts](../src/renderer/components/gantt/useGanttRange.test.ts):8 case(`ganttRangeToBounds` 跨度 / 中心点 + hook 默认值 / 持久化 hydrate / sanitize / 选择 / 清除)
-- [useBarDrag.test.tsx](../src/renderer/components/gantt/useBarDrag.test.tsx):8 用例,覆盖 3 态转换(click path、drag→commit 算术、Escape 取消、readOnly 拦截、非左键 / 修饰键、sub-day no-commit)
-
-**顺手补的工程债**:
-
-- `GanttEntryMenu` 文案脱钩 Kanban:[GanttEntryMenu.tsx](../src/renderer/components/GanttEntryMenu.tsx) 改用独立 `ganttMoveToStage` / `ganttSetPriority` / `ganttSetPeriod` / `ganttClearPeriod` / `ganttEditTags` 5 个 key(en/zh/zh-TW/ja/ko 各 5);Matrix 仍用 kanban key(文案同,未列入脱钩范围)
-- i18n 新增 key 总清单(en/zh 各一份,[locales](../src/renderer/locales/)):`ganttNoTasksHint` / `ganttOverdue` / `ganttInProgress` / `ganttFilterWorkflow` / `ganttFilterPriority` / `ganttFilterClear` / `ganttFilteredEmpty` / `ganttResetFilters` / `ganttFilterLaneHidden` / `ganttShortcut1w` / `ganttShortcut2w` / `ganttShortcut1m` / `ganttShortcut1q` / `ganttRangeLabel` / `ganttExportFail` / `ganttExportCopied` / `ganttExportCopiedAsBase64`
-
----
-
-## 10. Mapique 地名搜索(geocoding)— ⚠️ 已尝试并回退(2026-07-17)
-
-> **不要照原样重试 Nominatim 方案。** 曾按「两种 mapProvider 统一用 Nominatim」落地(commits `f3e97e0` 等),但**国内网络 Nominatim(`nominatim.openstreetmap.org`)被墙/超时**——搜索请求挂住、结果下拉框永不弹出,功能完全不可用,已 revert(commit `128c810`,−419 行)。
->
-> **根因**:地图瓦片用高德(`autonavi.com`,国内通、免 key),geocoding 却用 Nominatim(OSM,国内不通)——服务体系不一致。当初选 Nominatim 是为免 key,忽略了国内可达性。
->
-> **若以后要做**:高德 geocoding(`restapi.amap.com`,国内通、与高德瓦片同坐标系 GCJ-02),但要一个免费 web key + 设置项。
-
-### 10.1 相关现状(与搜索功能无关,仍然成立)
-
-- **mapProvider**:二元 `'gaode' | 'osm'`([settings/integrations.ts:22](../src/renderer/reducers/settings/integrations.ts#L22)),默认 `'gaode'`。**无 baidu/google**。
-- **tile**:二元 if/else([MapiqueView.tsx:226-229](../src/renderer/components/MapiqueView.tsx#L226)),gaode = GCJ-02(`webrd0{1-4}.is.autonavi.com`),osm = WGS-84(`tile.openstreetmap.org`)。
-- **坐标系**:内部/存储统一 **WGS-84**;GCJ-02 只在 gaode 显示层。`toDisplay`(WGS-84→显示)/ `fromDisplay`(显示→WGS-84)是组件内闭包,调 [src/renderer/domain/gcj02.ts](../src/renderer/domain/gcj02.ts)。
-- **flyTo**:**无现成 flyTo/setView**(只有 `FitBounds`)。**nameQuery** 是文件名搜索(detail panel 文件筛选),**非地名**,不能复用。
-
-### 10.2 回退实现留下的约束(重做时须遵守)
-
-- **geocoding 必走 main 进程 IPC**,不走 renderer:(a) renderer fetch 外部域撞 CSP;(b) Nominatim 类服务强制自定义 `User-Agent`(浏览器 fetch 设不了)。当时通道为 `mapique:geocode` + `mapiqueGeocode(query): Promise<{ results: Array<{ name, lat, lng }> }>`(WGS-84),已随 revert 删除,可照此重建。
-- **坐标系无需转换**:Nominatim 返 WGS-84 = 内部系,结果统一过 `toDisplay(lat,lng)` 再定位,与 marker 放置同链路不会错位(gaode 模式内部转 GCJ-02 显示,osm 模式恒等)。
-- **限频合规**:Nominatim 限 1 req/s、需有效 UA、尊重结果 license;搜索输入须防抖(当时 400ms)。当时请求参数:`format=jsonv2&limit=5&countrycodes=cn&accept-language=zh`。
-- 当时 UI 形态(可参考):搜索框绝对定位于地图左上(`top:8; left:8; zIndex:1000`)+ 结果下拉;选中后由 `FlyTo` 子组件(参考 `FitBounds` 的 useMap 模板)调 `map.flyTo(toDisplay(...), zoom)`。反向 geocoding、搜索历史 / 收藏地点当时明确不做。
+- **Gantt P0/P1 已完成**：泳道、视觉状态、空态、键盘导航、双筛选器、快捷区间、PNG 导出都已实现并收进 §2c；柱色改为 tag 派生后固定（早期 tag 派生方案的撤销结论同见 §2c）。**P2 整体搁置**（依赖箭头 / 里程碑节点 / 撤销重做 / 资源泳道分组 / 打印视图），未立项。
+- **Mapique 地名搜索（geocoding）已尝试并回退（2026-07-17）**：曾统一走 Nominatim（OSM），国内网络超时导致搜索请求挂住、下拉框永不弹出，已 revert。**不要照原样重试**；根因是瓦片用高德（`autonavi.com`，国内通、免 key）而 geocoding 用 OSM（国内不通），服务体系不一致。若以后要做，走高德 geocoding（`restapi.amap.com`，GCJ-02，需一个免费 web key + 设置项）。
+- **重做 geocoding 时的硬约束**：必须走 main 进程 IPC（renderer fetch 外部域撞 CSP，且 Nominatim 类服务要求自定义 `User-Agent`）；输入防抖；限频合规；结果统一过 `toDisplay`/`fromDisplay` 再定位（内部与存储统一 WGS-84，GCJ-02 只在 gaode 显示层）。
+- **相关现状（仍成立）**：`mapProvider` 只有 `'gaode' | 'osm'`（默认 gaode），无 baidu/google；组件内没有 `flyTo`（只有 `FitBounds`）；`nameQuery` 是文件名筛选，不是地名搜索。

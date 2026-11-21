@@ -195,25 +195,15 @@ Task reminder check failed: Error: Error invoking remote method 'index:build':
 
 ---
 
-## 15. Chromium native controls vs React 工具栏(教训归档)
+## 15. 已移除模块的归档教训(media-player / office-viewer / pdf-viewer / md-editor)
 
-✅ **media-player 已随 0.4.9 瘦身移除**(2026-09)。通用教训仍然有效:Chromium `<video>` / `<audio>` 的 native controls 栏(含画中画图标)是 shadow DOM,与 React 工具栏无关;排查"用户报告的按钮"先看 `tagName`。React UI 让位 native controls,抑制特定按钮用 `controlsList` / `disablePictureInPicture` / `disableRemotePlayback` 属性。
+✅ 四个扩展均随 0.4.9 瘦身移除(2026-09),各自的历史坑清单随代码删除归档,只留仍然有效的通用教训:
 
-**延伸**:dev 模式 `npm run dev` 不 watch `src/extensions/`,改完源码必须 `npm run build:extensions`,否则 `release/app/dist/extensions/<id>/bundle.js` 一直 stale;`watch:extensions` script 存在但没接进 `npm run dev` 的 concurrently(dev 流程已知 gap)。
-
----
-
-## 16. office-viewer 已知坑(历史归档)
-
-✅ **office-viewer 已随 0.4.9 瘦身移除**(2026-09,连同 office-convert / office-cache / office-binary / office-worker UNO 常驻进程、soffice/Calibre/LibreDWG 外部转换栈、office 缩略图)。通用资产(`createPdfjsSession` 工厂 + TextLayer + outline、`computeDisplayScale` 三档缩放范式、a11y 模式)先由 pdf-viewer 独享,**后随 pdf-viewer 一并移除**(见 §17)。
-
-## 17. pdf-viewer 已知坑与已修复(Phase 1/2, 2026-07-06/07)
-
-✅ **pdf-viewer 已随 0.4.9 瘦身移除**(2026-09,连同 `shared/pdfjs-in-iframe.ts` 会话工厂与其测试、AI 框选提问管线、`requestFileBytes`/`fs:readFileRange` 字节桥、`requestPdfAsset` 资产服务),本节 4 项历史坑随模块删除归档。通用教训仍然有效:①多页内容容器的高度管理走"溢出 + 滚动"路径,不要走"flex 平均压缩"路径 —— 用户报"每页/每项被挤成 1/N"几乎一定是 flex 子项默认 `flex-shrink: 1` 被压扁,dump 父子 `offsetHeight` + computed `flex-shrink` 再动手;②pdfjs 的 API 名同型异(`PDFDocumentProxy.cleanup(): Promise` vs `PDFPageProxy.cleanup(): boolean`)照 `.d.ts` 抄,别凭记忆。PDF 文件支持未丢:主进程缩略图(`thumb-render.ts`)+ 全文索引(`fulltext.ts`)仍用 pdfjs-dist,详见 [docs/06](./06-thumbnails.md) / [docs/04](./04-search-index.md)。
-
-## 18. md-editor 已知坑
-
-✅ **md-editor 已随 0.4.9 瘦身移除**(2026-09),本节 22 项历史坑随模块删除归档。通用教训已内化:postMessage 沙箱须校验 `e.source === contentWindow` 且 shape 匹配(§6)、DOMPurify 放行属性要配 `FORBID_ATTR` belt-and-suspenders、扩展 `applyTheme` 必须接受并解析 `'system'` 而非只收 light/dark(AGENTS.md 坑 #4)。
+- **media-player**:Chromium `<video>` / `<audio>` 的 native controls 栏(含画中画图标)是 shadow DOM,与 React 工具栏无关;排查"用户报告的按钮"先看 `tagName`,抑制单个按钮用 `controlsList` / `disablePictureInPicture` / `disableRemotePlayback`。
+- **office-viewer**:通用资产(pdfjs 会话工厂、`computeDisplayScale` 三档缩放、a11y 模式)后随 pdf-viewer 一并移除;多页内容容器的高度管理走"溢出 + 滚动"而非"flex 平均压缩"——用户报"每页被挤成 1/N"几乎一定是子项默认 `flex-shrink: 1` 被压扁。
+- **pdf-viewer**:pdfjs 的 API 同型异名(`PDFDocumentProxy.cleanup(): Promise` vs `PDFPageProxy.cleanup(): boolean`)照 `.d.ts` 抄,别凭记忆。**PDF 支持没丢**:缩略图(`thumb-render.ts`)与全文索引(`fulltext.ts`)仍走 pdfjs-dist,见 [docs/06](./06-thumbnails.md) / [docs/04](./04-search-index.md)。
+- **md-editor**:postMessage 沙箱须校验 `e.source === contentWindow` 且 shape 匹配(§6);DOMPurify 放行属性要配 `FORBID_ATTR`;扩展 `applyTheme` 必须接受并解析 `'system'`(AGENTS.md 坑 #4)。
+- **dev 模式不 watch 扩展**:改完 `src/extensions/` 必须 `npm run build:extensions`,否则 `release/app/dist/extensions/<id>/bundle.js` 一直 stale;`watch:extensions` script 存在但没接进 `npm run dev` 的 concurrently。
 
 ## 19. webpack `module: 'esnext'` 把主进程 `createRequire` stub 成 undefined (2026-07-09)
 
