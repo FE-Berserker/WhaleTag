@@ -229,12 +229,6 @@ const WORKFLOW_FN_BY_VALUE = new Map<string, SmartFunctionality>(
   WORKFLOW_DEFS.map((d) => [d.value, d.functionality])
 );
 
-/** The built-in workflow smart-tag set shown in the library. */
-export const WORKFLOW_TAGS: SmartTagDef[] = WORKFLOW_DEFS.map((d) => ({
-  functionality: d.functionality,
-  title: d.value,
-}));
-
 /** Color for a workflow functionality; falls back to the old single green. */
 export function workflowColor(fn: SmartFunctionality): string {
   const value = WORKFLOW_VALUE_BY_FN.get(fn);

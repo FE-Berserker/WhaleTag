@@ -16,14 +16,7 @@ import { DND_TYPE_TAG, type TagDragItem } from '../services/dnd';
 import { useTagDisplayLabels } from '../hooks/useTagDisplayLabels';
 import { usePeriodTagDialog } from './PeriodTagDialog';
 import ThumbIcon from './ThumbIcon';
-
-/** Local `YYYY-MM-DD` for "today" — used as the default for the period
- *  drop dialog. See Row.tsx / GridCell.tsx for the same helper; small
- *  enough to inline. */
-function todayIsoLocal(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+import { todayIsoLocal } from '../domain/calendar';
 
 const TILE_TAG_MAX = 2;
 

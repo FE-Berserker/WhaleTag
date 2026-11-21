@@ -176,6 +176,12 @@ FileList 的 visible 标签过滤抽为 `file-list-filter.ts` 纯函数（6 条�
 ### P3-5. `drawio-editor` iframe 销毁 ✅
 `drawio-bridge.ts` 统一清理 XML timer / pending requests / 主题与内部状态，销毁后拒绝新请求；`useWhaleBridge.ts` 提供幂等的 save-handler 注销；`app.tsx` 区分 effect 重跑与真实卸载（刷新不取消已开始的保存）。
 
+### P3-6. 代码清理轮（死导出 / 重复实现）✅
+- 删 20 个「声明即唯一出现」的死导出（`KNOWN_LANG_EXTENSIONS`、`WhaleExtApi`、`WORKFLOW_TAGS`、`TAG_OPEN/TAG_CLOSE`、`GanttDragState`、`CuratedThemeMode`、`ThumbWorkerResult`、`RunCommandResult`、`WhaleGlobal`、5 个 `*_STEP` 常量、3 个测试钩子等），`+27/−198`。
+- `todayIsoLocal` 7 份组件本地拷贝 → `domain/calendar.ts` 单一实现（`ymd(new Date())`）；`formatBytes` 4 份扩展拷贝 → `extensions/shared/format-bytes.ts`（`RevisionHistoryDialog` 的舍入语义不同，保留）。
+- 修 3 处指向已删 `docs/UI.md` 的源码注释指针（→ `docs/10-ui.md` §14）。
+- 仍待处理（记录不修）：U+FFFD 破损注释 86 行/16 文件（需人工判断原文）、`MapiqueContextMenu` 自带的 `NoTransition/NoBackdrop` 与 `MenuNoTransition` 重复、`pad2/ymd/addDays` 在 `shared/smart-tags.ts` 与 `domain/calendar.ts` 各一份、6 个死 preload API、未用 locale key、`CalendarView/MapiqueView/FileList` 三个 2000+ 行组件。
+
 ---
 
 ## ✅ 已记录在 docs、不在本篇重复

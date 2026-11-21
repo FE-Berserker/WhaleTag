@@ -40,6 +40,15 @@ export function ymd(d: Date): string {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
+/**
+ * Today's local calendar day as `YYYY-MM-DD` — the form the smart-tag / period
+ * dialogs expect. Every view used to carry its own copy of this; kept here so
+ * the format only exists once.
+ */
+export function todayIsoLocal(): string {
+  return ymd(new Date());
+}
+
 /** Add/subtract months (preserves local time-of-day). */
 export function addMonths(d: Date, n: number): Date {
   const r = new Date(d);

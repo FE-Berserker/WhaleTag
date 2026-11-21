@@ -14,7 +14,7 @@
 /**
  * Palette tokens a preset overrides, for a single light/dark variant.
  *
- * The full set mirrors the WhaleTag design language (`docs/UI.md` §3): every
+ * The full set mirrors the WhaleTag design language (`docs/10-ui.md` §14.3): every
  * token here is emitted by {@link createWhaleTheme} onto a concrete MUI palette
  * slot, so the ~30 components reading `divider` / `text.*` / `action.hover` /
  * `primary.light` follow the spec exactly instead of MUI's auto-derived values.
@@ -87,11 +87,9 @@ export const THEME_MODE_PRESET_MAP: Record<
   'high-contrast': { mode: 'light', presetId: 'high-contrast' },
 };
 
-export type CuratedThemeMode = keyof typeof THEME_MODE_PRESET_MAP;
-
 /**
  * Shared neutral ramp for light variants — the "Clean Professional" slate set
- * from `docs/UI.md` §3.1. Reused across every preset: the neutrals read well on
+ * from `docs/10-ui.md` §14.3. Reused across every preset: the neutrals read well on
  * all of the (near-white) light backgrounds, so only `primary`/`primaryLight`
  * change per preset. `whale` matches UI.md's light theme exactly.
  */
@@ -104,8 +102,8 @@ const LIGHT_NEUTRALS = {
 
 /**
  * Shared neutral ramp for dark variants — the "Dark Geek" zinc set from
- * `docs/UI.md` §3.2. Reused across presets on top of each preset's own
- * background; `whale` matches UI.md's dark theme exactly.
+ * `docs/10-ui.md` §14.3. Reused across presets on top of each preset's own
+ * background; `whale` matches the documented dark theme exactly.
  */
 const DARK_NEUTRALS = {
   border: '#27272a',

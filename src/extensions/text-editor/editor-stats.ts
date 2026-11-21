@@ -48,23 +48,6 @@ export const FOLDABLE_EXTENSIONS: ReadonlySet<string> = new Set([
  'xml',
 ]);
 
-/** File extensions the editor knows how to syntax-highlight. Mirrors the
- * switch in `index.ts langExtension()`. */
-export const KNOWN_LANG_EXTENSIONS: ReadonlySet<string> = new Set([
- 'md',
- 'json',
- 'js',
- 'ts',
- 'mjs',
- 'cjs',
- 'css',
- 'html',
- 'htm',
- 'xml',
- 'yaml',
- 'yml',
-]);
-
 // --- Bytes formatting -----------------------------------------------------
 
 /**
@@ -80,13 +63,7 @@ export const KNOWN_LANG_EXTENSIONS: ReadonlySet<string> = new Set([
  * separate to keep each extension bundle independent; a shared
  * `extensions/shared/text-utils.ts` extraction is tracked separately).
  */
-export function formatBytes(bytes: number): string {
- if (!Number.isFinite(bytes) || bytes < 0) return '0 B';
- if (bytes < 1024) return `${bytes} B`;
- if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
- if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
- return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
+export { formatBytes } from '../shared/format-bytes';
 
 // --- Encoding -------------------------------------------------------------
 

@@ -41,10 +41,3 @@ export function useTagDisplayLabels(tags: string[]): string[] {
     [tags, t, now]
   );
 }
-
-/** Single-tag convenience wrapper over {@link useTagDisplayLabels}. */
-export function useTagDisplayLabel(tag: string): string {
-  const tags = useMemo(() => [tag], [tag]);
-  const [label] = useTagDisplayLabels(tags);
-  return label;
-}

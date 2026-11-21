@@ -411,19 +411,6 @@ export function rectFromPeriod(
 
 export type GanttDragKind = 'body' | 'left' | 'right';
 
-/** Per-task state captured when a drag begins. Held in React state by the
- *  view; the view re-renders the bar as the user drags. */
-export interface GanttDragState {
-  task: GanttTask;
-  kind: GanttDragKind;
-  /** Pointer X at down, in client px. */
-  startClientX: number;
-  /** Period captured at down, so a no-op drag (move < threshold) commits
-   *  the original (or rather: produces no commit because we never leave the
-   *  pending state). */
-  original: GanttPeriod;
-}
-
 /** Threshold below which pointer motion is treated as a click (preserves
  *  double-click-to-open semantics). 4 px matches the canonical MUI pattern. */
 export const DRAG_PENDING_THRESHOLD_PX = 4;

@@ -15,6 +15,7 @@ import ThumbIcon from '-/components/ThumbIcon';
 import EntryTagChips from '-/components/EntryTagChips';
 import { EMPTY_ARR } from '-/constants';
 import { usePeriodTagDialog } from './PeriodTagDialog';
+import { todayIsoLocal } from '../domain/calendar';
 
 const CARD_THUMB = 40;
 const MAX_TAGS_PER_CARD = 4;
@@ -25,14 +26,6 @@ export const CARD_MIN_HEIGHT = 84;
 // P2-5 (perf audit): hoisted so the memo'd <EntryTagChips> gets a referentially
 // stable `containerSx` prop instead of a fresh `{ flexWrap: 'wrap' }` per render.
 const TAG_CHIPS_SX = { flexWrap: 'wrap' } as const;
-
-/** Local `YYYY-MM-DD` for "today" — used as the default for the period
- *  drop dialog. See Row.tsx / GridCell.tsx for the same helper; small
- *  enough to inline. */
-function todayIsoLocal(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
 
 /**
  * A draggable file card — thumbnail + name + tag chips — shared by the Kanban

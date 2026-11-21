@@ -59,6 +59,3 @@ export const COMMAND_NOT_ALLOWED = 'COMMAND_NOT_ALLOWED';
  * persisted per exact template string (editing a command re-asks).
  */
 export const COMMAND_NOT_APPROVED = 'COMMAND_NOT_APPROVED';
-
-/** IPC result of `shell:runCommand`. */
-export type RunCommandResult = { ok: true };

@@ -268,22 +268,6 @@ export type ExtensionMessage =
   | RequestFileEmbedMessage
   | RequestFileMessage;
 
-/** Runtime API injected into each extension iframe as `window.whaleExt`. */
-export interface WhaleExtApi {
-  postMessage: (msg: ExtensionMessage) => void;
-  onMessage: (handler: (msg: HostMessage) => void) => () => void;
-  manifest: ExtensionManifest;
-  /** Current host UI locale (e.g. 'en', 'zh'); defaults to 'en' until the host
-   *  sends its first setLocale. */
-  locale: string;
-  /** Subscribe to locale changes. The handler fires immediately with the current
-   *  locale and again whenever the host switches language. Returns unsubscribe. */
-  onLocale: (handler: (locale: string) => void) => () => void;
-  /** Pick the catalog entry for the current locale, falling back to the base
-   *  language tag then to `en`. `catalog` is `{ en: {...}, zh: {...} }`. */
-  t: <T>(catalog: Record<string, T>) => T;
-}
-
 export interface RevisionInfo {
   /** ISO-8601 timestamp of the backup. */
   timestamp: string;

@@ -309,5 +309,3 @@ const whaleApi: WhaleApi = {
 };
 
 contextBridge.exposeInMainWorld('whale', whaleApi);
-
-export type WhaleGlobal = typeof whaleApi;

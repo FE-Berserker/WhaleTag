@@ -79,8 +79,3 @@ export function cancelThumbLoad(key: string): void {
     if (queue[i].key === key) queue.splice(i, 1);
   }
 }
-
-/** Test-only escape hatch: read current queue depth and active count. */
-export function _thumbQueueStats(): { pending: number; active: number } {
-  return { pending: queue.length, active };
-}

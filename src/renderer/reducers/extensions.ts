@@ -1,8 +1,5 @@
 import type { AnyAction } from 'redux';
-import type {
-  ExtensionRegistry,
-  ExtensionManifest,
-} from '../../shared/extension-types';
+import type { ExtensionRegistry } from '../../shared/extension-types';
 
 export interface EditState {
   dirty: boolean;
@@ -96,13 +93,6 @@ export function setFileEditState(
 
 export function clearFileEditState(tabId: string): ClearFileEditStateAction {
   return { type: CLEAR_FILE_EDIT_STATE, payload: { tabId } };
-}
-
-export function getExtensionById(
-  state: ExtensionsState,
-  id: string
-): ExtensionManifest | undefined {
-  return state.registry?.extensions.find((e) => e.id === id);
 }
 
 export default function extensionsReducer(

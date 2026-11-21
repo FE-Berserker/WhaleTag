@@ -11,12 +11,6 @@ import type { RowComponentProps } from 'react-window';
 import { useDrop, useDrag } from 'react-dnd';
 import { usePeriodTagDialog } from './PeriodTagDialog';
 
-/** Local `YYYY-MM-DD` for "today", used as the dialog's default start/end. */
-function todayIsoLocal(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
 import type { DirEntry } from '../../shared/ipc-types';
 import {
   DND_TYPE_TAG,
@@ -30,6 +24,7 @@ import { EMPTY_ARR } from '-/constants';
 import { buildFileDragItem, type FileCellData } from '-/components/file-cell';
 import { stripTagsFromName } from '-/services/tags';
 import { formatSize, formatDate } from '-/services/format';
+import { todayIsoLocal } from '../domain/calendar';
 
 /** Max number of tag chips rendered before the row truncates (`+N` chip is
  *  tracked under H.23 P1-6 follow-up — currently it just slices). */

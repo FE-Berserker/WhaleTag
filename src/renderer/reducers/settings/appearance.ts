@@ -39,8 +39,8 @@ export interface AppearanceFields {
   /**
    * H.23 P1-3 list-row density preset. Three stops mapping to fixed row
    * heights (`compact` 32 / `normal` 56 / `comfortable` 72 px). `normal` is
-   * the default and matches the pre-P1-3 row height documented in `docs/UI.md`
-   * §2.1. Folders persist their own per-folder override elsewhere (H.24+);
+   * the default and matches the pre-P1-3 row height documented in
+   * `docs/10-ui.md` §14.2. Folders persist their own per-folder override elsewhere (H.24+);
    * this is the global fallback.
    */
   listRowDensity: ListRowDensity;

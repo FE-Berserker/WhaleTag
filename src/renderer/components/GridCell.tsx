@@ -24,14 +24,7 @@ import { buildFileDragItem, type FileCellData } from './file-cell';
 import ThumbIcon from './ThumbIcon';
 import EntryTagChips from './EntryTagChips';
 import { EMPTY_ARR } from '-/constants';
-
-/** Local `YYYY-MM-DD` for "today" — used as the default for the period
- *  drop dialog. Duplicated from Row.tsx; small enough to inline at each
- *  drop site (a shared util can DRY this later if a 4th site appears). */
-function todayIsoLocal(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+import { todayIsoLocal } from '../domain/calendar';
 
 /** Max tag chips shown on a grid card before the `+N` overflow chip. */
 const MAX_TAGS_PER_CELL = 3;

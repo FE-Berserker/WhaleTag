@@ -198,8 +198,6 @@ export function isHiddenName(name: string): boolean {
 export const SIDECAR_VERSION = 1;
 
 /** Tag delimiters for embedding tags in filenames: name[tag1 tag2].ext */
-export const TAG_OPEN = '[';
-export const TAG_CLOSE = ']';
 export const TAG_SEPARATOR = ' ';
 
 /** Storage backend for a location. More types (s3, webdav) added in Phase 5. */

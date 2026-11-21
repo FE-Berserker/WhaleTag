@@ -59,11 +59,6 @@ export function setUserCommandTemplates(templates: unknown): void {
   allowedTemplates = next;
 }
 
-/** Test hook: forget the pushed list (process-global, so tests must clean up). */
-export function resetUserCommandTemplatesForTests(): void {
-  allowedTemplates = new Set();
-}
-
 /**
  * Substitute `${path}` / `${dir}` / `${name}` into the template, each value
  * fully shell-quoted for the platform. Pure; exported for unit tests. Uses a

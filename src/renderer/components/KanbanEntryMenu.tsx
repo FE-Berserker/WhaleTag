@@ -34,15 +34,7 @@ import {
   noTransitionMenuSlotProps,
   noTransitionMenuSlots,
 } from './MenuNoTransition';
-
-/** YYYY-MM-DD local date — same format `PeriodTagDialog` expects for its
- * `defaultStart` / `defaultEnd` props. Mirrors `todayIso()` in
- * PeriodTagDialog.tsx but exposed as a stable helper so the menu's
- * open-handler doesn't depend on the dialog's internal helpers. */
-function todayIsoLocal(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+import { todayIsoLocal } from '../domain/calendar';
 
 /**
  * H.25 P0-1: domain-aware right-click menu for Kanban entries. Mirrors the

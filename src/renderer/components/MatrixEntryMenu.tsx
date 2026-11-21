@@ -34,13 +34,7 @@ import {
   noTransitionMenuSlotProps,
   noTransitionMenuSlots,
 } from './MenuNoTransition';
-
-/** YYYY-MM-DD local date — mirrors `todayIsoLocal` in KanbanEntryMenu so
- *  the same shared `PeriodTagDialog` defaults work without modification. */
-function todayIsoLocal(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+import { todayIsoLocal } from '../domain/calendar';
 
 /** Cursor-anchored right-click menu state (entry + click position). */
 export interface MatrixEntryContext {

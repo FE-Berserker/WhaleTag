@@ -23,16 +23,6 @@ export type ThumbWorkerArg =
   | { op: 'thumb:pdf'; arg: { srcPath: string } }
   | { op: 'thumb:font'; arg: { srcPath: string } };
 
-/**
- * Per-op return type. Same discriminated-union shape as `ThumbWorkerArg`.
- * `buf` crosses the port via structured clone, which turns the worker's
- * Node `Buffer` into a plain `Uint8Array` on the host side — the host
- * rewraps it with `Buffer.from(...)` before handing it to callers.
- */
-export type ThumbWorkerResult =
-  | { op: 'thumb:pdf'; result: { buf: Uint8Array } }
-  | { op: 'thumb:font'; result: { buf: Uint8Array } };
-
 /** A request envelope sent from host → worker. */
 export interface ThumbWorkerRequest {
   reqId: string;

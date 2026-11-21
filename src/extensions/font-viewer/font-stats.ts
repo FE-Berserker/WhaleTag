@@ -12,20 +12,13 @@
 // --- Bytes ---------------------------------------------------------------
 
 /** Convert a byte count to a short human string (`1024` → `"1.0 KB"`). */
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return '0 B';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
+export { formatBytes } from '../shared/format-bytes';
 
 // --- Font sizing (in CSS px) --------------------------------------------
 
 export const SIZE_MIN = 14;
 export const SIZE_MAX = 96;
 export const SIZE_DEFAULT = 40;
-export const SIZE_STEP = 1;
 
 /** Clamp a font-size value to [SIZE_MIN, SIZE_MAX]. Non-finite → DEFAULT. */
 export function clampSize(px: number): number {
@@ -38,7 +31,6 @@ export function clampSize(px: number): number {
 export const TRACKING_MIN = -5;
 export const TRACKING_MAX = 20;
 export const TRACKING_DEFAULT = 0;
-export const TRACKING_STEP = 0.5;
 
 /** Clamp a letter-spacing value (px). Non-finite → DEFAULT. */
 export function clampTracking(px: number): number {
@@ -51,7 +43,6 @@ export function clampTracking(px: number): number {
 export const LEADING_MIN = 0.8;
 export const LEADING_MAX = 2.5;
 export const LEADING_DEFAULT = 1.35;
-export const LEADING_STEP = 0.05;
 
 /** Clamp a line-height multiplier. Non-finite → DEFAULT. */
 export function clampLeading(n: number): number {
@@ -78,7 +69,6 @@ export function clampWeight(w: number): number {
 export const SLANT_MIN = -15;
 export const SLANT_MAX = 0;
 export const SLANT_DEFAULT = 0;
-export const SLANT_STEP = 0.5;
 
 /** Clamp a slant axis value in degrees. Non-finite → DEFAULT. */
 export function clampSlant(s: number): number {
@@ -91,7 +81,6 @@ export function clampSlant(s: number): number {
 export const WIDTH_MIN = 50;
 export const WIDTH_MAX = 200;
 export const WIDTH_DEFAULT = 100;
-export const WIDTH_STEP = 1;
 
 /** Clamp a width-axis percentage value. Non-finite → DEFAULT. */
 export function clampWidth(p: number): number {

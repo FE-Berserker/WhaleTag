@@ -625,10 +625,6 @@ export function closeAllWatchers(): void {
 export function _watchCountForTest(): number {
   return watches.size;
 }
-export function _pendingForTest(rootPath: string): string[] | null {
-  const w = watches.get(rootPath);
-  return w ? [...w.pending] : null;
-}
 export function _reindexDirtyForTest(rootPath: string): boolean | null {
   return watches.get(rootPath)?.reindexDirty ?? null;
 }
