@@ -7,11 +7,58 @@ const path = require('node:path');
 const { _electron: electron } = require('@playwright/test');
 
 const ROOT = path.resolve(__dirname, '..');
+const useCurrentBuild = process.env.WHALETAG_GUI_USE_CURRENT_BUILD === '1';
 const executablePath = path.resolve(
-  process.argv[2] || path.join(ROOT, 'release', 'build', 'win-unpacked', 'WhaleTag.exe')
+  process.argv[2] ||
+    (useCurrentBuild
+      ? path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe')
+      : path.join(ROOT, 'release', 'build', 'win-unpacked', 'WhaleTag.exe'))
 );
+const currentMainPath = path.join(ROOT, 'release', 'app', 'dist', 'main', 'main.js');
 const BEFORE = 'before-excalidraw-smoke';
 const AFTER = 'after-excalidraw-smoke';
+
+function errorText(error) {
+  return String((error && error.stack) || error);
+}
+
+// Excalidraw 0.18.1 attempts these remote fonts after the deliberately
+// non-fetchable whale-extension local font path fails. Chromium blocks the CDN
+// request under the extension CSP and Excalidraw falls back to system fonts.
+// Keep this documented fallback separate from real async-chunk request errors.
+const EXCALIDRAW_FONT_URL =
+  /^https:\/\/esm\.sh\/@excalidraw\/excalidraw@0\.18\.1\/dist\/prod\/fonts\/[^/'?#]+\/[^/'?#]+\.woff2$/;
+const EXCALIDRAW_SOURCE_URL =
+  /^whale-extension:\/\/excalidraw-editor\/(?:bundle\.js|chunks\/[^/'?#]+\.js)$/;
+const EXCALIDRAW_FONT_CONSOLE_PREFIX = "Loading the font '";
+const EXCALIDRAW_FONT_CONSOLE_SUFFIX =
+  '\' violates the following Content Security Policy directive: "font-src \'self\' data: whale-extension://*". The action has been blocked.';
+
+function isKnownExcalidrawFontConsole(message) {
+  if (
+    message.type !== 'error' ||
+    !EXCALIDRAW_SOURCE_URL.test(message.location?.url || '') ||
+    !message.text.startsWith(EXCALIDRAW_FONT_CONSOLE_PREFIX) ||
+    !message.text.endsWith(EXCALIDRAW_FONT_CONSOLE_SUFFIX)
+  ) {
+    return false;
+  }
+  const url = message.text.slice(
+    EXCALIDRAW_FONT_CONSOLE_PREFIX.length,
+    -EXCALIDRAW_FONT_CONSOLE_SUFFIX.length
+  );
+  return EXCALIDRAW_FONT_URL.test(url);
+}
+
+function isKnownExcalidrawFontRequest(request) {
+  return (
+    request.resourceType === 'font' &&
+    request.method === 'GET' &&
+    (request.errorText === 'csp' || request.errorText === 'net::ERR_BLOCKED_BY_CSP') &&
+    EXCALIDRAW_FONT_URL.test(request.url)
+  );
+}
+
 const INITIAL_SCENE = JSON.stringify({
   type: 'excalidraw',
   version: 2,
@@ -122,34 +169,99 @@ async function poll(read, milliseconds, label) {
   );
 }
 
-async function readCanvasRender(locator) {
-  return locator.evaluateAll((canvases) => {
+async function readCanvasRender(locator, onProbe) {
+  const probe = await locator.evaluateAll((canvases) => {
     let ink = 0;
     let width = 0;
     let height = 0;
+    const details = [];
     for (const canvas of canvases) {
-      if (!(canvas instanceof HTMLCanvasElement) || canvas.width === 0 || canvas.height === 0) {
-        continue;
-      }
-      const context = canvas.getContext('2d');
-      if (!context) continue;
-      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
-      let canvasInk = 0;
-      for (let index = 0; index < pixels.length; index += 4) {
-        if (
-          pixels[index + 3] > 0 &&
-          (pixels[index] < 240 || pixels[index + 1] < 240 || pixels[index + 2] < 240)
-        ) {
-          canvasInk += 1;
+      if (!(canvas instanceof HTMLCanvasElement)) continue;
+      const rect = canvas.getBoundingClientRect();
+      const detail = {
+        className: canvas.className,
+        width: canvas.width,
+        height: canvas.height,
+        cssWidth: rect.width,
+        cssHeight: rect.height,
+        ink: 0,
+        contextError: null,
+      };
+      details.push(detail);
+      if (canvas.width === 0 || canvas.height === 0) continue;
+      try {
+        const context = canvas.getContext('2d');
+        if (!context) {
+          detail.contextError = 'No 2D context';
+          continue;
         }
+        const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+        for (let index = 0; index < pixels.length; index += 4) {
+          if (
+            pixels[index + 3] > 0 &&
+            (pixels[index] < 240 || pixels[index + 1] < 240 || pixels[index + 2] < 240)
+          ) {
+            detail.ink += 1;
+          }
+        }
+      } catch (error) {
+        detail.contextError = String(error);
       }
-      if (canvasInk > 20) {
-        ink += canvasInk;
+      if (detail.ink > 20) {
+        ink += detail.ink;
         width = Math.max(width, canvas.width);
         height = Math.max(height, canvas.height);
       }
     }
-    return ink > 20 ? { ink, width, height } : null;
+    return {
+      ink,
+      width,
+      height,
+      canvases: details,
+      fontStatus: document.fonts.status,
+      fontFaceCount: document.fonts.size,
+      bodyText: document.body.innerText.slice(0, 1200),
+    };
+  });
+  if (onProbe) onProbe(probe);
+  return probe.ink > 20 ? probe : null;
+}
+
+async function readHostFileContentMessages(page) {
+  const editorFrame = page
+    .frames()
+    .find((frame) => frame.url().startsWith('whale-extension://excalidraw-editor/'));
+  if (!editorFrame) return [];
+  const messages = await editorFrame.evaluate(
+    () => window.__packagedExcalidrawSmokeMessages || []
+  );
+  return messages.map((message) => {
+    const result = { ...message, parsed: null, parseError: null };
+    try {
+      const data = JSON.parse(message.content || '{}');
+      result.parsed = {
+        type: data.type,
+        version: data.version,
+        elementCount: Array.isArray(data.elements) ? data.elements.length : null,
+        elements: Array.isArray(data.elements)
+          ? data.elements.map((element) => ({
+              id: element.id,
+              type: element.type,
+              x: element.x,
+              y: element.y,
+              width: element.width,
+              height: element.height,
+              isDeleted: element.isDeleted,
+              containerId: element.containerId,
+              boundElements: element.boundElements,
+            }))
+          : null,
+        appState: data.appState,
+      };
+    } catch (error) {
+      result.parseError = String(error);
+    }
+    return result;
   });
 }
 
@@ -163,6 +275,12 @@ async function main() {
         'Build it with: npm run package:win -- --dir'
     );
   }
+
+  fs.mkdirSync(path.join(ROOT, 'artifacts'), { recursive: true });
+  const outputDirectory = fs.mkdtempSync(
+    path.join(ROOT, 'artifacts', 'packaged-excalidraw-smoke-')
+  );
+  const diagnosticsPath = path.join(outputDirectory, 'diagnostics.json');
 
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'whale-packaged-excalidraw-'));
   const fixtureRoot = path.join(tempRoot, 'fixture');
@@ -182,26 +300,133 @@ async function main() {
   delete env.ELECTRON_RUN_AS_NODE;
 
   let electronApp;
+  let page;
   let stage = 'launch';
+  const diagnostics = {
+    name: 'packaged-excalidraw-smoke',
+    startedAt: new Date().toISOString(),
+    executablePath,
+    launchMode: useCurrentBuild ? 'current-build' : 'packaged',
+    outputDirectory,
+    stage,
+    ok: false,
+    console: [],
+    pageErrors: [],
+    requestFailed: [],
+    notFoundResponses: [],
+    cleanupErrors: [],
+  };
+  const saveDiagnostics = () => {
+    diagnostics.stage = stage;
+    const knownConsole = diagnostics.console.filter(isKnownExcalidrawFontConsole);
+    const knownRequests = diagnostics.requestFailed.filter(isKnownExcalidrawFontRequest);
+    const unexpectedConsole = diagnostics.console.filter(
+      (message) => message.type === 'error' && !isKnownExcalidrawFontConsole(message)
+    );
+    const unexpectedRequests = diagnostics.requestFailed.filter(
+      (request) => !isKnownExcalidrawFontRequest(request)
+    );
+    diagnostics.knownFontFallbacks = {
+      console: knownConsole.length,
+      requestFailed: knownRequests.length,
+      total: knownConsole.length + knownRequests.length,
+    };
+    diagnostics.unexpectedFailures = {
+      console: unexpectedConsole.length,
+      pageErrors: diagnostics.pageErrors.length,
+      requestFailed: unexpectedRequests.length,
+      notFoundResponses: diagnostics.notFoundResponses.length,
+      total:
+        unexpectedConsole.length +
+        diagnostics.pageErrors.length +
+        unexpectedRequests.length +
+        diagnostics.notFoundResponses.length,
+    };
+    fs.writeFileSync(diagnosticsPath, JSON.stringify(diagnostics, null, 2) + '\n', 'utf8');
+  };
+  saveDiagnostics();
+
   const watchdog = setTimeout(() => {
     process.exitCode = 1;
-    console.error(`Packaged Excalidraw smoke exceeded 300000ms during ${stage}; killing Electron`);
+    const message = `Packaged Excalidraw smoke exceeded 300000ms during ${stage}; killing Electron`;
+    diagnostics.ok = false;
+    diagnostics.failure = { stage, error: message };
+    saveDiagnostics();
+    console.error(message);
     if (electronApp) electronApp.process().kill();
   }, 300_000);
   try {
-    electronApp = await electron.launch({ executablePath, env, timeout: 30_000 });
+    electronApp = await electron.launch({
+      executablePath,
+      ...(useCurrentBuild ? { args: [currentMainPath] } : {}),
+      env,
+      timeout: 30_000,
+    });
     stage = 'window';
-    const page = await withTimeout(
+    page = await withTimeout(
       electronApp.firstWindow(),
       20_000,
       'first renderer window'
     );
+    // Page-level events include the production extension's nested iframes. Keep
+    // diagnostics from launch through both lazy Mermaid loads and disk saves.
+    page.on('console', (message) => {
+      diagnostics.console.push({
+        type: message.type(),
+        text: message.text(),
+        location: message.location(),
+      });
+      saveDiagnostics();
+    });
+    page.on('pageerror', (error) => {
+      diagnostics.pageErrors.push(errorText(error));
+      saveDiagnostics();
+    });
+    page.on('requestfailed', (request) => {
+      diagnostics.requestFailed.push({
+        url: request.url(),
+        method: request.method(),
+        resourceType: request.resourceType(),
+        errorText: request.failure()?.errorText || 'unknown request failure',
+      });
+      saveDiagnostics();
+    });
+    page.on('response', (response) => {
+      if (response.status() === 404) {
+        diagnostics.notFoundResponses.push({ url: response.url(), status: 404 });
+        saveDiagnostics();
+      }
+    });
+    // Record the real host-to-extension document envelopes in future extension
+    // frames. This is read-only diagnostics for distinguishing a missing
+    // fileContent handoff from an Excalidraw scene/render failure.
+    await page.addInitScript(() => {
+      window.addEventListener('message', (event) => {
+        const envelope = event.data;
+        if (envelope?.source !== 'host' || envelope?.message?.type !== 'fileContent') return;
+        const message = envelope.message;
+        window.__packagedExcalidrawSmokeMessages ||= [];
+        window.__packagedExcalidrawSmokeMessages.push({
+          path: message.path,
+          content: message.content,
+          encoding: message.encoding,
+          readOnly: message.readOnly,
+          size: message.size,
+        });
+      });
+    });
     await withTimeout(
       page.waitForLoadState('domcontentloaded'),
       20_000,
       'renderer DOM load'
     );
-    assert.ok(page.url().includes('app.asar'), `Expected packaged renderer URL, got ${page.url()}`);
+    const normalizedUrl = page.url().replace(/\\/g, '/');
+    assert.ok(
+      normalizedUrl.includes(
+        useCurrentBuild ? 'release/app/dist/renderer/index.html' : 'app.asar'
+      ),
+      `Expected ${useCurrentBuild ? 'current-build' : 'packaged'} renderer URL, got ${page.url()}`
+    );
 
     stage = 'editor';
     // Only the native picker result is replaced. All subsequent actions use the
@@ -232,10 +457,14 @@ async function main() {
     // Scene content is canvas-rendered, not DOM text. Read actual canvas pixels
     // and require non-white ink so an empty scene cannot pass as a loaded fixture.
     const rendered = await poll(
-      () => readCanvasRender(editor.locator('canvas.excalidraw__canvas')),
+      () =>
+        readCanvasRender(editor.locator('canvas.excalidraw__canvas'), (probe) => {
+          diagnostics.canvasProbe = probe;
+        }),
       20_000,
       'Excalidraw fixture canvas render'
     );
+    diagnostics.hostFileContentMessages = await readHostFileContentMessages(page);
     assert.ok(rendered.ink > 20, 'Fixture must produce visible canvas ink');
 
     stage = 'edit';
@@ -406,13 +635,82 @@ async function main() {
       5_000,
       'host clean after Mermaid Save'
     );
+    stage = 'diagnostics';
+    const consoleErrors = diagnostics.console.filter((message) => message.type === 'error');
+    const unexpectedConsoleErrors = consoleErrors.filter(
+      (message) => !isKnownExcalidrawFontConsole(message)
+    );
+    const unexpectedRequestFailures = diagnostics.requestFailed.filter(
+      (request) => !isKnownExcalidrawFontRequest(request)
+    );
+    assert.deepEqual(
+      unexpectedConsoleErrors,
+      [],
+      `Renderer/extension emitted unexpected console errors:\n${JSON.stringify(unexpectedConsoleErrors, null, 2)}`
+    );
+    assert.deepEqual(
+      diagnostics.pageErrors,
+      [],
+      `Renderer/extension emitted page errors:\n${JSON.stringify(diagnostics.pageErrors, null, 2)}`
+    );
+    assert.deepEqual(
+      unexpectedRequestFailures,
+      [],
+      `Renderer/extension emitted unexpected failed requests:\n${JSON.stringify(unexpectedRequestFailures, null, 2)}`
+    );
+    assert.deepEqual(
+      diagnostics.notFoundResponses,
+      [],
+      `Renderer/extension received HTTP 404 responses:\n${JSON.stringify(diagnostics.notFoundResponses, null, 2)}`
+    );
+    diagnostics.summary = {
+      consoleMessages: diagnostics.console.length,
+      consoleErrors: consoleErrors.length,
+      pageErrors: diagnostics.pageErrors.length,
+      requestFailed: diagnostics.requestFailed.length,
+      notFoundResponses: diagnostics.notFoundResponses.length,
+      knownFontFallbacks: diagnostics.knownFontFallbacks.total,
+      unexpectedFailures: diagnostics.unexpectedFailures.total,
+      savedElementCount: mermaidSaved.elements.length,
+    };
     stage = 'success';
+    diagnostics.ok = true;
+    saveDiagnostics();
 
     console.log(
       `Packaged Excalidraw smoke passed: real Add Location + canvas fixture render + ` +
         `bound-text edit + host Save + disk element/version readback + Mermaid lazy preview/Insert ` +
         `+ generated graph Save (${mermaidSaved.elements.length} elements).`
     );
+    console.log(`Excalidraw smoke diagnostics: ${diagnosticsPath}`);
+  } catch (error) {
+    diagnostics.ok = false;
+    diagnostics.failure = { stage, error: errorText(error) };
+    if (page) {
+      try {
+        diagnostics.hostFileContentMessages = await readHostFileContentMessages(page);
+      } catch (bridgeError) {
+        diagnostics.hostFileContentMessagesError = errorText(bridgeError);
+      }
+      try {
+        diagnostics.failureScreenshot = path.join(outputDirectory, 'failure.png');
+        await page.screenshot({ path: diagnostics.failureScreenshot, fullPage: true });
+      } catch (screenshotError) {
+        diagnostics.failureScreenshotError = errorText(screenshotError);
+      }
+    }
+    try {
+      diagnostics.diskAtFailure = {
+        path: drawingPath,
+        content: fs.readFileSync(drawingPath, 'utf8'),
+        mtimeMs: fs.statSync(drawingPath).mtimeMs,
+      };
+    } catch (diskError) {
+      diagnostics.diskAtFailureError = errorText(diskError);
+    }
+    saveDiagnostics();
+    console.error(`Excalidraw smoke diagnostics: ${diagnosticsPath}`);
+    throw error;
   } finally {
     stage = 'cleanup';
     if (electronApp) {
@@ -420,6 +718,8 @@ async function main() {
         await withTimeout(electronApp.close(), 10_000, 'Electron Excalidraw shutdown');
       } catch (error) {
         electronApp.process().kill();
+        diagnostics.ok = false;
+        diagnostics.cleanupErrors.push(errorText(error));
         console.error('Electron Excalidraw shutdown failed; killed the process:', error);
         process.exitCode = 1;
       }
@@ -428,9 +728,13 @@ async function main() {
     try {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     } catch (error) {
+      diagnostics.ok = false;
+      diagnostics.cleanupErrors.push(errorText(error));
       console.warn('Could not remove temporary Excalidraw smoke data:', error);
       process.exitCode = 1;
     }
+    diagnostics.finishedAt = new Date().toISOString();
+    saveDiagnostics();
   }
 }
 

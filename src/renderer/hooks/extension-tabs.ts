@@ -19,6 +19,15 @@ export function makeTabId(filePath: string, manifestId: string): string {
   return `${filePath}::${manifestId}`;
 }
 
+/** Edit state is keyed by tab id, not file path: one file can be open in two
+ *  extensions with independent dirty/saving state. */
+export function isTabDirty(
+  editState: Readonly<Record<string, { dirty?: boolean } | undefined>>,
+  tabId: string
+): boolean {
+  return editState[tabId]?.dirty ?? false;
+}
+
 /** Path equality with the same separator/case normalization used by the file
  * watcher. A watcher path need not be byte-for-byte identical to the path that
  * opened the tab. */
@@ -69,14 +78,15 @@ export interface LruCandidate {
 export function pickLruEvict(
   tabs: ReadonlyArray<LruCandidate>,
   newTabId: string,
-  dirtyPaths: Set<string>
+  dirtyTabIds: ReadonlySet<string>
 ): string | null {
   // Iterate oldest-first (last entry = LRU) and return the first non-dirty,
-  // non-new victim.
+  // non-new victim. Dirty state is keyed by tab id, so two extensions viewing
+  // the same path retain independent eviction protection.
   for (let i = tabs.length - 1; i >= 0; i -= 1) {
     const t = tabs[i];
     if (t.id === newTabId) continue;
-    if (dirtyPaths.has(t.filePath)) continue;
+    if (dirtyTabIds.has(t.id)) continue;
     return t.id;
   }
   return null;

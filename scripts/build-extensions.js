@@ -175,9 +175,9 @@ function configureDrawioPreConfig(source) {
 }
 
 /**
- * Copies an extension's runtime assets pulled from node_modules. Excalidraw loads
- * its fonts at runtime from window.EXCALIDRAW_ASSET_PATH (set to this extension's
- * served root in index.ts), so the package's fonts must sit next to the bundle.
+ * Copies runtime assets pulled from node_modules. Excalidraw tries these fonts
+ * from window.EXCALIDRAW_ASSET_PATH first; the current custom protocol cannot
+ * satisfy its fetch(), so the documented system-font fallback still applies.
  */
 function copyExtensionRuntimeAssets(id) {
   if (id === 'excalidraw-editor') {

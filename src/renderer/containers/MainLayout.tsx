@@ -1,7 +1,25 @@
-import { useState } from 'react';
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useDispatch } from 'react-redux';
 import { useTranslation } from 'react-i18next';
-import { Box, Divider, IconButton, Tab, Tabs, Tooltip, useMediaQuery } from '@mui/material';
+import {
+  Alert,
+  Box,
+  Button,
+  Divider,
+  IconButton,
+  Tab,
+  Tabs,
+  Tooltip,
+  useMediaQuery,
+} from '@mui/material';
 import CreateNewFolderIcon from '@mui/icons-material/CreateNewFolder';
 
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
@@ -12,9 +30,10 @@ import DirectoryTree from '-/components/DirectoryTree';
 import FileToolbar from '-/components/FileToolbar';
 import TitleBar from '-/components/TitleBar';
 import FileList from '-/components/FileList';
-import ExtensionViewPanel from '-/components/ExtensionViewPanel';
 import WelcomePanel from '-/components/WelcomePanel';
 import AddLocationDialog from '-/components/AddLocationDialog';
+import ErrorBoundary from '-/components/ErrorBoundary';
+import ExtensionTabBar from '-/components/ExtensionTabBar';
 import { PeriodTagDialogProvider } from '-/components/PeriodTagDialog';
 import { SettingsDialogProvider } from '-/components/SettingsDialogProvider';
 import McpApprovalDialog from '-/components/McpApprovalDialog';
@@ -22,6 +41,10 @@ import { useResolvedThemeMode } from '-/theme/useResolvedThemeMode';
 import { useExtensionContext } from '-/hooks/ExtensionContextProvider';
 import { useSelector } from 'react-redux';
 import { RootState } from '-/reducers';
+
+function loadExtensionViewPanel() {
+  return import('-/components/ExtensionViewPanel');
+}
 
 /**
  * Top-level layout: sidebar (locations) + main area (toolbar + file list, or a
@@ -33,12 +56,33 @@ import { RootState } from '-/reducers';
 export default function MainLayout() {
   const dispatch = useDispatch();
   const { currentLocation } = useCurrentLocationContext();
-  const { activeView } = useExtensionContext();
+  const { activeView, tabs, activeTabId, activateTab, closeTab } =
+    useExtensionContext();
   const themeMode = useSelector((s: RootState) => s.settings.themeMode);
   // ExtensionViewPanel (and the extension iframe it hosts) only understand a
   // concrete 'light' | 'dark' — resolve 'system' before handing it down.
   const resolvedThemeMode = useResolvedThemeMode(themeMode);
   const [addOpen, setAddOpen] = useState(false);
+  const [extensionAttempt, setExtensionAttempt] = useState(0);
+  const extensionFailedRef = useRef(false);
+  // A rejected React.lazy stays rejected forever. Keep the same lazy component
+  // during normal tab switches (iframe keepalive), recreating it only on retry.
+  const ExtensionViewPanel = useMemo(
+    () => lazy(loadExtensionViewPanel),
+    // The attempt counter intentionally recreates a rejected React.lazy.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [extensionAttempt]
+  );
+  const retryExtension = useCallback(() => {
+    extensionFailedRef.current = false;
+    setExtensionAttempt((attempt) => attempt + 1);
+  }, []);
+  useEffect(() => {
+    // Switching between still-open tabs must not remount every healthy iframe
+    // after a descendant render error. Retry is explicit; closing all tabs is
+    // safe and rearms the next extension view automatically.
+    if (!activeTabId && extensionFailedRef.current) retryExtension();
+  }, [activeTabId, retryExtension]);
   const { t } = useTranslation();
 
   // Narrow viewport: collapse the Sidebar (locations) + DirectoryTree into one
@@ -227,7 +271,58 @@ export default function MainLayout() {
                               flexDirection: 'column',
                             }}
                           >
-                            <ExtensionViewPanel theme={resolvedThemeMode} />
+                            <ErrorBoundary
+                              resetKey={extensionAttempt}
+                              onError={() => {
+                                extensionFailedRef.current = true;
+                              }}
+                              fallback={
+                                <Box
+                                  sx={{
+                                    flex: 1,
+                                    minHeight: 0,
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    bgcolor: 'background.default',
+                                  }}
+                                >
+                                  <ExtensionTabBar
+                                    tabs={tabs}
+                                    activeTabId={activeTabId}
+                                    onActivate={activateTab}
+                                    onClose={(id) => void closeTab(id)}
+                                  />
+                                  <Alert
+                                    severity="error"
+                                    action={
+                                      <Button
+                                        color="inherit"
+                                        size="small"
+                                        onClick={retryExtension}
+                                      >
+                                        {t('retry')}
+                                      </Button>
+                                    }
+                                  >
+                                    {t('errorOccurred')}
+                                  </Alert>
+                                </Box>
+                              }
+                            >
+                              <Suspense
+                                fallback={
+                                  <Box
+                                    sx={{
+                                      flex: 1,
+                                      minHeight: 0,
+                                      bgcolor: 'background.default',
+                                    }}
+                                  />
+                                }
+                              >
+                                <ExtensionViewPanel theme={resolvedThemeMode} />
+                              </Suspense>
+                            </ErrorBoundary>
                           </Box>
                         ) : null}
                       </Box>

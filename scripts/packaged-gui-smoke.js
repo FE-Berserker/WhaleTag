@@ -253,6 +253,11 @@ async function main() {
     // visible. Cancelling must restore the previously active tab and keep the
     // dirty tab open; this guards the real React/provider flow, not a fixture.
     await editor.fill('after cancelled close GUI smoke\n');
+    await poll(
+      async () => (await textTab.innerText()).includes('•'),
+      5_000,
+      'text tab dirty before cancelled close'
+    );
     await viewerTab.click();
     await poll(
       async () => (await viewerTab.getAttribute('aria-selected')) === 'true',

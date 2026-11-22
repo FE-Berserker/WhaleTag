@@ -23,7 +23,17 @@ jobs:
         run: node scripts/packaged-smoke.js
       - name: Smoke real renderer interactions
         run: node scripts/packaged-gui-smoke.js
+      - name: Run repeatable GUI accessibility and layout regression
+        run: npm run test:gui
       - name: Smoke Draw.io render/edit and host Save readback
         run: node scripts/packaged-drawio-smoke.js
       - name: Smoke Excalidraw edit/save and Mermaid preview/insert
         run: node scripts/packaged-excalidraw-smoke.js
+      - name: Upload packaged smoke diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-smoke-diagnostics
+          path: artifacts/**
+          if-no-files-found: ignore
+          retention-days: 7

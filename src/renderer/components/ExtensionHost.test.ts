@@ -3,7 +3,7 @@ import { after, afterEach, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'module';
 import { createElement } from 'react';
-import { act, cleanup, render } from '@testing-library/react';
+import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import type {
   ExtensionManifest,
   ExtensionMessage,
@@ -214,31 +214,40 @@ describe('ExtensionHost revision protocol', () => {
     isDefault: true,
   };
 
-  function renderHost(overrides: { readOnly?: boolean } = {}) {
+  function renderHost(
+    overrides: { readOnly?: boolean; filePath?: string; fileContent?: string } = {}
+  ) {
     const props = {
       tabId: 'tab-1',
       manifest,
-      filePath,
-      fileContent: 'disk',
+      filePath: overrides.filePath ?? filePath,
+      fileContent: overrides.fileContent ?? 'disk',
       encoding: 'utf8' as const,
       readOnly: overrides.readOnly ?? false,
       theme: 'light' as const,
       onRequestRevisionHistory: () => {},
     };
     const view = render(createElement(ExtensionHostComponent, props));
-    const iframe = document.querySelector('iframe');
-    assert.ok(iframe);
     const posted: HostMessage[] = [];
-    Object.defineProperty(iframe.contentWindow, 'postMessage', {
-      configurable: true,
-      value: (envelope: { message: HostMessage }) => {
-        posted.push(envelope.message);
-      },
-    });
+    let iframe: HTMLIFrameElement | null = null;
+    const wireCurrentIframe = () => {
+      const next = document.querySelector('iframe');
+      assert.ok(next);
+      if (next === iframe) return;
+      iframe = next;
+      Object.defineProperty(iframe.contentWindow, 'postMessage', {
+        configurable: true,
+        value: (envelope: { message: HostMessage }) => {
+          posted.push(envelope.message);
+        },
+      });
+    };
+    wireCurrentIframe();
     const emit = (message: ExtensionMessage) => {
+      wireCurrentIframe();
       act(() => {
         window.dispatchEvent(new window.MessageEvent('message', {
-          source: iframe.contentWindow,
+          source: iframe?.contentWindow,
           data: { protocolVersion: 1, source: 'extension', message },
         }));
       });
@@ -261,6 +270,141 @@ describe('ExtensionHost revision protocol', () => {
 
     assert.deepEqual(posted, [{ type: 'setReadOnly', readOnly: true }]);
     assert.equal(posted.some((msg) => msg.type === 'fileContent'), false);
+  });
+
+  it('skips the identical fs.watch readback after save but loads real external edits', async () => {
+    const { view, props, posted, emit } = renderHost();
+    posted.length = 0;
+
+    emit({
+      type: 'parentSaveDocument',
+      path: filePath,
+      content: 'saved locally',
+      revision: 1,
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    view.rerender(createElement(ExtensionHostComponent, {
+      ...props,
+      fileContent: 'saved locally',
+    }));
+    assert.equal(
+      posted.some((msg) => msg.type === 'fileContent'),
+      false,
+      'the host must not reload the editor for its own successful write'
+    );
+
+    view.rerender(createElement(ExtensionHostComponent, {
+      ...props,
+      fileContent: 'external edit',
+    }));
+    const reloads = posted.filter((msg) => msg.type === 'fileContent');
+    assert.equal(reloads.length, 1);
+    assert.equal(reloads[0].type === 'fileContent' && reloads[0].content, 'external edit');
+  });
+
+  it('does not suppress a later external edit back to the last self-saved bytes', async () => {
+    const { view, props, posted, emit } = renderHost({ fileContent: 'saved locally' });
+    posted.length = 0;
+    emit({ type: 'parentSaveDocument', path: filePath, content: 'B', revision: 1 });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    view.rerender(createElement(ExtensionHostComponent, { ...props, fileContent: 'B' }));
+    assert.equal(posted.filter((msg) => msg.type === 'fileContent').length, 0);
+
+    view.rerender(createElement(ExtensionHostComponent, { ...props, fileContent: 'C' }));
+    view.rerender(createElement(ExtensionHostComponent, { ...props, fileContent: 'B' }));
+    assert.deepEqual(
+      posted.filter((msg) => msg.type === 'fileContent').map((msg) => msg.content),
+      ['C', 'B']
+    );
+  });
+
+  it('resends identical content after a filePath change resets the write snapshot', async () => {
+    const { view, props, posted, emit } = renderHost();
+    emit({ type: 'parentSaveDocument', path: filePath, content: 'same bytes', revision: 1 });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    posted.length = 0;
+
+    view.rerender(createElement(ExtensionHostComponent, {
+      ...props,
+      filePath: '/tmp/other.txt',
+      fileContent: 'same bytes',
+    }));
+
+    const reloads = posted.filter((msg) => msg.type === 'fileContent');
+    assert.equal(reloads.length, 1);
+    assert.equal(reloads[0].type === 'fileContent' && reloads[0].path, '/tmp/other.txt');
+  });
+
+  it('shows a blocking retry and disables save for fatal restore errors', (context) => {
+    context.mock.method(console, 'error', () => undefined);
+    const { view, emit } = renderHost();
+    const save = view.getByTestId('SaveIcon').closest('button');
+    assert.ok(save);
+    assert.equal(save.disabled, false);
+
+    emit({ type: 'error', path: filePath, message: 'bad scene', fatal: true });
+
+    assert.equal(save.disabled, true);
+    assert.ok(view.getByText('extLoadFailed'));
+    assert.ok(view.getByRole('button', { name: 'extRetry' }));
+  });
+
+  it('rejects close-save immediately while a fatal load error is showing', async (context) => {
+    context.mock.method(console, 'error', () => undefined);
+    const { posted, emit, saveCurrent } = renderHost();
+    emit({ type: 'contentChangedInEditor', path: filePath, dirty: true, revision: 1 });
+    posted.length = 0;
+    emit({ type: 'error', path: filePath, message: 'bad scene', fatal: true });
+
+    let ok: boolean | undefined;
+    await act(async () => {
+      ok = await saveCurrent();
+    });
+
+    assert.equal(ok, false);
+    assert.equal(posted.some((msg) => msg.type === 'requestSave'), false);
+    assert.ok(hostNotices.includes('extensionSaveError: extLoadFailed'));
+  });
+
+  it('resets revision and identical-content suppression when retry remounts', async (context) => {
+    context.mock.method(console, 'error', () => undefined);
+    const { view, props, posted, emit, saveCurrent } = renderHost();
+    emit({ type: 'contentChangedInEditor', path: filePath, dirty: true, revision: 4 });
+    emit({ type: 'parentSaveDocument', path: filePath, content: 'saved bytes', revision: 4 });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    view.rerender(createElement(ExtensionHostComponent, { ...props, fileContent: 'saved bytes' }));
+    posted.length = 0;
+
+    emit({ type: 'error', path: filePath, message: 'bad scene', fatal: true });
+    fireEvent.click(view.getByRole('button', { name: 'extRetry' }));
+    emit({ type: 'ready' });
+
+    const reloads = posted.filter((msg) => msg.type === 'fileContent');
+    assert.equal(reloads.length, 1, 'retry must resend even identical bytes');
+    let pending!: Promise<boolean>;
+    act(() => {
+      pending = saveCurrent();
+    });
+    emit({ type: 'parentSaveDocument', path: filePath, content: 'after retry', revision: 0 });
+    let ok: boolean | undefined;
+    await act(async () => {
+      ok = await pending;
+    });
+    assert.equal(ok, true, 'a remounted extension restarts its revision at zero');
+    assert.equal(hostNotices.includes('extensionSaveError: extensionSaveOutdated'), false);
   });
 
   it('keeps dirty and resolves false when an older save ack follows a newer edit', async () => {

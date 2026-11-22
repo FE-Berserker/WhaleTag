@@ -15,6 +15,9 @@
 ### P0-1. redux-persist 落盘跳过 `datasync` ✅
 `persist-storage.ts` 的 `persistWrite` 曾手写 `writeFile`+`rename`，缺 `datasync` 与唯一 tmp 名；改调 `atomicWriteText`，删掉 dead 的 `tmpPathForKey`。
 
+### P0-2. 扩展场景恢复与 dirty 保护 ✅（2026-11-22）
+Excalidraw 首份内容改走 `initialData` Promise，避免初始化空场景覆盖；非空 JSON 先验证场景形状，拒绝上游 total restore 的 fail-open；恢复失败标记 fatal、阻断扩展/宿主 Save 并提供 Retry，失败时关闭保存立即失败，重试清旧 revision/自写回读快照，成功恢复强制 dirty 对账。`editState` 的关闭/监听/LRU 读取统一为 `tabId`，不再跳确认、覆盖未保存编辑或误淘汰 dirty 标签。真实 Excalidraw/Mermaid 与脏标签 GUI 冒烟作回归门。
+
 ---
 
 ## 🔴 P1 — 高优先级

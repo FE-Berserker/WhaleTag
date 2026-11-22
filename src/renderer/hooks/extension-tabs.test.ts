@@ -15,6 +15,7 @@ import {
   MAX_TABS,
   findTabForFile,
   makeTabId,
+  isTabDirty,
   pickLruEvict,
   sameFile,
   syncLocationReadOnly,
@@ -48,6 +49,18 @@ describe('extension-tabs', () => {
     });
   });
 
+  describe('isTabDirty', () => {
+    it('keys dirty state by tab id, keeping two extensions on one path independent', () => {
+      const filePath = '/same.md';
+      const textTab = makeTabId(filePath, 'text-editor');
+      const drawTab = makeTabId(filePath, 'excalidraw-editor');
+      const editState = { [textTab]: { dirty: true } };
+      assert.equal(isTabDirty(editState, textTab), true);
+      assert.equal(isTabDirty(editState, drawTab), false);
+      assert.equal(isTabDirty(editState, filePath), false);
+    });
+  });
+
   describe('pickLruEvict', () => {
     // Helper: build a newest-first candidate (index 0 = most recent).
     const mk = (id: string, filePath: string, lastAccessed: number) => ({
@@ -78,7 +91,15 @@ describe('extension-tabs', () => {
         mk('b', '/b', 200), // dirty — skip
         mk('c', '/c', 100), // oldest clean → evict
       ];
-      assert.equal(pickLruEvict(tabs, 'new', new Set(['/b'])), 'c');
+      assert.equal(pickLruEvict(tabs, 'new', new Set(['b'])), 'c');
+    });
+
+    it('protects only the dirty tab when two extensions share one file path', () => {
+      const filePath = '/same.md';
+      const textId = makeTabId(filePath, 'text-editor');
+      const drawId = makeTabId(filePath, 'excalidraw-editor');
+      const tabs = [mk(textId, filePath, 20), mk(drawId, filePath, 10)];
+      assert.equal(pickLruEvict(tabs, 'new', new Set([drawId])), textId);
     });
 
     it('returns null when every candidate is dirty', () => {
@@ -87,7 +108,7 @@ describe('extension-tabs', () => {
         mk('a', '/a', 200),
         mk('b', '/b', 100),
       ];
-      assert.equal(pickLruEvict(tabs, 'new', new Set(['/a', '/b'])), null);
+      assert.equal(pickLruEvict(tabs, 'new', new Set(['a', 'b'])), null);
     });
 
     it('returns null when there is nothing but the new tab', () => {

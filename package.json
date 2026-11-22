@@ -33,6 +33,8 @@
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx --report-unused-disable-directives --max-warnings 0",
     "type-check": "tsc --noEmit",
     "test": "node scripts/run-tests.cjs",
+    "test:gui": "node scripts/packaged-gui-regression.js",
+    "test:gui:current": "cross-env WHALETAG_GUI_USE_CURRENT_BUILD=1 node scripts/packaged-gui-regression.js",
     "clean": "rimraf release/app/dist release/build .erb/dll",
     "pretest": "npm run type-check"
   },

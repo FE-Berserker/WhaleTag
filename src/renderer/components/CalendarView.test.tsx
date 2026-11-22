@@ -24,12 +24,13 @@ import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import i18next from 'i18next';
 
-import CalendarView from './CalendarView';
+let CalendarView: typeof import('./CalendarView').default;
+let shouldJumpCursor: typeof import('./CalendarView').shouldJumpCursor;
 import type { FileCellData } from './file-cell';
 import { CurrentLocationContext } from '../hooks/CurrentLocationContextProvider';
 import { DirectoryContentContext, DirectoryUIContext } from '../hooks/DirectoryContentContextProvider';
 import { DirectoryTreeRefreshContextProvider } from '../hooks/DirectoryTreeRefreshContextProvider';
-import { IOActionsContextProvider } from '../hooks/IOActionsContextProvider';
+let IOActionsContextProvider: typeof import('../hooks/IOActionsContextProvider').IOActionsContextProvider;
 import type { DirEntry } from '../../shared/ipc-types';
 import {
   bucketByDate,
@@ -179,6 +180,13 @@ before(async () => {
   // of the test process.
   globalJsdom();
 
+  // Emotion selects its SSR, non-forwardRef wrappers at module-load time when
+  // no document exists. Load MUI through CalendarView only after jsdom is up.
+  const calendarModule = await import('./CalendarView');
+  CalendarView = calendarModule.default;
+  shouldJumpCursor = calendarModule.shouldJumpCursor;
+  ({ IOActionsContextProvider } = await import('../hooks/IOActionsContextProvider'));
+
   await i18next.use(initReactI18next).init({
     resources: {
       en: { common: {} },
@@ -255,6 +263,33 @@ describe('CalendarView PA-1 #1: isDateTypedTag via renderer/domain/calendar', ()
     assert.ok(isDateTypedTag('20260628-20260630'));
     assert.equal(isDateTypedTag('work'), false);
     assert.equal(isDateTypedTag('2026'), false);
+  });
+});
+
+describe('CalendarView MUI ref forwarding', () => {
+  it('renders Tooltip children and the Select Grow transition without ref warnings', () => {
+    cleanup();
+    const refWarnings: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      const message = args.map(String).join(' ');
+      // This assertion intentionally targets the React 18 warning wording.
+      if (/Function components cannot be given refs|Expected an element that can hold a ref/.test(message)) {
+        refWarnings.push(message);
+      } else {
+        originalError(...args);
+      }
+    };
+    try {
+      const view = renderCalendar(makeData());
+      assert.ok(view.getByTestId('calendar-toolbar'));
+      assert.ok(view.getByRole('combobox'));
+      cleanup();
+      assert.deepEqual(refWarnings, []);
+    } finally {
+      console.error = originalError;
+      cleanup();
+    }
   });
 });
 
@@ -648,8 +683,6 @@ describe('CalendarView PA-3: viewMode + grouping persistence', () => {
 // helper IS the contract that the onChange handler calls into, so locking
 // its truth table is sufficient.
 // ---------------------------------------------------------------------
-import { shouldJumpCursor } from './CalendarView';
-
 describe('CalendarView P1-4: shouldJumpCursor truth table', () => {
   const ranges: Array<'all' | 'today' | 'week' | 'month' | 'last30'> = [
     'all',

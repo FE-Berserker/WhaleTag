@@ -436,6 +436,10 @@ export default function PropertiesTray({
 
   const handleResizeKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLElement>) => {
+      // The tray lives inside FileList's keyboard container. Keep list-level
+      // open/delete/rename/view shortcuts away from the focused separator;
+      // Tab still keeps its native focus traversal below.
+      if (!e.ctrlKey && !e.metaKey && !e.altKey) e.stopPropagation();
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
       e.preventDefault();
       const delta =

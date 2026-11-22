@@ -19,6 +19,8 @@ import {
   resetObservedJson,
   resolveExcalidrawSaveAck,
 } from './save-state';
+import { createInitialContentDeferred } from './initial-content';
+import { parseExcalidrawScene } from './scene-content';
 
 // Excalidraw's imperative API is typed in a deep subpath that doesn't resolve
 // cleanly under this project's `moduleResolution: node`; this is glue code in a
@@ -32,9 +34,19 @@ export default function App() {
   const saveStateRef = useRef(createExcalidrawSaveState());
   const baselinePendingRef = useRef(false);
   const dirtyRef = useRef(false);
-  const pendingContentRef = useRef<{ path: string; content: string } | null>(
-    null
-  );
+  // A rejected restore leaves Excalidraw on an empty scene. Never let that
+  // placeholder be saved over the source document; the host also blocks Save
+  // and exposes its retry surface for fatal restore errors.
+  const restoreFailedRef = useRef(true);
+  // Excalidraw exposes its imperative API before async scene initialization.
+  // Feed the first host document through initialData so initializeScene cannot
+  // overwrite an early updateScene with an empty scene (upstream 0.18.1 race).
+  const initialContentRef = useRef<ReturnType<
+    typeof createInitialContentDeferred
+  > | null>(null);
+  if (!initialContentRef.current) {
+    initialContentRef.current = createInitialContentDeferred();
+  }
 
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [viewMode, setViewMode] = useState(false);
@@ -73,22 +85,47 @@ export default function App() {
     }
   }, []);
 
-  /** Loads a .excalidraw document into the scene; buffers if the API isn't ready
-   *  yet (the host may send fileContent before Excalidraw mounts). */
-  const applyScene = useCallback((path: string, content: string) => {
+  const restoreScene = useCallback((path: string, content: string) => {
+    try {
+      const data = restore(parseExcalidrawScene(content) as any, null, null);
+      restoreFailedRef.current = false;
+      return data;
+    } catch (error) {
+      restoreFailedRef.current = true;
+      const detail = error instanceof Error ? error.message : String(error);
+      const message = `Could not restore Excalidraw scene: ${detail}`;
+      window.whaleExt.postMessage({ type: 'error', message, path, fatal: true });
+      throw error;
+    }
+  }, []);
+
+  const loadInitialData = useCallback(async () => {
+    const initial = initialContentRef.current!;
+    const { path, content } = await initial.promise;
+    initial.consumed = true;
+    const data = restoreScene(path, content);
     pathRef.current = path;
     saveStateRef.current = createExcalidrawSaveState();
+    baselinePendingRef.current = true;
+    // A retry may have inherited dirty state from the failed previous iframe.
+    // Force the successful disk restore to reconcile the host even when this
+    // new editor's local dirtyRef already starts at false.
+    setDirty(false, true);
+    return {
+      elements: data.elements,
+      appState: data.appState,
+      files: data.files,
+    };
+  }, [restoreScene, setDirty]);
+
+  /** Applies a subsequent host document after initialData has initialized the
+   *  scene (for example, a host-driven reload). */
+  const applyScene = useCallback((path: string, content: string) => {
     const api = apiRef.current;
-    if (!api) {
-      pendingContentRef.current = { path, content };
-      return;
-    }
-    let data;
-    try {
-      data = restore(content ? (JSON.parse(content) as any) : {}, null, null);
-    } catch {
-      data = restore({} as any, null, null);
-    }
+    if (!api) return;
+    const data = restoreScene(path, content);
+    pathRef.current = path;
+    saveStateRef.current = createExcalidrawSaveState();
     // docs/20: stored element links are relative to the .excalidraw file's
     // directory (so a folder move keeps links intact). We keep them RELATIVE
     // in the scene too — the editor shows relative, the on-disk form is what
@@ -97,11 +134,12 @@ export default function App() {
     baselinePendingRef.current = true;
     api.updateScene({ elements: data.elements, appState: data.appState });
     if (data.files) api.addFiles(Object.values(data.files));
-  }, []);
+    setDirty(false, true);
+  }, [restoreScene, setDirty]);
 
   const doSave = useCallback(() => {
     const api = apiRef.current;
-    if (!api || !pathRef.current) return;
+    if (!api || !pathRef.current || restoreFailedRef.current) return;
     // docs/20: links are stored relative. New inserts are already relative
     // (see insertFileEmbed); this pass also migrates any still-absolute links
     // from older files to relative. The pending baseline stays in runtime form,
@@ -133,17 +171,9 @@ export default function App() {
     setDirty(currentJson !== lastSavedRef.current);
   }, [computeJson, setDirty]);
 
-  const handleApi = useCallback(
-    (api: AnyApi) => {
-      apiRef.current = api;
-      const pending = pendingContentRef.current;
-      if (pending) {
-        pendingContentRef.current = null;
-        applyScene(pending.path, pending.content);
-      }
-    },
-    [applyScene]
-  );
+  const handleApi = useCallback((api: AnyApi) => {
+    apiRef.current = api;
+  }, []);
 
   // Insert a non-image file as a thumbnail image element linked back to the file.
   const insertFileEmbed = useCallback(
@@ -224,10 +254,16 @@ export default function App() {
   useEffect(() => {
     const off = window.whaleExt.onMessage((msg) => {
       switch (msg.type) {
-        case 'fileContent':
+        case 'fileContent': {
           setViewMode(msg.readOnly);
-          applyScene(msg.path, msg.content);
+          const initial = initialContentRef.current!;
+          if (!initial.consumed) {
+            initial.resolve({ path: msg.path, content: msg.content });
+          } else {
+            applyScene(msg.path, msg.content);
+          }
           break;
+        }
         case 'setTheme':
           setTheme(msg.theme);
           break;
@@ -295,6 +331,7 @@ export default function App() {
     >
       <Excalidraw
         excalidrawAPI={handleApi}
+        initialData={loadInitialData}
         theme={theme}
         viewModeEnabled={viewMode}
         onChange={handleChange}

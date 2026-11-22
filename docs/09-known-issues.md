@@ -354,3 +354,61 @@ Internal React error: Expected static flag was missing. Please notify the React 
 ## 29. pdfjs 自定义 range transport 必须 `extends PDFDataRangeTransport` —— 鸭子类型被 `instanceof` 静默吞掉(2026-07-25)
 
 ✅ 消费方 pdf-viewer 已随 0.4.9 瘦身移除(2026-09),`WhaleRangeTransport` 与 `fs:readFileRange` 桥随之删除,本条归档。通用教训仍然有效:第三方库的"鸭子类型接口"一律先查源码有没有 `instanceof` 品牌检查(pdfjs 尤甚);命中检查时不会报"类型不对",而是报一个误导性的"参数缺失"(如 `getDocument` 的 `expected either 'data', 'range', or 'url'`)。
+
+## 30. 测试在 jsdom 之前静态加载 MUI → Emotion 选到 SSR 包装,出现 ref / Grow 告警(2026-11-22)
+
+**症状**:`CalendarView.test.tsx` / `EntryContextMenu.test.tsx` 在 `globalJsdom()` 之前就静态 `import` 被测组件,组件链带入 MUI;测试输出 `Function components cannot be given refs` / `Expected an element that can hold a ref` 以及 Grow / 过渡相关告警。生产构建与真实窗口没有这些告警。
+
+**根因**:Emotion 在模块求值时根据 `typeof document` 选择实现;测试文件顶部的静态 import 先于 `before()` 里的 `globalJsdom()` 执行,于是选中 SSR 版 `withEmotionCache`(非 `forwardRef` 包装),之后 Tooltip / Menu / Select 再传 ref 就告警。这是测试装载顺序问题,不是组件实现问题。
+
+**修法**:测试把被测组件改成 `let` 类型声明(`CalendarView` 另含被间接带入的 `IOActionsContextProvider`),在 `before()` 里 `globalJsdom()` 之后 `await import(...)`;同时增加断言:开启 `console.error` 捕获上述两类 ref 告警,渲染后必须为空。生产组件不改 —— 浏览器 / Electron 中 DOM 始终先于 MUI 模块求值。
+
+**教训**:jsdom 测试的契约是"先建 DOM,再加载 MUI";文件顶部的静态 `import` 会绕过 `before()` 的时序。新增涉及 MUI 过渡组件的测试时,沿用动态 import,别为了 import 好看把顺序改回去。
+
+## 31. 多 entry 的 `[runtime]/chunks` 会让扩展 chunk URL 变成 `_/chunks`(2026-11-22)
+
+**症状**:磁盘上 chunk 正确落在 `excalidraw-editor/chunks/`,但 Excalidraw 的动态 import 请求 `_/chunks/<id>.<hash>.js`,真实扩展 404;只检查文件名、bundle 体积或不打开扩展的 GUI 回归会误判通过。
+
+**根因**:webpack 多 entry 构建在 chunk 加载运行时的 `data.runtime` 不是字符串,`TemplatedPathPlugin` 会把 `[runtime]` 替换成字面 `_`;资源落盘与 URL 生成走了不同的 runtime 取值。直接删掉 `[runtime]` 又会把多扩展 chunk 写到共同根目录,按 `whale-extension://<extId>/` 解析仍找不到,跨扩展 splitChunks 还会破坏自包含边界。
+
+**修法**:每个扩展使用独立 compiler 与 `output.path=dist/extensions/<extId>/`,统一 `chunkFilename='chunks/[id].[contenthash].js'`、`publicPath=''`;`splitChunks:{chunks:'async'}` 只在当前扩展内去重。验收必须执行真实 Excalidraw/Mermaid 冒烟,并把 `requestfailed` / `pageerror` / console error / 404 纳入断言,不能只看构建产物存在。
+
+## 32. Excalidraw 0.18.1 的 API 早于 initializeScene,首份 fileContent 会被空场景覆盖(2026-11-22)
+
+**症状**:打开已有 `.excalidraw` 时偶发空白画布;宿主已下发 fileContent,扩展也没有报错,但编辑器停在空场景,此时保存会把空场景写回磁盘。
+
+**根因**:Excalidraw 0.18.1 在异步 `initializeScene` 完成前就暴露命令式 API;扩展收到首份 fileContent 后立刻 `updateScene`,初始化完成的空场景又把它覆盖。把内容暂存到 `pending` 再等 API ready 仍有同样的时序窗口。
+
+**修法**:首份 fileContent resolve 进一次性 `initialData` Promise,由 `<Excalidraw initialData={loadInitialData}>` 在初始化阶段原子恢复 `{elements, appState, files}`;`consumed` 之后的 fileContent 才走 `applyScene`。上游 `restore` 是 total 函数,所以非空 JSON 先经 `parseExcalidrawScene` 验证 `type==='excalidraw'` 且 `elements` 缺省或为数组,拒绝 `{}`、library export 等 fail-open 输入。解析/形状/恢复失败向宿主 post `{type:'error',fatal:true,path}` 并重新抛出,不再静默 `restore({})`;只有恢复成功才设置文件路径,扩展内部和宿主 Save 均被阻断。失败时关闭保存立即返回 false,不再等 15 秒;宿主显示可 Retry 的错误界面,Retry 同时清空旧 revision 与自写回读快照,成功恢复后强制 dirty=false 对账,因此失败后的空画布不能覆盖源文件。
+
+**教训**:第三方编辑器的命令式 API “已出现”不等于“初始化已完成”;场景/文档类数据优先走组件提供的 initialData 入口,而不是抢在初始化前 update。
+
+## 33. 保存后的 fs.watch 回读会把编辑器重载回去(2026-11-22)
+
+**症状**:Excalidraw 保存成功、宿主 dirty 已清,但紧接着 Mermaid 插入的预览或内容消失/标签被重载;外部编辑器修改同一文件时又必须刷新。
+
+**根因**:主进程 `fs.watch` 把本次写盘也当外部变化回读,ExtensionHost 收到与刚写入内容完全相同的 `fileContent` 后重新下发,编辑器按“外部刷新”重建场景。
+
+**修法**:ExtensionHost 用 `lastWrittenContentRef` 记录最近一次成功 `writeFileWithRevision` 的内容;仅当 `ready` 且新 `fileContent` 与记录不相等时才下发,保存成功后更新记录。出现不同内容时先作废旧自写快照再刷新,避免 B(自写)→C(外部)→B(外部) 把最后的 B 错当重复回读;切换文件或 `retryExtensionLoad` 时也会清空记录与旧 revision,重试后即使内容逐字相同也会重新下发。
+
+**教训**:自写回读抑制要按“内容相等”而不是按路径或时间窗口:路径比较会漏掉同一文件的外部真实修改,时间窗口则依赖 fs 事件延迟;同时自写快照不能永久粘性,第一份不同内容必须将其作废,否则后续外部改回旧字节会被误吞。
+
+## 34. React.lazy 的 import 被拒后不会自愈,需要重建 lazy 组件(2026-11-22)
+
+**症状**:开发态或打包态某次 chunk 请求失败(404 / 网络 / CSP)后,高级搜索或扩展页一直停在错误态;再点按钮也不会重新请求。
+
+**根因**:`React.lazy` 会把 rejected import 缓存在组件类型上;同一个 lazy 组件再次渲染仍抛同一错误,只清 ErrorBoundary 的 error state 不够。
+
+**修法**:SearchBar/MainLayout 用 `attempt` 计数 + `useMemo(() => lazy(loader), [attempt])` 在重试时创建新的 lazy;ErrorBoundary 增加 `resetKey` / `onError` / `fallback`,重试时同时清错误态并递增 attempt。MainLayout 的 fallback 保留 `ExtensionTabBar`(可切 tab/关闭),SearchBar 的 fallback 提供错误提示与重试按钮;Suspense fallback 使用不透明背景。正常 tab 切换仍复用同一 lazy 组件,不重挂 iframe。
+
+**教训**:lazy chunk 失败恢复要同时处理“错误边界状态”和“lazy 组件身份”;只 reset boundary 会立刻再次抛错。
+
+## 35. editState 改 tabId 键后,关闭/监听/LRU 仍按 filePath 查询(2026-11-22)
+
+**症状**:文本编辑器已显示 dirty `•`,关闭后台标签却不出现保存确认;外部文件刷新可能覆盖未保存内容,达到 8 个标签上限时 dirty 标签也可能被 LRU 静默驱逐。
+
+**根因**:`extensions.editState` 为支持同一文件在不同扩展中独立编辑,键已改为 `makeTabId(filePath, manifestId)`;但关闭确认、保存后复查、fs.watch dirty 检查和 `pickLruEvict` 仍按 `filePath` 查询,全部读取不到对应 dirty 状态。
+
+**修法**:新增 `isTabDirty(editState, tabId)` 并统一关闭/保存/监听/flush 查询;LRU 接收 `dirtyTabIds` 并用 `tab.id` 判断。共置测试覆盖同一路径两个扩展互不影响及 dirty LRU 保护;真实 packaged GUI 冒烟继续覆盖后台脏标签 Cancel 后焦点恢复与内容保留。
+
+**教训**:修改状态键是跨读写双方的契约变更;必须 grep 所有读取点和淘汰策略,不能只改 reducer 与写入端。

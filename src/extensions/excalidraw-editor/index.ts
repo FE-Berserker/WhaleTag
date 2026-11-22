@@ -5,9 +5,10 @@ import App from './app';
 
 declare global {
   interface Window {
-    // Excalidraw resolves its fonts / worker chunks relative to this base URL at
-    // runtime. Set before the component renders so the offline copies served
-    // under this extension's folder are used (see build-extensions.js).
+    // Preferred base URL for Excalidraw's runtime assets. Script/chunk loading
+    // uses the extension protocol directly; font fetch currently falls back to
+    // system fonts because whale-extension does not enable supportFetchAPI
+    // (the upstream CDN fallback is blocked by CSP). See docs/07 §6.
     EXCALIDRAW_ASSET_PATH?: string | string[];
   }
 }

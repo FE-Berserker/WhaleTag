@@ -19,6 +19,8 @@ const queries: string[] = [];
 let componentId = '';
 let cleanupDom: (() => void) | undefined;
 let SearchBarComponent: typeof import('./SearchBar').default;
+let advancedError: Error | null = null;
+let advancedReady = false;
 
 function inject(spec: string, exports: unknown): void {
   const id = require_.resolve(spec);
@@ -64,7 +66,10 @@ before(async () => {
   });
   inject('-/components/AdvancedSearchDialog', {
     __esModule: true,
-    default: () => null,
+    default: () => {
+      if (advancedError) throw advancedError;
+      return advancedReady ? <div>Advanced search recovered</div> : null;
+    },
   });
   inject('-/services/fulltext-search', {
     searchAllFulltext: async () => [],
@@ -80,6 +85,8 @@ before(async () => {
 afterEach(() => {
   cleanup();
   queries.length = 0;
+  advancedError = null;
+  advancedReady = false;
 });
 after(() => {
   if (componentId) delete require_.cache[componentId];
@@ -111,5 +118,37 @@ describe('SearchBar IME search', () => {
 
     fireEvent.keyDown(input, { key: 'Enter' });
     await waitFor(() => assert.deepEqual(queries, ['notes']));
+  });
+});
+
+describe('SearchBar advanced dialog recovery', () => {
+  it('retries the lazy dialog when the toolbar button is clicked again', async (t) => {
+    t.mock.method(console, 'error', () => undefined);
+    advancedError = new Error('advanced chunk failed');
+    const store = createStore(() => ({
+      settings: { fulltextPaths: [] },
+      locations: { items: [] },
+    }));
+    const view = render(
+      <Provider store={store}>
+        <I18nextProvider i18n={i18next}>
+          <SearchBarComponent />
+        </I18nextProvider>
+      </Provider>
+    );
+
+    const advancedButton = view.getByRole('button', {
+      name: 'advancedSearch',
+    });
+    fireEvent.click(advancedButton);
+    await waitFor(() => assert.ok(view.getByText('errorOccurred')));
+
+    advancedError = null;
+    advancedReady = true;
+    fireEvent.click(advancedButton);
+    await waitFor(() =>
+      assert.ok(view.getByText('Advanced search recovered'))
+    );
+    assert.equal(view.queryByText('errorOccurred'), null);
   });
 });

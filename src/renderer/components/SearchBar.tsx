@@ -1,4 +1,11 @@
-import { useRef, useState, type ReactNode } from 'react';
+import {
+  lazy,
+  Suspense,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
 import {
@@ -24,6 +31,7 @@ import ManageSearchIcon from '@mui/icons-material/ManageSearch';
 import FolderIcon from '@mui/icons-material/Folder';
 
 import FileTypeIcon from './FileTypeIcon';
+import ErrorBoundary from './ErrorBoundary';
 import type { IndexEntry, FulltextHit } from '../../shared/ipc-types';
 import { RootState } from '-/reducers';
 import { useLocationIndexContext } from '-/hooks/LocationIndexContextProvider';
@@ -33,8 +41,11 @@ import { joinPath } from '-/services/path-util';
 import { normalizeFsPath } from '-/reducers/settings';
 import { searchAllFulltext } from '-/services/fulltext-search';
 import { errorMessage } from '-/services/errors';
-import AdvancedSearchDialog from '-/components/AdvancedSearchDialog';
 import { isImeComposing } from './ime-guard';
+
+function loadAdvancedSearchDialog() {
+  return import('-/components/AdvancedSearchDialog');
+}
 
 /** True if `s` contains any CJK ideograph / symbol / fullwidth character. */
 function hasCjk(s: string): boolean {
@@ -120,7 +131,25 @@ export default function SearchBar() {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [advancedEverOpened, setAdvancedEverOpened] = useState(false);
+  const [advancedAttempt, setAdvancedAttempt] = useState(0);
+  const [advancedFailed, setAdvancedFailed] = useState(false);
+  // React.lazy memoizes a rejected import. Recreate it only for an explicit
+  // retry; ordinary close/reopen keeps the dialog's mounted state intact.
+  const AdvancedSearchDialog = useMemo(
+    () => lazy(loadAdvancedSearchDialog),
+    // The attempt counter intentionally recreates a rejected React.lazy.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [advancedAttempt]
+  );
   const anchorRef = useRef<HTMLDivElement>(null);
+
+  const retryAdvanced = () => {
+    setAdvancedFailed(false);
+    setAdvancedAttempt((attempt) => attempt + 1);
+    setAdvancedEverOpened(true);
+    setAdvancedOpen(true);
+  };
 
   const busy = status === 'loading' || status === 'building';
   const fulltextOn = fulltextPaths.length > 0;
@@ -284,6 +313,7 @@ export default function SearchBar() {
     <Box
       sx={{
         display: 'flex',
+        position: 'relative',
         alignItems: 'center',
         gap: 0.5,
         flex: '0 1 280px',
@@ -443,14 +473,54 @@ export default function SearchBar() {
         </Tooltip>
       ) : null}
       <Tooltip title={t('advancedSearch')}>
-        <IconButton size="small" onClick={() => setAdvancedOpen(true)}>
+        <IconButton
+          size="small"
+          onClick={() => {
+            if (advancedFailed) retryAdvanced();
+            else {
+              setAdvancedEverOpened(true);
+              setAdvancedOpen(true);
+            }
+          }}
+        >
           <TuneIcon fontSize="small" />
         </IconButton>
       </Tooltip>
-      <AdvancedSearchDialog
-        open={advancedOpen}
-        onClose={() => setAdvancedOpen(false)}
-      />
+      {advancedEverOpened ? (
+        <ErrorBoundary
+          resetKey={advancedAttempt}
+          onError={() => setAdvancedFailed(true)}
+          fallback={
+            <Alert
+              severity="error"
+              sx={{
+                position: 'absolute',
+                top: '100%',
+                right: 0,
+                zIndex: 1300,
+                mt: 0.5,
+                width: 320,
+                maxWidth: '90vw',
+                boxShadow: 3,
+              }}
+              action={
+                <Button color="inherit" size="small" onClick={retryAdvanced}>
+                  {t('retry')}
+                </Button>
+              }
+            >
+              {t('errorOccurred')}
+            </Alert>
+          }
+        >
+          <Suspense fallback={null}>
+            <AdvancedSearchDialog
+              open={advancedOpen}
+              onClose={() => setAdvancedOpen(false)}
+            />
+          </Suspense>
+        </ErrorBoundary>
+      ) : null}
     </Box>
   );
 }

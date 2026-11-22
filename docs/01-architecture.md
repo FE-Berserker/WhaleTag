@@ -119,7 +119,7 @@ npm test             # node:test 经 electron
 
 `.erb/configs/webpack.config.{main,renderer}.{dev,prod}.ts` 多目标;原生模块靠 webpack externals + builder `asarUnpack`。基础配置在 [`webpack.config.base.ts`](../.erb/configs/webpack.config.base.ts) 的 `createBase({ esnext })`——**仅 renderer 传 `esnext: true`**(让动态 `import()` 成为分割点);**主进程 / 扩展必须 CommonJS**(ESM 下 webpack 会把 `createRequire(__filename)` stub 成 undefined,详见 [docs/09 §19](./09-known-issues.md))。
 
-**renderer 代码分割**:`FileList` / `TaskView` / `SettingsDialogProvider` / `MainLayout` 里的视角组件 `React.lazy` + `<Suspense>`;echarts(Calendar / TagCloud / FolderViz)、leaflet(Mapique)、@xyflow(KnowledgeGraph)各自独立异步 chunk,首屏只加载 `main + 1 个 vendor`(≈0.94 MiB,拆分前 4.7 MiB)。`webpack.config.renderer.prod.ts` 的 `output.clean: true` 每次构建清掉旧 contenthash chunk,不累积进安装包。
+**renderer 代码分割**:`FileList` / `TaskView` / `SettingsDialogProvider` / `MainLayout` 里的视角组件 `React.lazy` + `<Suspense>`;`SearchBar` 的 `AdvancedSearchDialog` 首次点击才 `lazy` 加载,`advancedEverOpened` 让它在首次打开后保持挂载(关闭再开保留已填输入);`MainLayout` 的 `ExtensionViewPanel` 仅在 `activeView` 为扩展页时加载。这些 lazy 边界都有失败恢复:高级搜索加载失败时工具栏按钮改为重试,扩展页加载失败时保留 `ExtensionTabBar` 并可切换标签或点重试;`Suspense` 的 fallback 不铺白屏,避免一次 chunk 404 把主界面卡死。echarts(Calendar / TagCloud / FolderViz)、leaflet(Mapique)、@xyflow(KnowledgeGraph)各自独立异步 chunk,`FileList` 视角与这些既有边界不变;初始 JS 只含 `main` 435,963 B + 单个 vendor 669,591 B = 1,105,554 B(≈1.05 MiB,本轮前 1,151,343 B,减少 45,789 B)。`webpack.config.renderer.prod.ts` 的 `output.clean: true` 每次构建清掉旧 contenthash chunk,不累积进安装包。
 
 **dev 启动硬约束**(反复踩过的坑,先看完):
 

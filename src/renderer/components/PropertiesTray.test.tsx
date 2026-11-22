@@ -387,6 +387,26 @@ describe('PropertiesTray keyboard resizing', () => {
     assert.deepEqual(commits, [330, 310]);
   });
 
+  it('does not bubble list shortcuts from the focused separator', () => {
+    const { handle, commits } = renderTray();
+    const parentKeys: string[] = [];
+    const onParentKeyDown = (event: KeyboardEvent) => parentKeys.push(event.key);
+    document.addEventListener('keydown', onParentKeyDown);
+    try {
+      for (const key of ['ArrowRight', 'Delete', 'F2', 'Tab', 'Enter']) {
+        fireEvent.keyDown(handle, { key });
+      }
+      assert.deepEqual(commits, [310]);
+      assert.deepEqual(parentKeys, []);
+
+      fireEvent.keyDown(handle, { key: ',', ctrlKey: true });
+      assert.deepEqual(parentKeys, [','], 'Ctrl+, must reach window shortcuts');
+      assert.deepEqual(commits, [310]);
+    } finally {
+      document.removeEventListener('keydown', onParentKeyDown);
+    }
+  });
+
   it('clamps keyboard resizing to the existing width limits', () => {
     const minimum = renderTray(260);
     fireEvent.keyDown(minimum.handle, { key: 'ArrowRight' });

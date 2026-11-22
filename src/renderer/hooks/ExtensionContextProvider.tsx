@@ -35,6 +35,7 @@ import { isBinaryExtension, isImageFile } from '../../shared/whale-meta';
 import {
   MAX_TABS,
   findTabForFile,
+  isTabDirty,
   makeTabId,
   pickLruEvict,
   sameFile,
@@ -249,7 +250,7 @@ export function ExtensionContextProvider({
   // flag set and is logged by the registry.
   const flushDirtyTabs = useCallback(async () => {
     const dirtyTabs = tabsRef.current.filter(
-      (t) => editStateMapRef.current[t.id]?.dirty
+      (t) => isTabDirty(store.getState().extensions.editState, t.id)
     );
     await Promise.all(
       dirtyTabs.map((tab) => {
@@ -266,7 +267,7 @@ export function ExtensionContextProvider({
         });
       })
     );
-  }, []);
+  }, [store]);
 
   useEffect(() => {
     registerExtensionSaveFlush(flushDirtyTabs);
@@ -332,7 +333,10 @@ export function ExtensionContextProvider({
       const tab = tabsRef.current.find((t) => t.id === tabId);
       if (!tab) return 'closed';
       const previousActiveTabId = activeTabId;
-      const dirty = store.getState().extensions.editState[tab.filePath]?.dirty ?? false;
+      const dirty = isTabDirty(
+        store.getState().extensions.editState,
+        tab.id
+      );
       if (dirty) {
         closeInProgressRef.current = true;
         try {
@@ -359,8 +363,7 @@ export function ExtensionContextProvider({
                 // Read the store, not the effect-mirrored ref: a successful
                 // host dispatch may not have rendered through useSelector yet.
                 isDirty: () =>
-                  store.getState().extensions.editState[tab.filePath]?.dirty ??
-                  false,
+                  isTabDirty(store.getState().extensions.editState, tab.id),
                 notifyStillDirty: () => {
                   // The host returned success, so this post-save race is owned
                   // by the provider and needs exactly one close-specific notice.
@@ -443,8 +446,8 @@ export function ExtensionContextProvider({
           title: basename(entry.path),
           lastAccessed: Date.now(),
         };
-        const dirtyPaths = new Set(
-          Object.entries(editStateMapRef.current)
+        const dirtyTabIds = new Set(
+          Object.entries(store.getState().extensions.editState)
             .filter(([, v]) => v?.dirty)
             .map(([k]) => k)
         );
@@ -454,7 +457,7 @@ export function ExtensionContextProvider({
             ...prev.filter((t) => t.id !== newTab.id),
           ];
           if (next.length > MAX_TABS) {
-            const evictId = pickLruEvict(next, newTab.id, dirtyPaths);
+            const evictId = pickLruEvict(next, newTab.id, dirtyTabIds);
             if (evictId) return next.filter((t) => t.id !== evictId);
           }
           return next;
@@ -467,7 +470,7 @@ export function ExtensionContextProvider({
         setLoading(false);
       }
     },
-    [currentLocation, readFileContent, activateTab]
+    [currentLocation, readFileContent, activateTab, store]
   );
 
   const openFile = useCallback(
@@ -550,7 +553,7 @@ export function ExtensionContextProvider({
       // Don't clobber unsaved editor edits — the user's in-progress work wins
       // over a stale-on-disk reload. Query the matched tab's actual path: the
       // watcher may use different casing or separators from the open tab.
-      if (editStateMapRef.current[t.filePath]?.dirty) return;
+      if (isTabDirty(editStateMapRef.current, t.id)) return;
       try {
         const { content, encoding, size } = await readFileContent(t.filePath);
         setTabs((prev) =>

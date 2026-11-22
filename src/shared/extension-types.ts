@@ -225,6 +225,9 @@ export interface ErrorMessage {
   type: 'error';
   path: string;
   message: string;
+  /** Fatal document/load errors use the host's blocking retry surface instead
+   *  of leaving a blank editor interactive. Ordinary runtime errors omit it. */
+  fatal?: boolean;
 }
 
 /** Extension -> Host: heic-viewer requesting the libheif-js wasm bytes. */

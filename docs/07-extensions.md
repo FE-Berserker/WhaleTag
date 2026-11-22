@@ -46,6 +46,8 @@ src/extensions/
 
 **发现与注册**:[scripts/build-extensions.js](../scripts/build-extensions.js) 扫描 `src/extensions/*/manifest.json`,Webpack 打包,生成 `registry.json`。
 
+**代码分割与产物布局**:[webpack.config.extensions.ts](../.erb/configs/webpack.config.extensions.ts) 为 8 个扩展分别创建 compiler;每个 compiler 的 `output.path` 是 `dist/extensions/<extId>/`,`output.chunkFilename` 是 `chunks/[id].[contenthash].js`、`publicPath: ''`,并使用 `parser.javascript.dynamicImportMode: 'lazy'` 与 `optimization.splitChunks: { chunks: 'async' }`。动态依赖因此留在异步 chunk 中,chunk 文件和运行时 URL 都以所属扩展的 `index.html` 为根解析到 `<extId>/chunks/`;独立 compiler 同时保证 splitChunks 只在单个扩展内去重,不会把共享 chunk 写到产物根目录。不能用多 entry + `[runtime]/chunks` 替代:webpack 的加载运行时会把它坍缩成字面 `_`,造成磁盘路径与请求 URL 不一致。扩展 TS 仍走 `createBase()` 的 CommonJS 编译,CSP、`whale-extension://` 协议与 manifest 契约均不变;`text-editor` 没有 async chunk。以 Excalidraw 为例:entry 7,777,059 → 1,314,536 B,132 个异步 chunk 合计 6,496,642 B;entry + chunk 合计 7,811,178 B,比拆分前单文件多 34,119 B(+0.4%),换来首屏只加载 entry 与按需 chunk,完整总量并未下降。验收不能只数文件,必须让真实 packaged Excalidraw / Mermaid 跑通并断言 requestfailed / pageerror / console error / 404 为空。
+
 **Host ↔ Extension 协议**:统一 envelope `ExtensionEnvelope<T> { protocolVersion: 1, source: 'host' | 'extension', message }`,走 `window.postMessage`。
 
 **Host → Ext 全部消息类型**(`HostMessage` 联合,`src/shared/extension-types.ts:151-161`):
@@ -103,9 +105,10 @@ src/extensions/
 **文件打开 iframe 生命周期**:
 
 - `ExtensionHost.tsx` iframe 宿主,管理加载 / 消息桥 / 保存流程 / 工具栏;**启动看门狗**(2026-07-22):iframe 12s 内未 post `ready` → 显示可重试失败态(此前崩溃/CSP 拦截 = 永久白屏),ready 前显示加载遮罩,重试经 `retryKey` 重挂 iframe
-- 编辑器脏状态经 `contentChangedInEditor` 上报;Save 触发 `parentSaveDocument` → `writeFileWithRevision`。脏状态按**标签 id**（`makeTabId(filePath, extensionId)`）存放，不按文件路径：同一文件可以同时用两个扩展打开（文本编辑器 + JSON 查看器），按路径存放时两个标签会互相清除 dirty/saving，关闭其一时看起来"没有未保存修改"而丢内容
+- 扩展页本身是懒加载边界：`ExtensionViewPanel` 的 chunk 加载失败时，ErrorBoundary 保留 `ExtensionTabBar`（可切换/关闭标签）和重试按钮，重试会重建被拒绝的 lazy 组件；`Suspense` fallback 用不透明背景而不是空白。`SearchBar` 的高级搜索对话框同样在加载失败后由工具栏按钮或错误提示重试；扩展页的正常 tab 切换仍复用同一个 lazy 组件，不重挂已有 iframe
+- 编辑器脏状态经 `contentChangedInEditor` 上报;Save 触发 `parentSaveDocument` → `writeFileWithRevision`。脏状态按**标签 id**（`makeTabId(filePath, extensionId)`）存放，不按文件路径：同一文件可以同时用两个扩展打开（文本编辑器 + JSON 查看器），按路径存放时两个标签会互相清除 dirty/saving，关闭其一时看起来"没有未保存修改"而丢内容。关闭确认、保存后复查、fs.watch 刷新与 flush 统一经 `isTabDirty(editState, tabId)` 读取；`pickLruEvict` 同样接收 `dirtyTabIds` 并按 `tab.id` 跳过 dirty 标签，不能只改写入端而留下按路径查询的淘汰/监听逻辑
 - text / drawio / Excalidraw 的保存消息带内容 `revision`，宿主在 `savingFile` 回显实际写盘版本；旧回执不能清除写盘期间新产生的 dirty，stale 写盘即使已落盘也返回 false 并明确提示最新编辑仍未保存。并发保存会提示先等待当前写入；宿主报告成功后 provider 还会从 store 复查权威 dirty，仍有新编辑就取消关闭并恢复焦点。Excalidraw 每次完成写入都把比较基线推进到实际快照，再按当前 scene 重算 dirty，编辑后撤销回该快照也可正确变干净；缺省 revision 的旧扩展保留原行为
-- `fileContent` 用于真实文件切换/外部刷新，只读切换走独立 `setReadOnly`；text 同路径仍有未保存修改时不重灌旧磁盘内容，drawio 只读用 iframe `inert` 阻止继续编辑。text-editor 在同路径外部刷新（缓冲区干净、内容被替换）时也会重建 undo 历史：否则 Ctrl+Z 能撤回重载前的旧文本，下一次保存把过期内容写回刚被外部修改的文件
+- `fileContent` 用于真实文件切换/外部刷新，只读切换走独立 `setReadOnly`；text 同路径仍有未保存修改时不重灌旧磁盘内容，drawio 只读用 iframe `inert` 阻止继续编辑。text-editor 在同路径外部刷新（缓冲区干净、内容被替换）时也会重建 undo 历史：否则 Ctrl+Z 能撤回重载前的旧文本，下一次保存把过期内容写回刚被外部修改的文件。ExtensionHost 还记录最近一次成功写盘的内容：`fs.watch` 回读若与之逐字相同就跳过 `fileContent`，避免保存后重载编辑器（例如关掉刚插入的 Mermaid 预览）；不同内容的外部修改仍会刷新并立即作废旧自写快照（因此 B→C→B 的最后一次外部 B 不会被吞），切换文件或重试加载时也会清空这条记录
 - 多标签记录所属 `locationId`，位置只读状态变化只同步该位置的标签，其他位置的后台标签保持原权限与对象身份；关闭前直接从 store 读取权威 dirty，不依赖 effect 镜像。后台脏标签的确认框会临时聚焦目标，取消、保存失败或保存/放弃成功关闭后都恢复此前活动标签（目标已关闭时自然不再选中它）
 - 写盘异常、初始或请求后切换的只读状态、15 秒未收到保存响应都由 ExtensionHost 各通知一次；普通保存统一使用通用保存错误并附上具体原因，超时会明确较晚写盘仍可能完成，关闭/重试前需确认标签状态。provider 在已注册 handler 返回 false 时只恢复焦点，handler 缺失或保存成功后权威 dirty 仍为 true 时才发关闭专用通知，不再叠加 blocking alert 与 snackbar。工具栏 Save 与关闭保存交叠时可能保守地取消关闭并提示保存进行中，不会把未确认内容视为已保存
 - 外部刷新优先精确路径，只有大小写/分隔符归一化后唯一匹配才回退，大小写不同且结果有歧义时绝不重载错误标签；未保存编辑仍优先于磁盘重载
@@ -161,9 +164,11 @@ src/extensions/
 
 Draw.io 的本地 Link/Lightbox 会请求 `drawio-assets` 目录 URL。`extension-protocol.ts` 仅把 `drawio-editor/drawio-assets` 精确根路径（含尾斜杠变体）映射到该目录的 `index.html`,其他扩展目录仍保持 EISDIR/404,不开放通用目录索引。构建时 base/lightbox 使用无尾斜杠 URL,viewer/base/lightbox 都由独立赋值固定到本地,避免 vendor `PreConfig.js` 重置与赋值顺序影响。
 
+**Excalidraw 字体降级边界**:`whale-extension://` 可用于文档、script 与 chunk,但当前 Electron 的 `supportFetchAPI` 未开启;Excalidraw 的字体加载器先尝试随包 `EXCALIDRAW_ASSET_PATH`,本地 `fetch` 失败后还会尝试上游 esm.sh URL,随后被扩展 CSP 的 `font-src 'self' data: whale-extension://*` 阻止并回退系统字体。这是既有离线/字体取舍,不是 async chunk 失败。打包冒烟应单独归类这组精确匹配的字体 CSP 错误,继续对其它 console error、pageerror、requestfailed 和 404 零容忍,不能用全局忽略字体或全部 console 来掩盖 chunk 回归。
+
 上游 `drawio-offline` 包不包含 `embed-static.min.js` 或 `embed.js`(只有 `embed.dev.js`),所以 `EditorUi.getHtml` 的 HTML-embed 仍有上游资源缺口；本地 Link/Lightbox 与 viewer-static 可服务不等于 HTML-embed 已修复。不要简单把 `embed.dev.js` 改名冒充正式 bundle。
 
-**excalidraw**:直接 `@excalidraw/excalidraw` 嵌入,scene restore + dirty 跟踪 + 从目录树拖文件嵌入(图片经原生嵌入;非图片插入带链接的缩略图,点击用系统程序打开)。
+**excalidraw**:直接 `@excalidraw/excalidraw` 嵌入,scene restore + dirty 跟踪 + 从目录树拖文件嵌入(图片经原生嵌入;非图片插入带链接的缩略图,点击用系统程序打开)。0.18.1 的 API 可能早于异步 `initializeScene` 暴露,此时立刻 `updateScene` 会被随后初始化的空场景覆盖;现在首份 `fileContent` 不直接写 API,而是 resolve 进一次性 Promise,由 `<Excalidraw initialData>` 参与初始化并原子恢复,`consumed` 之后的刷新才走 `applyScene`。非空内容先经 `parseExcalidrawScene` 验证 `type==='excalidraw'` 且 `elements` 缺省或为数组,避免上游 total `restore` 把 `{}`、library export 等合法 JSON fail-open 成空场景。恢复失败会向宿主 post `{type:'error',fatal:true,path}` 后重新抛出,不再静默 `restore({})` 用空白场景吞掉错误;扩展不设置可保存路径且内部 Save 被 `restoreFailedRef` 阻断,宿主同时禁用 Save 并显示带 Retry 的错误界面,避免空场景覆盖源文件。失败时关闭保存立即返回 false,不再白等 15 秒;Retry 重挂 iframe 时清空旧 revision 与自写回读快照,成功恢复后强制上报 dirty=false 对账。
 
 **drawio**(`useWhaleBridge.ts` + `drawio-bridge.ts`):
 

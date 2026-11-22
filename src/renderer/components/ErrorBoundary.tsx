@@ -2,6 +2,11 @@ import { Component, type ErrorInfo, type ReactNode } from 'react';
 
 interface ErrorBoundaryProps {
   children: ReactNode;
+  /** Optional local fallback; omit to keep the root full-window recovery UI. */
+  fallback?: ReactNode;
+  /** Change after a failure to render the children again. */
+  resetKey?: unknown;
+  onError?: (error: Error, info: ErrorInfo) => void;
 }
 
 interface ErrorBoundaryState {
@@ -45,6 +50,16 @@ export default class ErrorBoundary extends Component<
     } catch {
       // Diagnostics must never mask the original render error.
     }
+    this.props.onError?.(error, info);
+  }
+
+  componentDidUpdate(previousProps: ErrorBoundaryProps): void {
+    if (
+      this.state.error &&
+      !Object.is(previousProps.resetKey, this.props.resetKey)
+    ) {
+      this.setState({ error: null });
+    }
   }
 
   private handleReload = (): void => {
@@ -54,6 +69,7 @@ export default class ErrorBoundary extends Component<
   render(): ReactNode {
     const { error } = this.state;
     if (!error) return this.props.children;
+    if (this.props.fallback !== undefined) return this.props.fallback;
 
     return (
       <div

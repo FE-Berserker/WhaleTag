@@ -31,7 +31,7 @@ import { Provider } from 'react-redux';
 import { createStore } from 'redux';
 import i18next from 'i18next';
 
-import EntryContextMenu from './EntryContextMenu';
+let EntryContextMenu: typeof import('./EntryContextMenu').default;
 import type { ContextMenuPosition } from './EntryContextMenu';
 import type { DirEntry } from '../../shared/ipc-types';
 import type { ExtensionRegistry } from '../../shared/extension-types';
@@ -164,6 +164,10 @@ let teardownJsdom: (() => void) | undefined;
 before(async () => {
   teardownJsdom = globalJsdom();
 
+  // Emotion chooses non-forwardRef SSR wrappers if MUI loads before jsdom.
+  const menuModule = await import('./EntryContextMenu');
+  EntryContextMenu = menuModule.default;
+
   await i18next.use(initReactI18next).init({
     resources: {
       en: { common: {} },
@@ -216,6 +220,32 @@ after(() => {
   // otherwise survive), then close the jsdom window.
   cleanup();
   teardownJsdom?.();
+});
+
+describe('EntryContextMenu MUI ref forwarding', () => {
+  it('mounts the menu transition without ref warnings', async () => {
+    cleanup();
+    const refWarnings: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      const message = args.map(String).join(' ');
+      // This assertion intentionally targets the React 18 warning wording.
+      if (/Function components cannot be given refs|Expected an element that can hold a ref/.test(message)) {
+        refWarnings.push(message);
+      } else {
+        originalError(...args);
+      }
+    };
+    try {
+      const menu = renderMenu({ x: 100, y: 200, entry: entry('note.md') });
+      assert.ok(await menu.findByTestId('entry-edit-tags'));
+      cleanup();
+      assert.deepEqual(refWarnings, []);
+    } finally {
+      console.error = originalError;
+      cleanup();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------

@@ -154,6 +154,10 @@ export default function ExtensionHost({
   // required here: an async save must compare against edits made after its
   // handler's React closure was created.
   const latestRevisionRef = useRef<number | undefined>(undefined);
+  // The fs.watch readback of our own successful write must not reload the
+  // editor: the iframe already has these exact bytes, and reloading can close
+  // an in-progress dialog. A genuinely different external edit still flows.
+  const lastWrittenContentRef = useRef<string | null>(null);
   const [ready, setReady] = useState(false);
   // Boot watchdog: the iframe must post `ready` within READY_TIMEOUT_MS of
   // mount, else show a retry-able failure instead of a permanent blank area
@@ -177,6 +181,8 @@ export default function ExtensionHost({
   }, [ready, loadFailed, retryKey]);
 
   const retryExtensionLoad = () => {
+    latestRevisionRef.current = undefined;
+    lastWrittenContentRef.current = null;
     setReady(false);
     setLoadFailed(false);
     setRetryKey((k) => k + 1);
@@ -207,10 +213,14 @@ export default function ExtensionHost({
 
   useEffect(() => {
     latestRevisionRef.current = undefined;
+    lastWrittenContentRef.current = null;
   }, [filePath]);
 
   useEffect(() => {
-    if (ready) {
+    if (ready && fileContent !== lastWrittenContentRef.current) {
+      // A real external edit invalidates the self-write snapshot. Without this,
+      // B(self-save) -> C(external) -> B(external) would skip the last B.
+      lastWrittenContentRef.current = null;
       postToExtension({
         type: 'fileContent',
         path: filePath,
@@ -287,6 +297,7 @@ export default function ExtensionHost({
       setSaving(true);
       try {
         await ipcApi.writeFileWithRevision(filePath, content);
+        lastWrittenContentRef.current = content;
         postToExtension({ type: 'savingFile', path: filePath, revision });
         const ackCurrent = isSaveAckCurrent(revision, latestRevisionRef.current);
         dispatch(
@@ -337,6 +348,10 @@ export default function ExtensionHost({
   // read-only, timeout (15s — covers large-file writes + revision backup), or
   // write failure; the caller then keeps the view open.
   const saveCurrent = useCallback(async (): Promise<boolean> => {
+    if (loadFailed) {
+      notifyApp(t('extensionSaveError', { message: t('extLoadFailed') }));
+      return false;
+    }
     if (readOnly) {
       notifyApp(
         t('extensionSaveError', { message: t('readOnlyLocation') })
@@ -367,7 +382,7 @@ export default function ExtensionHost({
         postToExtension({ type: 'requestSave', path: filePath });
       }
     });
-  }, [postToExtension, filePath, readOnly, saving, t]);
+  }, [postToExtension, filePath, loadFailed, readOnly, saving, t]);
 
   // Register this tab's saveCurrent into the context so closeTab(tabId) can
   // trigger a save before closing. Keyed by tab id; cleared on unmount.
@@ -588,6 +603,10 @@ export default function ExtensionHost({
               ? msg.message
               : 'unknown error';
           console.error('[ExtensionHost] extension error:', detail);
+          if (msg.fatal) {
+            setReady(false);
+            setLoadFailed(true);
+          }
           notifyApp(t('extensionRuntimeError', { message: detail }));
           break;
         }
@@ -681,7 +700,7 @@ export default function ExtensionHost({
                   // a no-op write, not an error. The local `dirty` indicator
                   // (the dot in the close button) still works because the
                   // bridge posts `contentChangedInEditor` on autosave.
-                  disabled={readOnly || saving}
+                  disabled={readOnly || saving || !ready || loadFailed}
                 >
                   {saving ? (
                     <CircularProgress size={18} />
