@@ -6,6 +6,7 @@ import {
   DialogActions,
   DialogContent,
   DialogContentText,
+  DialogTitle,
   Typography,
 } from '@mui/material';
 import GppMaybeIcon from '@mui/icons-material/GppMaybe';
@@ -110,13 +111,18 @@ export default function McpApprovalDialog() {
   };
 
   return (
-    <Dialog open maxWidth="sm" fullWidth>
+    <Dialog
+      open
+      maxWidth="sm"
+      fullWidth
+      aria-labelledby="mcp-approval-dialog-title"
+    >
       <DialogContent sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
         <GppMaybeIcon color="warning" sx={{ mt: 0.5 }} />
         <div>
-          <Typography variant="subtitle1" component="div">
+          <DialogTitle id="mcp-approval-dialog-title" sx={{ p: 0 }}>
             {t('mcpApproveTitle')}
-          </Typography>
+          </DialogTitle>
           <DialogContentText sx={{ mt: 1 }}>
             {t('mcpApproveIntro', { tool: req.tool })}
           </DialogContentText>

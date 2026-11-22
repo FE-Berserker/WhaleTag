@@ -208,14 +208,24 @@ export default function FileToolbar() {
     >
       <Tooltip title={t('up')}>
         <span>
-          <IconButton size="small" onClick={() => goUp()} disabled={atRoot}>
+          <IconButton
+            size="small"
+            aria-label={t('up')}
+            onClick={() => goUp()}
+            disabled={atRoot}
+          >
             <ArrowUpwardIcon fontSize="small" />
           </IconButton>
         </span>
       </Tooltip>
       <Tooltip title={t('back')}>
         <span>
-          <IconButton size="small" onClick={goBack} disabled={!canGoBack}>
+          <IconButton
+            size="small"
+            aria-label={t('back')}
+            onClick={goBack}
+            disabled={!canGoBack}
+          >
             <ArrowBackIcon fontSize="small" />
           </IconButton>
         </span>
@@ -224,6 +234,7 @@ export default function FileToolbar() {
         <span>
           <IconButton
             size="small"
+            aria-label={t('forward')}
             onClick={goForward}
             disabled={!canGoForward}
           >
@@ -235,6 +246,7 @@ export default function FileToolbar() {
         <span>
           <IconButton
             size="small"
+            aria-label={t('recent')}
             onClick={(e) => setRecentAnchor(e.currentTarget)}
             disabled={recents.length === 0}
           >

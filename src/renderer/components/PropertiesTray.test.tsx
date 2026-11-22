@@ -3,11 +3,16 @@ import globalJsdom from 'global-jsdom';
 import { after, afterEach, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'module';
-import { cleanup, fireEvent, render } from '@testing-library/react';
+type TestingLibrary = typeof import('@testing-library/react');
+let cleanup: TestingLibrary['cleanup'];
+let fireEvent: TestingLibrary['fireEvent'];
+let render: TestingLibrary['render'];
+let waitFor: TestingLibrary['waitFor'];
 import i18next from 'i18next';
 import { I18nextProvider, initReactI18next } from 'react-i18next';
-import { Provider } from 'react-redux';
 import { createStore } from 'redux';
+
+let Provider: typeof import('react-redux').Provider;
 
 import type { DirEntry } from '../../shared/ipc-types';
 
@@ -16,6 +21,16 @@ const savedModules = new Map<string, NodeJS.Module | undefined>();
 let componentId = '';
 let cleanupDom: (() => void) | undefined;
 let PropertiesTrayComponent: typeof import('./PropertiesTray').default;
+const renameCalls: [string, string][] = [];
+const saveMetaCalls: { entry: DirEntry; meta: unknown }[] = [];
+const getSaveMetaCalls = (): { entry: DirEntry; meta: unknown }[] =>
+  saveMetaCalls;
+const directoryContent = {
+  tagsByName: new Map<string, string[]>(),
+  descByName: new Map<string, string>(),
+};
+let renameEntryImpl: (path: string, name: string) => Promise<void> = async () =>
+  undefined;
 
 function inject(spec: string, exports: unknown): void {
   const id = require_.resolve(spec);
@@ -32,10 +47,21 @@ function inject(spec: string, exports: unknown): void {
 
 before(async () => {
   cleanupDom = globalJsdom();
+  ({ cleanup, fireEvent, render, waitFor } = await import(
+    '@testing-library/react'
+  ));
+  ({ Provider } = await import('react-redux'));
   await i18next.use(initReactI18next).init({
     lng: 'en',
     fallbackLng: 'en',
-    resources: { en: { translation: {} } },
+    resources: {
+      en: {
+        translation: {
+          fileProperties: 'File properties',
+          columnResizeHandle: 'Resize {{column}} column',
+        },
+      },
+    },
     interpolation: { escapeValue: false },
   });
 
@@ -43,19 +69,23 @@ before(async () => {
   // Keep this focused by replacing their context requirements, while the real
   // PropertiesTray, Redux selectors, and MUI width styles remain under test.
   inject('-/hooks/DirectoryContentContextProvider', {
-    useDirectoryContent: () => ({
-      tagsByName: new Map<string, string[]>(),
-      descByName: new Map<string, string>(),
-    }),
+    useDirectoryContent: () => directoryContent,
   });
   inject('-/hooks/TagMetaContextProvider', {
     useTagMetaContext: () => ({
-      save: async () => undefined,
+      save: async (entry: DirEntry, meta: unknown) => {
+        saveMetaCalls.push({ entry, meta });
+      },
       saveMany: async () => undefined,
     }),
   });
   inject('-/hooks/IOActionsContextProvider', {
-    useIOActionsContext: () => ({ renameEntry: async () => undefined }),
+    useIOActionsContext: () => ({
+      renameEntry: (path: string, name: string) => {
+        renameCalls.push([path, name]);
+        return renameEntryImpl(path, name);
+      },
+    }),
   });
   inject('-/components/PeriodTagDialog', {
     usePeriodTagDialog: () => ({ openDialog: () => undefined }),
@@ -88,7 +118,12 @@ before(async () => {
     .default as typeof import('./PropertiesTray').default;
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  renameCalls.length = 0;
+  saveMetaCalls.length = 0;
+  renameEntryImpl = async () => undefined;
+});
 after(() => {
   if (componentId) delete require_.cache[componentId];
   for (const [id, original] of savedModules) {
@@ -111,7 +146,17 @@ const entries = ['/root/a.txt', '/root/b.txt'].map(
     }) as DirEntry
 );
 
-function renderTray(width = 320, captureFails = false) {
+interface RenderTrayOptions {
+  entries?: DirEntry[];
+  readOnly?: boolean;
+  onError?: (message: string) => void;
+}
+
+function renderTray(
+  width = 320,
+  captureFails = false,
+  options: RenderTrayOptions = {}
+) {
   const commits: number[] = [];
   const store = createStore(() => ({
     settings: { tagColors: {}, tagShape: 'rounded' },
@@ -122,14 +167,15 @@ function renderTray(width = 320, captureFails = false) {
     <Provider store={store}>
       <I18nextProvider i18n={i18next}>
         <PropertiesTrayComponent
-          entries={entries}
+          entries={options.entries ?? entries}
           thumbCache={new Map()}
-          readOnly
+          readOnly={options.readOnly ?? true}
           width={width}
           onClose={() => undefined}
           onWidthChange={(nextWidth) => commits.push(nextWidth)}
           onOpen={() => undefined}
           onDelete={() => undefined}
+          onError={options.onError}
         />
       </I18nextProvider>
     </Provider>
@@ -206,6 +252,13 @@ function watchWindowFallbackListeners() {
       window.removeEventListener = originalRemove;
     },
   };
+}
+
+function startRename(view: ReturnType<typeof render>): HTMLInputElement {
+  const button = view.getByTestId('EditIcon').closest('button');
+  assert.ok(button);
+  fireEvent.click(button);
+  return view.getByDisplayValue('a.txt') as HTMLInputElement;
 }
 
 describe('PropertiesTray pointer resizing', () => {
@@ -310,5 +363,83 @@ describe('PropertiesTray pointer resizing', () => {
     } finally {
       listeners.restore();
     }
+  });
+});
+
+describe('PropertiesTray keyboard resizing', () => {
+  it('exposes separator semantics and adjusts width with arrow keys', () => {
+    const { handle, commits } = renderTray();
+    assert.equal(handle.getAttribute('role'), 'separator');
+    assert.equal(handle.getAttribute('tabindex'), '0');
+    assert.equal(handle.getAttribute('aria-orientation'), 'vertical');
+    assert.equal(handle.getAttribute('aria-valuemin'), '260');
+    assert.equal(handle.getAttribute('aria-valuemax'), '600');
+    assert.equal(handle.getAttribute('aria-valuenow'), '320');
+    assert.equal(
+      handle.getAttribute('aria-label'),
+      'Resize File properties column'
+    );
+
+    fireEvent.keyDown(handle, { key: 'ArrowDown' });
+    assert.deepEqual(commits, []);
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+    fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    assert.deepEqual(commits, [330, 310]);
+  });
+
+  it('clamps keyboard resizing to the existing width limits', () => {
+    const minimum = renderTray(260);
+    fireEvent.keyDown(minimum.handle, { key: 'ArrowRight' });
+    assert.deepEqual(minimum.commits, [260]);
+    minimum.view.unmount();
+
+    const maximum = renderTray(600);
+    fireEvent.keyDown(maximum.handle, { key: 'ArrowLeft' });
+    assert.deepEqual(maximum.commits, [600]);
+  });
+});
+
+describe('PropertiesTray IME commits and errors', () => {
+  it('ignores composing rename commits and reports a real failure', async () => {
+    const errors: string[] = [];
+    const { view } = renderTray(320, false, {
+      entries: [entries[0]],
+      readOnly: false,
+      onError: (message) => errors.push(message),
+    });
+    const input = startRename(view);
+    fireEvent.change(input, { target: { value: 'renamed.txt' } });
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+    fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 });
+    assert.deepEqual(renameCalls, []);
+
+    renameEntryImpl = async () => {
+      throw new Error('rename failed');
+    };
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => assert.deepEqual(errors, ['rename failed']));
+    assert.deepEqual(renameCalls, [['/root/a.txt', 'renamed.txt']]);
+  });
+
+  it('ignores composing Ctrl+Enter description saves', async () => {
+    const { view } = renderTray(320, false, {
+      entries: [entries[0]],
+      readOnly: false,
+    });
+    const input = view.getByPlaceholderText('No description');
+    fireEvent.change(input, { target: { value: 'Notes' } });
+    fireEvent.keyDown(input, {
+      key: 'Enter',
+      ctrlKey: true,
+      isComposing: true,
+    });
+    fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true, keyCode: 229 });
+    assert.deepEqual(getSaveMetaCalls(), []);
+
+    fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true });
+    await waitFor(() => assert.equal(getSaveMetaCalls().length, 1));
+    assert.deepEqual(getSaveMetaCalls().map((call) => call.meta), [
+      { description: 'Notes' },
+    ]);
   });
 });

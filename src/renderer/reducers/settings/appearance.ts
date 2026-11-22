@@ -1,5 +1,6 @@
 import type { AnyAction } from 'redux';
 import { DEFAULT_PRESET_ID } from '-/theme/presets';
+import { isThemeMode } from '-/theme/mode';
 import { TAG_COLOR_CLEARED } from '-/domain/tag-colors';
 import {
   DEFAULT_ENTRY_SIZE,
@@ -269,8 +270,11 @@ export function setTrayWidth(px: number): SetTrayWidthAction {
 export function migrateAppearance<T extends AppearanceFields>(base: T): T {
   let next = base;
   // Theme presets: old persisted state has no themePreset field; default to
-  // 'whale' so existing users see no visual change. (themeMode widening to add
-  // 'system' needs no migration — old 'light'/'dark' values satisfy the union.)
+  // 'whale' so existing users see no visual change. Unknown themeMode values
+  // (corrupt storage or a removed future mode) normalize to the classic light
+  // theme instead of flowing into the resolver as an undefined mapping.
+  if (!isThemeMode(next.themeMode))
+    next = { ...next, themeMode: appearanceInitial.themeMode };
   if (next.themePreset === undefined)
     next = { ...next, themePreset: DEFAULT_PRESET_ID };
   if (next.tagColors === undefined) next = { ...next, tagColors: {} };

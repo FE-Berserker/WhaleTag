@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ThemeMode } from '-/reducers/settings';
 import { DEFAULT_PRESET_ID, THEME_MODE_PRESET_MAP } from '-/theme/presets';
+import { isThemeMode } from '-/theme/mode';
 
 /**
  * The effective palette mode — always `'light' | 'dark'`, never `'system'` or
@@ -55,7 +56,11 @@ export function useResolvedTheme(mode: ThemeMode): ResolvedTheme {
   if (mode === 'system')
     return { mode: systemDark ? 'dark' : 'light', presetId: DEFAULT_PRESET_ID };
 
-  return THEME_MODE_PRESETS[mode];
+  if (isThemeMode(mode)) return THEME_MODE_PRESETS[mode as keyof typeof THEME_MODE_PRESETS];
+
+  // Persisted state is untrusted at runtime: a removed/corrupt value must not
+  // produce an undefined resolution (or index into Object.prototype).
+  return { mode: 'light', presetId: DEFAULT_PRESET_ID };
 }
 
 /**

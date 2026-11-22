@@ -7,6 +7,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),并遵循[语义化版本](https://semver.org/spec/v2.0.0.html)。
 
+## [Unreleased]
+
+### Added
+
+- **可见 / 隐藏选择计数**:文件列表头的主计数只统计**当前筛选下仍可见**的选中行(批量删除 / 移动 / 打包实际消费的就是这批),被筛选隐藏的选中项另起一行用新键 `nSelectedHidden`(en / zh / zh-TW / ja / ko)说明;隐藏项保持选中、撤销筛选即恢复,但永不进入批量命令,两者都为空时整块不渲染。
+  **Visible vs. hidden selection counts**: the file-list header now counts only the selected rows that remain visible under the active filter — exactly the set bulk delete/move/package consume — and reports filter-hidden selections on a separate `nSelectedHidden` line in all five locales. Hidden rows stay selected and reappear when the filter clears, but never enter a bulk command; the block renders nothing when both counts are zero.
+
+- **属性托盘的键盘调宽**:列宽分隔条可聚焦,带 `role="separator"`、`aria-orientation` 与 `aria-valuemin` / `aria-valuemax` / `aria-valuenow`,`←` / `→` 每步 10 px(向左变宽),与鼠标拖拽共用同一对 260–600 px 上下界。
+  **Keyboard resizing for the properties tray**: the column separator is focusable and exposes `role="separator"`, `aria-orientation` and `aria-valuemin` / `aria-valuemax` / `aria-valuenow`; the arrow keys resize in 10 px steps (left widens) while sharing the same 260–600 px bounds as pointer dragging.
+
+- **读屏可识别的图标按钮与对话框**:文件工具栏的四个导航按钮、侧栏的添加位置 / 新建 Excalidraw / 新建 Draw.io、标签组折叠按钮都补了 `aria-label`(折叠按钮另带 `aria-expanded`),MCP 审批对话框用 `aria-labelledby` 指向自己的标题。
+  **Named icon buttons and dialogs for screen readers**: the four FileToolbar navigation buttons, the sidebar's add-location / new Excalidraw / new Draw.io actions and the tag-group toggles now carry `aria-label` (toggles also expose `aria-expanded`), and the MCP approval dialog labels itself from its own title via `aria-labelledby`.
+
+### Fixed
+
+- **主题健壮性**:持久化的 `themeMode` 不再被直接当索引使用 —— 新增 `isThemeMode` 只认 11 个自身键(`__proto__` / `constructor` 之类不算合法),损坏、缺失或已删除的未来模式在 `useResolvedTheme` 回退到 `{ mode: 'light', presetId: 'whale' }`、在 `migrateAppearance` 归一成 `light`,且只在非法时才分配新对象。
+  **Theme robustness**: persisted `themeMode` values are no longer used as direct indexes. A new `isThemeMode` guard accepts only the eleven own keys (`__proto__` / `constructor` and friends are rejected), so corrupt, missing or removed future modes fall back to `{ mode: 'light', presetId: 'whale' }` in `useResolvedTheme` and normalize to `light` in `migrateAppearance`, which allocates only when the value is actually invalid.
+
+- **配色对比度达到 WCAG AA**:13 套预设的浅色主色与次要文字按"刚好达标"压暗(如 whale `#0ea5e9` → `#0a7bae`),`primary` 与 `textSecondary` 对 `backgroundDefault` / `backgroundPaper` 均 ≥ 4.5:1,全局 focus outline 取 `primary` 且 ≥ 3:1;`presets.test.ts` 逐预设 × 明暗变体断言。
+  **Color contrast now meets WCAG AA**: light-side primaries and secondary text across all 13 presets are darkened just enough to pass (whale `#0ea5e9` → `#0a7bae`), keeping `primary` and `textSecondary` ≥ 4.5:1 against both `backgroundDefault` and `backgroundPaper` while the global focus outline uses `primary` at ≥ 3:1. `presets.test.ts` asserts every preset in both variants.
+
+- **快捷主题切换回经典模式时重置预设**:从策划主题循环回 light / dark / system 会显式把 `themePreset` 重置为 `whale`,不再残留上一个策划预设。
+  **Quick theme toggle resets the preset**: cycling back into light / dark / system now explicitly resets `themePreset` to `whale` instead of leaving the previous curated preset behind.
+
+- **输入法组合期误提交**:新增 `isImeComposing`(`isComposing` 或 `keyCode 229`)守卫并接入 7 处 Enter 语义(行内重命名、属性托盘重命名与描述 `Ctrl+Enter`、标签输入、PromptDialog、添加位置、搜索框、工作流管理器),候选框里的回车与空格不再被当成提交。
+  **IME composition no longer submits**: a new `isImeComposing` guard (`isComposing` or `keyCode 229`) covers all seven Enter semantics — inline rename, tray rename and description `Ctrl+Enter`, tag input, PromptDialog, add-location, search and the workflow manager — so confirming a candidate with Enter or Space is no longer treated as a commit.
+
+- **设置页误导读屏的静态 "Enabled"**:两个通用开关不再渲染恒显的 "Enabled" 文案,状态由 `checked` 表达;快捷键搜索框补了 `aria-label` 与随主题变化的 `:focus-visible` 焦点环(2 px `primary` + 2 px offset),替代硬编码 rgba 边框与 `outline: none`。
+  **Removed the misleading static "Enabled" text**: the two general switches no longer render a permanently visible "Enabled" label — the checked state carries that meaning — and the shortcut search field gained an `aria-label` plus a theme-aware `:focus-visible` ring (2 px `primary`, 2 px offset) replacing its hard-coded rgba border and `outline: none`.
+
+- **静默失败**:属性托盘重命名失败除全局通知外也回落到本地 notice(失败后输入框回滚成原文件名),侧栏的新建 Excalidraw / Draw.io 与"在文件管理器中显示"改走应用级通知,不再 `.catch(() => undefined)`。
+  **Silent failures surfaced**: a failed tray rename now also reaches the local notice (the input rolls back to the original name) on top of the global notification, and the sidebar's new-Excalidraw / new-Draw.io plus reveal-in-file-manager paths report through the app-level notice instead of swallowing errors with `.catch(() => undefined)`.
+
+- **语言与本地化日期**:`document.documentElement.lang` 跟随语言设置;绝对日期与版本历史时间戳显式传 `i18n.language`,不再跟随 OS 区域。
+  **Language tag and localized dates**: `document.documentElement.lang` now follows the language setting, and absolute dates plus revision-history timestamps pass `i18n.language` explicitly instead of following the OS locale.
+
 ## [0.5.1] - 2026-11-19
 
 ### Added

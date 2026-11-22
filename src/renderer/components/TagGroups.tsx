@@ -361,6 +361,8 @@ export default function TagGroups() {
             >
               <IconButton
                 size="small"
+                aria-label={`${g.expanded ? t('collapse') : t('expand')}: ${g.title}`}
+                aria-expanded={g.expanded}
                 onClick={() => dispatch(toggleGroup(g.id))}
                 sx={{ p: 0.25 }}
               >

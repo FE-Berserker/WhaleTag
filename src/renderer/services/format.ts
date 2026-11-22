@@ -1,4 +1,5 @@
 import type { TFunction } from 'i18next';
+import i18n from '-/i18n';
 
 /** Human-readable file size (e.g. "1.5 MB"); empty string for 0/falsy. */
 export function formatSize(bytes: number): string {
@@ -38,7 +39,7 @@ export function formatDate(
   if (Number.isNaN(d.getTime())) return '';
   const mode = opts?.mode ?? 'absolute';
   if (mode === 'absolute') {
-    return d.toLocaleDateString();
+    return d.toLocaleDateString(i18n.language);
   }
   // mode === 'relative'
   const t = opts?.t;
@@ -46,7 +47,7 @@ export function formatDate(
     // Without an i18n function we cannot render the relative form — fall
     // back to absolute rather than throw, so callers that forget the `t`
     // still get a sane (date-formatted) string.
-    return d.toLocaleDateString();
+    return d.toLocaleDateString(i18n.language);
   }
   const now = Date.now();
   const ms = now - d.getTime();
@@ -65,7 +66,7 @@ export function formatDate(
   }
   // > 30 days: still show absolute, the relative form's "31 天前" is
   // less useful than the actual date.
-  return d.toLocaleDateString();
+  return d.toLocaleDateString(i18n.language);
 }
 
 /** Truncate `s` to at most `max` characters, appending `…` when shortened.

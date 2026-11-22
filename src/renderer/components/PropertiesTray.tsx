@@ -35,6 +35,7 @@ import { useDirectoryContent } from '-/hooks/DirectoryContentContextProvider';
 import { stripTagsFromName } from '-/services/tags';
 import { outlinedTagChipSx, tagDisplayLabel } from '-/services/tag-display';
 import { useTagDisplayLabels } from '-/hooks/useTagDisplayLabels';
+import { isImeComposing } from './ime-guard';
 import {
   SMART_TAGS,
   RATING_TAGS,
@@ -67,6 +68,7 @@ interface PropertiesTrayProps {
 
 const MIN_WIDTH = 260;
 const MAX_WIDTH = 600;
+const RESIZE_KEYBOARD_STEP = 10;
 
 /** Apply the per-file save guards (readOnly, dup detection) once, share between
  *  the per-tag add/remove and the smart-tag / rating / workflow / quadrant
@@ -347,12 +349,13 @@ export default function PropertiesTray({
     try {
       await renameEntry(single.path, trimmed);
       setRenaming(false);
-    } catch {
-      // Error is surfaced by IOActionsContext; reset input on failure.
+    } catch (e) {
+      onError?.(e instanceof Error ? e.message : String(e));
+      // Keep the context notification and reset input on failure.
       setNewName(stripTagsFromName(single.name));
       setRenaming(false);
     }
-  }, [single, readOnly, newName, renameEntry]);
+  }, [single, readOnly, newName, renameEntry, onError]);
 
   const previewResize = useCallback((e: React.PointerEvent<HTMLElement>) => {
     const drag = resizingRef.current;
@@ -431,6 +434,19 @@ export default function PropertiesTray({
     [effectiveWidth, finishResize]
   );
 
+  const handleResizeKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLElement>) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      const delta =
+        e.key === 'ArrowLeft' ? RESIZE_KEYBOARD_STEP : -RESIZE_KEYBOARD_STEP;
+      onWidthChange(
+        Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, effectiveWidth + delta))
+      );
+    },
+    [effectiveWidth, onWidthChange]
+  );
+
   useEffect(
     () => () => {
       const drag = resizingRef.current;
@@ -479,6 +495,14 @@ export default function PropertiesTray({
       {/* Resize handle */}
       <Box
         data-testid="properties-tray-resize-handle"
+        role="separator"
+        tabIndex={0}
+        aria-label={t('columnResizeHandle', { column: t('fileProperties') })}
+        aria-orientation="vertical"
+        aria-valuemin={MIN_WIDTH}
+        aria-valuemax={MAX_WIDTH}
+        aria-valuenow={Math.round(displayedWidth)}
+        onKeyDown={handleResizeKeyDown}
         onPointerDown={startResize}
         onPointerMove={previewResize}
         onPointerUp={(e) => finishResize(e, true)}
@@ -533,6 +557,7 @@ export default function PropertiesTray({
                     value={newName}
                     onChange={(e) => setNewName(e.target.value)}
                     onKeyDown={(e) => {
+                      if (isImeComposing(e)) return;
                       if (e.key === 'Enter') handleRenameCommit();
                       if (e.key === 'Escape') {
                         setRenaming(false);
@@ -740,6 +765,7 @@ export default function PropertiesTray({
                 onChange={(e) => setDesc(e.target.value)}
                 onBlur={handleSaveDescription}
                 onKeyDown={(e) => {
+                  if (isImeComposing(e)) return;
                   if (e.key === 'Enter' && e.ctrlKey) {
                     handleSaveDescription();
                   }

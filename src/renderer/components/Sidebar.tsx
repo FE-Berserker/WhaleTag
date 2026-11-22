@@ -109,9 +109,12 @@ export function SidebarActionsBar() {
             <IconButton
               size="small"
               data-testid="new-excalidraw-button"
+              aria-label={t('newExcalidraw')}
               disabled={!newExcalidraw.canCreate}
               onClick={() => {
-                newExcalidraw.create().catch(() => undefined);
+                void newExcalidraw.create().catch((e) =>
+                  notifyApp(t('operationFailed', { message: errorMessage(e) }))
+                );
               }}
             >
               <GestureIcon fontSize="small" />
@@ -125,9 +128,12 @@ export function SidebarActionsBar() {
             <IconButton
               size="small"
               data-testid="new-drawio-button"
+              aria-label={t('newDrawio')}
               disabled={!newDrawio.canCreate}
               onClick={() => {
-                newDrawio.create().catch(() => undefined);
+                void newDrawio.create().catch((e) =>
+                  notifyApp(t('operationFailed', { message: errorMessage(e) }))
+                );
               }}
             >
               <AccountTreeIcon fontSize="small" />
@@ -411,7 +417,11 @@ export default function Sidebar({ onAddLocation, embedded = false }: SidebarProp
             {t('locations')}
           </Typography>
           <Tooltip title={t('addLocation')}>
-            <IconButton size="small" onClick={onAddLocation}>
+            <IconButton
+              size="small"
+              aria-label={t('addLocation')}
+              onClick={onAddLocation}
+            >
               <CreateNewFolderIcon fontSize="small" />
             </IconButton>
           </Tooltip>
@@ -494,7 +504,9 @@ export default function Sidebar({ onAddLocation, embedded = false }: SidebarProp
               </MenuItem>
               <MenuItem
                 onClick={() => {
-                  void ipcApi.revealPath(loc.path).catch(() => undefined);
+                  void ipcApi.revealPath(loc.path).catch((e) =>
+                    notifyApp(t('operationFailed', { message: errorMessage(e) }))
+                  );
                   setCtxMenu(null);
                 }}
               >

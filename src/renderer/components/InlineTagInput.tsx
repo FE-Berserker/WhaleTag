@@ -9,6 +9,7 @@ import { withoutGeoTags } from '../domain/geo-tag';
 import type { RootState } from '-/reducers';
 import { chipSx } from '-/services/tag-display';
 import { useTagDisplayLabels } from '-/hooks/useTagDisplayLabels';
+import { isImeComposing } from './ime-guard';
 
 /**
  * Inline chip-style tag editor used by the Mapique detail panel and the
@@ -60,6 +61,7 @@ export default function InlineTagInput({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (isImeComposing(e)) return;
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       commit();

@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { TFunction } from 'i18next';
 
+import i18n from '-/i18n';
 import { formatDate, formatSize, truncate } from './format';
 
 /**
@@ -84,17 +85,36 @@ describe('renderer format', () => {
     describe('absolute mode (default + explicit)', () => {
       it('uses toLocaleDateString by default', () => {
         // The exact string is locale-dependent; just check it is non-empty
-        // and matches what `new Date(iso).toLocaleDateString()` returns.
+        // and matches what `new Date(iso).toLocaleDateString(i18n.language)` returns.
         const iso = '2026-07-02T12:00:00Z';
-        assert.equal(formatDate(iso), new Date(iso).toLocaleDateString());
+        assert.equal(formatDate(iso), new Date(iso).toLocaleDateString(i18n.language));
       });
 
       it('uses toLocaleDateString when mode is "absolute"', () => {
         const iso = '2026-07-02T12:00:00Z';
         assert.equal(
           formatDate(iso, { mode: 'absolute' }),
-          new Date(iso).toLocaleDateString()
+          new Date(iso).toLocaleDateString(i18n.language)
         );
+      });
+
+      it('follows i18n.language for every absolute-date path', async () => {
+        const iso = '2020-07-02T12:00:00Z';
+        const previousLanguage = i18n.language;
+        try {
+          for (const language of ['en', 'zh']) {
+            await i18n.changeLanguage(language);
+            const expected = new Date(iso).toLocaleDateString(language);
+            assert.equal(formatDate(iso), expected);
+            assert.equal(formatDate(iso, { mode: 'relative' }), expected);
+            assert.equal(
+              formatDate(iso, { mode: 'relative', t: makeT() }),
+              expected
+            );
+          }
+        } finally {
+          await i18n.changeLanguage(previousLanguage);
+        }
       });
 
       it('does not call t() in absolute mode', () => {
@@ -109,13 +129,13 @@ describe('renderer format', () => {
         const iso = ago(5 * 60_000); // 5 min ago
         // No `t` passed — should still produce a sensible date, not throw.
         const out = formatDate(iso, { mode: 'relative' });
-        assert.equal(out, new Date(iso).toLocaleDateString());
+        assert.equal(out, new Date(iso).toLocaleDateString(i18n.language));
       });
 
       it('falls back when t is explicitly undefined', () => {
         const iso = ago(5 * 60_000);
         const out = formatDate(iso, { mode: 'relative', t: undefined });
-        assert.equal(out, new Date(iso).toLocaleDateString());
+        assert.equal(out, new Date(iso).toLocaleDateString(i18n.language));
       });
     });
 
@@ -194,7 +214,7 @@ describe('renderer format', () => {
         // No t() call should have happened — we fell back before reaching the
         // day bucket.
         assert.equal(t.calls.length, 0);
-        assert.equal(out, new Date(iso).toLocaleDateString());
+        assert.equal(out, new Date(iso).toLocaleDateString(i18n.language));
       });
 
       it('returns absolute date string for a year-old timestamp', () => {
@@ -202,7 +222,7 @@ describe('renderer format', () => {
         const iso = ago(400 * 24 * 60 * 60_000); // ~13 months
         const out = formatDate(iso, { mode: 'relative', t });
         assert.equal(t.calls.length, 0);
-        assert.equal(out, new Date(iso).toLocaleDateString());
+        assert.equal(out, new Date(iso).toLocaleDateString(i18n.language));
       });
     });
 

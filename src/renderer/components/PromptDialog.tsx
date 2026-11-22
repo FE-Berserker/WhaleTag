@@ -8,6 +8,7 @@ import {
   DialogTitle,
   TextField,
 } from '@mui/material';
+import { isImeComposing } from './ime-guard';
 
 interface PromptDialogProps {
   open: boolean;
@@ -82,6 +83,7 @@ export default function PromptDialog({
             setError(null);
           }}
           onKeyDown={(e) => {
+            if (isImeComposing(e)) return;
             if (e.key === 'Enter') submit();
           }}
         />

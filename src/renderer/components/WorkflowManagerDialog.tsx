@@ -39,6 +39,7 @@ import {
 } from '../domain/tag-colors';
 import { tagDisplayLabel } from '-/services/tag-display';
 import type { WorkflowStage } from '../domain/workflow';
+import { isImeComposing } from './ime-guard';
 
 interface WorkflowManagerDialogProps {
   open: boolean;
@@ -169,6 +170,7 @@ export default function WorkflowManagerDialog({
                 key={`${stage.id}:${stage.value}`}
                 onBlur={(e) => commitRename(stage, e.target.value)}
                 onKeyDown={(e) => {
+                  if (isImeComposing(e)) return;
                   if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
                 }}
                 sx={{ flex: 1 }}
@@ -215,6 +217,7 @@ export default function WorkflowManagerDialog({
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => {
+              if (isImeComposing(e)) return;
               if (e.key === 'Enter') handleAdd();
             }}
             sx={{ flex: 1 }}

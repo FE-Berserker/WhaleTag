@@ -12,6 +12,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
+import { isImeComposing } from './ime-guard';
 import FolderIcon from '@mui/icons-material/Folder';
 
 import { ipcApi } from '-/services/ipc-api';
@@ -88,6 +89,7 @@ export default function AddLocationDialog({
             onKeyDown={(e) => {
               // Enter submits (same as PromptDialog) — the form has no other
               // single-line input competing for it.
+              if (isImeComposing(e)) return;
               if (e.key === 'Enter') {
                 e.preventDefault();
                 submit();

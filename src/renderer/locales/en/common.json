@@ -472,6 +472,7 @@
   "tagColors": "Tag Colors",
   "addTagsToSetColors": "Add tags above to set their colors",
   "nSelected": "{{count}} selected",
+  "nSelectedHidden": "{{count}} hidden by the current filter",
   "clearSelection": "Clear selection",
   "selectAll": "Select all",
   "nFilesSelected_one": "{{count}} file selected",

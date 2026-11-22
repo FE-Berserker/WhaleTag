@@ -465,6 +465,7 @@
   "tagColors": "标签颜色",
   "addTagsToSetColors": "先添加标签，再设置颜色",
   "nSelected": "已选择 {{count}} 项",
+  "nSelectedHidden": "{{count}} 项被当前筛选隐藏",
   "clearSelection": "清除选择",
   "selectAll": "全选",
   "nFilesSelected_other": "已选择 {{count}} 个文件",

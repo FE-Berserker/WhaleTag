@@ -7,6 +7,24 @@ import {
   DEFAULT_PRESET_ID,
   THEME_MODE_PRESET_MAP,
 } from './presets';
+import { createWhaleTheme } from './index';
+
+/** WCAG 2.x relative luminance for an opaque #rrggbb color. */
+function relativeLuminance(hex: string): number {
+  const [red, green, blue] = [1, 3, 5].map((offset) => {
+    const channel = parseInt(hex.slice(offset, offset + 2), 16) / 255;
+    return channel <= 0.04045
+      ? channel / 12.92
+      : ((channel + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+}
+
+function contrastRatio(foreground: string, background: string): number {
+  const a = relativeLuminance(foreground);
+  const b = relativeLuminance(background);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
 
 describe('theme presets registry', () => {
   it('ships at least the default set of presets', () => {
@@ -86,6 +104,56 @@ describe('theme presets registry', () => {
   });
 });
 
+describe('preset WCAG contrast', () => {
+  it('primary and secondary text meet 4.5:1 on default and paper in every variant', () => {
+    for (const preset of PRESETS) {
+      for (const mode of ['light', 'dark'] as const) {
+        const variant = preset[mode];
+        for (const token of ['primary', 'textSecondary'] as const) {
+          for (const background of [
+            'backgroundDefault',
+            'backgroundPaper',
+          ] as const) {
+            const ratio = contrastRatio(variant[token], variant[background]);
+            assert.ok(
+              ratio >= 4.5,
+              `${preset.id}.${mode}.${token} on ${background}: ${ratio.toFixed(3)}:1`
+            );
+          }
+        }
+      }
+    }
+  });
+
+  it('the global focus indicator meets 3:1 against both preset backgrounds', () => {
+    for (const preset of PRESETS) {
+      for (const mode of ['light', 'dark'] as const) {
+        const variant = preset[mode];
+        const theme = createWhaleTheme(mode, preset.id);
+        const overrides = theme.components?.MuiButtonBase?.styleOverrides
+          ?.root as
+          | { '&.Mui-focusVisible'?: { outline?: string } }
+          | undefined;
+        const outline = overrides?.['&.Mui-focusVisible']?.outline;
+        assert.ok(outline, `${preset.id}.${mode} focus outline missing`);
+        const focusColor = outline.match(/#[0-9a-f]{6}/i)?.[0];
+        assert.ok(focusColor, `${preset.id}.${mode} focus color missing`);
+        assert.equal(focusColor, variant.primary);
+        for (const background of [
+          variant.backgroundDefault,
+          variant.backgroundPaper,
+        ]) {
+          const ratio = contrastRatio(focusColor, background);
+          assert.ok(
+            ratio >= 3,
+            `${preset.id}.${mode} focus on ${background}: ${ratio.toFixed(3)}:1`
+          );
+        }
+      }
+    }
+  });
+});
+
 describe('getPreset fallback', () => {
   it('returns the matching preset for a known id', () => {
     assert.equal(getPreset('forest').id, 'forest');
@@ -99,15 +167,15 @@ describe('getPreset fallback', () => {
     assert.equal(getPreset(undefined).id, DEFAULT_PRESET_ID);
   });
 
-  it('whale light matches UI.md "Clean Professional" (unchanged for existing users)', () => {
+  it('whale light preserves the brand ramp with WCAG-safe foregrounds', () => {
     const d = getPreset('whale');
-    assert.equal(d.light.primary, '#0ea5e9');
+    assert.equal(d.light.primary, '#0a7bae');
     assert.equal(d.light.secondary, '#6366f1');
     assert.equal(d.light.backgroundDefault, '#f8fafc');
     assert.equal(d.light.backgroundPaper, '#ffffff');
     assert.equal(d.light.border, '#e2e8f0');
     assert.equal(d.light.text, '#0f172a');
-    assert.equal(d.light.textSecondary, '#64748b');
+    assert.equal(d.light.textSecondary, '#64738a');
     assert.equal(d.light.hover, '#f1f5f9');
     assert.equal(d.light.primaryLight, '#e0f2fe');
   });

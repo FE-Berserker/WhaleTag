@@ -14,7 +14,7 @@ import ContrastIcon from '@mui/icons-material/Contrast';
 
 import { RootState } from '-/reducers';
 import { setThemeMode, setThemePreset, type ThemeMode } from '-/reducers/settings';
-import { THEME_MODE_PRESET_MAP } from '-/theme/presets';
+import { DEFAULT_PRESET_ID, THEME_MODE_PRESET_MAP } from '-/theme/presets';
 
 const ORDER: ThemeMode[] = [
   'light',
@@ -82,10 +82,13 @@ export default function ThemeQuickToggle() {
         size="small"
         onClick={() => {
           dispatch(setThemeMode(next));
-          // Keep themePreset in sync for backward compatibility.
+          // Keep themePreset in sync for backward compatibility. Classic
+          // modes always use the default preset, even after a curated theme.
           const preset =
-            THEME_MODE_PRESET_MAP[next as keyof typeof THEME_MODE_PRESET_MAP];
-          if (preset) dispatch(setThemePreset(preset.presetId));
+            next === 'light' || next === 'dark' || next === 'system'
+              ? DEFAULT_PRESET_ID
+              : THEME_MODE_PRESET_MAP[next].presetId;
+          dispatch(setThemePreset(preset));
         }}
         data-testid="theme-quick-toggle"
         aria-label={tooltip}

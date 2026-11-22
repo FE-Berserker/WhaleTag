@@ -238,4 +238,14 @@ describe('McpApprovalDialog', () => {
     release({ ok: true, settled: true });
     await waitFor(() => assert.ok(!document.body.textContent?.includes('Move 2 items')));
   });
+
+  it('labels the dialog with its DialogTitle', async () => {
+    pendingImpl = async () => [request()];
+    const { findByRole, getByRole } = renderDialog();
+
+    const dialog = await findByRole('dialog', { name: 'Approve file operation' });
+    const title = getByRole('heading', { name: 'Approve file operation' });
+    assert.equal(dialog.getAttribute('aria-labelledby'), title.id);
+    assert.equal(title.id, 'mcp-approval-dialog-title');
+  });
 });

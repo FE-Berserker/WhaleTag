@@ -28,6 +28,9 @@ Test/
 # Local working dir for other agents
 LightWork/
 
+# Local audit screenshots, probes and runtime data
+artifacts/
+
 # Editor / OS
 .DS_Store
 .idea/

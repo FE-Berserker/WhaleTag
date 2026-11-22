@@ -80,6 +80,7 @@ export default function Root() {
   }, [defaultLocationId, locationItems, dispatch]);
 
   useEffect(() => {
+    document.documentElement.lang = language;
     if (i18n.language !== language) {
       void i18n.changeLanguage(language);
     }

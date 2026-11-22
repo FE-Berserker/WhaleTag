@@ -142,7 +142,7 @@ closeDialog(): void;
 [src/renderer/components/InlineTagInput.tsx](../src/renderer/components/InlineTagInput.tsx) chip 编辑器:
 
 - **chip 渲染**:已有标签渲染为可删除 MUI `Chip`,使用 `chipSx(getTagColor(...), false, tagShape)` 着色
-- **提交语义**:`Enter` / `Space` / `Blur` 任一触发 `commit()`,把 `input.trim()` 推给 `onAdd` 并清空输入框。**避开逗号**(geo `geo:lat,lng` 含逗号)
+- **提交语义**:`Enter` / `Space` / `Blur` 任一触发 `commit()`,把 `input.trim()` 推给 `onAdd` 并清空输入框。**避开逗号**(geo `geo:lat,lng` 含逗号)。输入法组合期(候选框里的 Enter / Space)一律早退,不提交 —— `isImeComposing(e)` 见 [docs/10 §15](./10-ui.md),同款守卫已铺到行内重命名、搜索框、PromptDialog 等所有 Enter 语义
 - **Backspace + 空输入** → 删除最后一个可见 chip(token-input 标准 affordance)
 - **点容器空白自动 focus** 到 input(`data-tag-input` 选择器);点 chip 的 `×`(`MuiChip-deleteIcon`)不抢焦点
 - **geo 标签隐藏**:`visibleTags = withoutGeoTags(tags)`,由 Mapique 写
@@ -172,6 +172,8 @@ closeDialog(): void;
 - 其它普通 tag(可拖,按 group 分组)
 
 `TagMetaContextProvider.allTags` 注入折叠键的 `count`(纯渲染辅助,不写入 sidecar)。
+
+分组折叠按钮带 `aria-expanded` 与 `aria-label`(`${展开 / 收起}: {组名}`)—— 图标按钮只有 Tooltip 时对读屏是匿名的,约定见 [docs/10 §15](./10-ui.md)。
 
 ## 11. 存量数据迁移(主进程启动后台扫描)
 

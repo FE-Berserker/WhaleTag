@@ -465,6 +465,7 @@
   "tagColors": "태그 색상",
   "addTagsToSetColors": "위에 태그를 추가하여 색상을 설정하세요",
   "nSelected": "{{count}}개 선택됨",
+  "nSelectedHidden": "{{count}}개 항목이 현재 필터에 의해 숨겨짐",
   "clearSelection": "선택 해제",
   "selectAll": "모두 선택",
   "nFilesSelected_other": "파일 {{count}}개 선택됨",

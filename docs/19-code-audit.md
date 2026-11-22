@@ -145,6 +145,9 @@ DirectoryTree 的 `ctxMenu` 增 `isDirectory`（文件行不再出现「新建�
 ### P1-42. P3 批次（6 条）✅
 `atomic-write` 的并发键先 `realpath` 再折叠（符号链接/8.3 短名的两条队列会各自 rename 同一 inode）；`restoreRevision` 保留 POSIX `mode`（tmp+rename 会把 `0600` 悄悄放宽）；MCP 会话上限 32、新建前按 `lastSeen` 驱逐最久未用；`SortableHeader` 提到模块作用域（组件体内定义每帧产生新身份）；Mapique 用未过滤 tray 回查路径，被筛选隐藏的 marker 仍可点选；html-viewer 用户 CSS 按 `cssRules` 作用域到 `#content`（`html`/`body`/`:root` 映射，`@media`/`@supports` 递归）。
 
+### P1-43. 无障碍、主题健壮性与选择计数（2026-11）✅
+主题：新增 `theme/mode.ts` 的 `isThemeMode` 做唯一校验（只认 11 个自身键，`__proto__` / `constructor` 不算合法），`useResolvedTheme` 对损坏值回落 `{light, whale}`、`migrateAppearance` 归一成 `light` 且只在非法时分配；13 套预设的浅色主色与次要文字压暗到 WCAG AA（`primary` / `textSecondary` 对两个背景均 ≥4.5:1，focus outline 取 `primary` ≥3:1，`presets.test.ts` 逐变体断言）；`ThemeQuickToggle` 切回经典模式显式重置 `whale`。交互：选择计数拆成可见批量目标 + 被筛选隐藏（`SelectionSummary` + 五语言 `nSelectedHidden`，隐藏项永不进批量命令）；PropertiesTray 分隔条补 `role=separator` / `aria-value*` 与 `←`/`→` ±10 px 键盘拖宽；IME 组合期 Enter 语义统一由 `ime-guard.ts` 早退（7 处调用点）；设置页去掉恒显 "Enabled" 文案、快捷键搜索框补名字与主题色 focus ring；图标按钮补 `aria-label`，"新建图表 / 在文件管理器中显示"与重命名失败改走 notice 通道；`html lang` 与绝对日期跟随 `i18n.language`。
+
 ---
 
 ## 🟡 P2 — 类型逃逸

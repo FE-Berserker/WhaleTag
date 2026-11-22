@@ -33,7 +33,7 @@ export default function RevisionHistoryDialog({
   onClose,
   onRestored,
 }: RevisionHistoryDialogProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   // Confirmation is mandatory here: restoring used to be one unguarded click on
   // a list row, which silently overwrote the current file (no undo, and the
   // dialog closed right after, so the mistake only surfaced later on disk).
@@ -68,7 +68,7 @@ export default function RevisionHistoryDialog({
     const ok = await confirm({
       title: t('revisionHistory'),
       message: t('revisionRestoreConfirm', {
-        time: new Date(revision.timestamp).toLocaleString(),
+        time: new Date(revision.timestamp).toLocaleString(i18n.language),
       }),
       confirmLabel: t('restore'),
       danger: true,
@@ -136,7 +136,7 @@ export default function RevisionHistoryDialog({
                 }
               >
                 <ListItemText
-                  primary={new Date(rev.timestamp).toLocaleString()}
+                  primary={new Date(rev.timestamp).toLocaleString(i18n.language)}
                   secondary={t('revisionSize', { size: formatBytes(rev.size) })}
                 />
               </ListItem>

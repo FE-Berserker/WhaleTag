@@ -10,6 +10,7 @@ import {
 import type { RowComponentProps } from 'react-window';
 import { useDrop, useDrag } from 'react-dnd';
 import { usePeriodTagDialog } from './PeriodTagDialog';
+import { isImeComposing } from './ime-guard';
 
 import type { DirEntry } from '../../shared/ipc-types';
 import {
@@ -416,7 +417,7 @@ export default function Row(props: RowComponentProps<FileCellData>) {
  * `ListItemButton`'s onClick / onKeyDown from interpreting the same events
  * (e.g. selecting the row, opening the entry on Enter).
  */
-function InlineRenameInput({
+export function InlineRenameInput({
   initial,
   onCommit,
   onCancel,
@@ -456,6 +457,7 @@ function InlineRenameInput({
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => {
         e.stopPropagation();
+        if (isImeComposing(e)) return;
         if (e.key === 'Enter') {
           e.preventDefault();
           onCommit(value);

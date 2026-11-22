@@ -6,9 +6,10 @@
  * The registry mirrors the `SUPPORTED_LANGUAGES` idiom in `i18n.ts`: a
  * `as const` array + a derived id union. Add a preset by appending here only.
  *
- * The first entry (`whale`) is the default and reuses the exact colors the app
- * shipped with before presets existed, so existing users see zero visual change.
- * `getPreset` falls back to it for any unknown / corrupt persisted id.
+ * The first entry (`whale`) is the default and preserves the original brand
+ * ramps; light foreground tokens are darkened just enough to meet WCAG AA on
+ * both preset backgrounds. `getPreset` falls back to it for any unknown /
+ * corrupt persisted id.
  */
 
 /**
@@ -91,12 +92,13 @@ export const THEME_MODE_PRESET_MAP: Record<
  * Shared neutral ramp for light variants — the "Clean Professional" slate set
  * from `docs/10-ui.md` §14.3. Reused across every preset: the neutrals read well on
  * all of the (near-white) light backgrounds, so only `primary`/`primaryLight`
- * change per preset. `whale` matches UI.md's light theme exactly.
+ * change per preset. The secondary text is darkened slightly from the original
+ * slate token so even the tinted ocean/sunset defaults clear WCAG AA.
  */
 const LIGHT_NEUTRALS = {
   border: '#e2e8f0',
   text: '#0f172a',
-  textSecondary: '#64748b',
+  textSecondary: '#64738a',
   hover: '#f1f5f9',
 } as const;
 
@@ -117,9 +119,9 @@ export const PRESETS = [
     id: 'whale',
     labelKey: 'presetWhale',
     // Light = UI.md "Clean Professional"; dark = UI.md "Dark Geek".
-    swatch: { light: '#0ea5e9', dark: '#818cf8' },
+    swatch: { light: '#0a7bae', dark: '#818cf8' },
     light: {
-      primary: '#0ea5e9',
+      primary: '#0a7bae',
       primaryLight: '#e0f2fe',
       secondary: '#6366f1',
       backgroundDefault: '#f8fafc',
@@ -138,9 +140,9 @@ export const PRESETS = [
   {
     id: 'ocean',
     labelKey: 'presetOcean',
-    swatch: { light: '#0284c7', dark: '#38bdf8' },
+    swatch: { light: '#0278b6', dark: '#38bdf8' },
     light: {
-      primary: '#0284c7',
+      primary: '#0278b6',
       primaryLight: '#e0f2fe',
       secondary: '#0891b2',
       backgroundDefault: '#f0f9ff',
@@ -159,9 +161,9 @@ export const PRESETS = [
   {
     id: 'forest',
     labelKey: 'presetForest',
-    swatch: { light: '#16a34a', dark: '#4ade80' },
+    swatch: { light: '#12863d', dark: '#4ade80' },
     light: {
-      primary: '#16a34a',
+      primary: '#12863d',
       primaryLight: '#dcfce7',
       secondary: '#65a30d',
       backgroundDefault: '#f6fef8',
@@ -180,9 +182,9 @@ export const PRESETS = [
   {
     id: 'sunset',
     labelKey: 'presetSunset',
-    swatch: { light: '#ea580c', dark: '#fb923c' },
+    swatch: { light: '#c64a0a', dark: '#fb923c' },
     light: {
-      primary: '#ea580c',
+      primary: '#c64a0a',
       primaryLight: '#ffedd5',
       secondary: '#db2777',
       backgroundDefault: '#fff7ed',
@@ -222,16 +224,16 @@ export const PRESETS = [
   {
     id: 'warm-paper',
     labelKey: 'presetWarmPaper',
-    swatch: { light: '#b45309', dark: '#fb923c' },
+    swatch: { light: '#b35209', dark: '#fb923c' },
     light: {
-      primary: '#b45309',
+      primary: '#b35209',
       primaryLight: '#fff7ed',
       secondary: '#d97706',
       backgroundDefault: '#f5f1e8',
       backgroundPaper: '#faf8f2',
       border: '#e7e5e4',
       text: '#292524',
-      textSecondary: '#78716c',
+      textSecondary: '#746d69',
       hover: '#efeae0',
     },
     dark: {
@@ -276,9 +278,9 @@ export const PRESETS = [
   {
     id: 'frosted-mint',
     labelKey: 'presetFrostedMint',
-    swatch: { light: '#14b8a6', dark: '#2dd4bf' },
+    swatch: { light: '#0e8276', dark: '#2dd4bf' },
     light: {
-      primary: '#14b8a6',
+      primary: '#0e8276',
       primaryLight: '#ccfbf1',
       secondary: '#06b6d4',
       backgroundDefault: '#f0fdfa',
@@ -303,9 +305,9 @@ export const PRESETS = [
   {
     id: 'deep-ocean',
     labelKey: 'presetDeepOcean',
-    swatch: { light: '#0284c7', dark: '#38bdf8' },
+    swatch: { light: '#0278b6', dark: '#38bdf8' },
     light: {
-      primary: '#0284c7',
+      primary: '#0278b6',
       primaryLight: '#e0f2fe',
       secondary: '#0891b2',
       backgroundDefault: '#f0f9ff',
@@ -330,9 +332,9 @@ export const PRESETS = [
   {
     id: 'dawn-blush',
     labelKey: 'presetDawnBlush',
-    swatch: { light: '#db2777', dark: '#f472b6' },
+    swatch: { light: '#d52674', dark: '#f472b6' },
     light: {
-      primary: '#db2777',
+      primary: '#d52674',
       primaryLight: '#fce7f3',
       secondary: '#e11d48',
       backgroundDefault: '#fff5f7',
@@ -357,9 +359,9 @@ export const PRESETS = [
   {
     id: 'forest-ink',
     labelKey: 'presetForestInk',
-    swatch: { light: '#16a34a', dark: '#34d399' },
+    swatch: { light: '#12853d', dark: '#34d399' },
     light: {
-      primary: '#16a34a',
+      primary: '#12853d',
       primaryLight: '#dcfce7',
       secondary: '#65a30d',
       backgroundDefault: '#f0fdf4',
@@ -393,7 +395,7 @@ export const PRESETS = [
       backgroundPaper: '#fcfaf5',
       border: '#e5e2d9',
       text: '#2d2a22',
-      textSecondary: '#7a756a',
+      textSecondary: '#757066',
       hover: '#edeae0',
     },
     dark: {

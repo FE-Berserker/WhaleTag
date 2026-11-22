@@ -1619,7 +1619,15 @@ export default function FileList() {
         // H.23 P1-3 row-density preset (compact / normal / comfortable).
         listRowDensity={listRowDensity}
         onChangeListRowDensity={handleChangeListRowDensity}
-        selectedCount={selectedPathsRef.current.size}
+        // Bulk commands consume selectedEntries, so the primary count must
+        // describe that same visible set. Selections hidden by the active
+        // filter remain intact but are called out separately, never silently
+        // included in delete/move/package operations.
+        selectedCount={selectedEntries.length}
+        hiddenSelectedCount={Math.max(
+          0,
+          selectedPathsRef.current.size - selectedEntries.length
+        )}
         onClearSelection={clearSelection}
         listSelectAllState={selectAllState}
         onToggleSelectAll={toggleSelectAll}

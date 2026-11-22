@@ -34,6 +34,7 @@ import { normalizeFsPath } from '-/reducers/settings';
 import { searchAllFulltext } from '-/services/fulltext-search';
 import { errorMessage } from '-/services/errors';
 import AdvancedSearchDialog from '-/components/AdvancedSearchDialog';
+import { isImeComposing } from './ime-guard';
 
 /** True if `s` contains any CJK ideograph / symbol / fullwidth character. */
 function hasCjk(s: string): boolean {
@@ -300,6 +301,7 @@ export default function SearchBar() {
             setOpen(false); // hide stale results while editing; reopen on Enter
           }}
           onKeyDown={(e) => {
+            if (isImeComposing(e)) return;
             if (e.key === 'Enter') {
               e.preventDefault();
               runSearch();

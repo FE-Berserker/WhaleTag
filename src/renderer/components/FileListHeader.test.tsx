@@ -6,7 +6,7 @@ import { cleanup, fireEvent, render } from '@testing-library/react';
 import i18next from 'i18next';
 import { I18nextProvider, initReactI18next } from 'react-i18next';
 
-import { RowColumnLabels } from './FileListHeader';
+import { RowColumnLabels, SelectionSummary } from './FileListHeader';
 
 let cleanupDom: (() => void) | undefined;
 
@@ -15,7 +15,14 @@ before(async () => {
   await i18next.use(initReactI18next).init({
     lng: 'en',
     fallbackLng: 'en',
-    resources: { en: { translation: {} } },
+    resources: {
+      en: {
+        translation: {
+          nSelected: '{{count}} selected',
+          nSelectedHidden: '{{count}} hidden by the current filter',
+        },
+      },
+    },
     interpolation: { escapeValue: false },
   });
 });
@@ -118,6 +125,37 @@ function watchWindowFallbackListeners() {
     },
   };
 }
+
+describe('SelectionSummary', () => {
+  function renderSummary(selectedCount: number, hiddenSelectedCount: number) {
+    return render(
+      <I18nextProvider i18n={i18next}>
+        <SelectionSummary
+          selectedCount={selectedCount}
+          hiddenSelectedCount={hiddenSelectedCount}
+        />
+      </I18nextProvider>
+    );
+  }
+
+  it('counts only visible bulk-action targets and separately explains filtered selections', () => {
+    const view = renderSummary(4, 6);
+    assert.ok(view.getByText('4 selected'));
+    assert.ok(view.getByText('6 hidden by the current filter'));
+  });
+
+  it('keeps hidden selections discoverable when no selected row is visible', () => {
+    const view = renderSummary(0, 2);
+    assert.ok(view.getByText('0 selected'));
+    assert.ok(view.getByText('2 hidden by the current filter'));
+  });
+
+  it('renders nothing when both visible and hidden selections are empty', () => {
+    const view = renderSummary(0, 0);
+    assert.equal(view.queryByText(/selected/), null);
+    assert.equal(view.queryByText(/hidden by/), null);
+  });
+});
 
 describe('RowColumnLabels pointer resizing', () => {
   it('previews moves locally and commits exactly the final width on pointerup', () => {

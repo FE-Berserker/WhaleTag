@@ -97,7 +97,10 @@ export interface FileListHeaderProps {
   listRowDensity: ListRowDensity;
   onChangeListRowDensity: (d: ListRowDensity) => void;
   // —— Selection ——
+  /** Selected rows that remain visible after the active tag/search filter. */
   selectedCount: number;
+  /** Selected rows hidden by the filter; never included in bulk commands. */
+  hiddenSelectedCount: number;
   onClearSelection: () => void;
   // —— List-column header (consumed by `RowColumnLabels`) ——
   listSelectAllState: 'checked' | 'indeterminate' | 'unchecked';
@@ -195,6 +198,37 @@ function SortableHeader({
   );
 }
 
+export function SelectionSummary({
+  selectedCount,
+  hiddenSelectedCount,
+}: {
+  selectedCount: number;
+  hiddenSelectedCount: number;
+}) {
+  const { t } = useTranslation();
+  if (selectedCount + hiddenSelectedCount === 0) return null;
+  return (
+    <Box
+      sx={{
+        minWidth: 132,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'flex-end',
+        justifyContent: 'center',
+      }}
+    >
+      <Typography variant="caption" color="text.secondary">
+        {t('nSelected', { count: selectedCount })}
+      </Typography>
+      {hiddenSelectedCount > 0 ? (
+        <Typography variant="caption" color="text.secondary">
+          {t('nSelectedHidden', { count: hiddenSelectedCount })}
+        </Typography>
+      ) : null}
+    </Box>
+  );
+}
+
 function FileListHeader(props: FileListHeaderProps) {
   const {
     sort,
@@ -216,6 +250,7 @@ function FileListHeader(props: FileListHeaderProps) {
     galleryShowTags,
     onToggleGalleryShowTags,
     selectedCount,
+    hiddenSelectedCount,
     onClearSelection,
   } = props;
   const { t } = useTranslation();
@@ -292,7 +327,7 @@ function FileListHeader(props: FileListHeaderProps) {
       }}
     >
       <Box sx={{ width: 42 }}>
-        {selectedCount > 0 ? (
+        {selectedCount + hiddenSelectedCount > 0 ? (
           <Tooltip title={t('clearSelection')}>
             <IconButton size="small" onClick={onClearSelection}>
               <CloseIcon fontSize="small" />
@@ -567,17 +602,10 @@ function FileListHeader(props: FileListHeaderProps) {
         </>
       ) : null}
 
-      {selectedCount > 0 ? (
-        <Box sx={{ minWidth: 132, display: 'flex', justifyContent: 'flex-end' }}>
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ alignSelf: 'center', mr: 1 }}
-          >
-            {t('nSelected', { count: selectedCount })}
-          </Typography>
-        </Box>
-      ) : null}
+      <SelectionSummary
+        selectedCount={selectedCount}
+        hiddenSelectedCount={hiddenSelectedCount}
+      />
     </Stack>
   );
 }

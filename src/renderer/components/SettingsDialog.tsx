@@ -13,7 +13,6 @@ import {
   DialogTitle,
   Divider,
   FormControl,
-  FormControlLabel,
   IconButton,
   List,
   ListItemButton,
@@ -103,7 +102,7 @@ import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvide
 import { ipcApi } from '-/services/ipc-api';
 import { errorMessage } from '-/services/errors';
 import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '-/i18n';
-import { THEME_MODE_PRESET_MAP } from '-/theme/presets';
+import { DEFAULT_PRESET_ID, THEME_MODE_PRESET_MAP } from '-/theme/presets';
 import { tagDisplayLabel } from '-/services/tag-display';
 import { readableTextOn } from '../domain/tag-colors';
 import { getDefaultPendingStageIds } from '../domain/task-reminder';
@@ -446,8 +445,9 @@ function GeneralSection() {
     dispatch(setThemeMode(value));
     // Keep themePreset in sync for backward compatibility with any code that
     // still reads it directly (e.g. extension views, persisted state consumers).
-    const preset = THEME_MODE_PRESET_MAP[value as keyof typeof THEME_MODE_PRESET_MAP];
-    if (preset) dispatch(setThemePreset(preset.presetId));
+    const preset =
+      THEME_MODE_PRESET_MAP[value as keyof typeof THEME_MODE_PRESET_MAP];
+    dispatch(setThemePreset(preset?.presetId ?? DEFAULT_PRESET_ID));
   };
 
   const THEME_OPTIONS: { value: ThemeMode; labelKey: string; Icon: typeof Brightness7Icon }[] = [
@@ -565,32 +565,23 @@ function GeneralSection() {
         <Switch
           checked={deleteToTrash}
           onChange={(e) => dispatch(setDeleteToTrash(e.target.checked))}
+          slotProps={{ input: { 'aria-label': t('deleteToTrash') } }}
         />
       </Field>
 
       <Field label={t('showHiddenFiles')} hint={t('showHiddenFilesHint')}>
-        <FormControlLabel
-          control={
-            <Switch
-              checked={showHiddenFiles}
-              onChange={(e) =>
-                dispatch(setShowHiddenFiles(e.target.checked))
-              }
-            />
-          }
-          label={t('enabled')}
+        <Switch
+          checked={showHiddenFiles}
+          onChange={(e) => dispatch(setShowHiddenFiles(e.target.checked))}
+          slotProps={{ input: { 'aria-label': t('showHiddenFiles') } }}
         />
       </Field>
 
       <Field label={t('showLunar')} hint={t('showLunarHint')}>
-        <FormControlLabel
-          control={
-            <Switch
-              checked={showLunar}
-              onChange={(e) => dispatch(setShowLunar(e.target.checked))}
-            />
-          }
-          label={t('enabled')}
+        <Switch
+          checked={showLunar}
+          onChange={(e) => dispatch(setShowLunar(e.target.checked))}
+          slotProps={{ input: { 'aria-label': t('showLunar') } }}
         />
       </Field>
     </Stack>
@@ -857,6 +848,7 @@ function NotificationsSection() {
       <Field label={t('taskReminder')} hint={t('taskReminderHint')}>
         <Switch
           checked={taskReminderEnabled}
+          slotProps={{ input: { 'aria-label': t('taskReminder') } }}
           onChange={(e) =>
             dispatch(setTaskReminderEnabled(e.target.checked))
           }
@@ -1045,23 +1037,30 @@ function KeyboardSection() {
       <Typography variant="body2" color="text.secondary">
         {t('keybindingsHint')}
       </Typography>
-      <input
+      <Box
+        component="input"
         type="text"
+        aria-label={t('keybindingsSearch')}
         placeholder={t('keybindingsSearch')}
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        style={{
+        sx={{
           width: '100%',
           height: 40,
           boxSizing: 'border-box',
           padding: '0 10px',
           fontSize: 14,
           fontFamily: 'inherit',
-          border: '1px solid rgba(127,127,127,0.4)',
-          borderRadius: 4,
+          border: 1,
+          borderColor: 'divider',
+          borderRadius: 1,
           background: 'transparent',
           color: 'inherit',
-          outline: 'none',
+          '&:focus-visible': {
+            outline: '2px solid',
+            outlineColor: 'primary.main',
+            outlineOffset: 2,
+          },
         }}
       />
       {MAPPABLE_KEYS.filter(({ labelKey }) =>

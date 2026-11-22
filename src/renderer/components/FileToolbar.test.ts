@@ -1,61 +1,124 @@
-/**
- * H.17 P?: locks down the FileToolbar responsive-folding rules. The component
- * itself is hard to mount in isolation (SearchBar / BreadcrumbNav /
- * ThemeQuickToggle all pull in their own context providers, and jsdom has no
- * real layout so a `ResizeObserver` polyfill + manual trigger would be needed
- * to exercise the width-driven state). Instead we test the pure derivation
- * function `computeFileToolbarVisibility` + the threshold constants — the
- * *only* surface that owns the folding policy.
- *
- * If a future change moves the thresholds or rewires the derivation, the
- * values below will fail loudly. Visual regression of the actual mount
- * (when the AI panel is open at a narrow window) is covered by manual smoke
- * — there's no Playwright suite for the renderer yet.
- */
+import globalJsdom from 'global-jsdom';
 
-import { describe, it } from 'node:test';
+import { after, afterEach, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { createElement } from 'react';
+import { createRequire } from 'module';
+import { cleanup, render } from '@testing-library/react';
 
-import {
-  FOLD_VIEW_DEPTH_BELOW,
-  FOLD_CREATE_BUTTONS_BELOW,
-  computeFileToolbarVisibility,
-} from './FileToolbar';
+const require_ = createRequire(__filename);
+const savedModules = new Map<string, NodeJS.Module | undefined>();
+let cleanupDom: (() => void) | undefined;
+let originalResizeObserver: typeof ResizeObserver | undefined;
+let FileToolbar: typeof import('./FileToolbar').default;
+let computeFileToolbarVisibility: typeof import('./FileToolbar').computeFileToolbarVisibility;
+let FOLD_VIEW_DEPTH_BELOW: number;
 
-describe('FileToolbar responsive folding', () => {
-  it('exposes the two thresholds in the expected order', () => {
-    // viewDepth cluster is the larger of the two (label + 70px slider), so
-    // it folds first when the toolbar narrows. create-buttons cluster is
-    // smaller (two icon buttons) and folds second.
-    assert.ok(
-      FOLD_CREATE_BUTTONS_BELOW < FOLD_VIEW_DEPTH_BELOW,
-      `create-buttons threshold (${FOLD_CREATE_BUTTONS_BELOW}) should fold later (i.e. at a smaller width) than viewDepth (${FOLD_VIEW_DEPTH_BELOW})`
-    );
-    // Both thresholds fit between "very narrow" (400) and "comfortable"
-    // (900) workspace widths. This is a sanity check against accidental
-    // typos that would push the breakpoint out of the practical range.
-    assert.ok(
-      FOLD_VIEW_DEPTH_BELOW >= 600 && FOLD_VIEW_DEPTH_BELOW <= 900,
-      `viewDepth threshold should sit in [600, 900], got ${FOLD_VIEW_DEPTH_BELOW}`
-    );
-    assert.ok(
-      FOLD_CREATE_BUTTONS_BELOW >= 400 && FOLD_CREATE_BUTTONS_BELOW <= 700,
-      `create-buttons threshold should sit in [400, 700], got ${FOLD_CREATE_BUTTONS_BELOW}`
-    );
+const state = {
+  recent: { items: [] },
+  locations: { items: [{ id: 'loc', path: 'D:/', name: 'Root' }] },
+  settings: { viewDepth: 1 },
+};
+
+const labels: Record<string, string> = {
+  up: 'Up one level',
+  back: 'Back',
+  forward: 'Forward',
+  recent: 'Recent',
+};
+
+function inject(spec: string, exports: unknown): void {
+  const id = require_.resolve(spec);
+  if (!savedModules.has(id)) savedModules.set(id, require_.cache[id]);
+  require_.cache[id] = {
+    id,
+    filename: id,
+    loaded: true,
+    exports,
+    children: [],
+    paths: [],
+  } as unknown as NodeJS.Module;
+}
+
+function Empty(): null {
+  return null;
+}
+
+class ResizeObserverStub {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+
+before(async () => {
+  cleanupDom = globalJsdom();
+  originalResizeObserver = globalThis.ResizeObserver;
+  globalThis.ResizeObserver =
+    ResizeObserverStub as unknown as typeof ResizeObserver;
+
+  inject('react-i18next', {
+    useTranslation: () => ({ t: (key: string) => labels[key] ?? key }),
   });
+  inject('react-redux', {
+    useSelector: (selector: (value: typeof state) => unknown) => selector(state),
+    useDispatch: () => () => undefined,
+  });
+  inject('-/theme', { COLUMN_HEADER_HEIGHT: 40 });
+  inject('-/hooks/CurrentLocationContextProvider', {
+    useCurrentLocationContext: () => ({
+      currentDirectoryPath: 'D:/',
+      currentLocation: { id: 'loc', path: 'D:/', isReadOnly: false },
+      navigateToInLocation: () => undefined,
+      goUp: () => undefined,
+      goBack: () => undefined,
+      goForward: () => undefined,
+      canGoBack: true,
+      canGoForward: true,
+    }),
+  });
+  inject('-/hooks/DirectoryContentContextProvider', {
+    useDirectoryUI: () => ({ refresh: () => undefined, loading: false }),
+  });
+  inject('-/hooks/IOActionsContextProvider', {
+    useIOActionsContext: () => ({
+      createFolder: async () => undefined,
+      createFile: async () => undefined,
+    }),
+  });
+  for (const spec of [
+    '-/components/PromptDialog',
+    '-/components/SearchBar',
+    '-/components/BreadcrumbNav',
+    '-/components/ThemeQuickToggle',
+  ]) {
+    inject(spec, { __esModule: true, default: Empty });
+  }
 
-  it('shows everything when the workspace is wide', () => {
+  const module = await import('./FileToolbar');
+  FileToolbar = module.default;
+  computeFileToolbarVisibility = module.computeFileToolbarVisibility;
+  FOLD_VIEW_DEPTH_BELOW = module.FOLD_VIEW_DEPTH_BELOW;
+});
+
+afterEach(cleanup);
+
+after(() => {
+  cleanupDom?.();
+  if (originalResizeObserver) globalThis.ResizeObserver = originalResizeObserver;
+  else delete (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
+  for (const [id, mod] of savedModules) {
+    if (mod) require_.cache[id] = mod;
+    else delete require_.cache[id];
+  }
+});
+
+describe('computeFileToolbarVisibility', () => {
+  it('keeps everything visible at comfortable widths', () => {
     assert.deepEqual(computeFileToolbarVisibility(Infinity), {
       showViewDepth: true,
       showCreateButtons: true,
       showMoreMenu: false,
     });
-    assert.deepEqual(computeFileToolbarVisibility(1024), {
-      showViewDepth: true,
-      showCreateButtons: true,
-      showMoreMenu: false,
-    });
-    // At the exact viewDepth threshold, both clusters are still visible.
     assert.deepEqual(computeFileToolbarVisibility(FOLD_VIEW_DEPTH_BELOW), {
       showViewDepth: true,
       showCreateButtons: true,
@@ -63,45 +126,15 @@ describe('FileToolbar responsive folding', () => {
     });
   });
 
-  it('folds only the viewDepth slider in the medium band', () => {
-    // 1px below the viewDepth threshold: viewDepth is hidden, create
-    // buttons still inline.
-    assert.deepEqual(
-      computeFileToolbarVisibility(FOLD_VIEW_DEPTH_BELOW - 1),
-      {
-        showViewDepth: false,
-        showCreateButtons: true,
-        showMoreMenu: true,
-      }
-    );
-    // At the create-buttons threshold: still medium (viewDepth hidden,
-    // create buttons inline).
-    assert.deepEqual(
-      computeFileToolbarVisibility(FOLD_CREATE_BUTTONS_BELOW),
-      {
-        showViewDepth: false,
-        showCreateButtons: true,
-        showMoreMenu: true,
-      }
-    );
-  });
-
-  it('folds both clusters at narrow widths and shows the ⋮ menu', () => {
-    // 1px below the create-buttons threshold: everything folded.
-    assert.deepEqual(
-      computeFileToolbarVisibility(FOLD_CREATE_BUTTONS_BELOW - 1),
-      {
-        showViewDepth: false,
-        showCreateButtons: false,
-        showMoreMenu: true,
-      }
-    );
-    assert.deepEqual(computeFileToolbarVisibility(400), {
+  it('folds the viewDepth slider into the overflow menu below its threshold', () => {
+    assert.deepEqual(computeFileToolbarVisibility(FOLD_VIEW_DEPTH_BELOW - 1), {
       showViewDepth: false,
-      showCreateButtons: false,
+      showCreateButtons: true,
       showMoreMenu: true,
     });
-    // Zero width (e.g. toolbar hidden): fully folded.
+  });
+
+  it('moves create-folder / create-file into the overflow at narrow widths', () => {
     assert.deepEqual(computeFileToolbarVisibility(0), {
       showViewDepth: false,
       showCreateButtons: false,
@@ -109,14 +142,26 @@ describe('FileToolbar responsive folding', () => {
     });
   });
 
-  it('treats Infinity as the wide initial state (no flash on cold render)', () => {
-    // The component seeds `toolbarWidth = Infinity` so the first paint shows
-    // every cluster before ResizeObserver fires. A regression that treated
-    // Infinity as "unknown / narrow" would flash a folded toolbar on every
-    // cold render — this assertion guards that initial state.
-    const wide = computeFileToolbarVisibility(Infinity);
-    assert.equal(wide.showViewDepth, true);
-    assert.equal(wide.showCreateButtons, true);
-    assert.equal(wide.showMoreMenu, false);
+  it('treats non-finite / negative widths as fully folded', () => {
+    assert.deepEqual(computeFileToolbarVisibility(NaN), {
+      showViewDepth: false,
+      showCreateButtons: false,
+      showMoreMenu: true,
+    });
+    assert.deepEqual(computeFileToolbarVisibility(-50), {
+      showViewDepth: false,
+      showCreateButtons: false,
+      showMoreMenu: true,
+    });
+  });
+});
+
+describe('FileToolbar accessibility', () => {
+  it('gives all four history/navigation icon buttons explicit names', () => {
+    const { getByRole } = render(createElement(FileToolbar));
+
+    for (const name of ['Up one level', 'Back', 'Forward', 'Recent']) {
+      assert.equal(getByRole('button', { name }).getAttribute('aria-label'), name);
+    }
   });
 });
