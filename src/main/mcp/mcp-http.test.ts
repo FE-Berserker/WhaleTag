@@ -9,8 +9,9 @@ import Module from 'node:module';
 import { EventEmitter } from 'node:events';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { setAllowedRoots } from '../allowed-roots';
+import { setAllowedRoots, setReadOnlyRoots } from '../allowed-roots';
 import { createMcpHttpCore, type McpHttpCore } from './mcp-http';
+import type { McpAddLocationRequest } from '../../shared/mcp-types';
 
 /**
  * End-to-end protocol test for the MCP HTTP core: boots the real handler on
@@ -28,7 +29,8 @@ import { createMcpHttpCore, type McpHttpCore } from './mcp-http';
  */
 
 const TMP_USER_DATA = path.join(os.tmpdir(), 'whaletag-mcp-test');
-fs.mkdirSync(TMP_USER_DATA, { recursive: true });
+const STARTUP_ROOT = path.join(TMP_USER_DATA, 'startup-root');
+fs.mkdirSync(STARTUP_ROOT, { recursive: true });
 
 const electronStub: any = {
   app: {
@@ -99,9 +101,15 @@ const TOKEN = 'test-token-0123456789abcdef';
 let server: http.Server;
 let core: McpHttpCore;
 let port = 0;
+let unwatchRawRoots: (() => void) | null = null;
 
 before(async () => {
-  const { registerMcpTools } = await import('./mcp-tools');
+  // Simulate the renderer pushing roots before the MCP service initializes.
+  // watchRawRoots must seed this existing snapshot, not only future changes.
+  setAllowedRoots([STARTUP_ROOT]);
+  setReadOnlyRoots([]);
+  const { registerMcpTools, watchRawRoots } = await import('./mcp-tools');
+  unwatchRawRoots = watchRawRoots();
   core = createMcpHttpCore({
     token: () => TOKEN,
     registerTools: registerMcpTools,
@@ -117,6 +125,7 @@ before(async () => {
 });
 
 after(async () => {
+  unwatchRawRoots?.();
   await core.close();
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
@@ -188,6 +197,7 @@ describe('mcp http core (official client SDK)', () => {
     const result = await client.listTools();
     const names = result.tools.map((t) => t.name);
     assert.ok(names.includes('whale_roots'), 'whale_roots missing');
+    assert.ok(names.includes('whale_add_location'), 'whale_add_location missing');
     assert.ok(names.includes('whale_search'), 'whale_search missing');
     assert.ok(names.includes('whale_apply_tags'), 'whale_apply_tags missing');
     assert.ok(names.includes('whale_zip_files'), 'whale_zip_files missing');
@@ -208,10 +218,13 @@ describe('mcp http core (official client SDK)', () => {
       .filter((c) => c.type === 'text')
       .map((c) => c.text)
       .join('');
-    const parsed = JSON.parse(text) as { roots: unknown[]; readOnly: boolean };
-    // No locations configured in the test env — but the call must succeed
-    // with a well-formed payload, not a protocol error.
-    assert.deepEqual(parsed.roots, []);
+    const parsed = JSON.parse(text) as {
+      roots: { rootPath: string }[];
+      readOnly: boolean;
+    };
+    // The root was configured before watchRawRoots started. A late MCP
+    // subscriber must still see the existing location immediately.
+    assert.deepEqual(parsed.roots.map((root) => root.rootPath), [STARTUP_ROOT]);
     assert.equal(typeof parsed.readOnly, 'boolean');
     await client.close();
   });
@@ -449,6 +462,18 @@ describe('mcp tool guards (location roots, read-only, read caps)', () => {
     await client.close();
   });
 
+  it('refuses whale_add_location in read-only mode', async () => {
+    await config.setMcpReadOnly(true);
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'whale_add_location',
+      arguments: { path: DIR },
+    });
+    assert.equal(res.isError, true);
+    assert.match(textOf(res), /read-only/);
+    await client.close();
+  });
+
   it('refuses whale_build_fulltext in read-only mode', async () => {
     await config.setMcpReadOnly(true);
     const { client } = await connectClient();
@@ -513,6 +538,13 @@ describe('mcp tool surface (approval allow path)', () => {
   let ROOT = '';
   let config: typeof import('./mcp-config');
   let approval: typeof import('./mcp-approval');
+  let locationRequests: typeof import('./mcp-location-requests');
+  let addedRoot = '';
+  const extraRoots: string[] = [];
+  let locationApprovalCount = 0;
+  const deliveredLocations: McpAddLocationRequest[] = [];
+  const heldLocationRequests: McpAddLocationRequest[] = [];
+  let holdLocationDeliveries = false;
 
   function textOf(res: unknown): string {
     const content = (res as { content?: unknown }).content;
@@ -524,6 +556,12 @@ describe('mcp tool surface (approval allow path)', () => {
 
   function jsonOf<T>(res: unknown): T {
     return JSON.parse(textOf(res)) as T;
+  }
+
+  function finishLocationDelivery(req: McpAddLocationRequest): void {
+    setAllowedRoots([ROOT, req.path]);
+    setReadOnlyRoots(req.readOnly ? [req.path] : []);
+    queueMicrotask(() => locationRequests.completeLocationRequest(req.reqId));
   }
 
   before(async () => {
@@ -538,7 +576,20 @@ describe('mcp tool surface (approval allow path)', () => {
     // dialog answers it. The approve() path then runs for real.
     approval.bindApprovalTransport({
       broadcast: (req) => {
+        if (req.tool === 'whale_add_location') locationApprovalCount += 1;
         queueMicrotask(() => approval.resolveApproval(req.reqId, true));
+      },
+      hasWindows: () => true,
+    });
+    locationRequests = await import('./mcp-location-requests');
+    // Electron-free stand-in for Root.tsx: the real renderer test separately
+    // covers dispatch + persistor.flush(). Here emulate the resulting root
+    // push, then acknowledge only after that push is visible to watchers.
+    locationRequests.bindLocationRequestTransport({
+      deliver: (req) => {
+        deliveredLocations.push(req);
+        if (holdLocationDeliveries) heldLocationRequests.push(req);
+        else finishLocationDelivery(req);
       },
       hasWindows: () => true,
     });
@@ -550,9 +601,159 @@ describe('mcp tool surface (approval allow path)', () => {
       hasWindows: () => false,
     });
     approval.denyAllPending();
+    locationRequests.bindLocationRequestTransport({
+      deliver: () => undefined,
+      hasWindows: () => false,
+    });
+    locationRequests.rejectAllLocationRequests('test cleanup');
     await config.setMcpReadOnly(true);
     setAllowedRoots([]);
+    setReadOnlyRoots([]);
     await fs.promises.rm(ROOT, { recursive: true, force: true });
+    if (addedRoot) {
+      await fs.promises.rm(addedRoot, { recursive: true, force: true });
+    }
+    for (const root of extraRoots.splice(0)) {
+      await fs.promises.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a regular file as a new location before asking for approval', async () => {
+    const file = path.join(ROOT, 'not-a-location.txt');
+    await fs.promises.writeFile(file, 'x', 'utf8');
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'whale_add_location',
+      arguments: { path: file },
+    });
+    assert.equal(res.isError, true);
+    assert.match(textOf(res), /not a directory/);
+    assert.equal(locationApprovalCount, 0);
+    assert.equal(deliveredLocations.length, 0);
+    await client.close();
+  });
+
+  it('adds a real directory, syncs whale_roots and makes retries idempotent', async () => {
+    addedRoot = await fs.promises.realpath(
+      await fs.promises.mkdtemp(path.join(os.tmpdir(), 'whale-mcp-location-'))
+    );
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'whale_add_location',
+      arguments: { path: addedRoot, name: '  Reference  ', readOnly: true },
+    });
+    assert.notEqual(res.isError, true, textOf(res));
+    const parsed = jsonOf<{
+      added: boolean;
+      rootPath: string;
+      name: string;
+      readOnly: boolean;
+      persisted: boolean;
+    }>(res);
+    assert.deepEqual(parsed, {
+      added: true,
+      rootPath: addedRoot,
+      name: 'Reference',
+      readOnly: true,
+      persisted: true,
+      indexing: {
+        triggered: false,
+        hint:
+          'This tool does not build search indexes. Check whale_roots. For ' +
+          'file/tag search, open the location in WhaleTag and click Build index ' +
+          'in the search bar (activation alone does not build it); call ' +
+          'whale_build_fulltext before content search.',
+      },
+    });
+    assert.equal(locationApprovalCount, 1);
+    assert.equal(deliveredLocations.length, 1);
+    assert.equal(deliveredLocations[0].path, addedRoot);
+
+    const roots = await client.callTool({ name: 'whale_roots', arguments: {} });
+    const rootsPayload = jsonOf<{ roots: { rootPath: string }[] }>(roots);
+    assert.ok(rootsPayload.roots.some((root) => root.rootPath === addedRoot));
+
+    const duplicate = await client.callTool({
+      name: 'whale_add_location',
+      arguments: { path: addedRoot, name: 'Different name', readOnly: false },
+    });
+    assert.notEqual(duplicate.isError, true);
+    const duplicatePayload = jsonOf<{
+      added: boolean;
+      alreadyConfigured: boolean;
+    }>(duplicate);
+    assert.equal(duplicatePayload.added, false);
+    assert.equal(duplicatePayload.alreadyConfigured, true);
+    assert.equal(locationApprovalCount, 1, 'an existing root needs no new approval');
+    assert.equal(deliveredLocations.length, 1, 'no duplicate renderer addition');
+    await client.close();
+  });
+
+  it('serializes concurrent additions of the same canonical directory', async () => {
+    const root = await fs.promises.realpath(
+      await fs.promises.mkdtemp(path.join(os.tmpdir(), 'whale-mcp-concurrent-'))
+    );
+    extraRoots.push(root);
+    const { client } = await connectClient();
+    const approvalsAtStart = locationApprovalCount;
+    const deliveriesAtStart = deliveredLocations.length;
+    holdLocationDeliveries = true;
+    const first = client.callTool({
+      name: 'whale_add_location',
+      arguments: { path: root, name: 'Concurrent' },
+    });
+    const second = client.callTool({
+      name: 'whale_add_location',
+      arguments: { path: root, name: 'Concurrent duplicate' },
+    });
+    const both = Promise.all([first, second]);
+
+    for (let i = 0; i < 100 && heldLocationRequests.length === 0; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    // Give the second request a chance to reach the serialized queue while the
+    // first is still waiting for its renderer acknowledgement.
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const heldBeforeRelease = heldLocationRequests.length;
+    const approvalsBeforeRelease = locationApprovalCount;
+    const deliveriesBeforeRelease = deliveredLocations.length;
+
+    holdLocationDeliveries = false;
+    for (const req of heldLocationRequests.splice(0)) finishLocationDelivery(req);
+    const results = await both;
+    await client.close();
+
+    assert.equal(heldBeforeRelease, 1, 'only the first request reaches the renderer');
+    assert.equal(approvalsBeforeRelease, approvalsAtStart + 1);
+    assert.equal(deliveriesBeforeRelease, deliveriesAtStart + 1);
+    const payloads = results.map((result) => {
+      assert.notEqual(result.isError, true, textOf(result));
+      return jsonOf<{ added: boolean; alreadyConfigured?: boolean }>(result);
+    });
+    assert.equal(payloads.filter((payload) => payload.added).length, 1);
+    assert.equal(
+      payloads.filter((payload) => payload.alreadyConfigured).length,
+      1
+    );
+    assert.equal(locationApprovalCount, approvalsAtStart + 1);
+    assert.equal(deliveredLocations.length, deliveriesAtStart + 1);
+  });
+
+  it('sanitizes control and bidi characters in client-supplied names', async () => {
+    const root = await fs.promises.realpath(
+      await fs.promises.mkdtemp(path.join(os.tmpdir(), 'whale-mcp-safe-name-'))
+    );
+    extraRoots.push(root);
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'whale_add_location',
+      arguments: { path: root, name: '  Bad\u202e\u0000Name  ' },
+    });
+    await client.close();
+    assert.notEqual(res.isError, true, textOf(res));
+    const parsed = jsonOf<{ name: string }>(res);
+    assert.equal(parsed.name, 'Bad��Name');
+    assert.equal(deliveredLocations.at(-1)?.name, 'Bad��Name');
   });
 
   it('lists one directory level', async () => {

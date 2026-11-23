@@ -19,7 +19,10 @@ type AppUpdateEventPayload =
   | string;
 import type { SidecarMeta, FolderMeta } from '../shared/whale-meta';
 import type { SearchQuery } from '../shared/search-query';
-import type { McpApprovalRequest } from '../shared/mcp-types';
+import type {
+  McpAddLocationRequest,
+  McpApprovalRequest,
+} from '../shared/mcp-types';
 import type {
   ExtensionRegistry,
   RevisionInfo,
@@ -255,6 +258,14 @@ const whaleApi: WhaleApi = {
     ipcRenderer.on('mcp:approvalRequest', listener);
     return () => ipcRenderer.off('mcp:approvalRequest', listener);
   },
+  onMcpAddLocationRequest: (cb: (req: McpAddLocationRequest) => void) => {
+    const listener = (_e: unknown, payload: McpAddLocationRequest): void =>
+      cb(payload);
+    ipcRenderer.on('mcp:addLocation', listener);
+    return () => ipcRenderer.off('mcp:addLocation', listener);
+  },
+  mcpCompleteAddLocation: (reqId: string, error?: string) =>
+    ipcRenderer.invoke('mcp:completeAddLocation', reqId, error),
 
   onIndexProgress: (cb: (ev: IndexProgressEvent) => void) => {
     const listener = (_e: unknown, payload: IndexProgressEvent): void =>

@@ -16,13 +16,15 @@ import { LocationIndexContextProvider } from '-/hooks/LocationIndexContextProvid
 import { TagMetaContextProvider } from '-/hooks/TagMetaContextProvider';
 import { LocationTagLibraryContextProvider } from '-/hooks/LocationTagLibraryContextProvider';
 import { ExtensionContextProvider } from '-/hooks/ExtensionContextProvider';
-import { setActiveLocation } from '-/reducers/locations';
+import { addLocation, removeLocation, setActiveLocation } from '-/reducers/locations';
 import { createWhaleTheme } from '-/theme';
 import { useResolvedTheme } from '-/theme/useResolvedThemeMode';
 import { RootState } from '-/reducers';
 import i18n from '-/i18n';
 import { ipcApi } from '-/services/ipc-api';
 import { setAllowedRootsAndWait } from '-/services/allowed-roots';
+import { errorMessage } from '-/services/errors';
+import { persistor, store } from '-/store/configureStore';
 
 /**
  * Root container: top of the renderer tree (after the Redux/i18n/Persist
@@ -33,6 +35,15 @@ import { setAllowedRootsAndWait } from '-/services/allowed-roots';
  * IOActions reads from both; LocationIndex reads from CurrentLocation.
  */
 const EMPTY_FULLTEXT_PATHS: string[] = [];
+
+async function pushLocationRoots(
+  items: RootState['locations']['items']
+): Promise<void> {
+  await setAllowedRootsAndWait(
+    items.map((item) => item.path),
+    items.filter((item) => item.isReadOnly).map((item) => item.path)
+  );
+}
 
 export default function Root() {
   const dispatch = useDispatch();
@@ -103,6 +114,47 @@ export default function Root() {
       locationItems.filter((l) => l.isReadOnly).map((l) => l.path)
     );
   }, [locationItems]);
+
+  // MCP location additions still go through the same Redux action as the
+  // native folder picker. Read the store AFTER dispatch, not a render-time
+  // snapshot: a concurrent UI add/remove must never be omitted or resurrected
+  // by this targeted root push. Ack only after roots and persistence settle.
+  useEffect(() => {
+    return ipcApi.onMcpAddLocationRequest((req) => {
+      void (async () => {
+        let failure: string | undefined;
+        let addedId: string | undefined;
+        try {
+          const action = addLocation(req.name, req.path, req.readOnly);
+          addedId = action.payload.id;
+          dispatch(action);
+          await pushLocationRoots(store.getState().locations.items);
+          await persistor.flush();
+        } catch (error) {
+          failure = errorMessage(error) || 'location addition failed';
+          console.error('[root] MCP location addition failed', error);
+          if (addedId) {
+            // A failed request must not leave a persisted duplicate that a
+            // retry cannot see in main's allowed-root list. Roll back through
+            // Redux, then re-sync and flush the removal before acknowledging.
+            try {
+              dispatch(removeLocation(addedId));
+              await pushLocationRoots(store.getState().locations.items);
+              await persistor.flush();
+            } catch (rollbackError) {
+              failure += `; rollback failed: ${errorMessage(rollbackError) || 'unknown error'}`;
+              console.error('[root] MCP location rollback failed', rollbackError);
+            }
+          }
+        }
+        try {
+          await ipcApi.mcpCompleteAddLocation(req.reqId, failure);
+        } catch (error) {
+          console.error('[root] MCP location acknowledgement failed', error);
+        }
+      })();
+    });
+  }, [dispatch]);
 
   // docs/04 §10: keep the dir-watcher's fulltext root set in sync so an
   // external change inside a fulltext root schedules an incremental rebuild.

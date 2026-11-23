@@ -159,6 +159,7 @@ describe('preload bridge — exposed shape', () => {
       'stopLanServer',
       'mcpGetStatus',
       'mcpResolveApproval',
+      'mcpCompleteAddLocation',
       'persistRead',
       'persistWrite',
       'flushComplete',
@@ -166,6 +167,7 @@ describe('preload bridge — exposed shape', () => {
       'onDirChanged',
       'onIndexProgress',
       'onMcpApprovalRequest',
+      'onMcpAddLocationRequest',
       'reportRendererError',
       'getPathForFile',
       'startFileDrag',
@@ -223,6 +225,7 @@ describe('preload bridge — invoke channels', () => {
     await api.runCommand('echo ${path}', '/dir');
     await api.mcpGetStatus();
     await api.mcpResolveApproval('req-1', true);
+    await api.mcpCompleteAddLocation('loc-1');
     await api.listRevisions('/a.drawio');
 
     assert.deepEqual(
@@ -232,6 +235,7 @@ describe('preload bridge — invoke channels', () => {
         'shell:runCommand',
         'mcp:getStatus',
         'mcp:resolveApproval',
+        'mcp:completeAddLocation',
         'ext:listRevisions',
       ]
     );
@@ -265,6 +269,25 @@ describe('preload bridge — send channels', () => {
 });
 
 describe('preload bridge — push channels', () => {
+  it('onMcpAddLocationRequest forwards requests and unsubscribes cleanly', () => {
+    const { api } = loadBridge();
+    const seen: unknown[] = [];
+    const off = api.onMcpAddLocationRequest((req: unknown) => seen.push(req));
+    const request = {
+      reqId: 'loc-1',
+      path: 'D:\\Reference',
+      name: 'Reference',
+      readOnly: false,
+    };
+
+    const listener = lastOn('mcp:addLocation');
+    listener({ sender: 'electron-event' }, request);
+    assert.deepEqual(seen, [request]);
+    off();
+    assert.equal(offCalls[0].channel, 'mcp:addLocation');
+    assert.equal(offCalls[0].listener, listener);
+  });
+
   it('onDirChanged forwards the payload and unsubscribes its own listener', () => {
     const { api } = loadBridge();
     const seen: unknown[] = [];

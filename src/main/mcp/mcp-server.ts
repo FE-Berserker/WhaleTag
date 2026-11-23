@@ -15,6 +15,11 @@ import {
   resolveApproval,
 } from './mcp-approval';
 import { registerMcpTools, watchRawRoots } from './mcp-tools';
+import {
+  bindLocationRequestTransport,
+  completeLocationRequest,
+  rejectAllLocationRequests,
+} from './mcp-location-requests';
 import { getWhaleAppVersion } from '../app-version';
 import { logInfo } from '../log';
 import type { McpStatus } from '../../shared/mcp-types';
@@ -49,7 +54,8 @@ async function doStartListening(): Promise<void> {
       'WhaleTag is a local-first file manager with tag-based organization. ' +
       'Start with whale_roots to discover configured locations. Metadata edits ' +
       '(tags, descriptions) are the preferred way to organize — they never touch ' +
-      'user files. File operations require explicit user approval in the app window.',
+      'user files. File operations and adding locations require explicit user ' +
+      'approval in the app window.',
   });
   try {
     const server = await new Promise<http.Server>((resolve, reject) => {
@@ -115,6 +121,7 @@ function startListening(): Promise<void> {
 
 export async function stopMcpServer(): Promise<void> {
   denyAllPending();
+  rejectAllLocationRequests('MCP server stopped before WhaleTag confirmed the location');
   await core?.close().catch(() => undefined);
   core = null;
   const server = httpServer;
@@ -209,6 +216,17 @@ export async function initMcpServer(): Promise<void> {
     hasWindows: () =>
       BrowserWindow.getAllWindows().some((w) => !w.isDestroyed()),
   });
+  bindLocationRequestTransport({
+    deliver: (req) => {
+      const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+      if (!win) throw new Error('no live WhaleTag window can add the location');
+      // Target one window only: broadcasting would add a duplicate location to
+      // every renderer. This is normally the app's single main window.
+      win.webContents.send('mcp:addLocation', req);
+    },
+    hasWindows: () =>
+      BrowserWindow.getAllWindows().some((w) => !w.isDestroyed()),
+  });
   unwatchRoots = watchRawRoots();
   if (loadMcpConfig().enabled) {
     await startListening().catch((e) => {
@@ -225,4 +243,4 @@ export async function shutdownMcpServer(): Promise<void> {
   await stopMcpServer();
 }
 
-export { resolveApproval, pendingApprovals };
+export { resolveApproval, pendingApprovals, completeLocationRequest };

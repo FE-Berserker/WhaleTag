@@ -1,5 +1,6 @@
 import path from 'path';
-import { stat } from 'fs/promises';
+import { realpathSync } from 'fs';
+import { realpath, stat } from 'fs/promises';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
@@ -7,6 +8,7 @@ import { request } from '../index-worker-host';
 import {
   assertNotLocationRoot,
   assertWithinAllowedRoot,
+  getRawAllowedRoots,
   onAllowedRootsChanged,
 } from '../allowed-roots';
 import { readSidecardsForPaths, updateFileTags, mutateSidecar } from '../sidecar';
@@ -29,17 +31,20 @@ import {
 import { normalizeSmartTags } from '../../shared/smart-tags';
 import { loadMcpConfig } from './mcp-config';
 import { requestApproval } from './mcp-approval';
+import { requestLocationAddition } from './mcp-location-requests';
+import { flushKnownRootsWrites, rememberPickedRoot } from '../known-roots';
+import { foldPath } from '../path-fold';
 
 /**
  * Tool surface exposed to external AI clients over the local MCP server
  * (docs/21). Three groups, matching the workflows the server exists for:
  *
- *   discovery  — search / list tags / browse  (read-only, no approval)
+ *   discovery  — locations / search / list tags / browse (read-only, no approval)
  *   reading    — file text + sidecar metadata (read-only, no approval;
  *                this is the input side of "summarize my documents")
  *   organizing — tags & description (sidecar-only, auto-allowed: they never
- *                touch user files) and file operations move/copy/delete/zip/
- *                create (user approval dialog, fail-closed).
+ *                touch user files), adding locations and file operations
+ *                move/copy/delete/zip/create (user approval, fail-closed).
  *
  * Every tool routes through the same main-process modules the renderer's IPC
  * uses — nothing re-implements FS logic here, so allowed-roots confinement,
@@ -100,6 +105,53 @@ function ensureWritable(): void {
   }
 }
 
+function canonicalRootKey(raw: string): string {
+  try {
+    return foldPath(realpathSync(raw));
+  } catch {
+    return foldPath(path.resolve(raw));
+  }
+}
+
+function existingLocationRoot(rootPath: string): string | undefined {
+  const key = canonicalRootKey(rootPath);
+  return rawRoots.find((root) => canonicalRootKey(root) === key);
+}
+
+/** Keep untrusted MCP names from spoofing approval-dialog text direction. */
+function visibleApprovalText(raw: string): string {
+  let visible = '';
+  for (const char of raw) {
+    const code = char.codePointAt(0) ?? 0;
+    const unsafe =
+      code <= 0x1f ||
+      (code >= 0x7f && code <= 0x9f) ||
+      code === 0x200e ||
+      code === 0x200f ||
+      (code >= 0x202a && code <= 0x202e) ||
+      (code >= 0x2066 && code <= 0x2069);
+    visible += unsafe ? '�' : char;
+  }
+  return visible;
+}
+
+function locationDisplayName(raw: string): string {
+  return visibleApprovalText(raw).trim().slice(0, 200) || 'Location';
+}
+
+// Adding a location spans main, Redux persistence and the allowed-roots push.
+// Serialize the whole operation so two clients cannot both pass the duplicate
+// check and add the same path before the first renderer acknowledgement.
+let locationAdditionQueue: Promise<void> = Promise.resolve();
+function serializeLocationAddition<T>(operation: () => Promise<T>): Promise<T> {
+  const run = locationAdditionQueue.then(operation, operation);
+  locationAdditionQueue = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
+
 /**
  * Mutating file ops gate: read-only check first, then the user approval
  * dialog. Resolves true only when the user explicitly allowed it.
@@ -135,7 +187,8 @@ export function registerMcpTools(server: McpServer): void {
       title: 'Configured locations',
       description:
         'List the location roots WhaleTag has open, with their search-index status. ' +
-        'All other tools require a rootPath from this list. Call this first.',
+        'File tools require a rootPath from this list. Call this first, or use ' +
+        'whale_add_location to add an existing directory as a new location.',
     },
     async () => {
       try {
@@ -172,12 +225,119 @@ export function registerMcpTools(server: McpServer): void {
   );
 
   server.registerTool(
+    'whale_add_location',
+    {
+      title: 'Add location',
+      description:
+        'Add an existing directory to WhaleTag as a location, without restarting the app. ' +
+        'Expands the files MCP can read and requires explicit user approval in the app window. ' +
+        'After the acknowledgement, file/tag tools can use it and its configuration is persisted. ' +
+        'Search indexes are separate: check whale_roots before searching.',
+      inputSchema: {
+        path: z
+          .string()
+          .min(1)
+          .describe('Absolute path of an existing directory to add'),
+        name: z
+          .string()
+          .max(200)
+          .optional()
+          .describe('Display name; blank or omitted uses the directory name'),
+        readOnly: z
+          .boolean()
+          .default(false)
+          .describe('Protect this location from all MCP/renderer writes'),
+      },
+    },
+    async ({ path: requestedPath, name, readOnly }) =>
+      serializeLocationAddition(async () => {
+        try {
+          ensureWritable();
+          if (!path.isAbsolute(requestedPath)) {
+            throw new Error('path must be absolute');
+          }
+          const rootPath = await realpath(requestedPath);
+          const info = await stat(rootPath);
+          if (!info.isDirectory()) {
+            throw new Error('path is not a directory');
+          }
+
+          const existing = existingLocationRoot(rootPath);
+          if (existing) {
+            return ok({
+              added: false,
+              alreadyConfigured: true,
+              rootPath: existing,
+              message: 'Location already configured; its name and access mode are unchanged.',
+            });
+          }
+
+          const displayName = locationDisplayName(
+            name?.trim() || path.basename(rootPath) || rootPath
+          );
+          await approve(
+            'whale_add_location',
+            'Add a new WhaleTag location with the path and access shown below?',
+            [
+              `Name: ${displayName}`,
+              `Path: ${visibleApprovalText(rootPath)}`,
+              `Access: ${readOnly ? 'read-only' : 'read and write'}`,
+              'This expands the directories external MCP clients can read.',
+            ]
+          );
+
+          // The user may have added the same directory through the UI while the
+          // approval dialog was open. Treat that as idempotent success.
+          const addedWhileWaiting = existingLocationRoot(rootPath);
+          if (addedWhileWaiting) {
+            return ok({
+              added: false,
+              alreadyConfigured: true,
+              rootPath: addedWhileWaiting,
+              message: 'Location already configured; its name and access mode are unchanged.',
+            });
+          }
+
+          // fs-roots accepts renderer pushes only for user-picked/approved roots.
+          // Record the explicit approval before the renderer sends its new list.
+          rememberPickedRoot(rootPath);
+          await flushKnownRootsWrites();
+          await requestLocationAddition({
+            path: rootPath,
+            name: displayName,
+            readOnly,
+          });
+          return ok({
+            added: true,
+            rootPath,
+            name: displayName,
+            readOnly,
+            persisted: true,
+            indexing: {
+              triggered: false,
+              hint:
+                'This tool does not build search indexes. Check whale_roots. For ' +
+                'file/tag search, open the location in WhaleTag and click Build index ' +
+                'in the search bar (activation alone does not build it); call ' +
+                'whale_build_fulltext before content search.',
+            },
+          });
+        } catch (e) {
+          return fail('whale_add_location', e);
+        }
+      })
+  );
+
+  server.registerTool(
     'whale_search',
     {
       title: 'Search files',
       description:
         'FTS trigram search over file names, paths and tags within a location. ' +
-        'Best for "find files like X". Use whale_advanced_search for tag/size/date filters.',
+        'Requires the file/tag index: check ready in whale_roots, open the location ' +
+        'in WhaleTag and click Build index in the search bar (activation alone does ' +
+        'not build it). Best for "find files like X". ' +
+        'Use whale_advanced_search for tag/size/date filters.',
       inputSchema: {
         rootPath: z.string().describe('Location root from whale_roots'),
         q: z.string().min(1).describe('Search text (matches name/path/tags)'),
@@ -200,8 +360,9 @@ export function registerMcpTools(server: McpServer): void {
     {
       title: 'Advanced search',
       description:
-        'Structured file search: all filters AND together. Tag names match the ' +
-        'location vocabulary (see whale_list_tags). Sizes in bytes, times in epoch ms.',
+        'Structured file search: all filters AND together. Requires the file/tag ' +
+        'index (check ready in whale_roots). Tag names match the location vocabulary ' +
+        '(see whale_list_tags). Sizes in bytes, times in epoch ms.',
       inputSchema: {
         rootPath: z.string(),
         text: z.string().default(''),
@@ -758,6 +919,9 @@ export function registerMcpTools(server: McpServer): void {
 
 /** Keep rawRoots in sync with renderer pushes (called by mcp-server init). */
 export function watchRawRoots(): () => void {
+  // initMcpServer may run after the renderer's first push. Seed the snapshot
+  // instead of leaving whale_roots empty until the next location change.
+  rawRoots = getRawAllowedRoots();
   return onAllowedRootsChanged((roots) => {
     rawRoots = roots;
   });

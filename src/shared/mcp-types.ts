@@ -22,6 +22,17 @@ export interface McpStatus {
   sessions: number;
 }
 
+export interface McpAddLocationRequest {
+  /** Main correlates the renderer acknowledgement with this id. */
+  reqId: string;
+  /** Canonical real path of an existing directory. */
+  path: string;
+  /** Non-empty display name (the tool derives one when omitted). */
+  name: string;
+  /** Add to the main-process write-deny subset when true. */
+  readOnly: boolean;
+}
+
 /**
  * A write operation an external AI client wants to perform, pushed to the
  * renderer for an explicit allow/deny decision (fail-closed: no answer

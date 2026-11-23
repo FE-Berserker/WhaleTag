@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **MCP 直接添加位置**:新增 `whale_add_location`,可将已存在的绝对路径目录加入 WhaleTag,支持自定义名称与位置只读标记。调用需用户在应用窗口明确批准;批准后等待授权记录落盘,由渲染层走标准位置 action、同步 allowed roots 并等待 `redux-persist` 落盘确认,无需退出或重启。重复路径幂等返回,添加调用串行执行,失败会回滚;无窗口、超时与持久化失败均不会误报成功。文件/标签工具确认后可用,搜索索引仍按现有流程单独构建,结果会显式提示。
+  **Add locations directly through MCP**: the new `whale_add_location` tool adds an existing absolute-path directory with an optional display name and per-location read-only marker. It requires explicit approval in the app window, persists the authorization record, then uses the renderer's standard location action, syncs allowed roots and waits for the `redux-persist` flush before acknowledging success — no quit or restart. Duplicate paths are idempotent, additions are serialized and failures roll back; missing windows, timeouts or persistence failures never produce false success. File/tag tools are available after acknowledgement, while search indexes remain a separate, explicitly surfaced step.
+
 - **可见 / 隐藏选择计数**:文件列表头的主计数只统计**当前筛选下仍可见**的选中行(批量删除 / 移动 / 打包实际消费的就是这批),被筛选隐藏的选中项另起一行用新键 `nSelectedHidden`(en / zh / zh-TW / ja / ko)说明;隐藏项保持选中、撤销筛选即恢复,但永不进入批量命令,两者都为空时整块不渲染。
   **Visible vs. hidden selection counts**: the file-list header now counts only the selected rows that remain visible under the active filter — exactly the set bulk delete/move/package consume — and reports filter-hidden selections on a separate `nSelectedHidden` line in all five locales. Hidden rows stay selected and reappear when the filter clears, but never enter a bulk command; the block renders nothing when both counts are zero.
 

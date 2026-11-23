@@ -4,6 +4,7 @@ import {
   applyMcpConfigChange,
   resolveApproval,
   pendingApprovals,
+  completeLocationRequest,
 } from './mcp-server';
 
 /**
@@ -40,4 +41,12 @@ export function registerMcpHandlers(): void {
   // A window (re)loading mid-approval pulls the current queue on mount so
   // its dialogs survive a dev reload (pending approvals auto-deny after 60s).
   ipcMain.handle('mcp:pendingApprovals', () => pendingApprovals());
+
+  ipcMain.handle(
+    'mcp:completeAddLocation',
+    (_event, reqId: string, error?: string) => ({
+      ok: true as const,
+      settled: completeLocationRequest(reqId, error),
+    })
+  );
 }

@@ -8,7 +8,11 @@ import type {
   ExtensionRegistry,
   RevisionInfo,
 } from './extension-types';
-import type { McpApprovalRequest, McpStatus } from './mcp-types';
+import type {
+  McpAddLocationRequest,
+  McpApprovalRequest,
+  McpStatus,
+} from './mcp-types';
 import type { LanStatus } from './lan-types';
 
 export interface DirEntry {
@@ -423,6 +427,15 @@ export interface WhaleApi {
   mcpPendingApprovals: () => Promise<McpApprovalRequest[]>;
   /** Subscribe to write-op approval requests. Returns unsubscribe. */
   onMcpApprovalRequest: (cb: (req: McpApprovalRequest) => void) => () => void;
+  /** Subscribe to approved location additions. Returns unsubscribe. */
+  onMcpAddLocationRequest: (
+    cb: (req: McpAddLocationRequest) => void
+  ) => () => void;
+  /** Acknowledge that the location was persisted and its roots were synced. */
+  mcpCompleteAddLocation: (
+    reqId: string,
+    error?: string
+  ) => Promise<{ ok: true; settled: boolean }>;
 
   /**
    * Lifecycle hook: the main process fires this right before the window closes
