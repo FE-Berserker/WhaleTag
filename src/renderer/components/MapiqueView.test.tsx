@@ -100,8 +100,8 @@ function makeProps(
   };
 }
 
-function renderMapique(props: MapiqueViewProps) {
-  return render(
+function mapiqueTree(props: MapiqueViewProps) {
+  return (
     <I18nextProvider i18n={i18next} defaultNS="common">
       <Provider store={STUB_STORE}>
         <DndProvider backend={HTML5Backend}>
@@ -116,6 +116,10 @@ function renderMapique(props: MapiqueViewProps) {
       </Provider>
     </I18nextProvider>
   );
+}
+
+function renderMapique(props: MapiqueViewProps) {
+  return render(mapiqueTree(props));
 }
 
 before(async () => {

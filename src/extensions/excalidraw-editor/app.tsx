@@ -21,6 +21,7 @@ import {
 } from './save-state';
 import { createInitialContentDeferred } from './initial-content';
 import { parseExcalidrawScene } from './scene-content';
+import { createDropRequestStore, type DropRequestStore } from './drop-requests';
 
 // Excalidraw's imperative API is typed in a deep subpath that doesn't resolve
 // cleanly under this project's `moduleResolution: node`; this is glue code in a
@@ -56,8 +57,22 @@ export default function App() {
   const externalDragRef = useRef<{ path: string; isImage: boolean } | null>(
     null
   );
-  // Scene coords where the next fileEmbed thumbnail should be placed.
-  const pendingDropRef = useRef<{ x: number; y: number } | null>(null);
+  // Scene coordinates of the drops that are waiting for a `fileEmbed` reply,
+  // keyed by request id. Several drops can be in flight at once (thumbnail
+  // generation is async); the reply is placed only at the coordinates of the
+  // drop that asked for it.
+  const dropRequestsRef = useRef<DropRequestStore | null>(null);
+  if (!dropRequestsRef.current) {
+    dropRequestsRef.current = createDropRequestStore({
+      onTimeout: (requestId) => {
+        console.warn(
+          '[excalidraw] fileEmbed request expired before the host replied:',
+          requestId
+        );
+      },
+    });
+  }
+  const dropRequestSeqRef = useRef(0);
   // Safety timer to drop a stale external-drag path if no drop happens.
   const dragTimerRef = useRef<number | null>(null);
 
@@ -176,12 +191,17 @@ export default function App() {
   }, []);
 
   // Insert a non-image file as a thumbnail image element linked back to the file.
+  // `position` comes from the drop that this reply belongs to; null means the
+  // reply carried no usable correlation and the default spot is used.
   const insertFileEmbed = useCallback(
-    (filePath: string, thumbnailDataUrl: string) => {
+    (
+      filePath: string,
+      thumbnailDataUrl: string,
+      position: { x: number; y: number } | null
+    ) => {
       const api = apiRef.current;
       if (!api) return;
-      const pos = pendingDropRef.current ?? { x: 100, y: 100 };
-      pendingDropRef.current = null;
+      const pos = position ?? { x: 100, y: 100 };
       const img = new Image();
       img.onload = () => {
         const natW = img.naturalWidth || 120;
@@ -240,8 +260,14 @@ export default function App() {
       } catch {
         // fall back to a default position
       }
-      pendingDropRef.current = pos;
-      window.whaleExt.postMessage({ type: 'requestFileEmbed', path: info.path });
+      dropRequestSeqRef.current += 1;
+      const requestId = `drop-${dropRequestSeqRef.current}`;
+      dropRequestsRef.current?.begin(requestId, pos);
+      window.whaleExt.postMessage({
+        type: 'requestFileEmbed',
+        path: info.path,
+        requestId,
+      });
       externalDragRef.current = null;
     }
   }, []);
@@ -312,9 +338,30 @@ export default function App() {
             }, 15000);
           }
           break;
-        case 'fileEmbed':
-          insertFileEmbed(msg.path, msg.thumbnailDataUrl);
+        case 'fileEmbed': {
+          // Correlate the reply with the drop that asked for it. Replies from a
+          // host that does not echo `requestId` are still accepted, but only
+          // when no correlated drop is waiting.
+          const resolution = dropRequestsRef.current?.resolve(
+            typeof msg.requestId === 'string' && msg.requestId
+              ? msg.requestId
+              : undefined
+          );
+          if (!resolution || !resolution.accepted) {
+            console.warn(
+              '[excalidraw] ignored an uncorrelated fileEmbed reply:',
+              resolution?.reason ?? 'store-unavailable',
+              msg.path
+            );
+            break;
+          }
+          insertFileEmbed(
+            msg.path,
+            msg.thumbnailDataUrl,
+            resolution.position
+          );
           break;
+        }
         default:
           break;
       }

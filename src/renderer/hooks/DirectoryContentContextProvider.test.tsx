@@ -26,6 +26,11 @@ let sidecarsFailure: Error | null = null;
 /** Overridable so a test can hold one directory's listing pending. */
 let listDirectoryImpl: (dirPath: string) => Promise<DirEntry[]> = async () =>
   entries;
+/** Folder-meta writes issued by the provider (view mode / entry size). */
+let metaWrites: { dirPath: string; patch: Record<string, unknown> }[] = [];
+/** When set, writeFolderMeta rejects with this error. */
+let metaWriteFailure: Error | null = null;
+let notices: string[] = [];
 
 function injectMock(moduleName: string, exports: unknown): void {
   const modulePath = require_.resolve(moduleName);
@@ -80,7 +85,19 @@ before(() => {
         return { sidecars: bulkSidecars, issues };
       },
       readFolderMeta: async () => ({}),
+      writeFolderMeta: async (
+        dirPath: string,
+        patch: Record<string, unknown>
+      ) => {
+        metaWrites.push({ dirPath, patch });
+        if (metaWriteFailure) throw metaWriteFailure;
+      },
       onDirChanged: () => () => undefined,
+    },
+  });
+  injectMock('-/services/app-notice', {
+    notifyApp: (message: string) => {
+      notices.push(message);
     },
   });
   injectMock('./CurrentLocationContextProvider', {
@@ -113,6 +130,9 @@ afterEach(() => {
   bulkCalls = [];
   sidecarsFailure = null;
   listDirectoryImpl = async () => entries;
+  metaWrites = [];
+  metaWriteFailure = null;
+  notices = [];
 });
 
 after(() => {
@@ -266,5 +286,52 @@ describe('DirectoryContentContextProvider sidecar issues', () => {
     );
     assert.equal(observed?.tagsByName.get(entries[0].path), undefined);
     sidecarsFailure = null;
+  });
+
+  it('reports a folder-meta write failure without undoing the optimistic view', async () => {
+    entries = [entry(currentDir, 'a.txt')];
+    metaWriteFailure = new Error('EROFS: read-only file system');
+    const warnings: unknown[][] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args);
+    };
+    try {
+      renderProvider();
+      await waitFor(() => assert.equal(observed?.loading, false));
+
+      observed?.setViewMode('grid');
+      await waitFor(() => assert.equal(metaWrites.length, 1));
+      await waitFor(() => assert.equal(notices.length, 1));
+
+      assert.deepEqual(metaWrites[0], {
+        dirPath: currentDir,
+        patch: { perspective: 'grid' },
+      });
+      assert.equal(
+        observed?.viewMode,
+        'grid',
+        'the failed persist must not revert the in-memory switch'
+      );
+
+      // A second failure in the same mount must not spam the user.
+      observed?.setEntrySize(200);
+      await new Promise((resolve) => setTimeout(resolve, 450));
+      assert.equal(metaWrites.length, 2);
+      assert.deepEqual(metaWrites[1], {
+        dirPath: currentDir,
+        patch: { entrySize: 200 },
+      });
+      assert.equal(notices.length, 1, 'only one notice per mount');
+      assert.ok(
+        warnings.some((args) =>
+          /failed to persist the folder view preference/.test(String(args[0]))
+        ),
+        'each failed write is logged'
+      );
+    } finally {
+      console.warn = originalWarn;
+      metaWriteFailure = null;
+    }
   });
 });

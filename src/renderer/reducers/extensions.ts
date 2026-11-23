@@ -160,16 +160,30 @@ export default function extensionsReducer(
         dirty: false,
         saving: false,
       };
+      const nextEntry = { ...prior, ...patch };
+      // Text editors post `dirty: true` on every document change, and the
+      // persisted `extensions` slice is whitelisted: without this identity
+      // short-circuit every keystroke produced a new root state, a full
+      // serialization and an atomic disk write (throttled since 2026-11, but
+      // still wasted work). Same values in → same state object out.
+      if (
+        state.editState[tabId] !== undefined &&
+        prior.dirty === nextEntry.dirty &&
+        prior.saving === nextEntry.saving
+      ) {
+        return state;
+      }
       return {
         ...state,
         editState: {
           ...state.editState,
-          [tabId]: { ...prior, ...patch },
+          [tabId]: nextEntry,
         },
       };
     }
     case CLEAR_FILE_EDIT_STATE: {
       const { tabId } = (action as ClearFileEditStateAction).payload;
+      if (state.editState[tabId] === undefined) return state;
       const next = { ...state.editState };
       delete next[tabId];
       return { ...state, editState: next };

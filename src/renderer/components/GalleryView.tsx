@@ -155,39 +155,54 @@ export default function GalleryView({
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
 
+      // P1-1 (gui-audit 2026-11): the gallery container sits inside FileList's
+      // outer keyboard Box, so without `stopPropagation` every handled key ran
+      // BOTH handlers — arrows moved the gallery caret and the list selection,
+      // Enter opened the lightbox and the list's focused entry, Space toggled
+      // selection twice. Consume handled keys here (keeping `preventDefault`
+      // for the browser default); keys we don't handle still bubble so
+      // list-level shortcuts (Delete / F2 / Esc / view switch) keep working.
       switch (e.key) {
         case 'ArrowRight':
           e.preventDefault();
+          e.stopPropagation();
           moveFocus(1);
           break;
         case 'ArrowLeft':
           e.preventDefault();
+          e.stopPropagation();
           moveFocus(-1);
           break;
         case 'ArrowDown':
           e.preventDefault();
+          e.stopPropagation();
           moveFocus(cols);
           break;
         case 'ArrowUp':
           e.preventDefault();
+          e.stopPropagation();
           moveFocus(-cols);
           break;
         case 'Home':
           e.preventDefault();
+          e.stopPropagation();
           setFocusedIndex(0);
           break;
         case 'End':
           e.preventDefault();
+          e.stopPropagation();
           setFocusedIndex(Math.max(0, mediaEntries.length - 1));
           break;
         case 'Enter': {
           e.preventDefault();
+          e.stopPropagation();
           const entry = mediaEntries[focusedIndex];
           if (entry) onOpen?.(entry);
           break;
         }
         case ' ': {
           e.preventDefault();
+          e.stopPropagation();
           const entry = mediaEntries[focusedIndex];
           if (entry) onSelect?.(entry, { shift: false, toggle: true });
           break;

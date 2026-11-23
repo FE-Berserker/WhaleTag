@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDispatch, useSelector } from 'react-redux';
 import {
@@ -12,6 +12,7 @@ import {
   DialogContent,
   DialogTitle,
   Divider,
+  LinearProgress,
   List,
   ListItemButton,
   ListItemIcon,
@@ -48,6 +49,13 @@ interface AdvancedSearchDialogProps {
 }
 
 const MB = 1024 * 1024;
+
+/**
+ * Rows the result list renders at most. A query over a large library can match
+ * tens of thousands of entries; rendering them all froze the dialog. The count
+ * line stays truthful and the truncation note says how many rows were hidden.
+ */
+const MAX_RENDERED_RESULTS = 300;
 
 /** Parses a number field; blank or invalid → null. */
 function numOrNull(raw: string): number | null {
@@ -132,6 +140,12 @@ export default function AdvancedSearchDialog({
   // A failed query used to leave the previous query's rows in place, which
   // reads as "this query matched these files". Errors now replace the rows.
   const [searchError, setSearchError] = useState<string | null>(null);
+  // `busy` drives the progress bar / aria-busy, so a query over a big library
+  // no longer looks like a dead button.
+  const [busy, setBusy] = useState(false);
+  // Only the newest query may write results. Without this, a slow first query
+  // could resolve after a fast second one and overwrite the newer rows.
+  const querySeq = useRef(0);
   const [savePromptOpen, setSavePromptOpen] = useState(false);
 
   const buildQuery = (): SearchQuery => {
@@ -163,14 +177,26 @@ export default function AdvancedSearchDialog({
       setSearchError(null);
       return;
     }
+    const seq = (querySeq.current += 1);
+    setBusy(true);
     setSearchError(null);
     try {
-      setResults(await ipcApi.advancedIndex(currentLocation.path, q));
+      const rows = await ipcApi.advancedIndex(currentLocation.path, q);
+      if (seq === querySeq.current) setResults(rows);
     } catch (e) {
+      if (seq !== querySeq.current) {
+        // A newer query owns the dialog now; surfacing this failure would
+        // blame the wrong query. Keep the evidence in the log instead of
+        // dropping it silently.
+        console.warn('[advanced-search] superseded query failed', e);
+        return;
+      }
       // Do not keep stale rows: they would be presented as this query's
       // result while the failure stayed invisible.
       setResults(null);
       setSearchError(t('searchFailed', { message: errorMessage(e) }));
+    } finally {
+      if (seq === querySeq.current) setBusy(false);
     }
   };
 
@@ -222,7 +248,17 @@ export default function AdvancedSearchDialog({
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>{t('advancedSearch')}</DialogTitle>
+      <DialogTitle sx={{ position: 'relative' }}>
+        {t('advancedSearch')}
+        {/* Indeterminate progress on the title's bottom edge: a search over a
+            large index takes a moment and used to look like a dead button. */}
+        {busy ? (
+          <LinearProgress
+            aria-label={t('searching')}
+            sx={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}
+          />
+        ) : null}
+      </DialogTitle>
       <DialogContent dividers>
         <Stack sx={{ gap: 2, pt: 0.5 }}>
           {savedSearches.length > 0 ? (
@@ -388,14 +424,14 @@ export default function AdvancedSearchDialog({
           ) : null}
 
           {results !== null ? (
-            <Box>
+            <Box aria-busy={busy}>
               <Divider sx={{ mb: 1 }} />
               <Typography variant="caption" color="text.secondary">
                 {t('resultsCount', { count: results.length })}
               </Typography>
               {results.length > 0 ? (
                 <List dense sx={{ maxHeight: 240, overflow: 'auto' }}>
-                  {results.slice(0, 300).map((entry) => (
+                  {results.slice(0, MAX_RENDERED_RESULTS).map((entry) => (
                     <ListItemButton
                       key={entry.path}
                       onClick={() => handlePick(entry)}
@@ -419,6 +455,18 @@ export default function AdvancedSearchDialog({
                   ))}
                 </List>
               ) : null}
+              {results.length > MAX_RENDERED_RESULTS ? (
+                <Typography
+                  variant="caption"
+                  color="warning.main"
+                  sx={{ display: 'block', mt: 0.5 }}
+                >
+                  {t('resultsTruncated', {
+                    shown: MAX_RENDERED_RESULTS,
+                    total: results.length,
+                  })}
+                </Typography>
+              ) : null}
             </Box>
           ) : null}
         </Stack>
@@ -438,8 +486,8 @@ export default function AdvancedSearchDialog({
         <Button onClick={onClose} color="inherit">
           {t('close')}
         </Button>
-        <Button onClick={handleSearch} variant="contained">
-          {t('search')}
+        <Button onClick={handleSearch} variant="contained" disabled={busy}>
+          {busy ? t('searching') : t('search')}
         </Button>
       </DialogActions>
 

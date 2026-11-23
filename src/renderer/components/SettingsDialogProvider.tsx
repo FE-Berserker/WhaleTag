@@ -29,17 +29,28 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { useTranslation } from 'react-i18next';
+import {
+  Alert,
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  LinearProgress,
+} from '@mui/material';
 
 import type {
   SettingsDialogProps,
   SettingsSectionId,
 } from './SettingsDialog';
+import ErrorBoundary from './ErrorBoundary';
 
 // SettingsDialog is ~1900 lines and pulls WorkflowManagerDialog / AiMcpSection
 // / ~25 MUI icons. Lazy-load it so that weight only loads when the user opens
 // Settings (the render below is gated on `open`). The type-only import above is
 // fully erased, so it does NOT pull the module eagerly.
-const SettingsDialog = lazy(() => import('./SettingsDialog'));
+const loadSettingsDialog = () => import('./SettingsDialog');
 
 interface OpenSettingsArgs {
   /** When set, focus this tab on the next open. Falls back to `general`. */
@@ -72,6 +83,17 @@ export function SettingsDialogProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [requestedSection, setRequestedSection] =
     useState<SettingsSectionId | undefined>(undefined);
+  // A rejected lazy() is cached forever, so a failed chunk load needs a fresh
+  // lazy component on retry. This counter is a cache-buster, not render state.
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [SettingsDialog, setSettingsDialog] = useState(() =>
+    lazy(loadSettingsDialog)
+  );
+
+  const handleRetry = useCallback(() => {
+    setLoadAttempt((attempt) => attempt + 1);
+    setSettingsDialog(() => lazy(loadSettingsDialog));
+  }, []);
 
   const openDialog = useCallback((args?: OpenSettingsArgs) => {
     setRequestedSection(args?.section);
@@ -98,6 +120,7 @@ export function SettingsDialogProvider({ children }: { children: ReactNode }) {
   // iframe stay in the iframe — editing won't accidentally pop Settings.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.repeat) return; // hold Ctrl+, must not flap the dialog
       if (e.key === ',' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         setOpen((v) => !v);
@@ -117,13 +140,23 @@ export function SettingsDialogProvider({ children }: { children: ReactNode }) {
     <SettingsDialogContext.Provider value={value}>
       {children}
       {open ? (
-        <Suspense fallback={null}>
-          <SettingsDialog
-            open={open}
-            section={requestedSection}
-            onClose={closeDialog}
-          />
-        </Suspense>
+        <ErrorBoundary
+          resetKey={loadAttempt}
+          fallback={
+            <SettingsLoadFailedDialog
+              onClose={closeDialog}
+              onRetry={handleRetry}
+            />
+          }
+        >
+          <Suspense fallback={<SettingsLoadingDialog />}>
+            <SettingsDialog
+              open={open}
+              section={requestedSection}
+              onClose={closeDialog}
+            />
+          </Suspense>
+        </ErrorBoundary>
       ) : null}
     </SettingsDialogContext.Provider>
   );
@@ -137,6 +170,48 @@ export function useSettingsDialog(): SettingsDialogContextValue {
     );
   }
   return ctx;
+}
+
+/** Non-null Suspense fallback: clicking the gear must never look like a no-op. */
+function SettingsLoadingDialog() {
+  const { t } = useTranslation();
+  return (
+    <Dialog open maxWidth="xs" fullWidth>
+      <DialogTitle>{t('settings')}</DialogTitle>
+      <DialogContent>
+        <LinearProgress />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Shown when the settings chunk (or the dialog render) fails. Retry creates a
+ * fresh lazy component because React caches a rejected import permanently;
+ * Close leaves the app usable instead of replacing the whole window.
+ */
+function SettingsLoadFailedDialog({
+  onClose,
+  onRetry,
+}: {
+  onClose: () => void;
+  onRetry: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle>{t('settings')}</DialogTitle>
+      <DialogContent>
+        <Alert severity="error">{t('errorOccurred')}</Alert>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>{t('close')}</Button>
+        <Button variant="contained" onClick={onRetry}>
+          {t('retry')}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
 }
 
 // Re-export the section id type so consumers can type

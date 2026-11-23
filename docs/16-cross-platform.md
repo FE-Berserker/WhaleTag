@@ -50,6 +50,7 @@
 ### C-1. Linux 大小写敏感路径守卫过宽(安全相关)✅ 已解决
 - **原问题**:[allowed-roots.ts](../src/main/allowed-roots.ts) `assertWithinAllowedRoot` 与 [extension-protocol.ts](../src/main/extension-protocol.ts) `isWithinRoot` 都把 target 和 root 整体 `toLowerCase()` 再比。Windows/mac(默认大小写不敏感)没问题;**Linux ext4 大小写敏感**,注册 `/home/u/Photos` 会连 `/home/u/photos/...` 也放进写白名单——是不同路径,破坏写保护语义。
 - **修法**(2026-07-16):新增 [path-fold.ts](../src/main/path-fold.ts) 的 `foldPath(p)`——`win32`/`darwin` 小写、其它(linux)原样,两处守卫(allowed-roots 3 个位点 + extension-protocol `isWithinRoot`)都改用它。**为什么 darwin 也 fold**:mac 默认 APFS 大小写不敏感,且 `realpath` 已把 case 归一到磁盘真实大小写,故 fold 与 exact 在 mac 上结果一致(fold 是 no-op-after-realpath);只在罕见的 case-sensitive mac 上 fold 略宽(= 改前风险,可接受),linux 则从过宽修成精确。`better-sqlite3` 之类无关。测试:[path-fold.test.ts](../src/main/path-fold.test.ts) 覆盖两分支(经 test-seam param);allowed-roots / extension-protocol 的 case 断言改成平台条件(`CASE_INSENSITIVE_FS` ? 接受 : 拒绝),32/32 过。
+- **渲染层镜像**(2026-11-23):[path-util.ts](../src/renderer/services/path-util.ts) 的 `isSameOrDescendant` 原先无条件 `toLowerCase()`,与主进程策略漂移(linux 上把 `/Foo` 与 `/foo` 当同一目录);现采用同一平台策略——`win32`/`darwin` 折叠、linux 精确,平台由 `process.platform`(Node/测试环境)或 `navigator.userAgent`(纯浏览器)解析,并保留 `caseInsensitive` test-seam 参数。[path-util.test.ts](../src/renderer/services/path-util.test.ts) 覆盖两分支。
 
 ### C-2. Linux 桌面环境 fallback 链 ✅ 已解决(2026-11-12)
 - **修复前**:

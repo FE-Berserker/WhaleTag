@@ -19,7 +19,7 @@
 - `assertWithinAllowedRoot(filePath)` 校验路径是否落在某个 root 下
 - **空集合 = 拒绝所有写**(fail-closed)
 - `fs.realpathSync` 解析目标(不存在递归父目录再拼尾部),防 symlink 逃逸
-- Windows 大小写归一(`isSameOrDescendant` 比较前 `toLowerCase`)
+- 大小写按平台归一:win32/darwin 折叠、linux 精确(与 [path-fold.ts](../src/main/path-fold.ts) 一致)
 
 **位置来历(provenance)**:`fs:setAllowedRoots` 只接受主进程记录在案的目录——用户在原生文件夹对话框里选过的(处理器在返回路径前用 [known-roots.ts](../src/main/known-roots.ts) 的 `rememberPickedRoot` 记录,持久化到 `<userData>/known-roots.json`),或升级/首装后第一次推送时的一次性种子(TOFU,写入记录后再以记录为准)。未知目录记 `console.warn` 后丢弃,不进入 `allowedRoots`——渲染层即使被注入,也无法把 `/` 注册成位置。记录文件损坏或不可读时按"未 seed"重来,而不是把用户锁在门外(若该路径被目录占用,先把目录改名为 `known-roots.json.corrupt-<时间戳>` 再重新记录,否则之后每次写入都会失败);位置目录改名后旧路径不再是已知目录,需重新添加。
 
@@ -57,7 +57,7 @@
 
 ## 5. 数据层
 
-- **redux-persist** 走主进程同步 IPC + atomic write(`.tmp + renameSync`),不丢数据;详见 [docs/02-file-io.md §8](./02-file-io.md)
+- **redux-persist** 走主进程异步 IPC + atomic write(`.tmp + rename` + datasync);读失败不降级为默认值,写盘每会话保留一份 `.bak`;详见 [docs/02-file-io.md §8](./02-file-io.md)
 - **sidecar**:标签 / 描述 / 颜色走 `.whale/wsd.json` 目录级聚合,不嵌入文件名
 - 路径存储为相对路径(便于整体迁移)
 
@@ -97,6 +97,7 @@
 | **云存储加密** | 🚫 不实现 | 云存储本身(S3 / WebDAV)不在范围 |
 | **导入 / 导出** | 🚫 不实现 | 配置 / 标签库 / 位置 JSON 备份 与 `.ts → .whale` 迁移工具均不做 |
 | **安全审计日志** | ⏳ 未做 | 用户没强需求 |
+| **局域网访问的 TLS / 证书管理** | 🚫 不实现 | 局域网只读访问(§14)是明文 HTTP,只服务可信私网;自签证书、HTTPS 混淆与证书轮换都不在范围 |
 
 > 任何"安全加强"需求先列到对应模块文档的"已知取舍 / 遗留"或新章节,不开"未来加密"段。
 
@@ -135,3 +136,16 @@
 - **可达性边界**：mte 2.2.2 的发布代码没有引用其顶层 `@mermaid-js/parser@0.6.3` 声明；Mermaid 自身按需图类型使用另一套嵌套 parser。对覆盖后的实际共享消费者——chevrotain、gast、cst-dts-gen、chevrotain-allstar 与 dagre-d3-es——检查其 `lodash-es` 导入，未命中告示要求的危险 template/unset/omit/pullAt 调用，因此该覆盖属于深度防御，不宣称已修复已证明可远程利用的 high。上游 TTD/粘贴路径仍用 `import()` 条件执行；生产扩展现为每扩展独立 compiler、`dynamicImportMode='lazy'` 且 `splitChunks={chunks:'async'}`，代码进入随包本地 `<extId>/chunks/` 异步 chunk，不是从公网按需下载独立网络 chunk。真实 Excalidraw/Mermaid 冒烟负责验证这些 URL 与 CSP。
 - ECharts 6 的升级与 `echarts-wordcloud@2.1.0` 的 `^5.0.1` peer 和深路径注册方式不兼容，因此保留 `echarts@^5.6.0`。当前所有 HTML tooltip 的用户名称都在 sink 经 `escapeHtml`（§1 与 `escape-html.test.ts`），这是已知上游告示下的应用层缓解，不声称替代未来兼容升级。
 - 其余完整树节点来自 drawio-offline 的旧 electron-updater、electron-builder / typescript-eslint 的 minimatch、webpack-dev-server / sockjs 的 uuid 等开发或构建链。它们不进入运行时白名单；对构建配置受信、dev server 仅本机使用的当前模型，不采用跨 major 降级或强制 overrides。后续上游出现同线修复时再收敛。
+
+## 14. 局域网只读访问(2026-11)
+
+手机 / 平板经浏览器访问桌面库,默认关闭、只读,详见 [./22-lan-access.md](./22-lan-access.md):
+
+- **只服务私网**:来源与目的地址都必须是回环 / 私网 / 链路本地(10/8、127/8、172.16–31、192.168/16、169.254/16、`::1`、`fc00::/7`、`fe80::/10`),否则 403;公网、NAT 后、运营商或 VPN 出口一律拒绝([security.ts](../src/main/lan/security.ts))。
+- **Host / Origin 校验**:监听 `0.0.0.0`,但只接受启动网卡快照里的本机地址;`Host` 必须是字面 IP(域名全拒)且端口等于实际监听端口 → DNS rebinding 不成立;`Origin` 若存在必须是 `http://<允许 IP>:<端口>`,带凭据 / 路径 / 查询 / hash 一律拒;`Sec-Fetch-Site` 只允许 `same-origin` / `none`。
+- **临时 token → 会话 cookie**:每次启动生成 32 字节随机 token(`timingSafeEqual` 比较),只在本次会话内有效、不落盘;配对成功下发 `whale_lan_session` cookie(`HttpOnly` + `SameSite=Strict` + `Path=/`,无 `Domain`;明文 HTTP 下不能设 `Secure`),会话 id 由服务端内存保存,最多 64 个。
+- **限速与请求上限**:同一来源 60 秒 5 次认证失败 → 429 + `Retry-After`;URL ≤ 8192、API body ≤ 1 KiB、拒绝 `Transfer-Encoding`、单连接最多 100 请求,超时 15s / keep-alive 5s。
+- **没有写路径**:不存在上传 / 删除 / 移动 / 重命名 / 打标 / 改 sidecar 的端点,唯一的非 GET 是 `POST /api/session`;索引以 `readonly` + `PRAGMA query_only` 短连接读、sidecar 走 `readSidecarsReadOnly`(不加写锁、不迁移、不建缓存),所以即使渲染层或实现有缺陷,Web 端也拿不到写能力。
+- **主动内容只下载**:`.html` `.htm` `.xhtml` `.xml` `.svg` `.svgz` `.js` `.mjs` `.cjs` `.pdf` 一律 `Content-Disposition: attachment`,不在手机浏览器里内联渲染;响应带 CSP(`object-src 'none'`、`frame-ancestors 'none'`、`form-action 'self'`)、`Cache-Control: no-store`、`Referrer-Policy: no-referrer`、`X-Content-Type-Options: nosniff`,静态资源另加 `Cross-Origin-Resource-Policy: same-origin`。
+- **撤销是关闭屏障**:start/stop 采用 last-command-wins 代次取消,后续停止会使 pending/queued start 全部失效,迟到的 listen 立即关闭;网卡指纹或 allowed roots 变化都走同一停止路径,roots 变化不再以 `running` 为前提。
+- **已接受取舍**:① 明文 HTTP,不防嗅探——同网段的设备可抓包看到内容与配对请求的 `Authorization` 头;② 只接受私网地址,跨网段 / 公网 / VPN 不可用;③ 每次会话级重启换 token 与端口,没有设备级白名单或踢下线。

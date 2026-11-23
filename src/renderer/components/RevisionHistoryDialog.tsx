@@ -23,6 +23,10 @@ import type { RevisionInfo } from '../../shared/extension-types';
 interface RevisionHistoryDialogProps {
   filePath: string;
   open: boolean;
+  /** The open tab has unsaved edits. Restoring replaces the on-disk file; the
+   *  editor then reloads it, discarding the buffer — so the confirmation must
+   *  say so out loud. */
+  dirty?: boolean;
   onClose: () => void;
   onRestored: () => void;
 }
@@ -30,6 +34,7 @@ interface RevisionHistoryDialogProps {
 export default function RevisionHistoryDialog({
   filePath,
   open,
+  dirty = false,
   onClose,
   onRestored,
 }: RevisionHistoryDialogProps) {
@@ -65,11 +70,16 @@ export default function RevisionHistoryDialog({
   }, [open, filePath, t]);
 
   const handleRestore = async (revision: RevisionInfo) => {
+    const time = new Date(revision.timestamp).toLocaleString(i18n.language);
+    // The dirty warning goes into the same (already mandatory) confirmation:
+    // without it, restoring looked like a plain "load this older version" and
+    // the editor then silently dropped the buffer the user was still editing.
+    const message = dirty
+      ? `${t('revisionRestoreConfirm', { time })} ${t('revisionRestoreDirty')}`
+      : t('revisionRestoreConfirm', { time });
     const ok = await confirm({
       title: t('revisionHistory'),
-      message: t('revisionRestoreConfirm', {
-        time: new Date(revision.timestamp).toLocaleString(i18n.language),
-      }),
+      message,
       confirmLabel: t('restore'),
       danger: true,
     });
@@ -119,6 +129,7 @@ export default function RevisionHistoryDialog({
                     <Tooltip title={t('restore')}>
                       <IconButton
                         edge="end"
+                        aria-label={t('restore')}
                         onClick={() => handleRestore(rev)}
                       >
                         <RestoreIcon />
@@ -127,6 +138,7 @@ export default function RevisionHistoryDialog({
                     <Tooltip title={t('delete')}>
                       <IconButton
                         edge="end"
+                        aria-label={t('delete')}
                         onClick={() => handleDelete(rev.path)}
                       >
                         <DeleteIcon />

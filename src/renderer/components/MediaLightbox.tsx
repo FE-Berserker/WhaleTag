@@ -392,9 +392,14 @@ export default function MediaLightbox({
     setPan({ x: 0, y: 0 });
   }, [isVideo]);
 
-  useEffect(() => {
-    if (!open) return;
-    const handleKey = (e: KeyboardEvent) => {
+  // Keyboard handling. The listener below is bound ONCE per open session and
+  // dispatches through `keyHandlerRef`, which always holds this render's
+  // closure. Before P2-4 the effect listed `zoom` in its dependency array, so
+  // every wheel notch (which changes `zoom`) tore the capture-phase listener
+  // off `document` and put a new one back — churn during the exact gesture the
+  // shortcut exists for. The handler body itself still sees fresh state.
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         // Own the key: MUI's Dialog closes on Escape on its own, which made
         // "step back out of zoom" impossible — the box closed instead. Capture
@@ -433,11 +438,22 @@ export default function MediaLightbox({
           setPan({ x: 0, y: 0 });
         }
       }
-    };
+    },
+    [onClose, goPrev, goNext, zoom, isVideo, stopPan]
+  );
+
+  const keyHandlerRef = useRef(handleKeyDown);
+  useEffect(() => {
+    keyHandlerRef.current = handleKeyDown;
+  }, [handleKeyDown]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKey = (e: KeyboardEvent) => keyHandlerRef.current(e);
     // Capture phase: runs before MUI's document-level Escape handler.
     document.addEventListener('keydown', handleKey, true);
     return () => document.removeEventListener('keydown', handleKey, true);
-  }, [open, onClose, goPrev, goNext, zoom, isVideo, stopPan]);
+  }, [open]);
 
   if (!current) return null;
 

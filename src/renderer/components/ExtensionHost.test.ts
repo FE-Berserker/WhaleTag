@@ -1,5 +1,5 @@
 import globalJsdom from 'global-jsdom';
-import { after, afterEach, before, describe, it } from 'node:test';
+import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'module';
 import { createElement } from 'react';
@@ -24,9 +24,16 @@ let originalBtoa: typeof globalThis.btoa | undefined;
 let ExtensionHostComponent: typeof import('./ExtensionHost').default;
 let jsdomCleanup: (() => void) | null = null;
 let writeFileWithRevisionImpl: (filePath: string, content: string) => Promise<void>;
+let renameImpl: (from: string, to: string) => Promise<void>;
+let closeTabImpl: (tabId: string) => Promise<'closed' | 'cancelled'>;
+let openWithExtensionImpl: (entry: { path: string }, manifest: { id: string }) => Promise<void>;
 type SaveCurrent = () => Promise<boolean>;
 const registeredSaveHandlers = new Map<string, SaveCurrent>();
 const hostNotices: string[] = [];
+const renameCalls: Array<{ from: string; to: string }> = [];
+const closeTabCalls: string[] = [];
+const openWithExtensionCalls: string[] = [];
+const capturedSelectors: Array<(state: unknown) => unknown> = [];
 type HostAction = {
   type: string;
   payload?: { state?: { dirty?: boolean; saving?: boolean } };
@@ -57,6 +64,9 @@ before(() => {
   btoaCalls = 0;
   readFileBase64Impl = async () => BINARY_BASE64;
   writeFileWithRevisionImpl = async () => {};
+  renameImpl = async () => {};
+  closeTabImpl = async () => 'closed';
+  openWithExtensionImpl = async () => {};
   injectMock(IPC_API_MODULE, {
     ipcApi: {
       readFileBase64: (filePath: string) => readFileBase64Impl(filePath),
@@ -66,6 +76,10 @@ before(() => {
       },
       writeFileWithRevision: (filePath: string, content: string) =>
         writeFileWithRevisionImpl(filePath, content),
+      rename: (from: string, to: string) => {
+        renameCalls.push({ from, to });
+        return renameImpl(from, to);
+      },
     },
   });
   injectMock('-/services/app-notice', {
@@ -82,9 +96,12 @@ before(() => {
       selector: (state: {
         extensions: { editState: Record<string, typeof hostEditState> };
       }) => unknown
-    ) => selector({
-      extensions: { editState: { 'tab-1': hostEditState } },
-    }),
+    ) => {
+      capturedSelectors.push(selector as (state: unknown) => unknown);
+      return selector({
+        extensions: { editState: { 'tab-1': hostEditState } },
+      });
+    },
   });
   injectMock('react-i18next', {
     useTranslation: () => ({
@@ -95,8 +112,15 @@ before(() => {
   });
   injectMock('-/hooks/ExtensionContextProvider', {
     useExtensionContext: () => ({
-      openWithExtension: () => {},
+      openWithExtension: (entry: { path: string }, manifest: { id: string }) => {
+        openWithExtensionCalls.push(entry.path);
+        return openWithExtensionImpl(entry, manifest);
+      },
       requestCloseCurrent: () => {},
+      closeTab: (tabId: string) => {
+        closeTabCalls.push(tabId);
+        return closeTabImpl(tabId);
+      },
       registerSaveCurrent: (tabId: string, handler: SaveCurrent | null) => {
         if (handler) registeredSaveHandlers.set(tabId, handler);
         else registeredSaveHandlers.delete(tabId);
@@ -114,7 +138,20 @@ before(() => {
   });
   injectMock('-/components/PromptDialog', {
     __esModule: true,
-    default: () => null,
+    default: (props: {
+      open: boolean;
+      onConfirm: (value: string) => void;
+    }) =>
+      props.open
+        ? createElement(
+            'button',
+            {
+              'data-testid': 'rename-confirm',
+              onClick: () => props.onConfirm('renamed.txt'),
+            },
+            'confirm'
+          )
+        : null,
   });
   try {
     delete require_.cache[require_.resolve(HOST_MODULE)];
@@ -136,6 +173,14 @@ afterEach(() => {
   hostNotices.length = 0;
   registeredSaveHandlers.clear();
   writeFileWithRevisionImpl = async () => {};
+  renameImpl = async () => {};
+  closeTabImpl = async () => 'closed';
+  openWithExtensionImpl = async () => {};
+  renameCalls.length = 0;
+  closeTabCalls.length = 0;
+  openWithExtensionCalls.length = 0;
+  capturedSelectors.length = 0;
+  hostEditState.dirty = true;
 });
 
 after(() => {
@@ -596,5 +641,214 @@ describe('ExtensionHost revision protocol', () => {
     assert.deepEqual(hostNotices, [
       'extensionSaveError: extensionSaveTimeout',
     ]);
+  });
+});
+
+describe('ExtensionHost hot-path subscriptions', () => {
+  const filePath = '/tmp/host.txt';
+  const manifest: ExtensionManifest = {
+    id: 'text-editor',
+    name: 'Text Editor',
+    type: 'editor',
+    color: '#000000',
+    fileTypes: ['txt'],
+    entryPoint: 'index.html',
+    enabled: true,
+    isDefault: true,
+  };
+
+  function renderHost() {
+    return render(
+      createElement(ExtensionHostComponent, {
+        tabId: 'tab-1',
+        manifest,
+        filePath,
+        fileContent: 'disk',
+        encoding: 'utf8' as const,
+        readOnly: false,
+        theme: 'light' as const,
+        onRequestRevisionHistory: () => {},
+      })
+    );
+  }
+
+  it('selects a primitive dirty boolean instead of the editState entry object', () => {
+    const view = renderHost();
+    assert.ok(view);
+    const stateWith = (editState: Record<string, unknown>) => ({
+      extensions: { editState },
+    });
+    const selector = capturedSelectors.find(
+      (candidate) =>
+        typeof candidate(stateWith({ 'tab-1': { dirty: true, saving: true } })) ===
+        'boolean'
+    );
+    assert.ok(selector, 'host must subscribe to a boolean dirty value');
+    // Fresh entry objects with the same flag must compare equal to React
+    // (primitives), so a saving toggle cannot force a re-render of this host.
+    assert.equal(selector(stateWith({ 'tab-1': { dirty: true, saving: true } })), true);
+    assert.equal(selector(stateWith({ 'tab-1': { dirty: true, saving: false } })), true);
+    assert.equal(selector(stateWith({ 'tab-1': { dirty: false, saving: true } })), false);
+    assert.equal(selector(stateWith({ 'tab-1': {} })), false);
+    assert.equal(selector(stateWith({})), false);
+    assert.equal(selector(stateWith({ other: { dirty: true } })), false);
+  });
+
+  it('does not dispatch when a dirty report repeats the current flag', () => {
+    const view = renderHost();
+    const iframe = document.querySelector('iframe');
+    assert.ok(iframe);
+    Object.defineProperty(iframe.contentWindow, 'postMessage', {
+      configurable: true,
+      value: () => {},
+    });
+    const emit = (message: ExtensionMessage) => {
+      act(() => {
+        window.dispatchEvent(new window.MessageEvent('message', {
+          source: iframe.contentWindow,
+          data: { protocolVersion: 1, source: 'extension', message },
+        }));
+      });
+    };
+    emit({ type: 'ready' });
+    dispatchedActions.length = 0;
+    void view;
+
+    // Mock host edit state already has dirty=true: a repeated true report is a
+    // hot-path no-op (editors may send revision snapshots during a save).
+    emit({ type: 'contentChangedInEditor', path: filePath, dirty: true, revision: 5 });
+    assert.equal(dispatchedActions.length, 0);
+
+    emit({ type: 'contentChangedInEditor', path: filePath, dirty: false, revision: 6 });
+    assert.deepEqual(
+      dispatchedActions.map((action) => action.type),
+      ['extensions/SET_FILE_EDIT_STATE']
+    );
+    assert.deepEqual(dispatchedActions[0].payload?.state, { dirty: false });
+  });
+
+  it('treats the save-time revision as current when intermediate reports were skipped', async () => {
+    const view = renderHost();
+    const iframe = document.querySelector('iframe');
+    assert.ok(iframe);
+    Object.defineProperty(iframe.contentWindow, 'postMessage', {
+      configurable: true,
+      value: () => {},
+    });
+    const emit = (message: ExtensionMessage) => {
+      act(() => {
+        window.dispatchEvent(new window.MessageEvent('message', {
+          source: iframe.contentWindow,
+          data: { protocolVersion: 1, source: 'extension', message },
+        }));
+      });
+    };
+    emit({ type: 'ready' });
+    void view;
+
+    // Dirty reports are edge-triggered, so the host only saw revision 1. The
+    // editor saves at revision 5 and the ack must still count as current.
+    emit({ type: 'contentChangedInEditor', path: filePath, dirty: true, revision: 1 });
+    const handler = registeredSaveHandlers.get('tab-1');
+    assert.ok(handler);
+    let pending!: Promise<boolean>;
+    act(() => {
+      pending = handler();
+    });
+    emit({ type: 'parentSaveDocument', path: filePath, content: 'final', revision: 5 });
+    let ok: boolean | undefined;
+    await act(async () => {
+      ok = await pending;
+    });
+
+    assert.equal(ok, true);
+    assert.equal(
+      hostNotices.includes('extensionSaveError: extensionSaveOutdated'),
+      false,
+      'a completed save must not be reported as outdated'
+    );
+  });
+});
+
+describe('ExtensionHost rename', () => {
+  // Rename is only offered for a clean tab; a dirty tab hits the alert guard.
+  beforeEach(() => {
+    hostEditState.dirty = false;
+  });
+
+  const filePath = '/tmp/host.txt';
+  const manifest: ExtensionManifest = {
+    id: 'text-editor',
+    name: 'Text Editor',
+    type: 'editor',
+    color: '#000000',
+    fileTypes: ['txt'],
+    entryPoint: 'index.html',
+    enabled: true,
+    isDefault: true,
+  };
+
+  function renderHost() {
+    return render(
+      createElement(ExtensionHostComponent, {
+        tabId: 'tab-1',
+        manifest,
+        filePath,
+        fileContent: 'disk',
+        encoding: 'utf8' as const,
+        readOnly: false,
+        theme: 'light' as const,
+        onRequestRevisionHistory: () => {},
+      })
+    );
+  }
+
+  async function confirmRename(view: ReturnType<typeof renderHost>): Promise<void> {
+    fireEvent.click(view.getByTestId('DriveFileRenameOutlineIcon').closest('button')!);
+    const confirm = view.getByTestId('rename-confirm');
+    fireEvent.click(confirm);
+    // Flush the rename -> close -> open promise chain (real timers).
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  it('closes the old-path tab before opening the renamed file', async () => {
+    const order: string[] = [];
+    renameImpl = async (from, to) => {
+      order.push(`rename:${from}->${to}`);
+    };
+    closeTabImpl = async (tabId) => {
+      order.push(`close:${tabId}`);
+      return 'closed';
+    };
+    openWithExtensionImpl = async (entry) => {
+      order.push(`open:${entry.path}`);
+    };
+
+    const view = renderHost();
+    await confirmRename(view);
+
+    assert.deepEqual(renameCalls, [
+      { from: '/tmp/host.txt', to: '/tmp/renamed.txt' },
+    ]);
+    assert.deepEqual(order, [
+      'rename:/tmp/host.txt->/tmp/renamed.txt',
+      'close:tab-1',
+      'open:/tmp/renamed.txt',
+    ]);
+  });
+
+  it('keeps the old tab when the rename fails', async (context) => {
+    context.mock.method(window, 'alert', () => undefined);
+    renameImpl = async () => {
+      throw new Error('access denied');
+    };
+
+    const view = renderHost();
+    await confirmRename(view);
+
+    assert.deepEqual(closeTabCalls, []);
+    assert.deepEqual(openWithExtensionCalls, []);
   });
 });

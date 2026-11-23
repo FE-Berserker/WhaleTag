@@ -57,7 +57,9 @@ import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import KeyboardIcon from '@mui/icons-material/Keyboard';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import HubIcon from '@mui/icons-material/Hub';
+import LanIcon from '@mui/icons-material/Lan';
 import SearchIcon from '@mui/icons-material/Search';
+import LanSettings from './LanSettings';
 
 import { RootState } from '-/reducers';
 import {
@@ -126,6 +128,7 @@ export type SettingsSectionId =
   | 'tags'
   | 'notifications'
   | 'mcp'
+  | 'lan'
   | 'commands'
   | 'about'
   | 'advanced';
@@ -185,10 +188,14 @@ interface FtStatus {
  * subdirectory). Adding or rebuilding triggers a main-process build; build
  * status is kept locally (redux only stores the path list).
  */
+const EMPTY_FULLTEXT_PATHS: string[] = [];
+
 function FulltextSection() {
   const { t } = useTranslation();
   const dispatch = useDispatch();
-  const paths = useSelector((s: RootState) => s.settings?.fulltextPaths ?? []);
+  const paths = useSelector(
+    (s: RootState) => s.settings?.fulltextPaths ?? EMPTY_FULLTEXT_PATHS
+  );
   const { currentLocation } = useCurrentLocationContext();
 
   const [input, setInput] = useState('');
@@ -322,6 +329,7 @@ function FulltextSection() {
             <IconButton
               size="small"
               color="primary"
+              aria-label={t('add')}
               onClick={handleAdd}
               disabled={!input.trim()}
             >
@@ -1114,6 +1122,7 @@ const SECTIONS: {
     Icon: NotificationsIcon,
   },
   { id: 'mcp', labelKey: 'settingsSectionMcp', Icon: HubIcon },
+  { id: 'lan', labelKey: 'settingsSectionLan', Icon: LanIcon },
   { id: 'commands', labelKey: 'settingsSectionCommands', Icon: TerminalIcon },
   { id: 'about', labelKey: 'settingsSectionAbout', Icon: InfoOutlinedIcon },
   { id: 'advanced', labelKey: 'settingsSectionAdvanced', Icon: SettingsIcon },
@@ -1144,6 +1153,44 @@ export default function SettingsDialog({
 
   const [workflowOpen, setWorkflowOpen] = useState(false);
 
+  const navRef = useRef<HTMLDivElement | null>(null);
+
+  /**
+   * Move focus + selection to a section. The tabs use the WAI-ARIA
+   * "automatic activation" pattern: arrowing changes the panel immediately, so
+   * the keyboard user never has to press Enter on a tab they just focused.
+   */
+  const activateSection = (id: SettingsSectionId) => {
+    setActive(id);
+    navRef.current
+      ?.querySelector<HTMLElement>(`#settings-tab-${id}`)
+      ?.focus();
+  };
+
+  const handleNavKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const index = SECTIONS.findIndex((s) => s.id === active);
+    if (index < 0) return;
+    let next: number;
+    switch (e.key) {
+      case 'ArrowDown':
+        next = (index + 1) % SECTIONS.length;
+        break;
+      case 'ArrowUp':
+        next = (index - 1 + SECTIONS.length) % SECTIONS.length;
+        break;
+      case 'Home':
+        next = 0;
+        break;
+      case 'End':
+        next = SECTIONS.length - 1;
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+    activateSection(SECTIONS[next].id);
+  };
+
   const renderSection = () => {
     switch (active) {
       case 'general':
@@ -1160,6 +1207,8 @@ export default function SettingsDialog({
         return <NotificationsSection />;
       case 'mcp':
         return <McpSection />;
+      case 'lan':
+        return <LanSettings />;
       case 'commands':
         return <UserCommandsSection />;
       case 'about':
@@ -1189,8 +1238,18 @@ export default function SettingsDialog({
             direction="row"
             sx={{ minHeight: 460, alignItems: 'stretch' }}
           >
+            {/* Real tablist semantics: section switching is a tab pattern, and
+                a plain List of buttons left screen readers without the
+                "tab N of M / selected" announcement. Roving tabindex keeps a
+                single tab stop in the list; Arrow/Home/End activate. */}
             <List
               dense
+              component="div"
+              role="tablist"
+              aria-label={t('settings')}
+              aria-orientation="vertical"
+              ref={navRef}
+              onKeyDown={handleNavKeyDown}
               sx={{
                 width: 200,
                 flexShrink: 0,
@@ -1202,6 +1261,11 @@ export default function SettingsDialog({
               {SECTIONS.map(({ id, labelKey, Icon }) => (
                 <ListItemButton
                   key={id}
+                  role="tab"
+                  id={`settings-tab-${id}`}
+                  aria-selected={active === id}
+                  aria-controls="settings-section-panel"
+                  tabIndex={active === id ? 0 : -1}
                   selected={active === id}
                   onClick={() => setActive(id)}
                   data-testid={`settings-nav-${id}`}
@@ -1224,6 +1288,12 @@ export default function SettingsDialog({
             </List>
 
             <Box
+              role="tabpanel"
+              id="settings-section-panel"
+              aria-labelledby={`settings-tab-${active}`}
+              // Scrollable region: focusable so keyboard users can scroll a
+              // long section (About/Advanced) without a mouse.
+              tabIndex={0}
               sx={{
                 flex: 1,
                 minWidth: 0,

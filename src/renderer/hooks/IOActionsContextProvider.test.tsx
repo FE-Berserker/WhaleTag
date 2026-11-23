@@ -71,7 +71,10 @@ describe('importExternalCore', () => {
     });
 
     assert.deepEqual(r.importerCalls, [{ sources: ['/os/foo.txt'], destDir: '/work' }]);
-    assert.deepEqual(result, r.importerResponse);
+    assert.deepEqual(result, {
+      ...r.importerResponse,
+      tagWriteFailures: [],
+    });
   });
 
   it('does NOT call sidecarWriter when tagToApply is null (Triage)', async () => {
@@ -187,7 +190,7 @@ describe('importExternalCore', () => {
     });
   });
 
-  it('swallows sidecar-write failures (best-effort, never rolls back the import)', async () => {
+  it('keeps the import but reports which tag writes failed (never silent)', async () => {
     const r = makeRecorder();
     r.importerResponse = {
       copied: 2,
@@ -198,20 +201,40 @@ describe('importExternalCore', () => {
       filePath === '/work/bad.md'
         ? Promise.reject(new Error('sidecar EIO'))
         : Promise.resolve();
+    const warnings: unknown[][] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args);
+    };
 
-    // Must not throw — a sidecar failure on one file mustn't break the
-    // whole import. The user sees the imported files, just without the
-    // tag on the broken one.
-    const result = await importExternalCore({
-      sources: ['/os/good.md', '/os/bad.md'],
-      destDir: '/work',
-      tagToApply: 'todo',
-      importer: r.importer,
-      sidecarWriter: r.sidecarWriter,
-    });
+    try {
+      // Must not throw — a sidecar failure on one file mustn't break the
+      // whole import. The user sees the imported files, just without the
+      // tag on the broken one.
+      const result = await importExternalCore({
+        sources: ['/os/good.md', '/os/bad.md'],
+        destDir: '/work',
+        tagToApply: 'todo',
+        importer: r.importer,
+        sidecarWriter: r.sidecarWriter,
+      });
 
-    assert.equal(r.sidecarCalls.length, 2);
-    assert.deepEqual(result, r.importerResponse);
+      assert.equal(r.sidecarCalls.length, 2);
+      assert.deepEqual(result, {
+        ...r.importerResponse,
+        tagWriteFailures: ['/work/bad.md'],
+      });
+      assert.ok(
+        warnings.some(
+          (args) =>
+            String(args[0]).includes('failed to write tags') &&
+            String(args[1]) === '/work/bad.md'
+        ),
+        'a failed tag write must be logged, not swallowed'
+      );
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 
   it('handles importedPaths being undefined (older main-process build compat)', async () => {

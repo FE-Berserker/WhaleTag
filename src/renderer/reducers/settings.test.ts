@@ -388,14 +388,33 @@ describe('settings.keybindings', () => {
     assert.equal(next.keybindings.Enter, 'open'); // valid entries survive
   });
 
-  it('sanitizes a corrupt persisted action on load', () => {
+  it('drops a corrupt action and the legacy Tab default on load', () => {
     const corrupt = {
       ...initialState,
+      themeMode: 'dark',
       keybindings: { Enter: 'fly' as never, Tab: 'switchView' },
     } as SettingsState;
     const next = settingsReducer(corrupt, { type: 'no-op' });
     assert.ok(!('Enter' in next.keybindings));
-    assert.equal(next.keybindings.Tab, 'switchView');
+    // WCAG 2.1.2: the old `Tab: 'switchView'` default trapped focus; drop it.
+    assert.ok(!('Tab' in next.keybindings));
+    assert.equal(next.themeMode, 'dark');
+  });
+
+  it('legacy Tab default: migration is one-shot and identity-stable', () => {
+    const legacy = {
+      ...initialState,
+      themeMode: 'dark',
+      keybindings: { ...DEFAULT_KEYBINDINGS, Tab: 'switchView' },
+    } as SettingsState;
+    const next = settingsReducer(legacy, { type: 'persist/REHYDRATE' });
+    assert.notEqual(next, legacy);
+    assert.ok(!('Tab' in next.keybindings));
+    assert.equal(next.keybindings.ArrowRight, 'open');
+    assert.equal(next.themeMode, 'dark');
+    // A second pass must not allocate again (H.25 autoMergeLevel1 identity).
+    const again = settingsReducer(next, { type: 'persist/REHYDRATE' });
+    assert.equal(again, next);
   });
 
   it('does not touch other settings fields when SET_KEYBINDING fires', () => {

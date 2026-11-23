@@ -191,7 +191,7 @@ describe('installBootGuard', () => {
     guard.dispose();
   });
 
-  it('clears the overlay on markReady and only reports later errors', () => {
+  it('keeps the recovery overlay shown for an early error after markReady', () => {
     const reports: string[] = [];
     const guard = installBootGuard({
       document,
@@ -202,16 +202,41 @@ describe('installBootGuard', () => {
     });
 
     dispatchError('early');
-    assert.ok(overlay());
+    const shown = overlay();
+    assert.ok(shown);
 
     guard.markReady();
     assert.equal(guard.isReady(), true);
-    assert.equal(overlay(), null);
+    // markReady only cancels the watchdog; it must not erase evidence of a
+    // failure that already happened (the user still needs the Reload button).
+    assert.equal(overlay(), shown);
 
     dispatchError('late');
-    assert.equal(overlay(), null);
+    assert.equal(overlay(), shown);
     assert.equal(reports.length, 2);
     assert.match(reports[1], /late/);
+    guard.dispose();
+  });
+
+  it('keeps the watchdog overlay after the app becomes ready too late', async () => {
+    const reports: string[] = [];
+    const guard = installBootGuard({
+      document,
+      window,
+      watchdogMs: 20,
+      report: (detail) => reports.push(detail),
+      onReload: () => undefined,
+    });
+
+    await sleep(80);
+    assert.ok(overlay());
+
+    guard.markReady();
+    assert.ok(
+      overlay(),
+      'a late markReady must not hide the watchdog recovery screen'
+    );
+    assert.equal(reports.length, 1);
     guard.dispose();
   });
 

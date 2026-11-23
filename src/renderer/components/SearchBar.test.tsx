@@ -21,6 +21,11 @@ let cleanupDom: (() => void) | undefined;
 let SearchBarComponent: typeof import('./SearchBar').default;
 let advancedError: Error | null = null;
 let advancedReady = false;
+/** What the injected full-text search returns for the current test. */
+let fulltextResult: {
+  hits: { path: string; name: string; snippet: string }[];
+  failedRoots: string[];
+} = { hits: [], failedRoots: [] };
 
 function inject(spec: string, exports: unknown): void {
   const id = require_.resolve(spec);
@@ -72,7 +77,7 @@ before(async () => {
     },
   });
   inject('-/services/fulltext-search', {
-    searchAllFulltext: async () => [],
+    searchAllFulltext: async () => fulltextResult,
   });
   inject('-/services/ipc-api', { ipcApi: {} });
 
@@ -87,6 +92,7 @@ afterEach(() => {
   queries.length = 0;
   advancedError = null;
   advancedReady = false;
+  fulltextResult = { hits: [], failedRoots: [] };
 });
 after(() => {
   if (componentId) delete require_.cache[componentId];
@@ -150,5 +156,37 @@ describe('SearchBar advanced dialog recovery', () => {
       assert.ok(view.getByText('Advanced search recovered'))
     );
     assert.equal(view.queryByText('errorOccurred'), null);
+  });
+});
+
+describe('SearchBar full-text partial failure', () => {
+  it('keeps the hits from healthy roots and warns that some roots failed', async () => {
+    fulltextResult = {
+      hits: [{ path: '/b/notes.md', name: 'notes.md', snippet: 'note body' }],
+      failedRoots: ['/b'],
+    };
+    const store = createStore(() => ({
+      settings: { fulltextPaths: ['/a', '/b'] },
+      locations: { items: [] },
+    }));
+    const view = render(
+      <Provider store={store}>
+        <I18nextProvider i18n={i18next}>
+          <SearchBarComponent />
+        </I18nextProvider>
+      </Provider>
+    );
+
+    // The placeholder switches to the content-search label when content mode
+    // is on, so grab the input by role (not by the initial placeholder).
+    const input = view.getByRole('textbox');
+    fireEvent.click(view.getByRole('button', { name: 'searchContents' }));
+    fireEvent.change(input, { target: { value: 'note' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    // Results from the healthy root stay visible...
+    await waitFor(() => assert.ok(view.getByText('notes.md')));
+    // ...and the incomplete result set is announced instead of hidden.
+    assert.ok(view.getByText('searchPartialFailure'));
   });
 });

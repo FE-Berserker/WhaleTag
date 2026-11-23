@@ -9,12 +9,15 @@ import {
   type ReactNode,
 } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
+import { useTranslation } from 'react-i18next';
 
 import type { WhaleLocation } from '../../shared/ipc-types';
 import { RootState } from '-/reducers';
 import { setActiveLocation } from '-/reducers/locations';
 import { recordRecent } from '-/reducers/recent';
 import { ipcApi } from '-/services/ipc-api';
+import { notifyApp } from '-/services/app-notice';
+import { errorMessage } from '-/services/errors';
 
 /**
  * Owns the "where am I" state: the active location plus the current
@@ -27,7 +30,7 @@ import { ipcApi } from '-/services/ipc-api';
  * Must sit ABOVE DirectoryContentContextProvider (which reads
  * currentDirectoryPath) in the tree.
  */
-interface CurrentLocationContextValue {
+export interface CurrentLocationContextValue {
   currentLocation: WhaleLocation | null;
   currentDirectoryPath: string;
   openLocation: (location: WhaleLocation) => void;
@@ -57,6 +60,20 @@ export function useCurrentLocationContext(): CurrentLocationContextValue {
   return ctx;
 }
 
+/**
+ * Path + back/forward history as ONE state value. Splitting `history` and
+ * `historyIndex` across two `useState`s let a callback capture a stale index:
+ * two navigations batched into the same render truncated the history to the
+ * OLD index and pushed the wrong entry, so Back skipped a real directory.
+ */
+interface NavigationState {
+  path: string;
+  history: string[];
+  index: number;
+}
+
+const EMPTY_NAVIGATION: NavigationState = { path: '', history: [], index: -1 };
+
 export function CurrentLocationContextProvider({
   children,
 }: {
@@ -64,15 +81,23 @@ export function CurrentLocationContextProvider({
 }) {
   const dispatch = useDispatch();
   const { items, activeId } = useSelector((s: RootState) => s.locations);
+  const { t } = useTranslation();
+  // `t` feeds only failure notices; keep it in a ref so goUp's identity doesn't
+  // churn (and don't put it in deps — i18n may return a fresh `t` each render).
+  const translateRef = useRef(t);
+  translateRef.current = t;
 
   const currentLocation = useMemo(
     () => items.find((l) => l.id === activeId) ?? null,
     [items, activeId]
   );
 
-  const [currentDirectoryPath, setCurrentDirectoryPath] = useState('');
-  const [history, setHistory] = useState<string[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [nav, setNav] = useState<NavigationState>(EMPTY_NAVIGATION);
+  const currentDirectoryPath = nav.path;
+  // Latest path for async callbacks: a navigation that lands while `goUp`'s IPC
+  // is in flight must win over the parent lookup started before it.
+  const currentPathRef = useRef(currentDirectoryPath);
+  currentPathRef.current = currentDirectoryPath;
   // Set just before switching location so the reset effect lands on this
   // sub-directory instead of the location root (used by navigateToInLocation).
   const pendingPathRef = useRef<string | null>(null);
@@ -84,9 +109,11 @@ export function CurrentLocationContextProvider({
     pendingPathRef.current = null;
     const root = currentLocation ? currentLocation.path : '';
     const target = pending && currentLocation ? pending : root;
-    setCurrentDirectoryPath(target);
-    setHistory(target ? [target] : []);
-    setHistoryIndex(target ? 0 : -1);
+    setNav(
+      target
+        ? { path: target, history: [target], index: 0 }
+        : EMPTY_NAVIGATION
+    );
     // We intentionally depend only on the location id.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentLocation?.id]);
@@ -122,15 +149,16 @@ export function CurrentLocationContextProvider({
     [dispatch]
   );
 
-  const navigateTo = useCallback(
-    (dirPath: string) => {
-      setCurrentDirectoryPath(dirPath);
-      setHistory((prev) => [...prev.slice(0, historyIndex + 1), dirPath]
-      );
-      setHistoryIndex((prev) => prev + 1);
-    },
-    [historyIndex]
-  );
+  const navigateTo = useCallback((dirPath: string) => {
+    // Functional update: use the index of the state being replaced, never a
+    // value captured at render time (two same-tick navigations used to
+    // truncate the forward history at the stale index).
+    setNav((prev) => ({
+      path: dirPath,
+      history: [...prev.history.slice(0, prev.index + 1), dirPath],
+      index: prev.index + 1,
+    }));
+  }, []);
 
   const navigateToInLocation = useCallback(
     (locationId: string, dirPath: string) => {
@@ -149,26 +177,47 @@ export function CurrentLocationContextProvider({
     if (!currentDirectoryPath) return;
     // Stop at the location root — don't browse above it.
     if (currentLocation && currentDirectoryPath === currentLocation.path) return;
-    const parent = await ipcApi.parentDir(currentDirectoryPath);
-    navigateTo(parent);
+    const from = currentDirectoryPath;
+    try {
+      const parent = await ipcApi.parentDir(from);
+      // A navigation completed while the IPC was in flight: don't yank the user
+      // back to a parent of the directory they already left.
+      if (currentPathRef.current !== from) return;
+      navigateTo(parent);
+    } catch (error) {
+      // Callers are plain `onClick={() => goUp()}` handlers (FileToolbar), so a
+      // rethrow here would surface as an unhandled rejection. Report instead.
+      console.error(
+        '[CurrentLocation] failed to resolve the parent directory:',
+        from,
+        error
+      );
+      notifyApp(
+        translateRef.current('operationFailed', {
+          message: errorMessage(error),
+        })
+      );
+    }
   }, [currentDirectoryPath, currentLocation, navigateTo]);
 
-  const canGoBack = historyIndex > 0;
-  const canGoForward = historyIndex < history.length - 1;
+  const canGoBack = nav.index > 0;
+  const canGoForward = nav.index < nav.history.length - 1;
 
   const goBack = useCallback(() => {
-    if (!canGoBack) return;
-    const next = historyIndex - 1;
-    setHistoryIndex(next);
-    setCurrentDirectoryPath(history[next]);
-  }, [canGoBack, history, historyIndex]);
+    setNav((prev) => {
+      if (prev.index <= 0) return prev;
+      const index = prev.index - 1;
+      return { path: prev.history[index], history: prev.history, index };
+    });
+  }, []);
 
   const goForward = useCallback(() => {
-    if (!canGoForward) return;
-    const next = historyIndex + 1;
-    setHistoryIndex(next);
-    setCurrentDirectoryPath(history[next]);
-  }, [canGoForward, history, historyIndex]);
+    setNav((prev) => {
+      if (prev.index >= prev.history.length - 1) return prev;
+      const index = prev.index + 1;
+      return { path: prev.history[index], history: prev.history, index };
+    });
+  }, []);
 
   const value = useMemo(
     () => ({

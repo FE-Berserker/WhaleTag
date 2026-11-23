@@ -2,7 +2,6 @@ import {
   memo,
   useEffect,
   useMemo,
-  useReducer,
   useRef,
   useState,
   useCallback,
@@ -177,21 +176,14 @@ export default function MapiqueView({
   tagColors = EMPTY_TAG_COLORS,
   groups = EMPTY_GROUPS,
 }: MapiqueViewProps) {
-  // Re-render whenever the parent's `geoByName` / `tagsByName` props change
-  // identity, even if React's normal prop-diff path doesn't take effect for
-  // some reason in this view. TagMetaContextProvider re-derives these maps
-  // on every `setSidecars` (post-save), so any sidecar mutation triggers a
-  // fresh identity and this bump. Belt-and-braces with the `key` prop on
-  // the rendering site in FileList — either path alone is enough; together
-  // they cover the case where the parent render is skipped but the props
-  // (and therefore the deps here) are still being read fresh.
-  //
-  // P3-6 fix: also re-render when `thumbCacheVersion` bumps. The shared
-  // thumb cache is a ref-held Map that mutates silently (no React
-  // signal); the version counter is bumped by `onThumbLoaded` from the
-  // tray's ThumbIcons so marker icons (which read the cache directly)
-  // re-render with the fresh data URL.
-  const [, forceRender] = useReducer((x: number) => x + 1, 0);
+  // P2-5: this view does NOT keep a local render bump for `geoByName` /
+  // `tagsByName`. React already re-renders on a prop-identity change, and
+  // `TagMetaContextProvider` re-derives both maps on every `setSidecars`
+  // (post-save), so the props are exactly the signal. A `useEffect` that
+  // called a reducer with those maps as deps made any tag/geo edit render
+  // twice (once for the prop change, once for the bump), and the comment used
+  // to claim a matching `key` prop existed on the FileList render site — it
+  // never did. Keep the single mechanism: props in, render out.
   const { t } = useTranslation();
   const {
     currentLocation,
@@ -305,21 +297,6 @@ export default function MapiqueView({
   // (TypeError, whole view crashed). A path that is no longer in the tray is
   // simply treated as "no anchor".
   const selectAnchorRef = useRef<string | null>(null);
-
-  // Re-render whenever the parent's `geoByName` / `tagsByName` props change
-  // identity (TagMetaContextProvider re-derives them on every `setSidecars`,
-  // so any sidecar mutation triggers a fresh identity and this bump), and
-  // Re-render whenever the parent's `geoByName` / `tagsByName` props change
-  // identity, even if React's normal prop-diff path doesn't take effect for
-  // some reason in this view. TagMetaContextProvider re-derives these maps
-  // on every `setSidecars` (post-save), so any sidecar mutation triggers a
-  // fresh identity and this bump. Belt-and-braces with the `key` prop on
-  // the rendering site in FileList — either path alone is enough; together
-  // they cover the case where the parent render is skipped but the props
-  // (and therefore the deps here) are still being read fresh.
-  useEffect(() => {
-    forceRender();
-  }, [geoByName, tagsByName]);
 
   // H.26 P1-1: load per-location prefs (panel open state + tray filter + sort).
   useEffect(() => {

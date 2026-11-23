@@ -1,8 +1,6 @@
-import { Box, IconButton, Stack, Tooltip, Typography } from '@mui/material';
-import CloseIcon from '@mui/icons-material/Close';
+import { Box } from '@mui/material';
 import { useTranslation } from 'react-i18next';
-import { useSelector } from 'react-redux';
-import type { RootState } from '-/reducers';
+import ExtensionTabButton from '-/components/ExtensionTabButton';
 import type { ExtensionTab } from '-/hooks/ExtensionContextProvider';
 
 interface ExtensionTabBarProps {
@@ -15,7 +13,11 @@ interface ExtensionTabBarProps {
 /** Horizontal strip of open-file tabs. Mirrors a browser's tab bar: click to
  *  focus, × to close (with the provider's dirty-check), and a leading dot in
  *  the extension's brand color so different extension types stay legible at a
- *  glance. Tabs with unsaved edits show a trailing "•". */
+ *  glance. Tabs with unsaved edits show a trailing "•".
+ *
+ *  Each tab subscribes to its own dirty flag in `ExtensionTabButton`; the bar
+ *  itself renders no edit state, so a keystroke in one tab re-renders only that
+ *  tab. */
 export default function ExtensionTabBar({
   tabs,
   activeTabId,
@@ -23,8 +25,6 @@ export default function ExtensionTabBar({
   onClose,
 }: ExtensionTabBarProps) {
   const { t } = useTranslation();
-  // Read the whole editState map once; per-tab dirty is a map lookup in render.
-  const editState = useSelector((s: RootState) => s.extensions.editState);
 
   if (tabs.length === 0) return null;
 
@@ -50,76 +50,15 @@ export default function ExtensionTabBar({
         '&::-webkit-scrollbar': { height: 4 },
       }}
     >
-      {tabs.map((tab) => {
-        const active = tab.id === activeTabId;
-        const dirty = editState[tab.id]?.dirty ?? false;
-        return (
-          <Stack
-            key={tab.id}
-            direction="row"
-            role="tab"
-            tabIndex={0}
-            aria-selected={active}
-            title={tab.filePath}
-            onClick={() => onActivate(tab.id)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onActivate(tab.id);
-              }
-            }}
-            sx={{
-              alignItems: 'center',
-              gap: 0.5,
-              px: 0.75,
-              py: 0.25,
-              borderRadius: 1,
-              cursor: 'pointer',
-              maxWidth: 200,
-              flexShrink: 0,
-              bgcolor: active ? 'action.selected' : 'transparent',
-              '&:hover': { bgcolor: 'action.hover' },
-              '&:focus-visible': { outline: '1px solid', outlineColor: 'primary.main' },
-            }}
-          >
-            <Box
-              sx={{
-                width: 8,
-                height: 8,
-                borderRadius: '50%',
-                bgcolor: tab.manifest.color ?? 'action.active',
-                flexShrink: 0,
-              }}
-            />
-            <Typography
-              variant="caption"
-              component="span"
-              sx={{
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                fontWeight: active ? 600 : 400,
-              }}
-            >
-              {tab.title}
-              {dirty ? ' •' : ''}
-            </Typography>
-            <Tooltip title={t('close')}>
-              <IconButton
-                size="small"
-                aria-label={t('close')}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onClose(tab.id);
-                }}
-                sx={{ p: 0.25 }}
-              >
-                <CloseIcon sx={{ fontSize: 14 }} />
-              </IconButton>
-            </Tooltip>
-          </Stack>
-        );
-      })}
+      {tabs.map((tab) => (
+        <ExtensionTabButton
+          key={tab.id}
+          tab={tab}
+          active={tab.id === activeTabId}
+          onActivate={onActivate}
+          onClose={onClose}
+        />
+      ))}
     </Box>
   );
 }

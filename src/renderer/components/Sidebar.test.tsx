@@ -65,6 +65,9 @@ before(async () => {
           newDrawio: 'New Draw.io',
           addLocation: 'Add Location',
           revealInExplorer: 'Reveal in Explorer',
+          remove: 'Remove',
+          openTrash: 'Open Trash',
+          settings: 'Settings',
         },
       },
     },
@@ -194,5 +197,26 @@ describe('Sidebar actions', () => {
       assert.deepEqual(notices, ['Operation failed: reveal failed'])
     );
     assert.deepEqual(revealCalls, ['/docs']);
+  });
+
+  it('keeps the remove button outside the row activation target', () => {
+    const view = renderSidebar();
+    const row = view.getByText('Docs').closest('[data-loc-row]');
+    assert.ok(row);
+
+    // A <button> nested inside the row's role=button made focus and activation
+    // ambiguous (Enter/Tab on Remove also opened the location). The remove
+    // control is now a sibling inside the same row container.
+    const rowButton = view.getByRole('button', { name: /Docs/ });
+    const remove = view.getByRole('button', { name: 'Remove' });
+    assert.equal(row.contains(rowButton), true);
+    assert.equal(rowButton.contains(remove), false);
+    assert.equal(row.contains(remove), true);
+    assert.notEqual(rowButton, remove);
+
+    // Shell actions expose names too (tooltip-only before).
+    view.getByRole('button', { name: 'Open Trash' });
+    view.getByRole('button', { name: 'Settings' });
+    view.getByRole('button', { name: 'Add Location' });
   });
 });

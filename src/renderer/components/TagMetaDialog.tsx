@@ -60,8 +60,13 @@ export default function TagMetaDialog({ open, tag, onClose }: TagMetaDialogProps
     setSaving(true);
     setSaveError(null);
     try {
-      dispatch(setTagColor(tag, color));
+      // Description first: it is the only step that can fail (optimistic
+      // context update + sidecar IPC). Committing the color only after it
+      // succeeds makes the save atomic from the user's point of view — before
+      // this order, a failed description left the new color already written to
+      // the store (and persisted) while the dialog reported an error.
       await setDescription(tag, desc);
+      dispatch(setTagColor(tag, color));
       onClose();
     } catch (e) {
       // Keep the dialog open so the user can retry; show WHY inline (the

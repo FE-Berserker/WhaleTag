@@ -35,7 +35,7 @@ describe('keybindings.resolveAction', () => {
     );
     assert.equal(
       resolveAction(DEFAULT_KEYBINDINGS, { key: 'Tab' }),
-      'switchView'
+      null
     );
     assert.equal(
       resolveAction(DEFAULT_KEYBINDINGS, { key: 'ArrowLeft' }),
@@ -158,12 +158,15 @@ describe('keybindings.MAPPABLE_KEYS / DEFAULT_KEYBINDINGS consistency', () => {
     }
   });
 
-  it('every mappable key has a default action', () => {
+  it('every mappable key except Tab has a default action', () => {
     for (const { token } of MAPPABLE_KEYS) {
+      if (token === 'Tab') continue;
       assert.ok(
         token in DEFAULT_KEYBINDINGS,
         `mappable key ${token} has no default action`
       );
     }
+    // WCAG 2.1.2: Tab must stay free for browser focus traversal by default.
+    assert.ok(!('Tab' in DEFAULT_KEYBINDINGS), 'Tab must be unbound by default');
   });
 });

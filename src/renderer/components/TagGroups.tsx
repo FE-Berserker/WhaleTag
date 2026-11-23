@@ -5,7 +5,8 @@ import { useDispatch, useSelector } from 'react-redux';
 import {
   Box,
   IconButton,
-  Popover,
+  Menu,
+  MenuItem,
   Stack,
   Tooltip,
   Typography,
@@ -93,7 +94,6 @@ function GroupTag({
     <Tooltip title={description || tag} disableInteractive>
       <Box
         ref={dragRef}
-        onClick={() => onToggleActive(tag)}
         onContextMenu={(e) => {
           e.preventDefault();
           onEdit(tag);
@@ -101,12 +101,9 @@ function GroupTag({
         sx={{
           display: 'inline-flex',
           alignItems: 'center',
-          gap: 0.25,
           border: 1,
           borderColor: active ? 'primary.main' : 'divider',
           borderRadius: 5,
-          px: 0.5,
-          py: '1px',
           cursor: 'grab',
           userSelect: 'none',
           fontSize: 11,
@@ -120,17 +117,54 @@ function GroupTag({
               : { bgcolor: 'background.paper' }),
         }}
       >
-        <Box component="span" sx={{ whiteSpace: 'nowrap' }}>
-          {tag}
+        <Box
+          role="button"
+          tabIndex={0}
+          aria-pressed={active}
+          onClick={() => onToggleActive(tag)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onToggleActive(tag);
+            }
+          }}
+          sx={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 0.25,
+            px: 0.5,
+            py: '1px',
+            cursor: 'grab',
+          }}
+        >
+          <Box component="span" sx={{ whiteSpace: 'nowrap' }}>
+            {tag}
+          </Box>
         </Box>
-        <CloseIcon
+        <Box
+          role="button"
+          tabIndex={0}
+          aria-label={removeTitle}
           onClick={(e) => {
             e.stopPropagation();
             onRemove(tag);
           }}
-          titleAccess={removeTitle}
-          sx={{ fontSize: 12, opacity: 0.7, cursor: 'pointer', '&:hover': { opacity: 1 } }}
-        />
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              e.stopPropagation();
+              onRemove(tag);
+            }
+          }}
+          sx={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            pr: 0.5,
+            cursor: 'pointer',
+          }}
+        >
+          <CloseIcon sx={{ fontSize: 12, opacity: 0.7 }} />
+        </Box>
       </Box>
     </Tooltip>
   );
@@ -239,7 +273,16 @@ export default function TagGroups() {
     >
       <Stack
         direction="row"
+        role="button"
+        tabIndex={0}
+        aria-expanded={!collapsed}
         onClick={() => setCollapsed((c) => !c)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setCollapsed((c) => !c);
+          }
+        }}
         sx={{
           alignItems: 'center',
           gap: 0.5,
@@ -261,10 +304,12 @@ export default function TagGroups() {
         <Tooltip title={t('addTagGroup')}>
           <IconButton
             size="small"
+            aria-label={t('addTagGroup')}
             onClick={(e) => {
               e.stopPropagation();
               setDialog({ mode: 'addGroup' });
             }}
+            onKeyDown={(e) => e.stopPropagation()}
           >
             <AddIcon fontSize="small" />
           </IconButton>
@@ -495,7 +540,7 @@ export default function TagGroups() {
         onClose={() => setDialog(null)}
       />
 
-      <Popover
+      <Menu
         open={colorAnchor !== null}
         anchorEl={colorAnchor}
         onClose={() => {
@@ -503,48 +548,62 @@ export default function TagGroups() {
           setPicking(null);
         }}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+        slotProps={{
+          list: {
+            sx: {
+              display: 'flex',
+              gap: 0.75,
+              p: 1.5,
+              flexWrap: 'wrap',
+              maxWidth: 240,
+            },
+          },
+        }}
       >
-        <Box sx={{ display: 'flex', gap: 0.75, p: 1.5, flexWrap: 'wrap', maxWidth: 240 }}>
-          {TAG_PALETTE.map((c) => (
-            <Box
-              key={c}
-              onClick={() => applyColor(c)}
-              sx={{
-                width: 28,
-                height: 28,
-                borderRadius: '50%',
-                bgcolor: c,
-                cursor: 'pointer',
-                border: 1,
-                borderColor: 'divider',
-                '&:hover': { transform: 'scale(1.1)' },
-                transition: 'transform 0.1s',
-              }}
-            />
-          ))}
-          <Box
-            onClick={() => applyColor(null)}
-            title={t('clearColor')}
+        {TAG_PALETTE.map((c) => (
+          <MenuItem
+            key={c}
+            onClick={() => applyColor(c)}
+            aria-label={c}
             sx={{
               width: 28,
               height: 28,
+              minWidth: 28,
+              minHeight: 28,
+              p: 0,
               borderRadius: '50%',
-              cursor: 'pointer',
+              bgcolor: c,
               border: 1,
               borderColor: 'divider',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: 12,
-              color: 'text.secondary',
               '&:hover': { transform: 'scale(1.1)' },
               transition: 'transform 0.1s',
             }}
-          >
-            ✕
-          </Box>
-        </Box>
-      </Popover>
+          />
+        ))}
+        <MenuItem
+          onClick={() => applyColor(null)}
+          aria-label={t('clearColor')}
+          sx={{
+            width: 28,
+            height: 28,
+            minWidth: 28,
+            minHeight: 28,
+            p: 0,
+            borderRadius: '50%',
+            border: 1,
+            borderColor: 'divider',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 12,
+            color: 'text.secondary',
+            '&:hover': { transform: 'scale(1.1)' },
+            transition: 'transform 0.1s',
+          }}
+        >
+          ✕
+        </MenuItem>
+      </Menu>
 
       {/* Right-click a tag: edit its color + description in one dialog. */}
       <TagMetaDialog

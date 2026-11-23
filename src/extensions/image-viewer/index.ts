@@ -25,6 +25,7 @@ import {
   type Rotation,
 } from '../shared/zoom';
 import { keymapAction, siblingTarget, type SiblingDirection } from './keymap';
+import { createObjectUrlScope, imageBlobFor } from './object-url';
 
 // ── DOM refs ────────────────────────────────────────────────────────────
 const stageEl = document.getElementById('stage') as HTMLDivElement;
@@ -44,6 +45,13 @@ const btnRotate = document.getElementById('rotate') as HTMLButtonElement;
 const btnFlipH = document.getElementById('flip-h') as HTMLButtonElement;
 const btnFlipV = document.getElementById('flip-v') as HTMLButtonElement;
 const btnFullscreen = document.getElementById('fullscreen') as HTMLButtonElement;
+
+// One live blob URL at a time: `replace()` revokes the previous image's URL, so
+// navigating a directory doesn't keep every decoded bitmap resident.
+const imageUrls = createObjectUrlScope();
+// Guards against a late load of a superseded file resetting the zoom of the
+// image the user is actually looking at.
+let loadToken = 0;
 
 // ── i18n ────────────────────────────────────────────────────────────────
 interface Strings {
@@ -279,11 +287,20 @@ function updateCounter() {
 }
 
 // ── Sibling navigation ──────────────────────────────────────────────────
+let navRequestSeq = 0;
+
 function navigateSibling(direction: SiblingDirection) {
   if (state.siblings.length === 0) return;
   const target = siblingTarget(state.siblings, state.currentPath, direction);
   if (!target || target === state.currentPath) return;
-  window.whaleExt.postMessage({ type: 'requestFile', path: target });
+  // The id lets the host drop a replayed/duplicate navigation request; the
+  // answer arrives as a new tab, so nothing is echoed back here.
+  navRequestSeq += 1;
+  window.whaleExt.postMessage({
+    type: 'requestFile',
+    path: target,
+    requestId: `nav-${navRequestSeq}`,
+  });
   // Optimistically reflect the new position so the counter doesn't lag the
   // network round-trip; the host will echo the actual content next.
   state.currentPath = target;
@@ -347,6 +364,7 @@ function showError(msg: string) {
   errorEl.hidden = false;
   loadingEl.hidden = true;
   imageEl.removeAttribute('src');
+  imageUrls.release();
   setControlsEnabled(false);
 }
 
@@ -368,19 +386,32 @@ function loadFile(filePath: string, content: string) {
   state.flipV = false;
   state.currentPath = filePath;
 
+  loadToken += 1;
+  const token = loadToken;
+
   showLoading();
-  const mime = mimeFor(filePath);
-  const dataUrl = `data:${mime};base64,${content}`;
+  let url: string;
+  try {
+    url = imageUrls.replace(imageBlobFor(content, mimeFor(filePath)));
+  } catch (e) {
+    // A corrupt/host-truncated payload must surface as the viewer's error
+    // state, not as an unhandled exception that leaves the spinner spinning.
+    console.error('[image-viewer] could not decode the image payload:', e);
+    showError(T.errorLoad);
+    return;
+  }
   imageEl.onload = () => {
+    if (token !== loadToken) return;
     hideOverlays();
     setControlsEnabled(true);
     controller.recomputeFitZoom();
     controller.resetToFit();
   };
   imageEl.onerror = () => {
+    if (token !== loadToken) return;
     showError(T.errorLoad);
   };
-  imageEl.src = dataUrl;
+  imageEl.src = url;
 }
 
 // ── Host message dispatch ───────────────────────────────────────────────
@@ -420,4 +451,9 @@ window.whaleExt.onMessage((msg: HostMessage) => {
 applyLocale();
 document.body.setAttribute('data-theme', 'light');
 setControlsEnabled(false);
+// Closing the tab tears the iframe down; revoke the last blob URL instead of
+// leaving the decoded bitmap to the detached document's garbage collector.
+window.addEventListener('pagehide', () => {
+  imageUrls.release();
+});
 window.whaleExt.postMessage({ type: 'ready' });

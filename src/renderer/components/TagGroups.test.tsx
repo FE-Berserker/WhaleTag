@@ -121,4 +121,21 @@ describe('TagGroups accessibility', () => {
       payload: 'g-work',
     });
   });
+
+  it('toggles the group list from the keyboard', () => {
+    const { getByRole } = render(
+      <I18nextProvider i18n={i18next}>
+        <TagGroups />
+      </I18nextProvider>
+    );
+
+    const toggle = getByRole('button', { name: 'Tag groups' });
+    assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+
+    fireEvent.keyDown(toggle, { key: 'Enter' });
+    assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+
+    fireEvent.keyDown(toggle, { key: ' ' });
+    assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  });
 });

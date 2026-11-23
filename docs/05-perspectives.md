@@ -74,7 +74,7 @@ Eisenhower 2×2 四象限 + 底部未分类托盘(**常显**,2026-07-22:空了�
 - **空态引导**:无 scheduled 且 Triage 非空时,空态文案显示 `ganttNoTasksHint`(“把 Triage 卡片拖到时间轴任意一天开始排期”);Triage 托盘首次出现时有 3 秒呼吸描边(`@keyframes whale-gantt-breath` 1.2s × 3 次),标志位 `sessionStorage['whale-gantt-triage-hint-shown']` 每会话一次;清空排期后切走再切回、重新满足条件时会再次提示
 - **柱颜色**:固定 fallback 蓝 `#3b82f6`,**不读任何 tag**(2026-07-06 撤销 tag 派生方案,原因:① `colorFor` 走"tags 数组第一个有色的赢",顺序由用户加标签顺序决定,同文件不同加法颜色不同;② 随手加的无关 tag 排在前面就会抢走柱色,跨职责污染;③ workflow tag 场景下柱色与 lane 底色同色,两层变一层)。`colorFor: (entry: DirEntry) => string` 签名保留(`_entry` 参数不读),未来要复活 bar 独立颜色只换 body、另立项;lane 底色与 bar 色**两层解耦**,传 status 靠 overdue / inProgress 描边角标
 - **数据源** = period 标签(`YYYYMMDD-YYYYMMDD`),**不发明新元数据**
-- **Triage drop** = `onRemoveEntryDateTag(entry)`(清 period)
+- **Triage drop** = `onRemoveEntryDateTags(entries)`(一次批量清 period;host 内部走**一次** `saveMany`,legacy host 才回退逐条 `onRemoveEntryDateTag`)
 - **底部 Triage** 沿用 Matrix `UntaggedTray` 模式(**常显**,2026-07-22:空了显示 `ganttTriageEmpty` 提示而不消失,保留"拖回取消排期"的放置目标)
 
 ## 3. 共享渲染三件套
@@ -110,6 +110,7 @@ Eisenhower 2×2 四象限 + 底部未分类托盘(**常显**,2026-07-22:空了�
 
 - 从标签库 chip 拖到 entry(行 / 卡片 / tile / node / marker)→ 调 `onDropTag`
 - 单文件 / 多选 / 文件夹三种落点都支持
+- 多文件落到**日期维度**(Calendar 日格 `onSetEntryDateTags`、Gantt Triage `onRemoveEntryDateTags`)→ 一次批量回调,host 内部只发**一次** `saveMany`;逐条 `onSetEntryDateTag` / `onRemoveEntryDateTag` 仅作 legacy 兜底(2026-11 gui-audit P1-2,此前 N 条拖拽 = N 次单文件 save + N 次 O(N) 重算)
 - `period:` chip 落 → 弹 `PeriodTagDialog`(详见 [docs/03-tagging.md §7](./03-tagging.md))
 - 只读位置:`canDrop: false` + 工具条 disabled
 

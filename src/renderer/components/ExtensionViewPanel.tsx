@@ -1,10 +1,12 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Box } from '@mui/material';
+import { useSelector } from 'react-redux';
 import ExtensionHost from '-/components/ExtensionHost';
 import ExtensionTabBar from '-/components/ExtensionTabBar';
 import RevisionHistoryDialog from '-/components/RevisionHistoryDialog';
 import { useExtensionContext } from '-/hooks/ExtensionContextProvider';
 import { useDirectoryContent } from '-/hooks/DirectoryContentContextProvider';
+import type { RootState } from '-/reducers';
 import type { DirEntry } from '../../shared/ipc-types';
 
 interface ExtensionViewPanelProps {
@@ -17,26 +19,42 @@ function extOf(name: string): string {
 }
 
 export default function ExtensionViewPanel({ theme }: ExtensionViewPanelProps) {
-  const { tabs, activeTabId, activateTab, closeTab, reloadContent, openFile } =
-    useExtensionContext();
+  const {
+    tabs,
+    activeTabId,
+    activateTab,
+    closeTab,
+    reloadContent,
+    reloadTokens,
+    openFile,
+  } = useExtensionContext();
   const { entries } = useDirectoryContent();
   const [historyOpen, setHistoryOpen] = useState(false);
+  // Restoring a revision replaces the file on disk and forces the editor to
+  // take it — which would throw away an unsaved buffer. The tab's dirty flag
+  // lives in redux, next to the flag ExtensionHost reads for close/save.
+  const activeDirty = useSelector(
+    (s: RootState) => s.extensions.editState[activeTabId ?? '']?.dirty === true
+  );
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
 
   // Sibling paths the active extension can navigate to (e.g. image-viewer's
   // prev/next within the current directory). Only computed for the active tab
   // — background tabs never receive `siblings`/`onRequestFile`, so a hidden
-  // tab can't accidentally navigate.
-  const siblings = useMemo<string[] | undefined>(() => {
-    if (!activeTab) return undefined;
+  // tab can't accidentally navigate. An EMPTY array is meaningful: it tells the
+  // viewer there is nothing to navigate to, and it disables prev/next. (This
+  // used to collapse to `undefined`, so a viewer that had multiple siblings and
+  // then landed in a single-file directory kept its buttons enabled.)
+  const siblings = useMemo<string[]>(() => {
+    if (!activeTab) return [];
     const accept = new Set(activeTab.manifest.fileTypes);
     const out: string[] = [];
     for (const entry of entries) {
       if (entry.isDirectory) continue;
       if (accept.has(extOf(entry.name))) out.push(entry.path);
     }
-    return out.length > 0 ? out : undefined;
+    return out;
   }, [activeTab, entries]);
 
   // Re-open the active tab's extension with a different sibling path (the
@@ -98,6 +116,7 @@ export default function ExtensionViewPanel({ theme }: ExtensionViewPanelProps) {
                 readOnly={tab.readOnly}
                 fileSize={tab.fileSize}
                 siblings={isActive ? siblings : undefined}
+                reloadToken={reloadTokens[tab.id]}
                 theme={theme}
                 onRequestRevisionHistory={() => setHistoryOpen(true)}
                 onRequestFile={isActive ? handleRequestFile : undefined}
@@ -110,9 +129,12 @@ export default function ExtensionViewPanel({ theme }: ExtensionViewPanelProps) {
         <RevisionHistoryDialog
           filePath={activeTab.filePath}
           open={historyOpen}
+          dirty={activeDirty}
           onClose={() => setHistoryOpen(false)}
           onRestored={() => {
-            reloadContent().catch(() => undefined);
+            // reloadContent reports its own failures (notifyApp) and forces the
+            // editor to take the restored bytes even when the tab is dirty.
+            void reloadContent();
           }}
         />
       ) : null}

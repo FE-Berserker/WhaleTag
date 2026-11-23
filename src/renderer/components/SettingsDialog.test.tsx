@@ -25,6 +25,9 @@ const state = {
     showHiddenFiles: false,
     showLunar: false,
     keybindings: {},
+    // Stable reference: FulltextSection's selector falls back to a fresh `[]`,
+    // and its effect would then re-run + setState on every render.
+    fulltextPaths: [],
   },
   locations: { items: [] },
   workflow: { stages: [] },
@@ -47,7 +50,11 @@ function Empty(): null {
   return null;
 }
 
-function renderDialog(section: 'general' | 'keyboard' | 'notifications') {
+function LanSettingsStub() {
+  return <div>LAN pairing content</div>;
+}
+
+function renderDialog(section: 'general' | 'keyboard' | 'notifications' | 'lan') {
   return render(
     <I18nextProvider i18n={i18next}>
       <SettingsDialog open section={section} onClose={() => undefined} />
@@ -78,6 +85,7 @@ before(async () => {
           settings: 'Settings',
           settingsSectionGeneral: 'General',
           settingsSectionKeyboard: 'Keyboard',
+          settingsSectionLan: 'LAN',
           keybindingsHint: 'Choose an action for each key.',
           keybindingsSearch: 'Search shortcuts…',
           resetKeybindings: 'Reset shortcuts',
@@ -107,7 +115,15 @@ before(async () => {
   inject('-/hooks/CurrentLocationContextProvider', {
     useCurrentLocationContext: () => ({ currentLocation: null }),
   });
-  inject('-/services/ipc-api', { ipcApi: {} });
+  inject('-/services/ipc-api', {
+    ipcApi: {
+      // The "advanced" tab renders the full-text index section, which subscribes
+      // to progress and probes each path on mount.
+      onIndexProgress: () => () => undefined,
+      hasFulltextIndex: async () => false,
+      buildFulltextIndex: async () => ({ count: 0 }),
+    },
+  });
   for (const spec of [
     './UpdateSection',
     './UserCommandsSection',
@@ -117,6 +133,7 @@ before(async () => {
   ]) {
     inject(spec, { __esModule: true, default: Empty });
   }
+  inject('./LanSettings', { __esModule: true, default: LanSettingsStub });
 
   SettingsDialog = (await import('./SettingsDialog')).default;
 });
@@ -148,6 +165,51 @@ describe('SettingsDialog accessibility', () => {
     getByRole('switch', { name: 'Show hidden files' });
     getByRole('switch', { name: 'Show lunar calendar' });
     assert.equal(queryByText('Enabled'), null);
+  });
+
+  it('exposes the sections as a vertical tablist and routes to the panel', () => {
+    const { getAllByRole, getByRole, getByText } = renderDialog('lan');
+
+    const tablist = getByRole('tablist', { name: 'Settings' });
+    assert.equal(tablist.getAttribute('aria-orientation'), 'vertical');
+    assert.equal(getAllByRole('tab').length, 11);
+
+    const lanTab = getByRole('tab', { name: 'LAN' });
+    assert.equal(lanTab.getAttribute('aria-selected'), 'true');
+    // Roving tabindex: only the active tab is in the page's tab order.
+    assert.equal(lanTab.getAttribute('tabindex'), '0');
+    assert.equal(lanTab.getAttribute('aria-controls'), 'settings-section-panel');
+    const panel = getByRole('tabpanel');
+    assert.equal(panel.getAttribute('id'), 'settings-section-panel');
+    assert.equal(panel.getAttribute('aria-labelledby'), lanTab.id);
+    getByText('LAN pairing content');
+  });
+
+  it('moves selection with Arrow/Home/End inside the tablist', () => {
+    const view = renderDialog('general');
+    const tabs = view.getAllByRole('tab');
+    assert.equal(tabs[0].getAttribute('aria-selected'), 'true');
+    assert.equal(tabs[0].getAttribute('tabindex'), '0');
+    assert.equal(tabs[1].getAttribute('tabindex'), '-1');
+
+    tabs[0].focus();
+    fireEvent.keyDown(tabs[0], { key: 'ArrowDown' });
+    // Automatic activation: focus and selection move together, so the user
+    // never has to press Enter on a tab they just arrowed to.
+    assert.equal(tabs[1].getAttribute('aria-selected'), 'true');
+    assert.equal(tabs[1].getAttribute('tabindex'), '0');
+    assert.equal(document.activeElement, tabs[1]);
+
+    fireEvent.keyDown(tabs[1], { key: 'End' });
+    assert.equal(tabs[tabs.length - 1].getAttribute('aria-selected'), 'true');
+
+    fireEvent.keyDown(tabs[tabs.length - 1], { key: 'Home' });
+    assert.equal(tabs[0].getAttribute('aria-selected'), 'true');
+    assert.equal(document.activeElement, tabs[0]);
+
+    // Wrapping in both directions keeps the list a closed loop.
+    fireEvent.keyDown(tabs[0], { key: 'ArrowUp' });
+    assert.equal(tabs[tabs.length - 1].getAttribute('aria-selected'), 'true');
   });
 
   it('names the task reminder Switch in the notifications section', () => {

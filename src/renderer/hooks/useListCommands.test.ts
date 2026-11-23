@@ -6,9 +6,11 @@ import {
   affectedTreePathsAfterBatch,
   composeBatchNotice,
   moveValidationError,
+  removeDateTagsFromEntries,
   runBatchWithRefresh,
   saveTagToEntries,
   selectionAfterBatch,
+  setDateTagForEntries,
   summarizeBatchErrors,
   tagMetaSaveManyFailure,
 } from './useListCommands';
@@ -424,5 +426,153 @@ describe('saveTagToEntries', () => {
     });
     assert.equal(logs[0][1], details.errors);
     assert.equal(tagMetaSaveManyFailure(new Error('ordinary failure')), null);
+  });
+});
+
+describe('setDateTagForEntries (P1-2 batch date drop)', () => {
+  it('writes a multi-target date drop with ONE saveMany and swaps date tags', async () => {
+    const a = entry('/a.jpg');
+    const b = entry('/b.jpg');
+    const c = entry('/c.jpg');
+    let saveCalls = 0;
+    const manyCalls: unknown[][] = [];
+    const count = await setDateTagForEntries([a, b, c], '20260202', {
+      save: async () => {
+        saveCalls += 1;
+      },
+      saveMany: async (updates) => {
+        manyCalls.push(updates);
+      },
+      tagsByName: new Map([
+        [a.path, ['keep', '20260101']],
+        [b.path, ['idea']],
+      ]),
+      descByName: new Map([[a.path, 'caption']]),
+      normalize: (tags) => tags,
+    });
+
+    assert.equal(count, 3);
+    assert.equal(saveCalls, 0, 'multi-target drops must not fall back to N saves');
+    assert.equal(manyCalls.length, 1, 'exactly one saveMany round-trip');
+    assert.deepEqual(manyCalls[0], [
+      {
+        entry: a,
+        meta: { tags: ['keep', '20260202'], description: 'caption' },
+      },
+      { entry: b, meta: { tags: ['idea', '20260202'] } },
+      { entry: c, meta: { tags: ['20260202'] } },
+    ]);
+  });
+
+  it('keeps the plain save API for a single-target drop', async () => {
+    const a = entry('/a.jpg');
+    let saveCalls = 0;
+    let saveManyCalls = 0;
+    const count = await setDateTagForEntries([a], '20260202', {
+      save: async () => {
+        saveCalls += 1;
+      },
+      saveMany: async () => {
+        saveManyCalls += 1;
+      },
+      tagsByName: new Map([[a.path, ['keep', '20260101']]]),
+      descByName: new Map(),
+      normalize: (tags) => tags,
+    });
+    assert.equal(count, 1);
+    assert.equal(saveCalls, 1);
+    assert.equal(saveManyCalls, 0);
+  });
+
+  it('writes nothing for an empty drop', async () => {
+    let calls = 0;
+    const count = await setDateTagForEntries([], '20260202', {
+      save: async () => {
+        calls += 1;
+      },
+      saveMany: async () => {
+        calls += 1;
+      },
+      tagsByName: new Map(),
+      descByName: new Map(),
+      normalize: (tags) => tags,
+    });
+    assert.equal(count, 0);
+    assert.equal(calls, 0);
+  });
+});
+
+describe('removeDateTagsFromEntries (P1-2 batch date clear)', () => {
+  it('strips date tags from every target in ONE saveMany, skipping clean entries', async () => {
+    const a = entry('/a.jpg');
+    const b = entry('/b.jpg');
+    const c = entry('/c.jpg');
+    let saveCalls = 0;
+    const manyCalls: unknown[][] = [];
+    const count = await removeDateTagsFromEntries([a, b, c], {
+      save: async () => {
+        saveCalls += 1;
+      },
+      saveMany: async (updates) => {
+        manyCalls.push(updates);
+      },
+      tagsByName: new Map([
+        [a.path, ['keep', '20260101']],
+        [b.path, ['no-date']],
+        [c.path, ['20260101-20260103', 'idea']],
+      ]),
+      descByName: new Map([[c.path, 'caption']]),
+      normalize: (tags) => tags,
+    });
+
+    assert.equal(count, 2);
+    assert.equal(saveCalls, 0);
+    assert.equal(manyCalls.length, 1);
+    assert.deepEqual(manyCalls[0], [
+      { entry: a, meta: { tags: ['keep'] } },
+      { entry: c, meta: { tags: ['idea'], description: 'caption' } },
+    ]);
+  });
+
+  it('uses one save for a single dated target', async () => {
+    const a = entry('/a.jpg');
+    let saveCalls = 0;
+    let saveManyCalls = 0;
+    const count = await removeDateTagsFromEntries([a], {
+      save: async () => {
+        saveCalls += 1;
+      },
+      saveMany: async () => {
+        saveManyCalls += 1;
+      },
+      tagsByName: new Map([[a.path, ['keep', '20260101']]]),
+      descByName: new Map(),
+      normalize: (tags) => tags,
+    });
+    assert.equal(count, 1);
+    assert.equal(saveCalls, 1);
+    assert.equal(saveManyCalls, 0);
+  });
+
+  it('skips the write when no target carries a date tag', async () => {
+    const a = entry('/a.jpg');
+    const b = entry('/b.jpg');
+    let calls = 0;
+    const count = await removeDateTagsFromEntries([a, b], {
+      save: async () => {
+        calls += 1;
+      },
+      saveMany: async () => {
+        calls += 1;
+      },
+      tagsByName: new Map([
+        [a.path, ['plain']],
+        [b.path, []],
+      ]),
+      descByName: new Map(),
+      normalize: (tags) => tags,
+    });
+    assert.equal(count, 0);
+    assert.equal(calls, 0);
   });
 });

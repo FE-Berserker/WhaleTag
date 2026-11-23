@@ -1,10 +1,13 @@
 import { createStore } from 'redux';
 import { persistReducer, persistStore, createTransform } from 'redux-persist';
 
+import i18n from '-/i18n';
+import { notifyApp } from '-/services/app-notice';
 import rootReducer, { RootState } from '-/reducers';
 import { ExtensionsState } from '-/reducers/extensions';
 import { flushExtensionEditors } from '-/services/extension-save-flush';
-import mainProcessStorage from './storage';
+import mainProcessStorage, { setPersistFailureHandler } from './storage';
+import { createPersistFailureReporter } from './persist-failure';
 
 /**
  * redux-persist: survives app restarts by writing whitelisted slices to a
@@ -49,6 +52,11 @@ const persistConfig = {
     'extensions',
   ] as string[],
   transforms: [extensionsTransform],
+  // Coalesce bursts (typing in the text editor dispatches edit-state updates
+  // per keystroke). Without this every dispatch re-serialized the whole root
+  // and rewrote the file; the transform already strips editState, but the
+  // persistoid still wrote the identical bytes each time.
+  throttle: 1000,
   // v2: drop the removed `ai` slice from any pre-0.5.0 persisted root. The
   // settings-level `ai*` fields are stripped separately by the settings
   // reducer (see stripRemovedAiFields in reducers/settings.ts) because
@@ -63,10 +71,8 @@ const persistConfig = {
     }
     return Promise.resolve(state as Record<string, unknown>);
   },
-  // Verbose redux-persist logging in dev; off in production. The console
-  // errors added in storage.ts and persist-storage.ts cover the production
-  // case (a corrupt file surfaces in DevTools instead of silently
-  // downgrading the user to defaults).
+  // Verbose redux-persist logging in dev; off in production. The explicit
+  // failure reporter below is what surfaces errors to the user in production.
   debug: process.env.NODE_ENV === 'development',
 };
 
@@ -77,6 +83,17 @@ const persistedReducer = persistReducer(persistConfig, rootReducer);
 // the middleware was dead weight on every dispatch.
 export const store = createStore(persistedReducer);
 export const persistor = persistStore(store);
+
+// A failed rehydrate read must never overwrite the existing blob with reducer
+// defaults. Pausing the persistor here happens before redux-persist's REHYDRATE
+// handler calls `conditionalUpdate`, so the default state stays in memory only.
+const reportPersistFailure = createPersistFailureReporter({
+  pause: () => persistor.pause(),
+  notify: notifyApp,
+  translate: (key) => String(i18n.t(key)),
+  log: (message, error) => console.error(message, error),
+});
+setPersistFailureHandler(reportPersistFailure);
 
 // Ensure pending redux-persist writes are flushed before the window unloads.
 // The main process intercepts the close event and asks the renderer to flush.

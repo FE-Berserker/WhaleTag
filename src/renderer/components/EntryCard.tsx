@@ -10,7 +10,7 @@ import {
   type TagDragItem,
 } from '-/services/dnd';
 import { stripTagsFromName } from '-/services/tags';
-import type { FileCellData } from '-/components/file-cell';
+import { lookupEntryIndex, type FileCellData } from '-/components/file-cell';
 import ThumbIcon from '-/components/ThumbIcon';
 import EntryTagChips from '-/components/EntryTagChips';
 import { EMPTY_ARR } from '-/constants';
@@ -203,7 +203,8 @@ function EntryCardBase({
       onOpen(entry);
     } else if (e.key === ' ') {
       e.preventDefault();
-      const index = entries.findIndex((x) => x.path === entry.path);
+      // P2-8: O(1) through the host's path→index map (was a per-press scan).
+      const index = lookupEntryIndex(data, entry.path);
       if (index >= 0) {
         onSelectRow(index, { shift: false, toggle: true });
       }
@@ -230,7 +231,8 @@ function EntryCardBase({
       title={entry.name}
       data-entry-path={entry.path}
       onClick={(e) => {
-        const index = entries.findIndex((x) => x.path === entry.path);
+        // P2-8: O(1) through the host's path→index map (was a scan per click).
+        const index = lookupEntryIndex(data, entry.path);
         if (index >= 0) {
           onSelectRow(index, {
             shift: e.shiftKey,

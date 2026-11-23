@@ -6,6 +6,7 @@ import { useConfirm } from '-/components/ConfirmDialogProvider';
 import type { DirEntry } from '../../shared/ipc-types';
 import { ipcApi } from '-/services/ipc-api';
 import { joinPath, isSameOrDescendant, parentDir } from '-/services/path-util';
+import { isDateTypedTag } from '../domain/calendar';
 import type { IOActionOptions } from './IOActionsContextProvider';
 import type { TagMetaSaveManyError } from './TagMetaContextProvider';
 import {
@@ -320,6 +321,95 @@ export async function saveTagToEntries(
       entry,
       meta: {
         tags: deps.normalize([...current, resolvedTag]),
+        ...(description ? { description } : {}),
+      },
+    });
+  }
+  if (updates.length === 0) return 0;
+  if (targets.length === 1) {
+    await deps.save(updates[0].entry, updates[0].meta);
+  } else {
+    await deps.saveMany(updates);
+  }
+  return updates.length;
+}
+
+/**
+ * P1-2 (gui-audit 2026-11): persist one logical multi-entry date-tag drop
+ * (Calendar day cell). Every target keeps its non-date tags and gets
+ * `dateKey` swapped in — same rule as the single-entry
+ * `handleSetEntryDateTag`. A multi-target drop is written with ONE
+ * `saveMany` round-trip instead of N single-entry `save` calls (each of which
+ * separately re-read the sidecar and recomputed the listing); the
+ * single-target case keeps the plain `save` API.
+ *
+ * Returns the number of sidecars written (0 for an empty drop). Write
+ * failures propagate to the caller so the host can surface the notice.
+ */
+export async function setDateTagForEntries(
+  targets: readonly DirEntry[],
+  dateKey: string,
+  deps: Pick<
+    ListCommandsDeps,
+    'save' | 'saveMany' | 'tagsByName' | 'descByName' | 'normalize'
+  >
+): Promise<number> {
+  const updates: {
+    entry: DirEntry;
+    meta: { tags: string[]; description?: string };
+  }[] = [];
+  for (const entry of targets) {
+    const current = deps.tagsByName.get(entry.path) ?? [];
+    const kept = current.filter((tag) => !isDateTypedTag(tag));
+    const description = deps.descByName.get(entry.path);
+    updates.push({
+      entry,
+      meta: {
+        // No no-op skip here: setting the date is an explicit "make this the
+        // date", matching the single-entry handler's behavior (idempotent
+        // write). Non-date tags are preserved, exactly like the single path.
+        tags: deps.normalize([...kept, dateKey]),
+        ...(description ? { description } : {}),
+      },
+    });
+  }
+  if (updates.length === 0) return 0;
+  if (targets.length === 1) {
+    await deps.save(updates[0].entry, updates[0].meta);
+  } else {
+    await deps.saveMany(updates);
+  }
+  return updates.length;
+}
+
+/**
+ * P1-2 (gui-audit 2026-11): batch companion of `setDateTagForEntries` for
+ * drops that clear the date (Gantt Triage). Entries that carry no date tag
+ * are skipped (no sidecar write), mirroring the single-entry
+ * `handleRemoveEntryDateTag` no-op guard — a drop where every entry is
+ * already clean writes nothing. Multi-target writes go through ONE
+ * `saveMany`.
+ */
+export async function removeDateTagsFromEntries(
+  targets: readonly DirEntry[],
+  deps: Pick<
+    ListCommandsDeps,
+    'save' | 'saveMany' | 'tagsByName' | 'descByName' | 'normalize'
+  >
+): Promise<number> {
+  const updates: {
+    entry: DirEntry;
+    meta: { tags: string[]; description?: string };
+  }[] = [];
+  for (const entry of targets) {
+    const current = deps.tagsByName.get(entry.path) ?? [];
+    const kept = current.filter((tag) => !isDateTypedTag(tag));
+    if (kept.length === current.length) continue;
+    const description = deps.descByName.get(entry.path);
+    updates.push({
+      entry,
+      meta: {
+        tags: deps.normalize(kept),
         ...(description ? { description } : {}),
       },
     });

@@ -8,6 +8,8 @@
 
 > **归档**:0.4.9 瘦身移除的 office / CAD / 电子书 / 压缩包 / pdf-viewer / md-editor / AI 助手模块,其专属性能项(soffice·ebook·dwg2dxf 异步探测、office→PDF 字节桥、office-viewer 冷转码占位与滚动同步、LibreOffice UNO 常驻进程、pdf-viewer 字节桥、AI 流式去重)已随代码一并删除,不再追踪,通用教训保留在文末「可复用范式」。
 
+> **2026-11-23 GUI 审核 P2 视图性能修复**:稳定 `columnLabels`/`commandsDeps`/`cellData` 引用以恢复 memo,目录树缓存原始列表、把隐藏过滤下沉到行构建,MediaLightbox 键盘监听不再随缩放重绑,Mapique 删除多余 forceRender,Calendar 的 DayCell/常量数组 memo 化,KnowledgeGraph 的 prefs 写入只在切位置/卸载各一次,四视图的新增/删除/拖拽统一走 `lookupEntry`/`lookupEntryIndex` 的 O(1) 查找;GridCell/PropertiesTray 与 Row 统一 `listDateFormat`。实现细节见对应组件注释。
+
 ---
 
 ## 🔴 Tier 0 — 最大收益

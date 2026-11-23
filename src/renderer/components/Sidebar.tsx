@@ -94,6 +94,7 @@ export function SidebarActionsBar() {
       <Tooltip title={t('openTrash')}>
         <IconButton
           size="small"
+          aria-label={t('openTrash')}
           onClick={() =>
             void ipcApi.openTrash().catch((e) =>
               notifyApp(t('operationFailed', { message: errorMessage(e) }))
@@ -145,6 +146,7 @@ export function SidebarActionsBar() {
         <IconButton
           size="small"
           data-testid="settings-button"
+          aria-label={t('settings')}
           onClick={() => {
             openSettings();
           }}
@@ -224,80 +226,102 @@ function LocationRow({
   drag(drop(ref));
 
   return (
-    <ListItemButton
+    // The row is a plain flex container, NOT a button. The delete affordance
+    // used to be an IconButton nested inside the row's ListItemButton — invalid
+    // nested interactive content: one focus stop held two actions, and a
+    // screen-reader/keyboard activation of the inner button could also open the
+    // location. As a sibling, each control gets its own focus stop and its own
+    // activation handler; right-click still opens the row menu everywhere
+    // because the handler sits on the wrapper.
+    <Box
       ref={ref}
       data-loc-row="true"
-      selected={selected}
-      onClick={onOpen}
       onContextMenu={onContextMenu}
       sx={{
+        display: 'flex',
+        alignItems: 'center',
         cursor: 'grab',
         opacity: isDragging ? 0.4 : 1,
-        // Suppress MUI ListItemButton's default selected / hover / active / focus
-        // background tints — user reports a persistent grey shadow on the
-        // selected location row. Current location is signalled by the folder
-        // icon (open vs closed) + the breadcrumb in the file area instead of
-        // a row tint. Focus keeps a primary outline so keyboard navigation
-        // stays visible without re-introducing the grey wash.
-        '&.Mui-selected, &.Mui-selected:hover, &:hover, &:active, &:focus, &.Mui-focusVisible':
-          { backgroundColor: 'transparent' },
-        '&.Mui-focusVisible': {
-          outline: 2,
-          outlineColor: 'primary.main',
-          outlineStyle: 'solid',
-          outlineOffset: -2,
-        },
       }}
     >
-      <ListItemIcon>
-        {selected ? <FolderOpenIcon color="primary" /> : <FolderIcon />}
-      </ListItemIcon>
-      <ListItemText
-        primary={loc.name}
-        secondary={loc.path}
-        slotProps={{
-          primary: { noWrap: true },
-          secondary: { noWrap: true, sx: { fontSize: 11 } },
+      <ListItemButton
+        selected={selected}
+        onClick={onOpen}
+        sx={{
+          flex: 1,
+          minWidth: 0,
+          cursor: 'grab',
+          // Suppress MUI ListItemButton's default selected / hover / active / focus
+          // background tints — user reports a persistent grey shadow on the
+          // selected location row. Current location is signalled by the folder
+          // icon (open vs closed) + the breadcrumb in the file area instead of
+          // a row tint. Focus keeps a primary outline so keyboard navigation
+          // stays visible without re-introducing the grey wash.
+          '&.Mui-selected, &.Mui-selected:hover, &:hover, &:active, &:focus, &.Mui-focusVisible':
+            { backgroundColor: 'transparent' },
+          '&.Mui-focusVisible': {
+            outline: 2,
+            outlineColor: 'primary.main',
+            outlineStyle: 'solid',
+            outlineOffset: -2,
+          },
         }}
-      />
-      {isTaskReminder ? (
-        <Tooltip title={t('taskReminder')}>
-          <NotificationsActiveIcon
-            fontSize="small"
-            color="warning"
-            sx={{ mr: 0.5, flexShrink: 0 }}
-          />
-        </Tooltip>
-      ) : null}
-      {isDefault ? (
-        <Tooltip title={t('defaultLocation')}>
-          <StarIcon
-            fontSize="small"
-            color="primary"
-            sx={{ mr: 0.5, flexShrink: 0 }}
-          />
-        </Tooltip>
-      ) : null}
-      {isReadOnly ? (
-        // Color distinct from the warning + primary pair so the three
-        // indicators read as a horizontal strip of "what is special about
-        // this row": gold star = default, orange bell = task reminder,
-        // grey closed lock = read-only.
-        <Tooltip title={t('readOnly')}>
-          <LockOutlinedIcon
-            fontSize="small"
-            color="disabled"
-            sx={{ mr: 0.5, flexShrink: 0 }}
-            data-testid={`sidebar-row-readonly-${loc.id}`}
-          />
-        </Tooltip>
-      ) : null}
+      >
+        <ListItemIcon>
+          {selected ? <FolderOpenIcon color="primary" /> : <FolderIcon />}
+        </ListItemIcon>
+        <ListItemText
+          primary={loc.name}
+          secondary={loc.path}
+          slotProps={{
+            primary: { noWrap: true },
+            secondary: { noWrap: true, sx: { fontSize: 11 } },
+          }}
+        />
+        {isTaskReminder ? (
+          <Tooltip title={t('taskReminder')}>
+            <NotificationsActiveIcon
+              fontSize="small"
+              color="warning"
+              sx={{ mr: 0.5, flexShrink: 0 }}
+            />
+          </Tooltip>
+        ) : null}
+        {isDefault ? (
+          <Tooltip title={t('defaultLocation')}>
+            <StarIcon
+              fontSize="small"
+              color="primary"
+              sx={{ mr: 0.5, flexShrink: 0 }}
+            />
+          </Tooltip>
+        ) : null}
+        {isReadOnly ? (
+          // Color distinct from the warning + primary pair so the three
+          // indicators read as a horizontal strip of "what is special about
+          // this row": gold star = default, orange bell = task reminder,
+          // grey closed lock = read-only.
+          <Tooltip title={t('readOnly')}>
+            <LockOutlinedIcon
+              fontSize="small"
+              color="disabled"
+              sx={{ mr: 0.5, flexShrink: 0 }}
+              data-testid={`sidebar-row-readonly-${loc.id}`}
+            />
+          </Tooltip>
+        ) : null}
+      </ListItemButton>
       <Tooltip title={t('remove')}>
-        <IconButton edge="end" size="small" onClick={onRemove}>
+        <IconButton
+          size="small"
+          aria-label={t('remove')}
+          onClick={onRemove}
+          sx={{ ml: 0.5, mr: 0.5, flexShrink: 0 }}
+        >
           <DeleteOutlineIcon fontSize="small" />
         </IconButton>
       </Tooltip>
-    </ListItemButton>
+    </Box>
   );
 }
 
@@ -443,7 +467,10 @@ export default function Sidebar({ onAddLocation, embedded = false }: SidebarProp
             {t('noLocationsHint')}
           </Typography>
         ) : (
-          <List dense>
+          /* Rows are Boxes (drag + context-menu target) wrapping a ListItemButton,
+             not <li>s, so render the List as a div: a <ul> with <div> children is
+             invalid markup and confuses some screen readers' list navigation. */
+          <List dense component="div">
             {items.map((loc, index) => (
               <LocationRow
                 key={loc.id}

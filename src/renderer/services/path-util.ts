@@ -53,20 +53,75 @@ export function parentDir(p: string): string {
   return parentNorm;
 }
 
-/** Returns true if `candidate` is the same as or inside `ancestor`. */
-export function isSameOrDescendant(ancestor: string, candidate: string): boolean {
-  // Normalise case as well as separators. This is a UI helper (the real
-  // security boundary lives in the main process), but on Windows/macOS-style
-  // case-insensitive filesystems it prevents false negatives when comparing
-  // paths that differ only in casing.
-  const normAncestor = ancestor
-    .replace(/\\/g, '/')
-    .replace(/\/$/, '')
-    .toLowerCase();
-  const normCandidate = candidate
-    .replace(/\\/g, '/')
-    .replace(/\/$/, '')
-    .toLowerCase();
+/**
+ * Best-effort platform of the renderer, for filesystem-case policy only.
+ *
+ * The renderer bundle targets `web` (no Node `process`), so we cannot rely on
+ * `process.platform` being present. Two sources, in order:
+ *  1. `globalThis.process.platform` — present under Electron's renderer via
+ *     preload/node integration in dev, and under `node:test` (the whole test
+ *     suite runs inside Electron `--test`, where it is a real Node process).
+ *  2. `navigator.userAgent` — same sniffing approach as MenuNoTransition.tsx.
+ *
+ * Returns `undefined` when neither source is usable; callers then assume a
+ * case-sensitive filesystem (the conservative choice: it only risks a false
+ * negative on a case-insensitive disk, never a false positive).
+ */
+function resolveRendererPlatform(): string | undefined {
+  const nodeProcess = (
+    globalThis as { process?: { platform?: unknown } }
+  ).process;
+  if (nodeProcess && typeof nodeProcess.platform === 'string') {
+    return nodeProcess.platform;
+  }
+  if (typeof navigator !== 'undefined') {
+    const ua = navigator.userAgent ?? '';
+    if (/Windows NT/i.test(ua)) return 'win32';
+    if (/Macintosh|Mac OS X/i.test(ua)) return 'darwin';
+    if (/Linux|X11/i.test(ua)) return 'linux';
+  }
+  return undefined;
+}
+
+/**
+ * True when `platform` (Node-style, e.g. `'win32'`) usually has a
+ * case-insensitive filesystem — same policy as the main process
+ * `CASE_INSENSITIVE_FS` in src/main/path-fold.ts.
+ */
+export function isCaseInsensitivePlatform(
+  platform: string | undefined
+): boolean {
+  return platform === 'win32' || platform === 'darwin';
+}
+
+/**
+ * Renderer mirror of the main process `CASE_INSENSITIVE_FS` (src/main/path-fold.ts):
+ * Windows/macOS fold case, Linux does not. Keeping the two in sync matters —
+ * an always-lowercase comparison here would accept `/home/u/Photos` for a root
+ * of `/home/u/photos` on Linux, disagreeing with the main process guard.
+ */
+export const CASE_INSENSITIVE_FS = isCaseInsensitivePlatform(
+  resolveRendererPlatform()
+);
+
+/**
+ * Returns true if `candidate` is the same as or inside `ancestor`.
+ *
+ * This is a UI helper (the real security boundary lives in the main process).
+ * Case is folded only on case-insensitive filesystems so the verdict matches
+ * the main process; `caseInsensitive` is an explicit seam for tests.
+ */
+export function isSameOrDescendant(
+  ancestor: string,
+  candidate: string,
+  caseInsensitive: boolean = CASE_INSENSITIVE_FS
+): boolean {
+  const fold = (p: string): string => {
+    const normalized = p.replace(/\\/g, '/').replace(/\/$/, '');
+    return caseInsensitive ? normalized.toLowerCase() : normalized;
+  };
+  const normAncestor = fold(ancestor);
+  const normCandidate = fold(candidate);
   return (
     normCandidate === normAncestor ||
     normCandidate.startsWith(normAncestor + '/')

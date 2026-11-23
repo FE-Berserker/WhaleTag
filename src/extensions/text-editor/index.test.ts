@@ -5,6 +5,7 @@ import { createRequire } from 'module';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { EditorView } from '@codemirror/view';
+import { SearchQuery, setSearchQuery } from '@codemirror/search';
 import type { HostMessage } from '../../shared/extension-types';
 import type {} from '../shared/whale-ext';
 
@@ -23,6 +24,14 @@ let jsdomCleanup: (() => void) | null = null;
 
 function emitHost(msg: HostMessage): void {
   listeners.forEach((listener) => listener(msg));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function contentChangedMessages(): PostedMessage[] {
+  return posted.filter((msg) => msg.type === 'contentChangedInEditor');
 }
 
 describe('text-editor revision-aware saves', () => {
@@ -76,16 +85,16 @@ describe('text-editor revision-aware saves', () => {
     const editor = EditorView.findFromDOM(container);
     assert.ok(editor);
     assert.equal(editor.state.doc.toString(), 'disk');
-    assert.deepEqual(posted.at(-1), {
-      type: 'contentChangedInEditor',
-      path,
-      dirty: false,
-      revision: 0,
-    });
+    // Loading a clean file must not report dirty: reports are edge-triggered.
+    assert.deepEqual(contentChangedMessages(), []);
 
     editor.dispatch({ changes: { from: 4, insert: ' one' } });
-    assert.equal(posted.at(-1)?.revision, 1);
-    assert.equal(posted.at(-1)?.dirty, true);
+    assert.deepEqual(contentChangedMessages().at(-1), {
+      type: 'contentChangedInEditor',
+      path,
+      dirty: true,
+      revision: 1,
+    });
     emitHost({ type: 'requestSave', path });
     assert.deepEqual(posted.at(-1), {
       type: 'parentSaveDocument',
@@ -94,8 +103,15 @@ describe('text-editor revision-aware saves', () => {
       revision: 1,
     });
 
+    // While the save is in flight the host needs the newest revision even
+    // though the dirty flag does not change (stale-ack guard).
     editor.dispatch({ changes: { from: 8, insert: ' two' } });
-    assert.equal(posted.at(-1)?.revision, 2);
+    assert.deepEqual(contentChangedMessages().at(-1), {
+      type: 'contentChangedInEditor',
+      path,
+      dirty: true,
+      revision: 2,
+    });
     emitHost({ type: 'savingFile', path, revision: 1 });
     assert.equal(posted.at(-1)?.dirty, true, 'stale ack must not clear revision 2');
 
@@ -126,5 +142,51 @@ describe('text-editor revision-aware saves', () => {
       dirty: false,
       revision: 2,
     });
+  });
+
+  it('posts dirty only on transitions and debounces the match count', async () => {
+    emitHost({
+      type: 'fileContent',
+      path: '/tmp/matches.txt',
+      content: 'aaa',
+      encoding: 'utf8',
+      readOnly: false,
+    });
+
+    const container = document.getElementById('editor');
+    assert.ok(container);
+    const editor = EditorView.findFromDOM(container);
+    assert.ok(editor);
+    assert.equal(editor.state.doc.toString(), 'aaa');
+
+    // First edit: false -> true edge, exactly one report.
+    const before = contentChangedMessages().length;
+    editor.dispatch({ changes: { from: 3, insert: 'b' } });
+    assert.equal(contentChangedMessages().length, before + 1);
+    assert.equal(contentChangedMessages().at(-1)?.dirty, true);
+
+    // Two more keystrokes on an already-dirty buffer: no extra messages (the
+    // old code posted dirty:true on every keystroke and re-rendered the host).
+    editor.dispatch({ changes: { from: 4, insert: 'c' } });
+    editor.dispatch({ changes: { from: 5, insert: 'd' } });
+    assert.equal(
+      contentChangedMessages().length,
+      before + 1,
+      'same-dirty keystrokes must not post'
+    );
+
+    // Match count is debounced instead of stringifying the doc per keystroke.
+    const matchesEl = document.getElementById('status-matches');
+    assert.ok(matchesEl);
+    editor.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: 'a' })) });
+    editor.dispatch({ selection: { anchor: 1 } });
+    assert.equal(matchesEl.textContent, '—', 'count is not recomputed synchronously');
+    await sleep(260);
+    assert.equal(matchesEl.textContent, '3');
+
+    editor.dispatch({ changes: { from: editor.state.doc.length, insert: 'a' } });
+    assert.equal(matchesEl.textContent, '3', 'a keystroke must not recount immediately');
+    await sleep(260);
+    assert.equal(matchesEl.textContent, '4');
   });
 });

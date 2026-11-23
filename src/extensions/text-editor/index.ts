@@ -60,16 +60,32 @@ let currentEncoding: 'utf8' | 'base64' = 'utf8';
 let revision = 0;
 let dirty = false;
 let applyingFileContent = false;
+// True between `parentSaveDocument` and the host's `savingFile` ack. Used to
+// keep the host's revision view fresh while a write is in flight: edits made
+// during that window must not be mistaken for a completed save. Outside the
+// window dirty reports are edge-triggered (see postDirty), so typing does not
+// post a message per keystroke.
+let saveInFlight = false;
 
+/** Post the current dirty flag + revision. */
+function sendDirtySnapshot() {
+ if (!currentPath) return;
+ window.whaleExt.postMessage({
+  type: 'contentChangedInEditor',
+  path: currentPath,
+  dirty,
+  revision,
+ });
+}
+
+/** Report a dirty transition. Same-value reports are suppressed — a keystroke
+ * burst on an already-dirty document posts nothing (the old code posted
+ * `dirty:true` on every single keystroke, re-rendering the host each time). */
 function postDirty(nextDirty: boolean) {
  if (!currentPath) return;
+ if (nextDirty === dirty) return;
  dirty = nextDirty;
- window.whaleExt.postMessage({
- type: 'contentChangedInEditor',
- path: currentPath,
- dirty,
- revision,
- });
+ sendDirtySnapshot();
 }
 
 const themeCompartment = new Compartment();
@@ -460,6 +476,20 @@ function updateMatchesField() {
  replaceAllBtn.disabled = count === 0;
 }
 
+// Typing must not stringify the whole document + run the search regex on every
+// keystroke. Coalesce match-count refreshes per burst; 200ms stays below the
+// ~250ms perception threshold.
+const MATCHES_DEBOUNCE_MS = 200;
+let matchesTimer: ReturnType<typeof setTimeout> | undefined;
+
+function scheduleMatchesUpdate() {
+ if (matchesTimer !== undefined) clearTimeout(matchesTimer);
+ matchesTimer = setTimeout(() => {
+ matchesTimer = undefined;
+ updateMatchesField();
+ }, MATCHES_DEBOUNCE_MS);
+}
+
 // --- Fold button state --------------------------------------------------
 
 function updateFoldButtonsState() {
@@ -502,7 +532,7 @@ function updateStatusBar() {
  // Matches + fold buttons are also "status" in a broad sense — refresh
  // them here so any state change (doc edit, query change) keeps them in
  // sync without the listener having to track multiple update shapes.
- updateMatchesField();
+ scheduleMatchesUpdate();
  updateFoldButtonsState();
 }
 
@@ -515,7 +545,12 @@ function makeUpdateListener() {
  // docChanged === false, so they don't trigger spurious dirty bits.
  if (update.docChanged && currentPath && !applyingFileContent) {
  revision += 1;
+ const wasDirty = dirty;
  postDirty(true);
+ // While a save is in flight the host still needs the newest revision to
+ // detect "edits arrived after parentSaveDocument"; send a snapshot even
+ // though dirty did not change. This window is short (one disk write).
+ if (saveInFlight && wasDirty) sendDirtySnapshot();
  }
  // Replace-all toast (catches replace-alls triggered from the search
  // panel itself, not just the toolbar button). CM's replaceAll uses
@@ -548,6 +583,7 @@ const saveKeymap = keymap.of([
  run: () => {
  if (!currentPath || !view) return false;
  if (view.state.readOnly) return false;
+ saveInFlight = true;
  window.whaleExt.postMessage({
  type: 'parentSaveDocument',
  path: currentPath,
@@ -746,6 +782,7 @@ function handleMessage(msg: HostMessage) {
  switch (msg.type) {
  case 'fileContent': {
  const switchedFile = currentPath !== msg.path;
+ saveInFlight = false;
  currentPath = msg.path;
  currentEncoding = msg.encoding;
  if (!view) {
@@ -762,8 +799,10 @@ function handleMessage(msg: HostMessage) {
  });
  }
  // A same-path fileContent may be a legacy host's readOnly refresh. Never
- // replace unsaved editor text with that older disk snapshot.
- const shouldLoadContent = switchedFile || !dirty;
+ // replace unsaved editor text with that older disk snapshot — unless the host
+ // sets `force` (revision restore: the user explicitly agreed that the dirty
+ // buffer is expendable and the restored file wins).
+ const shouldLoadContent = msg.force === true || switchedFile || !dirty;
  // A same-path refresh of a clean buffer DOES replace the text (external
  // change on disk). Drop the history here too: otherwise Ctrl+Z restored the
  // pre-reload buffer, and the next save wrote that stale text back over the
@@ -796,6 +835,7 @@ function handleMessage(msg: HostMessage) {
  setReadOnly(msg.readOnly);
  break;
  case 'savingFile':
+ saveInFlight = false;
  if (
  msg.path === currentPath &&
  isSaveAckCurrent(msg.revision, revision)
@@ -805,6 +845,7 @@ function handleMessage(msg: HostMessage) {
  break;
  case 'requestSave':
  if (currentPath && view && !view.state.readOnly) {
+ saveInFlight = true;
  window.whaleExt.postMessage({
  type: 'parentSaveDocument',
  path: currentPath,

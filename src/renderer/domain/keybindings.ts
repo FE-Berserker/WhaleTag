@@ -87,13 +87,14 @@ const VALID_ACTIONS: ReadonlySet<KeyAction> = new Set(
 );
 
 /** Default key→action bindings. This is what a fresh install (and the
- *  "Reset to defaults" button) uses. */
+ *  "Reset to defaults" button) uses. `Tab` is deliberately unbound: binding it
+ *  to `switchView` trapped focus in the file list (WCAG 2.1.2); users can still
+ *  assign it explicitly in Settings. */
 export const DEFAULT_KEYBINDINGS: Record<string, KeyAction> = {
   ArrowUp: 'navigateUp',
   ArrowDown: 'navigateDown',
   ArrowLeft: 'back',
   ArrowRight: 'open',
-  Tab: 'switchView',
   Enter: 'open',
   Space: 'toggleSelect',
   Escape: 'clearSelection',

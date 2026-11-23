@@ -78,7 +78,7 @@ folder/
 
 - **所有 FS 操作** = `invoke('fs:*' | 'sidecar:*' | 'thumbnail:*' | ...)`
 - **主进程 → 渲染层事件**:`index:progress` / `fs:dirChanged` / `window:maximizeChange` / `app:update-*` / `app:request-flush`,preload 各自暴露 `onX(cb)` 返回 unsubscribe。**均为固定通道,不泛化整桥**
-- **redux-persist**:`persistRead/Write/DeleteSync` 等同步 IPC(走主进程 `writeFileSync(.tmp) + renameSync`,Chromium localStorage 异步 flush 在 OS 强杀 / 3s close-fallback 时会丢数据)
+- **redux-persist**:`persistRead/persistWrite/persistDelete` 异步 IPC(主进程 `writeFile(.tmp) + rename` + `datasync`;Chromium localStorage 异步 flush 在 OS 强杀 / 3s close-fallback 时会丢数据)。读失败上抛并暂停自动保存,写盘每会话保留一份 `.bak`;详见 [docs/02-file-io.md §8](./02-file-io.md)
 
 ## 6. 状态管理
 
@@ -102,13 +102,14 @@ CurrentLocation → DirectoryContent → DirectoryTreeRefresh → IOActions
 - 所有文件 IO 集中在 [src/main/ipc/](../src/main/ipc/)(按域拆分:fs-read / fs-write / fs-roots / dialogs / shell / search-index / meta / thumbnails / extensions / window / persist),写操作经 `assertWithinAllowedRoot` 限制在已注册位置内
 - 扩展 iframe sandbox = `allow-same-origin allow-scripts allow-modals allow-downloads`;主进程只接受 `event.source === iframe.contentWindow` 的消息
 - 外部链接走 `shell.openExternal` / 系统浏览器,不在扩展内跳转
+- 局域网只读访问(docs/22)是**另一个**网络面:主进程在临时端口上开 HTTP 服务,只接受私网来源与字面 IP 的 Host,只提供只读 API 与 `dist/mobile` 静态资源;它不复用 `whale-file://` 协议、也不经过 `window.whale` 桥,写 / 删 / 打标路径一概不存在
 
 ## 8. 构建 / 打包
 
 ```bash
 npm install          # 含原生模块(better-sqlite3 / sharp / @napi-rs/canvas)需 @electron/rebuild
-npm run dev          # main watch + 渲染层 dev server(:4002) + electronmon
-npm run build        # 生产构建 → release/app/dist/{main,renderer,extensions}
+npm run dev          # main watch + 渲染层 dev server(:4002) + mobile watch + electronmon
+npm run build        # 生产构建 → release/app/dist/{main,renderer,extensions,mobile}
 npm start            # 跑生产构建
 npm run package      # electron-builder 当前平台
 npm run package:win  # NSIS / :mac DMG / :linux AppImage
@@ -117,9 +118,9 @@ npm run type-check   # tsc --noEmit
 npm test             # node:test 经 electron
 ```
 
-`.erb/configs/webpack.config.{main,renderer}.{dev,prod}.ts` 多目标;原生模块靠 webpack externals + builder `asarUnpack`。基础配置在 [`webpack.config.base.ts`](../.erb/configs/webpack.config.base.ts) 的 `createBase({ esnext })`——**仅 renderer 传 `esnext: true`**(让动态 `import()` 成为分割点);**主进程 / 扩展必须 CommonJS**(ESM 下 webpack 会把 `createRequire(__filename)` stub 成 undefined,详见 [docs/09 §19](./09-known-issues.md))。
+`.erb/configs/webpack.config.{main,renderer,mobile}.{dev,prod}.ts` 多目标;原生模块靠 webpack externals + builder `asarUnpack`。基础配置在 [`webpack.config.base.ts`](../.erb/configs/webpack.config.base.ts) 的 `createBase({ esnext })`——**renderer 与 mobile 传 `esnext: true`**(让动态 `import()` 成为分割点);**主进程 / 扩展必须 CommonJS**(ESM 下 webpack 会把 `createRequire(__filename)` stub 成 undefined,详见 [docs/09 §19](./09-known-issues.md))。移动端是独立的浏览器 bundle(target `web`、入口 `src/mobile/main.tsx` → `dist/mobile`),由主进程的局域网服务同源提供,没有独立 dev server;`npm run build` 与 `npm run dev` 都已包含它的构建 / watch(见 [docs/22](./22-lan-access.md))。
 
-**renderer 代码分割**:`FileList` / `TaskView` / `SettingsDialogProvider` / `MainLayout` 里的视角组件 `React.lazy` + `<Suspense>`;`SearchBar` 的 `AdvancedSearchDialog` 首次点击才 `lazy` 加载,`advancedEverOpened` 让它在首次打开后保持挂载(关闭再开保留已填输入);`MainLayout` 的 `ExtensionViewPanel` 仅在 `activeView` 为扩展页时加载。这些 lazy 边界都有失败恢复:高级搜索加载失败时工具栏按钮改为重试,扩展页加载失败时保留 `ExtensionTabBar` 并可切换标签或点重试;`Suspense` 的 fallback 不铺白屏,避免一次 chunk 404 把主界面卡死。echarts(Calendar / TagCloud / FolderViz)、leaflet(Mapique)、@xyflow(KnowledgeGraph)各自独立异步 chunk,`FileList` 视角与这些既有边界不变;初始 JS 只含 `main` 435,963 B + 单个 vendor 669,591 B = 1,105,554 B(≈1.05 MiB,本轮前 1,151,343 B,减少 45,789 B)。`webpack.config.renderer.prod.ts` 的 `output.clean: true` 每次构建清掉旧 contenthash chunk,不累积进安装包。
+**renderer 代码分割**:`FileList` / `TaskView` / `SettingsDialogProvider` / `MainLayout` 里的视角组件 `React.lazy` + `<Suspense>`;`SearchBar` 的 `AdvancedSearchDialog` 首次点击才 `lazy` 加载,`advancedEverOpened` 让它在首次打开后保持挂载(关闭再开保留已填输入);`MainLayout` 的 `ExtensionViewPanel` 仅在 `activeView` 为扩展页时加载。这些 lazy 边界都有失败恢复:高级搜索加载失败时工具栏按钮改为重试,扩展页加载失败时保留 `ExtensionTabBar` 并可切换标签或点重试,设置页加载失败时在弹窗内给出重试/关闭(重试会重新创建 lazy 组件,失败不缓存);`Suspense` 的 fallback 不铺白屏,避免一次 chunk 404 把主界面卡死。echarts(Calendar / TagCloud / FolderViz)、leaflet(Mapique)、@xyflow(KnowledgeGraph)各自独立异步 chunk,`FileList` 视角与这些既有边界不变;初始 JS 只含 `main` 435,963 B + 单个 vendor 669,591 B = 1,105,554 B(≈1.05 MiB,本轮前 1,151,343 B,减少 45,789 B)。`webpack.config.renderer.prod.ts` 的 `output.clean: true` 每次构建清掉旧 contenthash chunk,不累积进安装包。
 
 **dev 启动硬约束**(反复踩过的坑,先看完):
 
@@ -186,6 +187,7 @@ try {
 | 标签与工作流 | `tags` | `TagsSection`(内嵌 `WorkflowManagerDialog`) |
 | 通知 | `notifications` | `NotificationsSection` |
 | MCP 服务器 | `mcp` | `McpSection`(本地 MCP 服务,docs/21) |
+| 局域网 | `lan` | `LanSettings`(只读局域网访问,docs/22) |
 | 命令 | `commands` | `UserCommandsSection` |
 | 关于 | `about` | `UpdateSection` |
 | 高级 | `advanced` | `AdvancedSection`(内嵌 `ExtensionsSection` + `FulltextSection`) |

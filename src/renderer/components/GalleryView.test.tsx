@@ -17,6 +17,7 @@ import globalJsdom from 'global-jsdom';
 
 import { before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import type { KeyboardEvent } from 'react';
 import { render, fireEvent, cleanup } from '@testing-library/react';
 import { I18nextProvider, initReactI18next } from 'react-i18next';
 import { Provider } from 'react-redux';
@@ -84,8 +85,11 @@ function makeProps(entries: DirEntry[], selected: Set<string> = new Set(), spies
   };
 }
 
-function renderGallery(props: ReturnType<typeof makeProps>) {
-  return render(
+function renderGallery(
+  props: ReturnType<typeof makeProps>,
+  onParentKeyDown?: (e: KeyboardEvent<HTMLDivElement>) => void
+) {
+  const tree = (
     <I18nextProvider i18n={i18next} defaultNS="common">
       <Provider store={STUB_STORE}>
         <DndProvider backend={HTML5Backend}>
@@ -95,6 +99,12 @@ function renderGallery(props: ReturnType<typeof makeProps>) {
         </DndProvider>
       </Provider>
     </I18nextProvider>
+  );
+  // P1-1: mount an outer keyboard listener to prove handled gallery keys do
+  // not bubble up to a FileList-style ancestor (the real FileList wraps the
+  // gallery in a tabIndex=-1 Box with its own onKeyDown).
+  return render(
+    onParentKeyDown ? <div onKeyDown={onParentKeyDown}>{tree}</div> : tree
   );
 }
 
@@ -321,5 +331,75 @@ describe('GalleryView #5: showTags toggle', () => {
       0,
       'overlay should not render when showTags is false'
     );
+  });
+});
+
+// ---------------------------------------------------------------------
+// Test #6: P1-1 — handled keys are consumed, unhandled keys still bubble.
+// The gallery grid sits inside FileList's outer keyboard Box; before the fix
+// arrows / Home / End / Enter / Space ran BOTH handlers (gallery caret +
+// list selection, lightbox + list open, double selection toggle).
+// ---------------------------------------------------------------------
+describe('GalleryView #6: keyboard handled keys do not double-consume (P1-1)', () => {
+  it('stops propagation for every handled key and still prevents the default', () => {
+    cleanup();
+    const entries = [entry('a.png'), entry('b.png')];
+    const spies: Spies = {};
+    const props = makeProps(entries, new Set(), spies);
+    const parentKeys: string[] = [];
+    const { container } = renderGallery(props, (e) => parentKeys.push(e.key));
+
+    const grid = container.querySelector('[role="grid"]') as HTMLElement;
+    assert.ok(grid, 'gallery grid should render');
+
+    for (const key of [
+      'ArrowRight',
+      'ArrowLeft',
+      'ArrowDown',
+      'ArrowUp',
+      'Home',
+      'End',
+    ]) {
+      assert.equal(
+        fireEvent.keyDown(grid, { key }),
+        false,
+        `${key} should call preventDefault (fireEvent returns false)`
+      );
+    }
+    // Enter / Space are the user-visible double-action keys: the gallery must
+    // handle them (open / toggle) and the ancestor must NOT see them.
+    assert.equal(fireEvent.keyDown(grid, { key: 'Enter' }), false);
+    assert.equal(fireEvent.keyDown(grid, { key: ' ' }), false);
+
+    assert.deepEqual(parentKeys, [], 'handled keys must not bubble to FileList');
+    assert.equal(spies.openEntry?.called ?? 0, 1, 'Enter should still open the lightbox');
+    assert.equal(spies.selectEntry?.called ?? 0, 1, 'Space should still toggle selection');
+  });
+
+  it('lets unhandled keys bubble so list-level shortcuts keep working', () => {
+    cleanup();
+    const props = makeProps([entry('a.png')]);
+    const parentKeys: string[] = [];
+    const { container } = renderGallery(props, (e) => parentKeys.push(e.key));
+
+    const grid = container.querySelector('[role="grid"]') as HTMLElement;
+    assert.ok(grid);
+    fireEvent.keyDown(grid, { key: 'Delete' });
+    fireEvent.keyDown(grid, { key: 'F2' });
+    assert.deepEqual(parentKeys, ['Delete', 'F2']);
+  });
+
+  it('leaves keydown from a text input untouched (typing must not be consumed)', () => {
+    cleanup();
+    const props = makeProps([entry('a.png')]);
+    const parentKeys: string[] = [];
+    const { container } = renderGallery(props, (e) => parentKeys.push(e.key));
+
+    const input = document.createElement('input');
+    container.querySelector('[role="grid"]')?.appendChild(input);
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    // The gallery's handler bails on INPUT targets, so the event is neither
+    // prevented nor stopped: it bubbles and the browser default is kept.
+    assert.deepEqual(parentKeys, ['ArrowDown']);
   });
 });

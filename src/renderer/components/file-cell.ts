@@ -69,6 +69,15 @@ export interface FileCellData {
    */
   resolveEntry?: (path: string) => DirEntry | undefined;
   /**
+   * P2-8: O(1) index lookup into `entries`, backed by a `Map<string, number>`
+   * on the parent side. `onSelectRow` takes a linear index, and the calendar /
+   * kanban-style cards used to recover it with `entries.findIndex(...)` on
+   * every click and every Space keypress — O(N) per interaction on a large
+   * listing. Optional so standalone hosts (and tests) keep working; callers
+   * fall back to `findIndex` when it is absent.
+   */
+  entryIndex?: (path: string) => number;
+  /**
    * Select-gesture on the entry at `index` (into `entries`): plain toggles one,
    * `toggle` (Ctrl/Cmd) toggles without clearing, `shift` extends the range from
    * the last anchor. The linear index works for both list rows and grid cells.
@@ -101,6 +110,19 @@ export interface FileCellData {
    * for the same reason as `onSetEntryDateTag`.
    */
   onRemoveEntryDateTag?: (entry: DirEntry) => void;
+  /**
+   * P1-2 (gui-audit 2026-11): batch variant of `onSetEntryDateTag` for drops
+   * that carry several paths (Calendar day cell). The owner persists every
+   * entry in ONE `saveMany` round-trip instead of N per-entry saves. Optional:
+   * only the drop targets that can receive multi-entry drags use it.
+   */
+  onSetEntryDateTags?: (entries: DirEntry[], dateKey: string) => void;
+  /**
+   * P1-2 (gui-audit 2026-11): batch variant of `onRemoveEntryDateTag` (Gantt
+   * Triage drop) — one `saveMany` for the whole batch; entries without a date
+   * tag are skipped.
+   */
+  onRemoveEntryDateTags?: (entries: DirEntry[]) => void;
   /**
    * H.25 P0-1: move `sources` into a kanban/workflow column keyed by
    * `targetValue` (null = the untagged column → strip the whole group). The
@@ -200,4 +222,75 @@ export interface FileCellData {
   // read-only) were removed from per-entry right-click menus (P?).
   // They live in the Sidebar's per-location context menu, so
   // FileCellData no longer needs to carry them.
+}
+
+/**
+ * P1-2 (gui-audit 2026-11): dispatch a multi-entry date-tag set from a drop
+ * target (Calendar day cell). The batch callback is preferred so the owner can
+ * persist the whole batch with ONE `saveMany`; hosts that only expose the
+ * legacy single-entry callback keep the old per-entry behavior verbatim.
+ *
+ * Kept pure so the "one batch call per drop" contract is directly testable —
+ * simulating react-dnd drops in jsdom is out of scope for the suite.
+ */
+export function setDateTagForDroppedEntries(
+  data: Pick<FileCellData, 'onSetEntryDateTags' | 'onSetEntryDateTag'>,
+  entries: readonly DirEntry[],
+  dateKey: string
+): void {
+  if (entries.length === 0) return;
+  if (data.onSetEntryDateTags) {
+    data.onSetEntryDateTags([...entries], dateKey);
+    return;
+  }
+  for (const entry of entries) data.onSetEntryDateTag?.(entry, dateKey);
+}
+
+/**
+ * P1-2 (gui-audit 2026-11): dispatch a multi-entry date-tag clear from the
+ * Gantt Triage drop. Same batch-first / legacy-fallback contract as
+ * `setDateTagForDroppedEntries`.
+ */
+export function removeDateTagsForDroppedEntries(
+  data: Pick<FileCellData, 'onRemoveEntryDateTags' | 'onRemoveEntryDateTag'>,
+  entries: readonly DirEntry[]
+): void {
+  if (entries.length === 0) return;
+  if (data.onRemoveEntryDateTags) {
+    data.onRemoveEntryDateTags([...entries]);
+    return;
+  }
+  for (const entry of entries) data.onRemoveEntryDateTag?.(entry);
+}
+
+/**
+ * P2-8 (gui-audit 2026-11): resolve a dropped/clicked path to its entry.
+ *
+ * The host (FileList) backs `resolveEntry` with a `Map<string, DirEntry>`, so
+ * this is O(1) in the real app; the linear scan only runs for standalone hosts
+ * that don't provide the map (tests, future embeds). Before, Calendar / Gantt /
+ * KnowledgeGraph each spelled out `data.entries.find(...)` inline, which the
+ * audit flagged as an O(N) lookup on a path the app already had a map for.
+ */
+export function lookupEntry(
+  data: Pick<FileCellData, 'entries' | 'resolveEntry'>,
+  path: string
+): DirEntry | undefined {
+  return data.resolveEntry?.(path) ?? data.entries.find((e) => e.path === path);
+}
+
+/**
+ * P2-8: the linear index of `path` inside `entries`, through the host's
+ * `entryIndex` map when present. `onSelectRow` takes an index, and the
+ * calendar / kanban cards recovered it with `entries.findIndex(...)` on every
+ * click and Space press.
+ */
+export function lookupEntryIndex(
+  data: Pick<FileCellData, 'entries' | 'entryIndex'>,
+  path: string
+): number {
+  const index = data.entryIndex?.(path);
+  return index === undefined
+    ? data.entries.findIndex((e) => e.path === path)
+    : index;
 }

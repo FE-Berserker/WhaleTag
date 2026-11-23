@@ -11,6 +11,7 @@ import { useSelector } from 'react-redux';
 
 import { ipcApi } from '-/services/ipc-api';
 import { joinPath, basename, parentDir } from '-/services/path-util';
+import { notifyApp } from '-/services/app-notice';
 import { normalizeSmartTags } from '../../shared/smart-tags';
 import { RootState } from '-/reducers';
 import { useCurrentLocationContext } from './CurrentLocationContextProvider';
@@ -108,6 +109,9 @@ export function useIOActionsContext(): IOActionsContextValue {
  *     swallowed so a successful import isn't rolled back.
  *   - `sidecarWriter` and `importer` are injected so tests can swap in
  *     pure spies.
+ *   - A failed sidecar write keeps the import but is logged and collected
+ *     into `tagWriteFailures`, so the provider can warn the user instead of
+ *     pretending the tag was stamped.
  *   - `onSuccess` runs after the tag loop, so the caller can refresh the
  *     directory listing (kept outside this helper so the helper stays
  *     synchronous-flow without React context).
@@ -125,10 +129,19 @@ export interface ImportExternalCoreDeps {
   onSuccess?: () => void;
 }
 
+export interface ImportExternalCoreResult {
+  importedPaths: string[];
+  copied: number;
+  errors: string[];
+  /** Paths whose sidecar tag write failed (the import itself succeeded). */
+  tagWriteFailures: string[];
+}
+
 export async function importExternalCore(
   deps: ImportExternalCoreDeps
-): Promise<{ importedPaths: string[]; copied: number; errors: string[] }> {
+): Promise<ImportExternalCoreResult> {
   const result = await deps.importer(deps.sources, deps.destDir);
+  const tagWriteFailures: string[] = [];
   if (deps.tagToApply) {
     const normalized = normalizeSmartTags([deps.tagToApply]);
     for (const p of result.importedPaths ?? []) {
@@ -138,13 +151,16 @@ export async function importExternalCore(
       // tags later via the sidecar command.
       try {
         await deps.sidecarWriter(p, normalized);
-      } catch {
-        // swallowed — see comment above
+      } catch (error) {
+        // Never silent: collect the path so the provider can tell the
+        // user "N imported, M tag writes failed", and log for support.
+        tagWriteFailures.push(p);
+        console.warn('[IOActions] failed to write tags for', p, error);
       }
     }
   }
   deps.onSuccess?.();
-  return result;
+  return { ...result, tagWriteFailures };
 }
 
 export function IOActionsContextProvider({
@@ -318,15 +334,26 @@ export function IOActionsContextProvider({
         sources,
         destDir: currentDirectoryPath,
         tagToApply: options?.tagToApply ?? null,
-        // importExternalCore swallows sidecar-write failures (best-effort
-        // — a failed tag stamp mustn't roll back a successful import), so
-        // the caller doesn't need its own .catch here.
+        // importExternalCore keeps the import when a sidecar write fails
+        // (best-effort), but reports which paths failed so we can warn the
+        // user that the files landed without their tag.
         sidecarWriter: (filePath, tags) =>
           ipcApi.writeSidecar(filePath, { tags }),
         importer: ipcApi.importExternal,
         onSuccess: () => {
           void refresh();
         },
+      }).then((result) => {
+        if (result.tagWriteFailures.length > 0) {
+          notifyApp(
+            t('importTagWriteFailed', {
+              count: result.tagWriteFailures.length,
+              failed: result.tagWriteFailures.length,
+            }),
+            'warning'
+          );
+        }
+        return result;
       });
     },
     [currentDirectoryPath, currentLocation?.isReadOnly, refresh, t]

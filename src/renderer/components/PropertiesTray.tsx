@@ -228,6 +228,11 @@ export default function PropertiesTray({
     (s: RootState) => s.settings?.tagColors ?? {}
   );
   const tagGroups = useSelector((s: RootState) => s.taglibrary?.groups ?? []);
+  // P2-7: the tray's "modified" row must agree with the list/grid views, which
+  // follow the user's `listDateFormat` setting (absolute vs relative).
+  const listDateFormat = useSelector(
+    (s: RootState) => s.settings?.listDateFormat ?? 'absolute'
+  );
   const stages = useSelector((s: RootState) => s.workflow?.stages ?? []);
   const stageValues = useMemo(() => stages.map((s) => s.value), [stages]);
   const tagShape = useSelector(
@@ -597,7 +602,10 @@ export default function PropertiesTray({
 
             <Stack spacing={0.5}>
               <MetaRow label={t('size')} value={single.isFile ? formatSize(single.size) : '-'} />
-              <MetaRow label={t('modified')} value={formatDate(single.modified)} />
+              <MetaRow
+                label={t('modified')}
+                value={formatDate(single.modified, { mode: listDateFormat, t })}
+              />
               <MetaRow label={t('path')} value={single.path} />
             </Stack>
 

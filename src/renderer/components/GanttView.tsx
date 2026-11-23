@@ -41,10 +41,12 @@
  *     no-op at the old L682-L690.
  *
  * Triage:
- *   Unchanged — same react-dnd `useDrop(DND_TYPE_FILE)` pattern. Drop
- *   still calls `data.onRemoveEntryDateTag?.(e)` per source (NOT
- *   `onMoveToColumn(null, …)` — distinct path; see `renderer/domain/gantt.ts`
- *   invariant #3).
+ *   Unchanged react-dnd `useDrop(DND_TYPE_FILE)` pattern. P1-2 (gui-audit
+ *   2026-11): a drop clears the whole batch through
+ *   `data.onRemoveEntryDateTags?.(sources)` (one `saveMany` on the host),
+ *   falling back to per-source `data.onRemoveEntryDateTag?.(e)` for legacy
+ *   hosts. Still NOT `onMoveToColumn(null, …)` — distinct path; see
+ *   `renderer/domain/gantt.ts` invariant #3.
  *
  * Right-click menu:
  *   `<GanttEntryMenu>` unchanged; same props the legacy version wired.
@@ -109,7 +111,11 @@ import {
 } from '../domain/gantt';
 import { DND_TYPE_FILE, type FileDragItem } from '-/services/dnd';
 import { NativeTypes } from 'react-dnd-html5-backend';
-import type { FileCellData } from '-/components/file-cell';
+import {
+  lookupEntry,
+  removeDateTagsForDroppedEntries,
+  type FileCellData,
+} from '-/components/file-cell';
 import { useImageExport, base64FromDataUrl, type ClipboardKind } from '-/hooks/useImageExport';
 import { useTheme } from '@mui/material/styles';
 import EntryCard from '-/components/EntryCard';
@@ -438,26 +444,22 @@ export default function GanttView({ data, stages, onMoveToColumn }: GanttViewPro
           return;
         }
         const sources = item.paths
-          .map(
-            (p) =>
-              data.resolveEntry?.(p) ?? data.entries.find((e) => e.path === p)
-          )
+          // P2-8: O(1) through the host map; the linear fallback inside
+          // `lookupEntry` only runs for hosts that don't provide one.
+          .map((p) => lookupEntry(data, p))
           .filter(Boolean) as DirEntry[];
         if (sources.length === 0) return;
-        for (const e of sources) data.onRemoveEntryDateTag?.(e);
+        // P1-2 (gui-audit 2026-11): clear the whole batch in one call so the
+        // host persists with a single `saveMany` instead of N sidecar saves.
+        // Falls back to the per-entry callback for legacy hosts.
+        removeDateTagsForDroppedEntries(data, sources);
       },
       collect: (monitor) => ({
         isOver: monitor.isOver(),
         canDrop: monitor.canDrop(),
       }),
     }),
-    [
-      data.entries,
-      data.resolveEntry,
-      readOnly,
-      data.onRemoveEntryDateTag,
-      importExternalFiles,
-    ]
+    [data, readOnly, importExternalFiles]
   );
   const triageDropActive = triageIsOver && triageCanDrop;
 

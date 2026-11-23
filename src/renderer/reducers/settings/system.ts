@@ -177,8 +177,18 @@ export function migrateSystem<T extends SystemFields>(base: T): T {
   if (next.keybindings === undefined) {
     next = { ...next, keybindings: { ...DEFAULT_KEYBINDINGS } };
   } else {
-    const sanitized = sanitizeKeybindings(next.keybindings);
-    const prev = next.keybindings;
+    // WCAG 2.1.2: `Tab: 'switchView'` was the old default and trapped keyboard
+    // focus inside the file list. Drop exactly that legacy default so browser
+    // focus traversal works again; a user can still re-bind Tab explicitly.
+    // Only allocate when the legacy entry is present, otherwise the H.25
+    // `autoMergeLevel1` identity trap comes back.
+    let migrated = next.keybindings;
+    if (migrated.Tab === 'switchView') {
+      migrated = { ...migrated };
+      delete migrated.Tab;
+    }
+    const sanitized = sanitizeKeybindings(migrated);
+    const prev = migrated;
     let bindingsChanged = Object.keys(sanitized).length !== Object.keys(prev).length;
     if (!bindingsChanged) {
       for (const token of Object.keys(sanitized)) {
@@ -188,7 +198,7 @@ export function migrateSystem<T extends SystemFields>(base: T): T {
         }
       }
     }
-    if (bindingsChanged) {
+    if (migrated !== next.keybindings || bindingsChanged) {
       next = { ...next, keybindings: sanitized };
     }
   }

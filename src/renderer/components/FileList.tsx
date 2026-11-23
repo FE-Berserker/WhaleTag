@@ -101,7 +101,12 @@ import { splitNameExt } from '-/services/tags';
 import { basename } from '-/services/path-util';
 import { useNewExcalidraw } from '-/hooks/useNewExcalidraw';
 import { useNewDrawio } from '-/hooks/useNewDrawio';
-import { useListCommands } from '-/hooks/useListCommands';
+import {
+  removeDateTagsFromEntries,
+  setDateTagForEntries,
+  useListCommands,
+  type ListCommandsDeps,
+} from '-/hooks/useListCommands';
 import { ipcApi } from '-/services/ipc-api';
 import { errorMessage } from '-/services/errors';
 import {
@@ -115,6 +120,8 @@ import {
 } from '../../shared/smart-tags';
 import { useNow } from '-/hooks/useNow';
 import { useConfirm } from '-/components/ConfirmDialogProvider';
+import { useStableBag } from '-/hooks/useStableBag';
+import { useListColumnLabels } from '-/hooks/useListColumnLabels';
 
 const SORT_KEYS: SortKey[] = ['name', 'size', 'modified', 'extension'];
 
@@ -399,6 +406,12 @@ export default function FileList() {
     (d: ListRowDensity) => dispatch(setListRowDensity(d)),
     [dispatch]
   );
+  // P2-2: stable column captions. The JSX used to inline
+  // `{ name: t('name'), ... }` twice (FileListHeader + RowColumnLabels), i.e. a
+  // fresh object on every FileList render (selection tick, scroll, thumbnail)
+  // that defeated the `memo` on both header components. Identity now only
+  // changes when the language does.
+  const columnLabels = useListColumnLabels(t);
 
   const groups = useShallowEqualSelector(
     (s: RootState) => s.taglibrary?.groups ?? []
@@ -478,10 +491,9 @@ export default function FileList() {
   // NOTE: an earlier version bumped a `mapiqueVersion` counter on every
   // `geoByName` change and used it as `<MapiqueView key=...>` to force a full
   // remount. That rebuilt the Leaflet map (tiles reload, view reset) on every
-  // add/remove-tag — a jarring "page refresh". MapiqueView now handles sidecar
-  // mutations in place: its `forceRender` (on geoByName/tagsByName change)
-  // re-renders markers/tray, and it drops a stale `activeEntry` when the entry
-  // leaves `entries`. No remount is needed.
+  // add/remove-tag — a jarring "page refresh". The `key` prop and the counter
+  // are gone; MapiqueView renders from props and drops a stale `activeEntry`
+  // when the entry leaves `entries` (P2-5: it does NOT bump its own render).
   // Thumbnail data-URL cache (path|mtime -> url). Survives row unmount during
   // scroll so re-mounts don't re-read from disk; cleared on directory change
   // and bounded at the write site (`THUMB_CACHE_LIMIT` in ThumbIcon) so a long
@@ -669,6 +681,20 @@ export default function FileList() {
     [visibleByPath]
   );
 
+  // P2-8: same one-shot table for the *index* of a path. `onSelectRow` takes a
+  // linear index; the calendar / kanban cards used to recover it with
+  // `entries.findIndex(...)` on every click and every Space keypress (O(N) per
+  // interaction on large listings). Built with the same pass as `visibleByPath`.
+  const indexByPath = useMemo(() => {
+    const map = new Map<string, number>();
+    for (let i = 0; i < visible.length; i += 1) map.set(visible[i].path, i);
+    return map;
+  }, [visible]);
+  const entryIndex = useCallback(
+    (path: string) => indexByPath.get(path) ?? -1,
+    [indexByPath]
+  );
+
   // Anchor row for Shift range-selection (the last row toggled without Shift).
   const selectAnchorRef = useRef<number | null>(null);
 
@@ -814,76 +840,50 @@ export default function FileList() {
   // P0-1d wire-up: deps bag for `useListCommands`. Stable across renders so the
   // hook can `useMemo`-key on identity. After P0-2 this becomes even more
   // important (handlers feed into `cellData`'s React.memo comparator).
-  const commandsDeps = useMemo(
-    () => ({
-      renameEntry,
-      moveEntry,
-      // `useListCommands` doesn't read `selected` directly — it just needs the
-      // `bumpSelection` + ref pair to mutate-in-place (P0-3). After the refactor
-      // we removed the `selected: Set<string>` field from `ListCommandsDeps`.
-      copyEntry,
-      deleteEntry,
-      createFolder,
-      createFile,
-      createTaggedEntry,
-      save,
-      saveMany,
-      tagsByName,
-      descByName,
-      normalize,
-      selectedEntries,
-      setSelected,
-      clearSelection,
-      // H.23 P3-1: handleInvertSelection mutates the ref directly (single
-      // mutation + one tick bump), so we expose both the ref and the
-      // bump fn to the hook. Avoids an O(n) re-derive per click.
-      selectedPathsRef,
-      bumpSelection,
-      showNotice,
-      currentLocation,
-      currentDirectoryPath,
-      deleteToTrash,
-      refresh,
-      refreshTree,
-      setPackageOpen,
-      setCreateKind,
-      setCreateWithTag,
-      newExcalidraw,
-      newDrawio,
-      createWithTag,
-    }),
-    // deps are stable callbacks/Set refs we already memoize; listing them by
-    // identity keeps the bag itself stable.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [
-      renameEntry,
-      moveEntry,
-      copyEntry,
-      deleteEntry,
-      createFolder,
-      createFile,
-      createTaggedEntry,
-      save,
-      saveMany,
-      tagsByName,
-      descByName,
-      normalize,
-      selectedEntries,
-      deleteToTrash,
-      refresh,
-      refreshTree,
-      currentLocation,
-      // H.23 P3-1: deps mirror of the inline object — P3-1 hook
-      // implementation mutates the ref directly + bumps the tick once
-      // for the whole inversion.
-      selectedPathsRef,
-      bumpSelection,
-      currentDirectoryPath,
-      newExcalidraw,
-      newDrawio,
-      createWithTag,
-    ]
-  );
+  //
+  // P2-10: no hand-maintained dependency array. `useStableBag` compares the
+  // object's own fields, so a new field is picked up automatically (the old
+  // array — plus its `eslint-disable-next-line react-hooks/exhaustive-deps` —
+  // silently omitted `setSelected / clearSelection / showNotice /
+  // setPackageOpen / setCreateKind / setCreateWithTag`). The generic is
+  // `ListCommandsDeps`, so a missing required field is now a type error.
+  const commandsDeps = useStableBag<ListCommandsDeps>({
+    renameEntry,
+    moveEntry,
+    // `useListCommands` doesn't read `selected` directly — it just needs the
+    // `bumpSelection` + ref pair to mutate-in-place (P0-3). After the refactor
+    // we removed the `selected: Set<string>` field from `ListCommandsDeps`.
+    copyEntry,
+    deleteEntry,
+    createFolder,
+    createFile,
+    createTaggedEntry,
+    save,
+    saveMany,
+    tagsByName,
+    descByName,
+    normalize,
+    selectedEntries,
+    setSelected,
+    clearSelection,
+    // H.23 P3-1: handleInvertSelection mutates the ref directly (single
+    // mutation + one tick bump), so we expose both the ref and the
+    // bump fn to the hook. Avoids an O(n) re-derive per click.
+    selectedPathsRef,
+    bumpSelection,
+    showNotice,
+    currentLocation,
+    currentDirectoryPath,
+    deleteToTrash,
+    refresh,
+    refreshTree,
+    setPackageOpen,
+    setCreateKind,
+    setCreateWithTag,
+    newExcalidraw,
+    newDrawio,
+    createWithTag,
+  });
   const commands = useListCommands(commandsDeps);
 
   // Images open in MediaLightbox for the zoom / pan / filmstrip single-image
@@ -1216,6 +1216,46 @@ export default function FileList() {
   // handleNewExcalidraw / handleNewDrawio / handleCreateTagged moved to
   // `useListCommands` (P0-1d). `changeSort` moved to `FileListHeader`.
 
+  // P1-2 (gui-audit 2026-11): batch companions for the two date-tag handlers
+  // above. A Calendar day-cell / Gantt Triage drop carries N paths; one
+  // `saveMany` round-trip replaces the previous N × single-entry `save` calls
+  // (each of which separately re-read the sidecar and recomputed the listing).
+  // Read-only gate + failure surfacing mirror the single-entry paths exactly;
+  // `setDateTagForEntries` keeps the single-target `save` API, while
+  // `removeDateTagsFromEntries` skips entries that carry no date tag (so an
+  // all-already-clean drop writes nothing).
+  const handleSetEntryDateTags = useCallback(
+    (entries: DirEntry[], dateKey: string) => {
+      if (currentLocation?.isReadOnly) return;
+      void setDateTagForEntries(entries, dateKey, {
+        save,
+        saveMany,
+        tagsByName,
+        descByName,
+        normalize: normalizeSmartTags,
+      }).catch((e: unknown) =>
+        showNotice(e instanceof Error ? e.message : String(e))
+      );
+    },
+    [currentLocation, tagsByName, descByName, save, saveMany, showNotice]
+  );
+
+  const handleRemoveEntryDateTags = useCallback(
+    (entries: DirEntry[]) => {
+      if (currentLocation?.isReadOnly) return;
+      void removeDateTagsFromEntries(entries, {
+        save,
+        saveMany,
+        tagsByName,
+        descByName,
+        normalize: normalizeSmartTags,
+      }).catch((e: unknown) =>
+        showNotice(e instanceof Error ? e.message : String(e))
+      );
+    },
+    [currentLocation, tagsByName, descByName, save, saveMany, showNotice]
+  );
+
   // Returns true for text-entry surfaces (TextField, textarea, contenteditable)
   // so shortcuts like Delete / F2 / arrows don't fire while the user is typing
   // in a search box, InlineTagInput, the inline rename TextField, or a
@@ -1249,6 +1289,13 @@ export default function FileList() {
   // ignores modifiers on purpose — Shift-range-extend stays inside the
   // navigate cases. The bindings apply in list/grid; GalleryView etc. own
   // their own focused-container keydown.
+  //
+  // P1-1 (gui-audit 2026-11): GalleryView is rendered *inside* this outer
+  // container, and its handler now calls `stopPropagation` for the keys it
+  // consumes (arrows / Home / End / Enter / Space). So those never reach
+  // this handler from the gallery, while list-level shortcuts it does NOT
+  // handle (Delete / F2 / Esc / Tab view-switch) still bubble up here —
+  // exactly the split the comment above promises, no `viewMode` guard needed.
   //
   // Default scheme: ↑/↓ navigate (Shift = range), → open, ← back (history),
   // Tab cycle view, Enter open, Space toggle, Esc clear, F2 rename,
@@ -1416,108 +1463,78 @@ export default function FileList() {
   // menu is reversible without leaving the page.
   // One handler bag, shared verbatim by the list rows and the grid cells, so
   // both views behave identically (selection, tagging, context menus). After
-  // P0-1d the IO-bound handlers come from `commands`; P0-2 wraps the bag in
-  // `useMemo` (every dep below is reference-stable) so react-window v2's
-  // per-row shallow compare short-circuits to "no change" while no real input
-  // changed.
-  const cellData = useMemo<FileCellData>(
-    () => ({
-      entries: visible,
-      thumbCache: thumbCache.current,
-      tagsByName,
-      descByName,
-      activeTag,
-      tagColors,
-      groups,
-      readOnly: !!currentLocation?.isReadOnly,
-      t,
-      isSelected,
-      onSelectRow: selectRow,
-      onOpen: handleOpen,
-      onClickTag,
-      onTagContextMenu,
-      onCopy: setCopyTarget,
-      onMove: commands.handleMove,
-      onRename: setRenameTarget,
-      onDelete: commands.handleDelete,
-      onDropTag: commands.handleDropTag,
-      onDropFiles: commands.handleDropFiles,
-      onContextEntry,
-      onCreateTagged,
-      // H.24 P0-1: date-tag setters for the Calendar right-click menu.
-      onSetEntryDateTag: handleSetEntryDateTag,
-      onRemoveEntryDateTag: handleRemoveEntryDateTag,
-      // H.25 P0-1: Kanban right-click menu handlers. Move/Add/Remove are
-      // backed by the existing IO handlers above; `onMoreFileActions` simply
-      // re-uses the generic `onContextEntry` so the "More file actions" item
-      // in KanbanEntryMenu pops the same EntryContextMenu the list/grid
-      // would show.
-      onMoveToColumn: handleMoveToColumn,
-      onAddTag: handleAddTag,
-      onRemoveTag: handleRemoveTag,
-      onMoreFileActions: (entry: DirEntry, x: number, y: number) =>
-        onContextEntry(entry, x, y),
-      // P0-4 plumbing:
-      selectedPaths: selectedPathsRef.current,
-      resolveEntry,
-      // H.23 P1-5 column plumbing:
-      columnWidths,
-      hiddenColumns,
-      // H.23 P2-1 zebra striping toggle (default off).
-      listZebra,
-      // H.23 P2-3 date format preset (default 'absolute').
-      listDateFormat,
-      // H.23 P1-1: keyboard focus index. Row uses it to (1) render a focus
-      // outline and (2) auto-focus its own ListItemButton on match. Read here
-      // instead of taking a separate prop on `<VirtualList>` to keep all
-      // per-row input in one bag.
-      focusIndex,
-      // H.23 P1-4: in-place rename state. Row swaps the name Typography for
-      // a TextField when this entry's path matches `inlineRenameEntry.path`.
-      inlineRenameEntry,
-      startInlineRename,
-      cancelInlineRename,
-      commitInlineRename,
-    }),
-    [
-      visible,
-      tagsByName,
-      descByName,
-      activeTag,
-      tagColors,
-      groups,
-      currentLocation?.isReadOnly,
-      t,
-      isSelected,
-      selectRow,
-      handleOpen,
-      commands,
-      onClickTag,
-      onTagContextMenu,
-      onContextEntry,
-      onCreateTagged,
-      handleSetEntryDateTag,
-      handleRemoveEntryDateTag,
-      // H.25 P0-3: include the new Kanban handlers in the deps so the bag
-      // re-allocates when any of them changes identity. `handleMoveToColumn`
-      // is now a useCallback (was an arrow before), so its identity tracks
-      // the underlying IO state.
-      handleMoveToColumn,
-      handleAddTag,
-      handleRemoveTag,
-      selectedPathsRef,
-      resolveEntry,
-      focusIndex,
-      columnWidths,
-      hiddenColumns,
-      listZebra,
-      listDateFormat,
-      inlineRenameEntry,
-      startInlineRename,
-      cancelInlineRename,
-      commitInlineRename,
-    ]
+  // P0-1d the IO-bound handlers come from `commands`; P2-10 replaces the
+  // 39-entry hand-maintained `useMemo` dependency array with `useStableBag`,
+  // which compares the bag's own fields (every value below is reference-stable)
+  // so react-window v2's per-row shallow compare short-circuits to "no change"
+  // while no real input changed — and a new field can never be forgotten.
+  const handleMoreFileActions = useCallback(
+    (entry: DirEntry, x: number, y: number) => onContextEntry(entry, x, y),
+    [onContextEntry]
   );
+  const cellData = useStableBag<FileCellData>({
+    entries: visible,
+    thumbCache: thumbCache.current,
+    tagsByName,
+    descByName,
+    activeTag,
+    tagColors,
+    groups,
+    readOnly: !!currentLocation?.isReadOnly,
+    t,
+    isSelected,
+    onSelectRow: selectRow,
+    onOpen: handleOpen,
+    onClickTag,
+    onTagContextMenu,
+    onCopy: setCopyTarget,
+    onMove: commands.handleMove,
+    onRename: setRenameTarget,
+    onDelete: commands.handleDelete,
+    onDropTag: commands.handleDropTag,
+    onDropFiles: commands.handleDropFiles,
+    onContextEntry,
+    onCreateTagged,
+    // H.24 P0-1: date-tag setters for the Calendar right-click menu.
+    onSetEntryDateTag: handleSetEntryDateTag,
+    onRemoveEntryDateTag: handleRemoveEntryDateTag,
+    // P1-2: batch variants for multi-entry drops (Calendar day cell / Gantt
+    // Triage) — one `saveMany` instead of N per-entry saves.
+    onSetEntryDateTags: handleSetEntryDateTags,
+    onRemoveEntryDateTags: handleRemoveEntryDateTags,
+    // H.25 P0-1: Kanban right-click menu handlers. Move/Add/Remove are
+    // backed by the existing IO handlers above; `onMoreFileActions` simply
+    // re-uses the generic `onContextEntry` so the "More file actions" item
+    // in KanbanEntryMenu pops the same EntryContextMenu the list/grid
+    // would show. Memoized above: an inline arrow here would be a fresh
+    // field value on every render and defeat `useStableBag` entirely.
+    onMoveToColumn: handleMoveToColumn,
+    onAddTag: handleAddTag,
+    onRemoveTag: handleRemoveTag,
+    onMoreFileActions: handleMoreFileActions,
+    // P0-4 plumbing:
+    selectedPaths: selectedPathsRef.current,
+    resolveEntry,
+    entryIndex,
+    // H.23 P1-5 column plumbing:
+    columnWidths,
+    hiddenColumns,
+    // H.23 P2-1 zebra striping toggle (default off).
+    listZebra,
+    // H.23 P2-3 date format preset (default 'absolute').
+    listDateFormat,
+    // H.23 P1-1: keyboard focus index. Row uses it to (1) render a focus
+    // outline and (2) auto-focus its own ListItemButton on match. Read here
+    // instead of taking a separate prop on `<VirtualList>` to keep all
+    // per-row input in one bag.
+    focusIndex,
+    // H.23 P1-4: in-place rename state. Row swaps the name Typography for
+    // a TextField when this entry's path matches `inlineRenameEntry.path`.
+    inlineRenameEntry,
+    startInlineRename,
+    cancelInlineRename,
+    commitInlineRename,
+  });
 
   const gridRowHeight = entrySize + GRID_CELL_FOOTER;
   // Columns reflow on viewport resize (gridWidth) or zoom (entrySize). The
@@ -1650,12 +1667,7 @@ export default function FileList() {
         // Gallery tag overlay toggle.
         galleryShowTags={galleryShowTags}
         onToggleGalleryShowTags={onToggleGalleryShowTags}
-        columnLabels={{
-          name: t('name'),
-          tags: t('tags'),
-          size: t('size'),
-          modified: t('modified'),
-        }}
+        columnLabels={columnLabels}
       />
 
       {loading && entries.length === 0 ? (
@@ -1692,33 +1704,13 @@ export default function FileList() {
                 // H.23 P1-5: column-width + visibility plumbing.
                 columnWidths={columnWidths}
                 hiddenColumns={hiddenColumns}
-                setColumnWidth={(id, px) => {
-                  const bounds =
-                    LIST_COLUMN_BOUNDS[id as keyof typeof LIST_COLUMN_BOUNDS];
-                  if (!bounds) return;
-                  const clamped = Math.max(
-                    bounds.min,
-                    Math.min(bounds.max, Math.round(px))
-                  );
-                  dispatch(
-                    setListColumnWidths({ [id]: clamped } as Record<
-                      string,
-                      number
-                    >)
-                  );
-                }}
-                toggleColumn={(columnId) => {
-                  const next = hiddenColumns.includes(columnId)
-                    ? hiddenColumns.filter((id) => id !== columnId)
-                    : [...hiddenColumns, columnId];
-                  dispatch(setListHiddenColumns(next));
-                }}
-                labels={{
-                  name: t('name'),
-                  tags: t('tags'),
-                  size: t('size'),
-                  modified: t('modified'),
-                }}
+                // P2-2: reuse the stable handlers + captions instead of inline
+                // closures/literals; `RowColumnLabels` is memoized, so fresh
+                // identities here would re-render the whole header strip on
+                // every selection tick.
+                setColumnWidth={handleColumnWidth}
+                toggleColumn={handleToggleColumn}
+                labels={columnLabels}
               />
             ) : null}
             <Suspense fallback={PerspectiveFallback}>{viewMode === 'task' ? (
@@ -1741,6 +1733,12 @@ export default function FileList() {
             ) : viewMode === 'knowledge-graph' ? (
               <KnowledgeGraphView data={cellData} />
             ) : viewMode === 'mapique' ? (
+              // P2-5: no `key` prop here on purpose. `MapiqueView` used to bump
+              // itself through an effect keyed on `geoByName`/`tagsByName`, and
+              // its comment pointed at a `key` on this site that never existed.
+              // Props are the signal: `geoByName` / `tagsByName` come from
+              // `TagMetaContextProvider` and get a fresh identity on every
+              // sidecar save, so this subtree re-renders once, normally.
               <MapiqueView
                 entries={visible}
                 geoByName={geoByName}

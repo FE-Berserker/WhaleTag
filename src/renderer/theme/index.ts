@@ -68,6 +68,22 @@ export function createWhaleTheme(
     },
     components: {
       MuiButton: { defaultProps: { disableElevation: true } },
+      // Respect the OS "reduce motion" preference app-wide (WCAG 2.3.3):
+      // MUI animates Dialog/Snackbar transitions, the tag-cloud layout and the
+      // small hover transforms. Durations collapse to a single frame instead of
+      // removing the animations, so `transitionend`-driven code still fires.
+      MuiCssBaseline: {
+        styleOverrides: {
+          '@media (prefers-reduced-motion: reduce)': {
+            '*, *::before, *::after': {
+              animationDuration: '0.01ms !important',
+              animationIterationCount: '1 !important',
+              transitionDuration: '0.01ms !important',
+              scrollBehavior: 'auto !important',
+            },
+          },
+        },
+      },
       // Global keyboard-focus indicator. MUI's default focus feedback is a
       // near-invisible ripple; only a few views hand-rolled outlines, so Tab
       // trails were lost across most of the app. One override covers every

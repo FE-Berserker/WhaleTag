@@ -45,6 +45,7 @@ npm run dev
 - 字段级迁移(sanitize / migrate)逐键比较,**真改了才分配新对象**
 - 写 `<key>.json.tmp` + `renameSync`,失败 re-throw 不再静默
 - `storage.ts` IPC 全部 try-catch,失败 `Promise.reject`
+- 读失败不再按"无数据"处理:非 ENOENT 上抛,renderer 暂停 persistor 并提示,避免默认值回写覆盖;写盘每会话保留一份 `.json.bak`(2026-11-23)
 
 详见 [docs/02-file-io.md §8](./02-file-io.md)。
 
@@ -128,7 +129,7 @@ Edit 工具在 Windows 偶发写入 `\0` null 字节。修法:用 Write 重写�
 
 - 三形态归一(Mac/Linux `\`、Windows `\ `、云 `/` 无盘符)
 - 比较前两侧统一去尾分隔符
-- Windows 大小写归一(`isSameOrDescendant` 比较前 `toLowerCase()`)
+- 大小写按平台归一:win32/darwin 折叠、linux 精确(与主进程 [path-fold.ts](../src/main/path-fold.ts) 一致;`isSameOrDescendant` 的 `caseInsensitive` 参数可显式覆盖)
 - Path 把 basename 解析反函数 `parentDir` 在 [src/renderer/services/path-util.ts](../src/renderer/services/path-util.ts)
 
 ---
@@ -412,3 +413,19 @@ Internal React error: Expected static flag was missing. Please notify the React 
 **修法**:新增 `isTabDirty(editState, tabId)` 并统一关闭/保存/监听/flush 查询;LRU 接收 `dirtyTabIds` 并用 `tab.id` 判断。共置测试覆盖同一路径两个扩展互不影响及 dirty LRU 保护;真实 packaged GUI 冒烟继续覆盖后台脏标签 Cancel 后焦点恢复与内容保留。
 
 **教训**:修改状态键是跨读写双方的契约变更;必须 grep 所有读取点和淘汰策略,不能只改 reducer 与写入端。
+
+## 36. 局域网只读访问的已知边界与取舍(2026-11-22)
+
+功能行为见 [./22-lan-access.md](./22-lan-access.md),安全保证见 [./13-security.md §14](./13-security.md)。这一节只记"决定不做 / 暂时这样"的部分:
+
+- **明文 HTTP,不防嗅探**:不做 TLS / 自签证书 / HTTPS 混淆。同网段的设备可以抓包看到目录内容、文件与配对请求里的 `Authorization` 头;前提是"可信局域网"。
+- **只读,没有写能力**:不做打标 / 改名 / 移动 / 删除 / 上传;要改元数据必须回桌面端。
+- **依赖桌面端已建索引**:不替 Web 端建索引或全文索引,索引缺失只回 `indexUnavailable` 并提示;搜索只覆盖文件名子串 + 标签(固定"标签全部满足"),不支持桌面的类型 / 大小 / 日期 / 排除标签条件。
+- **不生成缩略图与缓存**:手机列表 / 网格直接显示安全栅格原图,加载失败回退图标,不在服务端生成缩略图;流量与解码成本按原文件算,换来的是浏览过程绝不写 `.whale/` 缩略图缓存。
+- **单层浏览 + 500 项截断**:没有分页 / 游标协议;超大目录的首次加载按每项 `realpath` 复核的开销线性上升。
+- **会话级而非设备级**:没有设备列表 / 单独踢下线 / 持久白名单;「停止」对全体生效,重新开始会换 token、通常也换端口。
+- **网卡一变就停**:切 Wi-Fi、断网、DHCP 换 IP、VPN 起停都会自动关闭服务(面板每 2s 轮询收回已失效的二维码);多网卡 / 热点场景需要重新开启。
+- **只服务私网**:跨网段、公网、运营商网络或 VPN 出口访问一律 403;不做远程访问 / 内网穿透。
+- **Windows 防火墙要用户放行**:首次在 `0.0.0.0` 监听时系统会弹窗,必须勾选专用网络;拒绝后手机端表现为连不上(超时),仓库不带防火墙规则。
+- **主动内容只下载**:PDF / HTML / SVG / JS 在手机上不预览,只提供下载。
+- **移动端是独立实现**:自有 i18n 字典与样式(不共用桌面 locale 与主题),改文案 / 视觉要两边都改。

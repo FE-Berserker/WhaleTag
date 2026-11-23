@@ -72,6 +72,13 @@ export interface FileContentMessage {
    * relative `src` as a remote URL and lets it 404.
    */
   dirPath?: string;
+  /**
+   * Set by the host when it wants the extension to replace its buffer even if
+   * the editor is dirty (e.g. the user restored an older revision of this file
+   * and confirmed losing the unsaved edits). Extensions that keep an unmodified
+   * buffer on same-path reloads must honour it and reset their dirty state.
+   */
+  force?: boolean;
 }
 
 export interface SavingFileMessage {
@@ -140,6 +147,11 @@ export interface FileEmbedMessage {
   name: string;
   /** A data: URL (real thumbnail, or a generic file-type icon as fallback). */
   thumbnailDataUrl: string;
+  /** Echo of the `requestId` from `RequestFileEmbedMessage`. Present when the
+   *  request carried one; absent for legacy extensions (and legacy hosts).
+   *  Extensions must only place a reply whose id is still pending — see
+   *  `src/shared/extension-requests.ts`. */
+  requestId?: string;
 }
 
 /** Host -> Extension: the list of sibling files the extension can navigate
@@ -150,19 +162,15 @@ export interface FileEmbedMessage {
  *  - `current` is the file the extension is currently displaying (member of
  *    `paths`, or absent if the current file lives in another directory).
  *  - `paths` is a flat list of absolute paths in display order. The viewer is
- *    free to wrap around; the host does not pre-send file contents. */
+ *    free to wrap around; the host does not pre-send file contents.
+ *  - An empty `paths` is meaningful: it says "there is nothing to navigate to"
+ *    and viewers must disable their prev/next controls. The host therefore
+ *    always sends this message for a tab that opted into sibling navigation,
+ *    instead of skipping the send and leaving stale buttons enabled. */
 export interface SiblingsMessage {
   type: 'siblings';
   current: string;
   paths: string[];
-}
-
-/** Host -> Extension: result of a directory-picker dialog requested by an
- *  extension. */
-export interface DirectoryDialogResultMessage {
-  type: 'directoryDialogResult';
-  requestId: string;
-  path: string | null;
 }
 
 export type HostMessage =
@@ -175,18 +183,12 @@ export type HostMessage =
   | HeicWasmMessage
   | ExternalDragMessage
   | FileEmbedMessage
-  | SiblingsMessage
-  | DirectoryDialogResultMessage;
+  | SiblingsMessage;
 
 // Extension -> Host messages
 
 export interface ReadyMessage {
   type: 'ready';
-}
-
-export interface LoadDefaultTextContentMessage {
-  type: 'loadDefaultTextContent';
-  path: string;
 }
 
 export interface ParentSaveDocumentMessage {
@@ -203,17 +205,6 @@ export interface ContentChangedMessage {
   dirty: boolean;
   /** Latest editor document version. Legacy editors omit it. */
   revision?: number;
-}
-
-export interface EditDocumentMessage {
-  type: 'editDocument';
-  path: string;
-}
-
-export interface ThumbnailGeneratedMessage {
-  type: 'thumbnailGenerated';
-  path: string;
-  thumbnailBase64: string;
 }
 
 export interface OpenLinkExternallyMessage {
@@ -239,11 +230,16 @@ export interface RequestHeicWasmMessage {
 /** Extension -> Host: request a thumbnail + metadata for a dropped non-image
  *  file so it can be inserted as a linked thumbnail (answered with fileEmbed).
  *  `isDirectory` switches the host between `loadThumbnail` (per-file pipeline)
- *  and `loadFolderThumbnail` (`<dir>/.whale/wst.jpg`). */
+ *  and `loadFolderThumbnail` (`<dir>/.whale/wst.jpg`).
+ *  `requestId` correlates the reply: the host echoes it on `fileEmbed` so a
+ *  late answer to an earlier drop cannot be placed at the newest drop's
+ *  coordinates. Optional — extensions that omit it keep the old single-slot
+ *  behaviour. */
 export interface RequestFileEmbedMessage {
   type: 'requestFileEmbed';
   path: string;
   isDirectory?: boolean;
+  requestId?: string;
 }
 
 /** Extension -> Host: ask the host to load and deliver the file at `path` as
@@ -252,19 +248,22 @@ export interface RequestFileEmbedMessage {
  *  just points at one of those paths and the host re-sends fileContent
  *  (re-encoding through `readFileContent` so the same base64 / utf8 plumbing
  *  is reused). The host is free to ignore requests for paths outside the
- *  active location. */
+ *  active location.
+ *
+ *  `requestId` identifies the navigation attempt. The answer is a *new tab*
+ *  showing the requested file, not a `fileContent` echo into this iframe, so
+ *  the id is not round-tripped; the host uses it to drop a replayed request
+ *  (double click / duplicated message) and to correlate its own log lines. */
 export interface RequestFileMessage {
   type: 'requestFile';
   path: string;
+  requestId?: string;
 }
 
 export type ExtensionMessage =
   | ReadyMessage
-  | LoadDefaultTextContentMessage
   | ParentSaveDocumentMessage
   | ContentChangedMessage
-  | EditDocumentMessage
-  | ThumbnailGeneratedMessage
   | OpenLinkExternallyMessage
   | ErrorMessage
   | RequestHeicWasmMessage
@@ -308,19 +307,16 @@ export function isValidEnvelope<T>(
 /**
  * Every message type the host↔extension protocol defines. Kept as a runtime
  * set (not just types) because envelopes are validated at the iframe boundary.
- * `directoryDialogResult` is included even though it is not part of
- * `HostMessage`: the host forwards it verbatim from the dialog callback.
+ * Keep it in sync with `HostMessage` / `ExtensionMessage` — a type listed here
+ * but nowhere in the unions is a protocol entry nothing produces or consumes.
  */
 const KNOWN_MESSAGE_TYPES: ReadonlySet<string> = new Set([
   'contentChangedInEditor',
-  'directoryDialogResult',
-  'editDocument',
   'error',
   'externalDrag',
   'fileContent',
   'fileEmbed',
   'heicWasm',
-  'loadDefaultTextContent',
   'openLinkExternally',
   'parentSaveDocument',
   'ready',
@@ -333,5 +329,4 @@ const KNOWN_MESSAGE_TYPES: ReadonlySet<string> = new Set([
   'setReadOnly',
   'setTheme',
   'siblings',
-  'thumbnailGenerated',
 ]);

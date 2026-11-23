@@ -625,8 +625,14 @@ export default memo(FileListHeader);
  * H.23 P0-1: extracted from FileList.tsx (was inline above the VirtualList).
  * Lives in FileListHeader.tsx because it's part of the same presentational
  * header stack.
+ *
+ * P2-2: memoized. It sits in FileList's render tree, which re-renders on every
+ * selection tick / thumbnail arrival; as long as FileList passes stable props
+ * (`useListColumnLabels` captions, `handleColumnWidth` / `handleToggleColumn`,
+ * the persisted `columnWidths` / `hiddenColumns` objects) the strip is skipped.
+ * The drag preview is local state, so memoization never hides a gesture.
  */
-export function RowColumnLabels(props: {
+export const RowColumnLabels = memo(function RowColumnLabels(props: {
   selectAllState: 'checked' | 'indeterminate' | 'unchecked';
   onToggleSelectAll: () => void;
   disabled: boolean;
@@ -980,4 +986,4 @@ export function RowColumnLabels(props: {
       </Menu>
     </Stack>
   );
-}
+});

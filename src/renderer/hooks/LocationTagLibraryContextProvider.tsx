@@ -4,11 +4,14 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { ipcApi } from '-/services/ipc-api';
+import { notifyApp } from '-/services/app-notice';
 import { useCurrentLocationContext } from './CurrentLocationContextProvider';
 
 /**
@@ -27,7 +30,7 @@ import { useCurrentLocationContext } from './CurrentLocationContextProvider';
  *
  * Sits BELOW CurrentLocationContextProvider (reads currentLocation.path).
  */
-interface LocationTagLibraryContextValue {
+export interface LocationTagLibraryContextValue {
   /** Tag → description map for the current location. Empty when no library. */
   descriptions: Record<string, string>;
   /** True while the initial IPC load for the current location is in flight. */
@@ -58,6 +61,16 @@ export function LocationTagLibraryContextProvider({
 }) {
   const { currentLocation } = useCurrentLocationContext();
   const locationRoot = currentLocation?.path ?? null;
+  const { t } = useTranslation();
+  // `t` feeds only failure notices; a ref keeps it out of the effect/callback
+  // dependency lists (i18n may return a fresh `t` identity on every render).
+  const translateRef = useRef(t);
+  translateRef.current = t;
+  // Latest location for async callbacks. A write/rollback that resolves after
+  // the user switched locations must not leak one location's library into the
+  // other's context.
+  const locationRootRef = useRef<string | null>(locationRoot);
+  locationRootRef.current = locationRoot;
 
   const [descriptions, setDescriptions] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -76,8 +89,19 @@ export function LocationTagLibraryContextProvider({
       .then((map) => {
         if (!cancelled) setDescriptions(map);
       })
-      .catch(() => {
-        if (!cancelled) setDescriptions({});
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        // The main process returns `{}` for a missing (or unparseable)
+        // wtaglib.json, so this catch only fires on a real transport/IPC
+        // failure. Clearing the map silently made every description look
+        // deleted — say so instead.
+        console.warn(
+          '[LocationTagLibrary] failed to read the tag library:',
+          locationRoot,
+          error
+        );
+        setDescriptions({});
+        notifyApp(translateRef.current('tagLibraryLoadFailed'));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -102,11 +126,25 @@ export function LocationTagLibraryContextProvider({
         await ipcApi.setTagLibraryDescription(locationRoot, tag, description);
       } catch (e) {
         // Roll back to the previous state so the UI matches disk on retry.
-        try {
-          const fresh = await ipcApi.readTagLibrary(locationRoot);
-          setDescriptions(fresh);
-        } catch {
-          // Swallow the rollback failure — the original error is the meaningful one.
+        // Only while the view still shows the location this write targeted:
+        // re-reading the old root into the new location's context would show
+        // one location's descriptions in another.
+        if (locationRootRef.current === locationRoot) {
+          try {
+            const fresh = await ipcApi.readTagLibrary(locationRoot);
+            if (locationRootRef.current === locationRoot) setDescriptions(fresh);
+          } catch (rollbackError) {
+            console.warn(
+              '[LocationTagLibrary] rollback read failed; keeping the optimistic state:',
+              locationRoot,
+              rollbackError
+            );
+          }
+        } else {
+          console.warn(
+            '[LocationTagLibrary] discarded a cross-location rollback for:',
+            locationRoot
+          );
         }
         throw e;
       }
@@ -127,9 +165,16 @@ export function LocationTagLibraryContextProvider({
       try {
         await ipcApi.clearTagLibraryDescription(locationRoot, tag);
       } catch (e) {
-        // Restore the previous entry on failure.
-        if (prev !== undefined) {
+        // Restore the previous entry on failure — but only into the location
+        // the entry came from (a stale restore would plant a foreign tag in
+        // the newly selected location's library view).
+        if (prev !== undefined && locationRootRef.current === locationRoot) {
           setDescriptions((cur) => ({ ...cur, [tag]: prev }));
+        } else if (prev !== undefined) {
+          console.warn(
+            '[LocationTagLibrary] discarded a cross-location restore for:',
+            locationRoot
+          );
         }
         throw e;
       }

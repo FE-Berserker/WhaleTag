@@ -32,6 +32,8 @@ import { setAllowedRootsAndWait } from '-/services/allowed-roots';
  * Nesting order matters: DirectoryContent reads from CurrentLocation;
  * IOActions reads from both; LocationIndex reads from CurrentLocation.
  */
+const EMPTY_FULLTEXT_PATHS: string[] = [];
+
 export default function Root() {
   const dispatch = useDispatch();
   const themeMode = useSelector((s: RootState) => s.settings.themeMode);
@@ -105,7 +107,7 @@ export default function Root() {
   // docs/04 §10: keep the dir-watcher's fulltext root set in sync so an
   // external change inside a fulltext root schedules an incremental rebuild.
   const fulltextPaths = useSelector(
-    (s: RootState) => s.settings?.fulltextPaths ?? []
+    (s: RootState) => s.settings?.fulltextPaths ?? EMPTY_FULLTEXT_PATHS
   );
   useEffect(() => {
     void ipcApi.syncFulltextPaths(fulltextPaths).catch((e) => {

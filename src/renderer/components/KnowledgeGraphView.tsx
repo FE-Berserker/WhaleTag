@@ -56,7 +56,7 @@ import { parentDir } from '-/services/path-util';
 import LoadingOverlay from '-/components/perspective/LoadingOverlay';
 import EmptyHint from '-/components/perspective/EmptyHint';
 import ErrorBanner from '-/components/perspective/ErrorBanner';
-import type { FileCellData } from '-/components/file-cell';
+import { lookupEntry, type FileCellData } from '-/components/file-cell';
 
 interface KnowledgeGraphViewProps {
   /** The shared per-cell handler bag from FileList. */
@@ -270,18 +270,28 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
   // (single source); the recursive-scan truncation banner is at FileList level.
   const { loading } = useDirectoryUI();
 
-  // P2-2: keep a live ref to the latest prefs so the unmount cleanup can flush
-  // them immediately. This prevents losing a just-toggled filter when the user
-  // switches perspectives within the 200ms debounce window.
-  const prefsRef = useRef<KgPrefs>({ shown });
-  useEffect(() => {
-    prefsRef.current = { shown, positions: storedPositions };
-  });
+  // P2-9: prefs that are scheduled but not yet written. This replaces the old
+  // `prefsRef` mirror, which lived in an effect with NO dependency array (so it
+  // re-ran after every commit just to copy state into a ref), and it replaces
+  // the cleanup-write in the debounce effect below (cleanup ran on every
+  // `shown` change, then the re-armed timer wrote again → two writes per
+  // toggle). Now: one pending snapshot, one timer, one write.
+  const pendingPrefsRef = useRef<{ id: string; prefs: KgPrefs } | null>(null);
+  const flushPrefs = useCallback(() => {
+    const pending = pendingPrefsRef.current;
+    if (!pending) return undefined;
+    pendingPrefsRef.current = null;
+    writePrefs<KgPrefs>(PREFS_KEY_PREFIX + pending.id, pending.prefs);
+    return undefined;
+  }, []);
 
   // P2-2: restore / persist per-location prefs (depth + visible categories),
   // mirroring TagCloud and FolderViz. Load on location change; debounced save
-  // on any change, with the cleanup flushing the latest prefs on unmount.
+  // on any change, with a flush on unmount (see the last effect).
   useEffect(() => {
+    // A location switch is a new prefs key: persist the outgoing location's
+    // unsaved changes first so a just-toggled filter isn't dropped.
+    flushPrefs();
     const id = currentLocation?.id;
     if (!id) return;
     const prefs = readPrefs<KgPrefs>(PREFS_KEY_PREFIX + id);
@@ -291,19 +301,26 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
     if (!prefs) return;
     const shownV = sanitizeShownCategories(prefs.shown);
     if (shownV !== null) setShown(shownV);
-  }, [currentLocation?.id]);
+  }, [currentLocation?.id, flushPrefs]);
 
+  // Debounced write. The cleanup only cancels the timer — it no longer writes,
+  // which is what made a single toggle write twice. `storedPositions` is in the
+  // deps because it is part of the persisted payload (dragging a node used to
+  // rely on the next unrelated `shown` change to be saved).
   useEffect(() => {
     const id = currentLocation?.id;
     if (!id) return undefined;
+    pendingPrefsRef.current = { id, prefs: { shown, positions: storedPositions } };
     const handle = window.setTimeout(() => {
-      writePrefs<KgPrefs>(PREFS_KEY_PREFIX + id, prefsRef.current);
+      if (pendingPrefsRef.current?.id === id) flushPrefs();
     }, 200);
-    return () => {
-      window.clearTimeout(handle);
-      writePrefs<KgPrefs>(PREFS_KEY_PREFIX + id, prefsRef.current);
-    };
-  }, [currentLocation?.id, shown]);
+    return () => window.clearTimeout(handle);
+  }, [currentLocation?.id, shown, storedPositions, flushPrefs]);
+
+  // Flush on unmount — the user may leave the perspective inside the 200 ms
+  // debounce window. `flushPrefs` is dependency-free, so this cleanup runs
+  // exactly once, at unmount.
+  useEffect(() => () => flushPrefs(), [flushPrefs]);
 
   const { rfNodes, rfEdges, tagCount, fileCount } = useMemo(() => {
     const exclude = FILTERABLE_CATEGORIES.filter((c) => !shown.includes(c));
@@ -405,12 +422,14 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
         onClickTag((node.data as TagNodeData).raw);
       } else if (node.type === 'directory') {
         const path = (node.data as DirectoryNodeData).path;
-        const ent = entries.find((en) => en.path === path);
+        // P2-8: O(1) through the host's path→entry map (was a full scan of the
+        // listing on every node click).
+        const ent = lookupEntry(data, path);
         if (!ent) return;
         navigateTo(ent.path);
       } else {
         const path = (node.data as FileNodeData).path;
-        const ent = entries.find((en) => en.path === path);
+        const ent = lookupEntry(data, path);
         if (!ent) return;
         // If the file lives in a subdirectory, navigate there first so the
         // file list reflects the selection; otherwise open directly.
@@ -421,7 +440,7 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
         }
       }
     },
-    [entries, currentDirectoryPath, navigateTo, onOpen, onClickTag]
+    [data, currentDirectoryPath, navigateTo, onOpen, onClickTag]
   );
 
   const captureMindMap = useCallback(async (): Promise<string | null> => {

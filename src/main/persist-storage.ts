@@ -28,9 +28,14 @@
  *    The `datasync` before rename is what prevents a post-rename crash from
  *    exposing a partially-flushed temp as the target — the exact failure
  *    mode that surfaced as "settings revert to defaults".
- *  - Errors are logged, not swallowed. The renderer-side adapter does the
- *    same, so a corrupt file surfaces in DevTools instead of silently
- *    downgrading the user to defaults.
+ *  - Read errors are **propagated**, not collapsed into `null`. `null` means
+ *    "the file does not exist" (first run) and nothing else: redux-persist
+ *    treats it as an empty store and rewrites the defaults. The renderer
+ *    pauses persistence when the read rejects, so a transient I/O error can
+ *    no longer replace the user's settings/tag library with defaults.
+ *  - A one-time `.bak` copy of the pre-session blob is kept next to the real
+ *    file. It is best effort (a failed backup never blocks the write) and is
+ *    meant for manual recovery when the primary file is later damaged.
  */
 
 import { app } from 'electron';
@@ -39,6 +44,9 @@ import { promises as fsp } from 'fs';
 import { atomicWriteText } from './atomic-write';
 
 let _persistDir: string | null = null;
+
+/** Paths whose pre-session backup has already been taken in this process. */
+const backedUpPaths = new Set<string>();
 
 /** Resolve the persist directory lazily. Safe to call before `app.whenReady()`
  *  in current Electron, but we still defer to the first call so any future
@@ -57,15 +65,40 @@ function filePathForKey(key: string): string {
   return path.join(persistDir(), `${safeKey}.json`);
 }
 
+/**
+ * Copy the current blob to `<key>.json.bak` once per process. Taking the copy
+ * before the first write of a session preserves the state the app *read*, so
+ * a bad later write can be diagnosed/recovered. Missing file (first run) is
+ * not an error; any other failure is logged and the real write proceeds.
+ */
+async function backupOnce(filePath: string): Promise<void> {
+  if (backedUpPaths.has(filePath)) return;
+  try {
+    await fsp.access(filePath);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return;
+    console.warn('[persist-storage] backup access failed for', filePath, e);
+    return;
+  }
+  try {
+    await fsp.copyFile(filePath, `${filePath}.bak`);
+    backedUpPaths.add(filePath);
+  } catch (e) {
+    console.warn('[persist-storage] backup failed for', filePath, e);
+  }
+}
+
 export async function persistRead(key: string): Promise<string | null> {
   try {
     return await fsp.readFile(filePathForKey(key), 'utf8');
   } catch (e) {
-    // A missing file is the normal first-run case, not an error.
-    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.error('[persist-storage] read failed for', key, e);
-    }
-    return null;
+    // Only a missing file is the first-run case. Anything else (EACCES,
+    // EIO, EISDIR, a disconnected drive) must reject: the renderer pauses
+    // redux-persist on a read failure, whereas returning null here would let
+    // the defaults be written over the user's real data.
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    console.error('[persist-storage] read failed for', key, e);
+    throw e;
   }
 }
 
@@ -73,6 +106,10 @@ export async function persistWrite(key: string, value: string): Promise<void> {
   const filePath = filePathForKey(key);
   try {
     await fsp.mkdir(persistDir(), { recursive: true });
+    // Keep the state the app started this session with, once. The copy runs
+    // before the first write only, so a long session does not pay for it on
+    // every keystroke flush.
+    await backupOnce(filePath);
     // Atomic + durable write via the shared helper (same one used by sidecar
     // / index / thumbnail): write a pid+counter-unique temp, `datasync` the
     // bytes to stable storage, then rename over the final file. The

@@ -1,4 +1,12 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { alpha, lighten, useTheme } from '@mui/material/styles';
@@ -67,7 +75,12 @@ import {
   ymd,
 } from '../domain/calendar';
 import { resolveSmartTag } from '../../shared/smart-tags';
-import type { FileCellData } from '-/components/file-cell';
+import {
+  lookupEntry,
+  lookupEntryIndex,
+  setDateTagForDroppedEntries,
+  type FileCellData,
+} from '-/components/file-cell';
 import { useIOActionsContext } from '-/hooks/IOActionsContextProvider';
 import ThumbIcon from '-/components/ThumbIcon';
 import CalendarEntryMenu, {
@@ -113,6 +126,14 @@ export function shouldJumpCursor(
 
 const CELL_MIN_HEIGHT = 96;
 const ENTRY_THUMB = 24;
+
+// P2-6: module-level identity. Both used to be allocated inside render:
+// `hours` was a fresh 24-element array per TimelineView render, and every
+// `?? []` fallback (one per day cell, 168 per week-timeline render) handed
+// `<DayCell>` a brand-new array. That alone defeated its `memo`, because the
+// prop compared unequal on every parent render.
+const EMPTY_ENTRIES: DirEntry[] = [];
+const HOURS: readonly number[] = Array.from({ length: 24 }, (_, h) => h);
 
 // H.24 PA-3: per-location persisted view state. Keyed `whale.calendar.<locationId>`
 // to match `whale.folderViz.*` / `whale.tagCloud.*`. `cursor` is deliberately NOT
@@ -815,7 +836,7 @@ function MonthView({
                 <DayCell
                   key={day.key}
                   day={day}
-                  entries={buckets.get(day.key) ?? []}
+                  entries={buckets.get(day.key) ?? EMPTY_ENTRIES}
                   data={data}
                   showEmptyHint
                   onOpenCalendarMenu={onOpenCalendarMenu}
@@ -902,7 +923,7 @@ function WeekView({
             <DayCell
               key={day.key}
               day={day}
-              entries={buckets.get(day.key) ?? []}
+              entries={buckets.get(day.key) ?? EMPTY_ENTRIES}
               data={data}
               showEmptyHint={false}
               onOpenCalendarMenu={onOpenCalendarMenu}
@@ -942,7 +963,6 @@ function TimelineView({
 }: TimelineViewProps) {
   const { t } = data;
   const days = useMemo(() => weekDays(cursor, weekStartsOn), [cursor, weekStartsOn]);
-  const hours = Array.from({ length: 24 }, (_, h) => h);
   // 2026-07-04: when the range filter excludes every day in this week
   // (e.g. cursor is on a past week and range='today'), the grid would
   // otherwise render 168 empty cells — show a centered empty banner
@@ -1001,7 +1021,7 @@ function TimelineView({
           </Typography>
         ))}
       </Box>
-      {hours.map((hour) => (
+      {HOURS.map((hour) => (
         <Box
           key={hour}
           sx={{
@@ -1016,8 +1036,9 @@ function TimelineView({
             {`${String(hour).padStart(2, '0')}:00`}
           </Typography>
           {days.map((day) => {
-            const list = hourBuckets.get(day.key)?.[hour] ?? [];
-            const visible = list.slice(0, 2);
+            const list = hourBuckets.get(day.key)?.[hour] ?? EMPTY_ENTRIES;
+            // Avoid an allocation for the common case of a 0-2 entry cell.
+            const visible = list.length > 2 ? list.slice(0, 2) : list;
             const extra = list.length - visible.length;
             const todayCell = isToday(day.date);
             return (
@@ -1763,7 +1784,11 @@ interface DayCellProps {
   showLunar?: boolean;
 }
 
-function DayCell({
+// P2-6: memoized. A month grid renders up to 42 cells and the week timeline
+// 168; the parent re-renders on every cursor/selection/thumbnail tick. With
+// stable inputs (`day` from the `calendarDays` memo, `entries` from the bucket
+// map — or the shared `EMPTY_ENTRIES`) an unchanged cell now skips entirely.
+const DayCell = memo(function DayCell({
   day,
   entries,
   data,
@@ -1775,17 +1800,29 @@ function DayCell({
   const { t, readOnly, onCreateTagged } = data;
   const { importExternalFiles } = useIOActionsContext();
   const today = isToday(day.date);
-  // H.24 P2-6: lunar label is pre-gated on zh locale by the caller; empty
-  // string (no data / out of range) renders nothing.
-  const lunarLabel = showLunar ? lunarDayLabel(day.date) : '';
   const [dayCtx, setDayCtx] = useState<{ x: number; y: number } | null>(null);
-  const autoTag = resolveSmartTag('today', day.date) ?? day.key.replace(/-/g, '');
+  // P2-6: `resolveSmartTag` walks the period table and allocates its result;
+  // the day (and its date) never changes for a mounted cell, so cache it.
+  const autoTag = useMemo(
+    () => resolveSmartTag('today', day.date) ?? day.key.replace(/-/g, ''),
+    [day.date, day.key]
+  );
+  // P2-6: `lunarDayLabel` does lunar-calendar math; skip it unless shown.
+  // (The label is pre-gated on the zh locale by the caller; an empty string —
+  // no data / out of range — renders nothing.)
+  const lunarLabel = useMemo(
+    () => (showLunar ? lunarDayLabel(day.date) : ''),
+    [showLunar, day.date]
+  );
 
   // H.24 P1-5: drop target — dragging a file onto this day re-dates it
-  // (overwrites its date tag with this day's smart tag). Reuses
-  // `onSetEntryDateTag` so the sidecar write + non-date-tag filtering is
-  // shared with the domain menu's "Set as date". No confirm dialog — matches
-  // Kanban's direct-drop behavior, and it's reversible (right-click → clear).
+  // (overwrites its date tag with this day's smart tag). Reuses the
+  // date-tag callback so the sidecar write + non-date-tag filtering is
+  // shared with the domain menu's "Set as date". A multi-file drop goes
+  // through the P1-2 batch callback (one `saveMany`); hosts that only expose
+  // the legacy single-entry callback still get a per-entry fallback. No
+  // confirm dialog — matches Kanban's direct-drop behavior, and it's
+  // reversible (right-click → clear).
   //
   // Also accepts native OS files (NativeTypes.FILE): imports them into the
   // current directory and stamps THIS day's smart tag on the imported
@@ -1811,10 +1848,18 @@ function DayCell({
           );
           return undefined;
         }
+        const targets: DirEntry[] = [];
         for (const p of item.paths) {
-          const ent = data.entries.find((e) => e.path === p);
-          if (ent) data.onSetEntryDateTag?.(ent, autoTag);
+          // P2-8: O(1) through the host map (`lookupEntry`); the inline
+          // `entries.find` fallback only runs for hosts without the map.
+          const ent = lookupEntry(data, p);
+          if (ent) targets.push(ent);
         }
+        if (targets.length === 0) return undefined;
+        // P1-2 (gui-audit 2026-11): one batch callback → one `saveMany`, not
+        // N single-entry `save` calls. Falls back to the per-entry callback
+        // for hosts that only provide the legacy single-entry API.
+        setDateTagForDroppedEntries(data, targets, autoTag);
         return undefined;
       },
       collect: (monitor) => ({
@@ -1955,7 +2000,7 @@ function DayCell({
       </Menu>
     </Box>
   );
-}
+});
 
 function CalendarEntryItem({
   entry,
@@ -2007,7 +2052,8 @@ function CalendarEntryItem({
   // opens. Click-to-open made it impossible to select or start a drag
   // without the file popping open.
   const handleClick = () => {
-    const index = entries.findIndex((e) => e.path === entry.path);
+    // P2-8: O(1) through the host's path→index map (was a scan per click).
+    const index = lookupEntryIndex(data, entry.path);
     if (index >= 0) {
       onSelectRow(index, { shift: false, toggle: false });
     }

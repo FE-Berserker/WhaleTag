@@ -83,6 +83,8 @@ export default function GridCell({
   // H.23 P0-4 plumbing (mirrors Row's fields):
   selectedPaths,
   resolveEntry,
+  // P2-7: honor the user's list-date-format setting, like Row already does.
+  listDateFormat,
 }: CellComponentProps<GridCellData>) {
   const index = rowIndex * columnCount + columnIndex;
   const entry = entries[index];
@@ -313,7 +315,7 @@ export default function GridCell({
         >
           {[
             entry.isFile ? formatSize(entry.size) : '',
-            formatDate(entry.modified),
+            formatDate(entry.modified, { mode: listDateFormat, t }),
           ]
             .filter(Boolean)
             .join(' · ')}

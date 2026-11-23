@@ -98,7 +98,16 @@ function DraggableTag({
     <Tooltip title={tooltip} disableInteractive>
       <Box
         ref={dragRef}
+        role="button"
+        tabIndex={0}
+        aria-pressed={active}
         onClick={() => onToggleActive(tag)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onToggleActive(tag);
+          }
+        }}
         onContextMenu={(e) => {
           e.preventDefault();
           onEdit(tag);

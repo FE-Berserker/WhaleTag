@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -70,6 +71,36 @@ export function LocationIndexContextProvider({
   const [count, setCount] = useState(0);
   const [progress, setProgress] = useState<IndexProgress | null>(null);
 
+  // P1-3 (gui-audit 2026-11): async-result ownership. The index IPC calls can
+  // outlive the state they were started for — the user switches location (or
+  // starts a second build) while `buildLocationIndex` is still awaiting, and
+  // the old result used to be written onto the NEW location's status/count.
+  //
+  // `requestSeqRef` is a monotonic generation token: every new build claims a
+  // token, and it is bumped again whenever the active location changes or the
+  // provider unmounts. A continuation only writes state when its captured
+  // token still matches (i.e. it still owns the current generation).
+  // `mountedRef` additionally keeps unmount cleanup from touching state.
+  const requestSeqRef = useRef(0);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      // Invalidate any in-flight continuation so a late IPC reply can't
+      // resolve into a dead component.
+      requestSeqRef.current += 1;
+    };
+  }, []);
+
+  // Any location change (including "no location") invalidates builds that were
+  // started against the previous one. Declared in its own effect so it runs
+  // for every id change without re-running the probe below.
+  useEffect(() => {
+    requestSeqRef.current += 1;
+  }, [currentLocation?.id]);
+
   // docs/04 §10: live build progress for the active location. Events for
   // other roots (fulltext builds from Settings, another location's build)
   // are ignored; the terminal `done` event clears the indicator.
@@ -126,13 +157,20 @@ export function LocationIndexContextProvider({
 
   const build = useCallback(async () => {
     if (!currentLocation) return;
+    // Claim the generation this build belongs to. Bumped by a location change,
+    // a newer build, or unmount — after the await we only write state when
+    // we still own it.
+    requestSeqRef.current += 1;
+    const requestSeq = requestSeqRef.current;
     setStatus('building');
     setError(null);
     try {
       const { count: c } = await ipcApi.buildLocationIndex(currentLocation.path);
+      if (!mountedRef.current || requestSeqRef.current !== requestSeq) return;
       setCount(c);
       setStatus('ready');
     } catch (e) {
+      if (!mountedRef.current || requestSeqRef.current !== requestSeq) return;
       setError(errMsg(e));
       setStatus('error');
     }

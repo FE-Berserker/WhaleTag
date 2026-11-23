@@ -159,6 +159,20 @@ export function DirectoryContentContextProvider({
   // may return a fresh `t` identity), re-running the load effect forever.
   const translateRef = useRef(t);
   translateRef.current = t;
+  // Persisting a view preference (.whale/wsm.json) is non-critical — the
+  // optimistic state already switched the UI — but a silent failure means the
+  // pref reverts on the next visit with no explanation. Log it and tell the
+  // user once per mount (a drag/zoom burst must not spam notices).
+  const folderMetaWriteFailureNotified = useRef(false);
+  const reportFolderMetaWriteFailure = useCallback((error: unknown) => {
+    console.warn(
+      '[DirectoryContent] failed to persist the folder view preference:',
+      error
+    );
+    if (folderMetaWriteFailureNotified.current) return;
+    folderMetaWriteFailureNotified.current = true;
+    notifyApp(translateRef.current('folderMetaWriteFailed'), 'warning');
+  }, []);
   const defaultViewMode = useSelector(
     (s: RootState) => s.settings?.defaultViewMode ?? 'list'
   );
@@ -396,9 +410,9 @@ export function DirectoryContentContextProvider({
       if (!currentDirectoryPath) return;
       void ipcApi
         .writeFolderMeta(currentDirectoryPath, { perspective: mode })
-        .catch(() => undefined); // view pref is non-critical; ignore write failure
+        .catch(reportFolderMetaWriteFailure);
     },
-    [currentDirectoryPath]
+    [currentDirectoryPath, reportFolderMetaWriteFailure]
   );
 
   // Debounce the entrySize write: dragging the zoom fires many steps, but only
@@ -412,10 +426,10 @@ export function DirectoryContentContextProvider({
       entrySizeWriteTimer.current = setTimeout(() => {
         void ipcApi
           .writeFolderMeta(currentDirectoryPath, { entrySize: px })
-          .catch(() => undefined);
+          .catch(reportFolderMetaWriteFailure);
       }, 400);
     },
-    [currentDirectoryPath]
+    [currentDirectoryPath, reportFolderMetaWriteFailure]
   );
 
   // Clear a pending debounced entrySize write if the provider unmounts mid-drag

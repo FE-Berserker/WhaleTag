@@ -13,6 +13,7 @@
 - `fulltext_fts`:FTS5 virtual table(全文 snippet)
 - `exif_processed`:已抽 GPS 的文件缓存(防止 N 次扫描重抽)
 - 触发器同步 `files` ↔ `files_fts`
+- **只读连接**:局域网只读访问的查询走 `getReadOnlyDb()`——`readonly: true, fileMustExist: true` 打开并 `PRAGMA query_only = ON`,用完立即关闭。桌面路径的 `getDb()` 会设 WAL 模式并执行 SCHEMA(两者都是写),所以 Web 端**刻意**不走它;索引库不存在时返回 `null`,调用方据此报 `indexUnavailable`,浏览不会创建 `.whale/` 或 `index.db`(见 [docs/22](./22-lan-access.md))。
 
 **增量重建**:`buildFulltextIndex` 只 select `path + mtime`(**不把全文 content load 进内存**);mtime 未变的行原样留在表里(不重抽、不重插),改动 / 新增才抽 → `insertFulltext`,消失的 path → `deleteFulltextPaths`,见 [src/main/fulltext.ts](../src/main/fulltext.ts)。(取代旧的全量重写策略 —— 大语料下须把每个文件正文搬进内存,冻结数秒。) **读取失败 ≠ 文件被删**:遍历中打不开的目录 / 条目、以及超过 128 MiB 的 PDF 记入 `skipped`,它们既有的行**保留**(仍然可搜索,等下一次构建成功再刷新),绝不算进 removed —— 瞬时权限错误不会把已索引内容清空。读取失败与"空文件"在 `extractText` 内部用 `unreadable` 标志区分。
 
@@ -33,6 +34,8 @@ loadExifProcessed(rootPath)                 // 查询
 ```
 
 `TaskReminder` 启动时总是重 build 索引,确保子目录新打的 pending workflow tag 能被检索到。
+
+**渲染层只认领自己的构建结果**:[LocationIndexContextProvider.tsx](../src/renderer/hooks/LocationIndexContextProvider.tsx) 在 `buildLocationIndex` 的 await 前领取单调递增的请求序号,并在位置切换、新构建、卸载时让序号前进;await 后只有「序号仍是自己的 + 组件仍挂载」才写 `status/count`。过期成功与过期失败都被丢弃,快速切换位置不会把上一个根目录的构建结果写进当前 UI。
 
 **侧车读失败不擦标签**:遍历时若某个目录的 `wsd.json` 读不出(损坏 / 权限),`buildIndex` 仍会返回该目录的文件,但每条带 `tagsUnreadable: true`——此时 `tags` 只有文件名里解析出的标签。`ingestFiles` 对带该标记的行**保留数据库里已有的 tags**(`ON CONFLICT ... tags=CASE WHEN @keep_tags THEN files.tags ELSE excluded.tags END`),并且不做"签名未变就跳过"的优化(partial 视图永远算不上未变)。这样一次瞬时读失败不会把位置里的标签从搜索/标签过滤里抹掉;下次读取成功时仍以侧车为准(清空标签会真正清空)。
 
@@ -60,6 +63,10 @@ loadExifProcessed(rootPath)                 // 查询
 `SearchQuery` 字段(`search-query.ts:17-35`):`text, tags, tagMatch, excludeTags, type, extensions, sizeMinBytes, sizeMaxBytes, modifiedAfter, modifiedBefore`(共 10 字段)。renderer 经 `-/services/search-filter` 薄 shim (`src/renderer/services/search-filter.ts`) 转发到 `src/shared/search-query.ts`,shim 不再加工。
 
 结果在主进程拼 SQL → 返回带 snippet 的条目列表。
+
+**只读副本**:同一套 SQL 有两条入口——`advancedQuery(rootPath, q)`(桌面,`getDb()`)与 `advancedQueryReadOnly(rootPath, q)`(LAN,`getReadOnlyDb()` + 立即关闭);标签同理 `distinctTags` / `distinctTagsReadOnly`。worker 侧对应 op 是 `index:readonly-advanced` / `index:readonly-tags`,结果都带 `indexUnavailable` 标记(索引库不存在时为 `true`,查询返回空集而不报错)。
+
+**局域网查询的约束**(详见 [docs/22 §5](./22-lan-access.md)):Web 端只发 `text` + `tags`,固定 `tagMatch: 'all'`、`type: 'any'`,其余字段留空;`q` ≤ 512 字符,标签 ≤ 16 个且每个 ≤ 128 字符。命中结果会再逐个落盘复核(必须在 root 内、`.whale` 之外、仍然存在),已删除或越界的条目丢弃。
 
 ## 6. 保存的搜索
 

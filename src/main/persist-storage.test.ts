@@ -45,6 +45,41 @@ describe('redux-persist file storage', () => {
     }
   });
 
+  it('rejects a non-ENOENT read failure instead of returning null', async () => {
+    // A directory in the blob's place makes readFile fail with EISDIR — the
+    // non-first-run case that used to be collapsed into null (and then let
+    // redux-persist rewrite defaults over the real file).
+    const dir = path.join(userData, 'persist', 'read-fail.json');
+    try {
+      await fsp.mkdir(dir, { recursive: true });
+      await assert.rejects(mod.persistRead('read-fail'));
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a one-time .bak of the blob that was read at session start', async () => {
+    const file = path.join(userData, 'persist', 'backup-test.json');
+    const bak = `${file}.bak`;
+    try {
+      await mod.persistWrite('backup-test', 'v1');
+      assert.equal(existsSync(bak), false, 'first write has nothing to back up');
+
+      await mod.persistWrite('backup-test', 'v2');
+      assert.equal(await fsp.readFile(bak, 'utf8'), 'v1');
+
+      await mod.persistWrite('backup-test', 'v3');
+      assert.equal(
+        await fsp.readFile(bak, 'utf8'),
+        'v1',
+        'later writes must not overwrite the pre-session backup'
+      );
+    } finally {
+      await fsp.rm(file, { force: true });
+      await fsp.rm(bak, { force: true });
+    }
+  });
+
   it('rejects when the blob cannot be removed (purge must not fake success)', async () => {
     // `persistDir()` caches on first use, so reuse the first test's userData
     // directory and pick a different key.

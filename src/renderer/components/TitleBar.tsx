@@ -64,13 +64,18 @@ export default function TitleBar(): JSX.Element {
       <Box sx={{ flex: 1 }} />
       <Box sx={{ display: 'flex', WebkitAppRegion: 'no-drag' }}>
         <Tooltip title={t('minimize')} enterDelay={500}>
-          <IconButton size="small" onClick={() => fire(ipcApi.windowMinimize())}>
+          <IconButton
+            size="small"
+            aria-label={t('minimize')}
+            onClick={() => fire(ipcApi.windowMinimize())}
+          >
             <RemoveIcon fontSize="small" />
           </IconButton>
         </Tooltip>
         <Tooltip title={maximized ? t('restore') : t('maximize')} enterDelay={500}>
           <IconButton
             size="small"
+            aria-label={maximized ? t('restore') : t('maximize')}
             onClick={() => fire(ipcApi.windowMaximizeToggle())}
           >
             {maximized ? (
@@ -83,6 +88,7 @@ export default function TitleBar(): JSX.Element {
         <Tooltip title={t('close')} enterDelay={500}>
           <IconButton
             size="small"
+            aria-label={t('close')}
             onClick={() => fire(ipcApi.windowClose())}
             sx={{
               '&:hover': { bgcolor: 'rgba(232,17,35,0.9)', color: '#fff' },

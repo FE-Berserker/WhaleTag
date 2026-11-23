@@ -23,6 +23,9 @@ import { createStore } from 'redux';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import i18next from 'i18next';
+import { createRequire } from 'module';
+
+const require_ = createRequire(__filename);
 
 let CalendarView: typeof import('./CalendarView').default;
 let shouldJumpCursor: typeof import('./CalendarView').shouldJumpCursor;
@@ -149,11 +152,11 @@ const STUB_STORE = createStore(
   () => ({ settings: { officeThumbnailEnabled: false, sofficePath: null } })
 );
 
-function renderCalendar(data: FileCellData, _lng = 'en') {
+function calendarTree(data: FileCellData) {
   // DayCell now uses useIOActionsContext() for native OS-file drop
   // support — wrapping the production IOActionsContextProvider is
   // enough; the default `importExternalFiles` stub resolves to a no-op.
-  return render(
+  return (
     <I18nextProvider i18n={i18next} defaultNS="common">
       <Provider store={STUB_STORE}>
         <DndProvider backend={HTML5Backend}>
@@ -172,6 +175,10 @@ function renderCalendar(data: FileCellData, _lng = 'en') {
       </Provider>
     </I18nextProvider>
   );
+}
+
+function renderCalendar(data: FileCellData, _lng = 'en') {
+  return render(calendarTree(data));
 }
 
 before(async () => {
@@ -745,4 +752,40 @@ describe('CalendarView P1-4: shouldJumpCursor truth table', () => {
       });
     }
   }
+});
+
+describe('CalendarView P2-6: per-day label work is memoized', () => {
+  it('resolves the smart-tag label once per day instead of on every render', () => {
+    // `CalendarView` does `(0, smart_tags_1.resolveSmartTag)(...)`, and the
+    // module object is shared with this require — patching the export is
+    // enough to count calls. Before P2-6 the call sat directly in the DayCell
+    // body, so every parent render re-walked the period table for all 42
+    // cells.
+    const smartTags = require_('../../shared/smart-tags') as {
+      resolveSmartTag: (...args: unknown[]) => string | undefined;
+    };
+    const original = smartTags.resolveSmartTag;
+    let calls = 0;
+    smartTags.resolveSmartTag = (...args: unknown[]) => {
+      calls += 1;
+      return original(...args);
+    };
+    try {
+      const view = renderCalendar(makeData());
+      const afterMount = calls;
+      assert.ok(
+        afterMount >= 28,
+        `expected one call per rendered day cell, saw ${afterMount}`
+      );
+
+      view.rerender(calendarTree(makeData()));
+      assert.equal(
+        calls,
+        afterMount,
+        'a parent re-render must not re-resolve the day labels'
+      );
+    } finally {
+      smartTags.resolveSmartTag = original;
+    }
+  });
 });

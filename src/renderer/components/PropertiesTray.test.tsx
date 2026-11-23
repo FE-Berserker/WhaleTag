@@ -59,6 +59,11 @@ before(async () => {
         translation: {
           fileProperties: 'File properties',
           columnResizeHandle: 'Resize {{column}} column',
+          modified: 'Modified',
+          justNow: 'just now',
+          nMinutesAgo: '{{count}} minutes ago',
+          nHoursAgo: '{{count}} hours ago',
+          nDaysAgo: '{{count}} days ago',
         },
       },
     },
@@ -150,6 +155,8 @@ interface RenderTrayOptions {
   entries?: DirEntry[];
   readOnly?: boolean;
   onError?: (message: string) => void;
+  /** `settings.listDateFormat` — the P2-7 fix reads it for the modified row. */
+  listDateFormat?: 'absolute' | 'relative';
 }
 
 function renderTray(
@@ -159,7 +166,11 @@ function renderTray(
 ) {
   const commits: number[] = [];
   const store = createStore(() => ({
-    settings: { tagColors: {}, tagShape: 'rounded' },
+    settings: {
+      tagColors: {},
+      tagShape: 'rounded',
+      listDateFormat: options.listDateFormat,
+    },
     taglibrary: { groups: [] },
     workflow: { stages: [] },
   }));
@@ -461,5 +472,39 @@ describe('PropertiesTray IME commits and errors', () => {
     assert.deepEqual(getSaveMetaCalls().map((call) => call.meta), [
       { description: 'Notes' },
     ]);
+  });
+});
+
+describe('PropertiesTray list date format', () => {
+
+  // P2-7: GridCell and PropertiesTray used to hard-code the absolute form,
+  // so a user who picked "relative" in Settings saw it in Row/Calendar but
+  // not here. The tray must read `settings.listDateFormat`.
+  it('renders the relative form when the setting asks for it', () => {
+    const twoDaysAgo = { ...entries[0], modified: new Date(Date.now() - 2 * 86_400_000).toISOString() };
+    const { view } = renderTray(320, false, {
+      entries: [twoDaysAgo],
+      listDateFormat: 'relative',
+    });
+    assert.ok(
+      view.getByText('2 days ago'),
+      'the modified row follows the relative setting'
+    );
+  });
+
+  it('keeps the absolute form when the setting is absolute or unset', () => {
+    // `formatDate` is external state (it reads the app's i18n language), so
+    // assert on the year instead of a locale-specific rendering.
+    const unset = renderTray(320, false, { entries: [entries[0]] });
+    assert.equal(unset.view.queryByText(/days ago/), null, 'absolute by default');
+    assert.ok(unset.view.getByText(/2026/));
+    unset.view.unmount();
+
+    const explicit = renderTray(320, false, {
+      entries: [entries[0]],
+      listDateFormat: 'absolute',
+    });
+    assert.equal(explicit.view.queryByText(/days ago/), null);
+    assert.ok(explicit.view.getByText(/2026/));
   });
 });

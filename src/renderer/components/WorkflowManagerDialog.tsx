@@ -10,6 +10,7 @@ import {
   DialogTitle,
   IconButton,
   Menu,
+  MenuItem,
   Stack,
   TextField,
   Tooltip,
@@ -113,7 +114,16 @@ export default function WorkflowManagerDialog({
             return (
               <Box
                 key={shape}
+                role="button"
+                tabIndex={0}
+                aria-pressed={selected}
                 onClick={() => dispatch(setTagShape(shape))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    dispatch(setTagShape(shape));
+                  }
+                }}
                 title={t(`shape_${shape}`)}
                 sx={{
                   px: 1.25,
@@ -147,9 +157,18 @@ export default function WorkflowManagerDialog({
             >
               <Tooltip title={t('changeColor')}>
                 <Box
+                  role="button"
+                  tabIndex={0}
+                  aria-label={t('changeColor')}
                   onClick={(e) =>
                     setPalette({ anchorEl: e.currentTarget, stage })
                   }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setPalette({ anchorEl: e.currentTarget, stage });
+                    }
+                  }}
                   sx={{
                     width: 22,
                     height: 22,
@@ -243,43 +262,47 @@ export default function WorkflowManagerDialog({
         open={palette !== null}
         anchorEl={palette?.anchorEl ?? null}
         onClose={() => setPalette(null)}
+        slotProps={{
+          list: {
+            sx: {
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 0.75,
+              p: 1,
+              maxWidth: 200,
+            },
+          },
+        }}
       >
-        <Box
-          sx={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 0.75,
-            p: 1,
-            maxWidth: 200,
-          }}
-        >
-          {TAG_PALETTE.map((c) => (
-            <Box
-              key={c}
-              onClick={() => pickColor(c)}
-              sx={{
-                width: 24,
-                height: 24,
-                borderRadius: '50%',
-                bgcolor: c,
-                cursor: 'pointer',
-                border: palette?.stage.color === c ? 2 : 1,
-                borderColor:
-                  palette?.stage.color === c ? 'text.primary' : 'divider',
-                color: readableTextOn(c),
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: 13,
-                fontWeight: 700,
-                '&:hover': { transform: 'scale(1.1)' },
-                transition: 'transform 0.1s',
-              }}
-            >
-              {palette?.stage.color === c ? '✓' : ''}
-            </Box>
-          ))}
-        </Box>
+        {TAG_PALETTE.map((c) => (
+          <MenuItem
+            key={c}
+            onClick={() => pickColor(c)}
+            aria-label={c}
+            sx={{
+              width: 24,
+              height: 24,
+              minWidth: 24,
+              minHeight: 24,
+              p: 0,
+              borderRadius: '50%',
+              bgcolor: c,
+              border: palette?.stage.color === c ? 2 : 1,
+              borderColor:
+                palette?.stage.color === c ? 'text.primary' : 'divider',
+              color: readableTextOn(c),
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 13,
+              fontWeight: 700,
+              '&:hover': { transform: 'scale(1.1)' },
+              transition: 'transform 0.1s',
+            }}
+          >
+            {palette?.stage.color === c ? '✓' : ''}
+          </MenuItem>
+        ))}
       </Menu>
     </Dialog>
   );

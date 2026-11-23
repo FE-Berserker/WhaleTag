@@ -267,6 +267,16 @@ export function setTrayWidth(px: number): SetTrayWidthAction {
 }
 
 // --- Migration (redux-persist backfill) --------------------------------------
+/** True when a persisted `listColumnWidths` value is a plain map of usable px widths. */
+function isValidColumnWidths(value: unknown): value is Record<string, number> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  return Object.values(value).every(
+    (width) => typeof width === 'number' && Number.isFinite(width) && width >= 0
+  );
+}
+
 export function migrateAppearance<T extends AppearanceFields>(base: T): T {
   let next = base;
   // Theme presets: old persisted state has no themePreset field; default to
@@ -292,6 +302,28 @@ export function migrateAppearance<T extends AppearanceFields>(base: T): T {
     next = { ...next, galleryShowTags: true };
   if (next.trayVisible === undefined) next = { ...next, trayVisible: true };
   if (next.trayWidth === undefined) next = { ...next, trayWidth: 300 };
+  // H.23 P1-5 / P2-1 / P2-3 list presentation. These four fields shipped after
+  // the first redux-persist state shape, so an existing profile either lacks
+  // them or carries corrupt values from a hand-edited / truncated store.
+  // Backfill only when the value is unusable, and allocate a fresh object then
+  // (the autoMergeLevel1 reconciler compares references — mutating in place or
+  // always allocating would break its slice-rehydration shortcuts).
+  if (!isValidColumnWidths(next.listColumnWidths)) {
+    next = {
+      ...next,
+      listColumnWidths: { ...appearanceInitial.listColumnWidths },
+    };
+  }
+  if (
+    !Array.isArray(next.listHiddenColumns) ||
+    next.listHiddenColumns.some((column) => typeof column !== 'string')
+  ) {
+    next = { ...next, listHiddenColumns: [...appearanceInitial.listHiddenColumns] };
+  }
+  if (typeof next.listZebra !== 'boolean')
+    next = { ...next, listZebra: appearanceInitial.listZebra };
+  if (next.listDateFormat !== 'absolute' && next.listDateFormat !== 'relative')
+    next = { ...next, listDateFormat: appearanceInitial.listDateFormat };
   return next;
 }
 

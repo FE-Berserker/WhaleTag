@@ -111,19 +111,24 @@ function Highlighted({
  * the query never triggers a search); Escape clears. Results show matched
  * substrings highlighted; clicking a result navigates to its directory.
  */
+const EMPTY_FULLTEXT_PATHS: string[] = [];
+
 export default function SearchBar() {
   const { t } = useTranslation();
   const { status, progress, build, search } = useLocationIndexContext();
   const { currentLocation, navigateTo, navigateToInLocation } =
     useCurrentLocationContext();
   const fulltextPaths = useSelector(
-    (s: RootState) => s.settings?.fulltextPaths ?? []
+    (s: RootState) => s.settings?.fulltextPaths ?? EMPTY_FULLTEXT_PATHS
   );
   const locations = useSelector((s: RootState) => s.locations.items);
 
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<IndexEntry[]>([]);
   const [contentResults, setContentResults] = useState<FulltextHit[]>([]);
+  // Roots whose full-text search failed: results from the healthy roots are
+  // still useful, but the user must know the result set is incomplete.
+  const [contentFailedRoots, setContentFailedRoots] = useState<string[]>([]);
   const [contentMode, setContentMode] = useState(false);
   const [contentBusy, setContentBusy] = useState(false);
   // A failed search must not look like "no results" (or, worse, leave the
@@ -184,6 +189,7 @@ export default function SearchBar() {
         // spinner here or it stays on forever.
         setContentBusy(false);
         setContentResults([]);
+        setContentFailedRoots([]);
         setSearchError(null);
         setOpen(false);
         return;
@@ -191,14 +197,16 @@ export default function SearchBar() {
       setContentBusy(true);
       setSearchError(null);
       try {
-        const hits = await searchAllFulltext(fulltextPaths, q);
+        const { hits, failedRoots } = await searchAllFulltext(fulltextPaths, q);
         if (!isCurrent()) return;
         setContentResults(hits);
+        setContentFailedRoots(failedRoots);
       } catch (e) {
         if (!isCurrent()) return;
         // Clear the previous hits: keeping them would present stale data as
         // this query's result while the failure stayed invisible.
         setContentResults([]);
+        setContentFailedRoots([]);
         setSearchError(t('searchFailed', { message: errorMessage(e) }));
       } finally {
         if (isCurrent()) {
@@ -395,32 +403,45 @@ export default function SearchBar() {
             </Alert>
           ) : null}
           {searchError ? null : contentMode ? (
-            contentResults.length === 0 ? (
-              <Typography variant="body2" sx={{ p: 2 }} color="text.secondary">
-                {t('fulltextNoResults')}
-              </Typography>
-            ) : (
-              <List dense sx={{ maxHeight: 360, overflow: 'auto' }}>
-                {contentResults.map((hit) => (
-                  <ListItemButton
-                    key={hit.path}
-                    onClick={() => handlePickContent(hit)}
-                  >
-                    <ListItemIcon>
-                      <FileTypeIcon name={hit.name} />
-                    </ListItemIcon>
-                    <ListItemText
-                      primary={hit.name}
-                      secondary={hit.snippet}
-                      slotProps={{
-                        primary: { noWrap: true },
-                        secondary: { sx: { fontSize: 11 } },
-                      }}
-                    />
-                  </ListItemButton>
-                ))}
-              </List>
-            )
+            <>
+              {contentFailedRoots.length > 0 ? (
+                <Alert severity="warning" sx={{ m: 1 }}>
+                  {t('searchPartialFailure', {
+                    count: contentFailedRoots.length,
+                  })}
+                </Alert>
+              ) : null}
+              {contentResults.length === 0 ? (
+                <Typography
+                  variant="body2"
+                  sx={{ p: 2 }}
+                  color="text.secondary"
+                >
+                  {t('fulltextNoResults')}
+                </Typography>
+              ) : (
+                <List dense sx={{ maxHeight: 360, overflow: 'auto' }}>
+                  {contentResults.map((hit) => (
+                    <ListItemButton
+                      key={hit.path}
+                      onClick={() => handlePickContent(hit)}
+                    >
+                      <ListItemIcon>
+                        <FileTypeIcon name={hit.name} />
+                      </ListItemIcon>
+                      <ListItemText
+                        primary={hit.name}
+                        secondary={hit.snippet}
+                        slotProps={{
+                          primary: { noWrap: true },
+                          secondary: { sx: { fontSize: 11 } },
+                        }}
+                      />
+                    </ListItemButton>
+                  ))}
+                </List>
+              )}
+            </>
           ) : results.length === 0 ? (
             <Typography variant="body2" sx={{ p: 2 }} color="text.secondary">
               {t('noResults')}
@@ -463,6 +484,8 @@ export default function SearchBar() {
           <IconButton
             size="small"
             color={contentMode ? 'primary' : 'default'}
+            aria-label={t('searchContents')}
+            aria-pressed={contentMode}
             onClick={() => {
               setContentMode((v) => !v);
               setOpen(false);
@@ -475,6 +498,7 @@ export default function SearchBar() {
       <Tooltip title={t('advancedSearch')}>
         <IconButton
           size="small"
+          aria-label={t('advancedSearch')}
           onClick={() => {
             if (advancedFailed) retryAdvanced();
             else {

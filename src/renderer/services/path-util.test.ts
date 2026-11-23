@@ -4,7 +4,9 @@ import {
   basename,
   joinPath,
   pathSegments,
+  isCaseInsensitivePlatform,
   isSameOrDescendant,
+  CASE_INSENSITIVE_FS,
   parentDir,
 } from './path-util';
 
@@ -84,12 +86,53 @@ describe('renderer path-util', () => {
       assert.ok(isSameOrDescendant('/foo/bar', '\\foo\\bar\\baz'));
     });
 
-    it('is case-insensitive', () => {
-      assert.ok(isSameOrDescendant('/Foo/Bar', '/foo/bar/baz'));
+    it('folds case only on case-insensitive filesystems', () => {
+      // Explicit seam: Windows/macOS-style disks compare case-insensitively...
+      assert.ok(isSameOrDescendant('/Foo/Bar', '/foo/bar/baz', true));
       assert.ok(
-        isSameOrDescendant('C:\\Users\\Name', 'c:\\users\\name\\file.txt')
+        isSameOrDescendant('C:\\Users\\Name', 'c:\\users\\name\\file.txt', true)
       );
-      assert.ok(!isSameOrDescendant('/Foo/Bar', '/foo/bartender'));
+      // ...while a case-sensitive disk (Linux) treats them as different paths,
+      // matching the main process `foldPath` policy.
+      assert.ok(!isSameOrDescendant('/Foo/Bar', '/foo/bar/baz', false));
+      assert.ok(
+        !isSameOrDescendant(
+          'C:\\Users\\Name',
+          'c:\\users\\name\\file.txt',
+          false
+        )
+      );
+      assert.ok(!isSameOrDescendant('/Foo/Bar', '/foo/bartender', true));
+    });
+
+    it('defaults to the platform case policy', () => {
+      // The test process always has a real `process.platform`, so the module
+      // constant must mirror it (same rule as src/main/path-fold.ts).
+      assert.equal(
+        CASE_INSENSITIVE_FS,
+        isCaseInsensitivePlatform(process.platform)
+      );
+      const [ancestor, candidate] = CASE_INSENSITIVE_FS
+        ? ['/Foo/Bar', '/foo/bar/baz']
+        : ['/Foo/Bar', '/Foo/Bar/baz'];
+      assert.ok(isSameOrDescendant(ancestor, candidate));
+    });
+  });
+
+  describe('isCaseInsensitivePlatform', () => {
+    it('folds case on Windows and macOS', () => {
+      assert.equal(isCaseInsensitivePlatform('win32'), true);
+      assert.equal(isCaseInsensitivePlatform('darwin'), true);
+    });
+
+    it('does not fold case on Linux or POSIX', () => {
+      assert.equal(isCaseInsensitivePlatform('linux'), false);
+      assert.equal(isCaseInsensitivePlatform('freebsd'), false);
+      assert.equal(isCaseInsensitivePlatform('aix'), false);
+    });
+
+    it('treats an unknown platform as case-sensitive', () => {
+      assert.equal(isCaseInsensitivePlatform(undefined), false);
     });
   });
 

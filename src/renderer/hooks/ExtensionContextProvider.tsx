@@ -17,6 +17,7 @@ import type {
 } from '../../shared/extension-types';
 import { ipcApi } from '-/services/ipc-api';
 import { notifyApp } from '-/services/app-notice';
+import { errorMessage } from '-/services/errors';
 import { registerExtensionSaveFlush } from '-/services/extension-save-flush';
 import ConfirmDiscardDialog, {
   ConfirmDiscardChoice,
@@ -31,7 +32,7 @@ import {
   clearFileEditState,
 } from '-/reducers/extensions';
 
-import { isBinaryExtension, isImageFile } from '../../shared/whale-meta';
+import { isImageFile } from '../../shared/whale-meta';
 import {
   MAX_TABS,
   findTabForFile,
@@ -42,6 +43,7 @@ import {
   syncLocationReadOnly,
 } from './extension-tabs';
 import { saveForExtensionClose } from './extension-save-close';
+import { readExtensionFileContent } from './extension-file-content';
 
 export interface ActiveExtensionView {
   manifest: ExtensionManifest;
@@ -49,7 +51,7 @@ export interface ActiveExtensionView {
   fileContent: string;
   encoding: ExtensionEncoding;
   readOnly: boolean;
-  /** File size in bytes, populated by `readFileContent` and forwarded to the
+  /** File size in bytes, populated by `readExtensionFileContent` and forwarded to the
    *  extension via `FileContentMessage.size`. Optional — extensions that
    *  don't need it can ignore it. */
   fileSize?: number;
@@ -95,7 +97,15 @@ export interface ExtensionContextValue {
   openEntryInTab: (entry: DirEntry) => Promise<void>;
   activateTab: (tabId: string) => void;
   closeTab: (tabId: string) => Promise<'closed' | 'cancelled'>;
+  /** Re-read the active tab's file and make its editor take the disk content
+   *  even if the buffer is dirty (revision restore, after the user confirmed
+   *  the unsaved changes are expendable). Never rejects: a failed reload is
+   *  reported through `notifyApp`, since the on-disk file has already changed. */
   reloadContent: () => Promise<void>;
+  /** Per-tab counter `reloadContent` bumps to force a re-post of unchanged
+   *  content. `ExtensionHost` turns a new value into `fileContent.force` so a
+   *  dirty editor replaces its buffer instead of ignoring the message. */
+  reloadTokens: Record<string, number>;
   /** Close the active tab, prompting to save if it has unsaved edits.
    *  Resolves 'cancelled' if the user aborted (keep the tab open). Alias for
    *  `closeTab(activeTabId)`; kept for legacy callers. */
@@ -122,21 +132,6 @@ export function useExtensionContext(): ExtensionContextValue {
 
 interface ExtensionContextProviderProps {
   children: ReactNode;
-}
-
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  const len = bytes.byteLength;
-  for (let i = 0; i < len; i += 1) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return window.btoa(binary);
-}
-
-function extOf(filePath: string): string {
-  const dot = filePath.lastIndexOf('.');
-  return dot > 0 ? filePath.slice(dot + 1).toLowerCase() : '';
 }
 
 export function ExtensionContextProvider({
@@ -176,8 +171,14 @@ export function ExtensionContextProvider({
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Bumped per tab by `reloadContent` so `ExtensionHost` can force a re-post of
+  // content that looks unchanged (see `reloadTokens` in the context type).
+  const [reloadTokens, setReloadTokens] = useState<Record<string, number>>({});
 
-  // Load registry once on mount.
+  // Load registry once on mount. A missing registry file is a legitimate
+  // "no extensions" build (Main resolves `null`); a present-but-unreadable
+  // registry rejects — surface that instead of silently pretending the user has
+  // no extensions installed.
   useEffect(() => {
     let mounted = true;
     ipcApi
@@ -185,37 +186,18 @@ export function ExtensionContextProvider({
       .then((reg) => {
         if (mounted) dispatch(loadExtensionRegistry(reg));
       })
-      .catch(() => {
-        if (mounted) dispatch(loadExtensionRegistry(null));
+      .catch((e: unknown) => {
+        if (!mounted) return;
+        dispatch(loadExtensionRegistry(null));
+        const message = t('extensionRegistryError');
+        setError(message);
+        notifyApp(message);
+        console.error('[extensions] failed to load registry:', e);
       });
     return () => {
       mounted = false;
     };
-  }, [dispatch]);
-
-  const readFileContent = useCallback(
-    async (
-      filePath: string
-    ): Promise<{ content: string; encoding: ExtensionEncoding; size: number }> => {
-      const ext = extOf(filePath);
-      if (isBinaryExtension(ext)) {
-        const buffer = await ipcApi.readFile(filePath);
-        return {
-          content: arrayBufferToBase64(buffer),
-          encoding: 'base64',
-          size: buffer.byteLength,
-        };
-      }
-      const text = await ipcApi.readTextFile(filePath);
-      // Polyfill-free UTF-8 byte count (works in renderer, jsdom, modern browsers).
-      return {
-        content: text,
-        encoding: 'utf8',
-        size: new TextEncoder().encode(text).byteLength,
-      };
-    },
-    []
-  );
+  }, [dispatch, t]);
 
   // §unsaved-close — read dirty flags so we can prompt before closing a tab.
   const editStateMap = useSelector((s: RootState) => s.extensions.editState);
@@ -253,11 +235,15 @@ export function ExtensionContextProvider({
       (t) => isTabDirty(store.getState().extensions.editState, t.id)
     );
     await Promise.all(
-      dirtyTabs.map((tab) => {
+      dirtyTabs.map(async (tab) => {
         const save = saveHandlersRef.current.get(tab.id);
-        if (!save) return Promise.resolve();
-        return new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, 5000);
+        if (!save) return;
+        let timedOut = false;
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(() => {
+            timedOut = true;
+            resolve();
+          }, 5000);
           void save()
             .catch(() => false)
             .finally(() => {
@@ -265,9 +251,13 @@ export function ExtensionContextProvider({
               resolve();
             });
         });
+        // A save that never acked is dropped when the window goes away, with no
+        // other owner to report it: a registered handler only reports its own
+        // failures, and `flushExtensionEditors` swallows the rest.
+        if (timedOut) notifyApp(t('extensionSaveCloseFailed'));
       })
     );
-  }, [store]);
+  }, [store, t]);
 
   useEffect(() => {
     registerExtensionSaveFlush(flushDirtyTabs);
@@ -385,12 +375,25 @@ export function ExtensionContextProvider({
       }
       const idx = tabsRef.current.findIndex((t) => t.id === tabId);
       const remaining = tabsRef.current.filter((t) => t.id !== tabId);
+      // Keep the ref authoritative for callers that act right after this
+      // resolves. Rename closes the old-path tab and immediately opens the new
+      // path; a stale ref would make openWithExtension think the old tab still
+      // exists and just re-activate it (leaving the renamed file unopened).
+      tabsRef.current = remaining;
       setTabs(remaining);
       // display:none keeps inactive tabs mounted, so ExtensionHost's unmount
       // cleanup only fires now (when the tab leaves the list). Clear edit
       // state explicitly too — the unmount handler does the same and the
       // reducer delete is idempotent.
       dispatch(clearFileEditState(tabId));
+      // Drop the tab's force-reload counter too: tab ids are never reused, so
+      // keeping it would just grow the map.
+      setReloadTokens((prev) => {
+        if (!(tabId in prev)) return prev;
+        const next = { ...prev };
+        delete next[tabId];
+        return next;
+      });
       setActiveTabId((prev) => {
         if (prev !== tabId) return prev; // closed a background tab — keep focus
         if (remaining.length === 0) return null;
@@ -425,14 +428,14 @@ export function ExtensionContextProvider({
         return;
       }
       // In-flight dedup: a double click (or key + click) fires two opens before
-      // `readFileContent` resolves, and both used to push the same tab id — two
-      // tabs for one document, each with its own editor state.
+      // `readExtensionFileContent` resolves, and both pushed the same tab id —
+      // two tabs for one document, each with its own editor state.
       if (openingTabIdsRef.current.has(tabId)) return;
       openingTabIdsRef.current.add(tabId);
       setLoading(true);
       setError(null);
       try {
-        const { content, encoding, size } = await readFileContent(entry.path);
+        const { content, encoding, size } = await readExtensionFileContent(entry.path);
         const newTab: ExtensionTab = {
           id: tabId,
           locationId: currentLocation?.id ?? null,
@@ -470,7 +473,7 @@ export function ExtensionContextProvider({
         setLoading(false);
       }
     },
-    [currentLocation, readFileContent, activateTab, store]
+    [currentLocation, activateTab, store]
   );
 
   const openFile = useCallback(
@@ -531,15 +534,35 @@ export function ExtensionContextProvider({
   }, [activeTabId, closeTab]);
 
   const reloadContent = useCallback(async () => {
-    const t = activeTab;
-    if (!t) return;
-    const { content, encoding, size } = await readFileContent(t.filePath);
-    setTabs((prev) =>
-      prev.map((x) =>
-        x.id === t.id ? { ...x, fileContent: content, encoding, fileSize: size } : x
-      )
-    );
-  }, [activeTab, readFileContent]);
+    const tab = activeTab;
+    if (!tab) return;
+    try {
+      const { content, encoding, size } = await readExtensionFileContent(
+        tab.filePath
+      );
+      setTabs((prev) =>
+        prev.map((x) =>
+          x.id === tab.id
+            ? { ...x, fileContent: content, encoding, fileSize: size }
+            : x
+        )
+      );
+      // Same bytes as before still have to reach the iframe: the editor may be
+      // dirty (revision restore overwrote the file with content identical to
+      // what it already had in memory), and a plain content prop change would
+      // look like "nothing changed" to the host.
+      setReloadTokens((prev) => ({
+        ...prev,
+        [tab.id]: (prev[tab.id] ?? 0) + 1,
+      }));
+    } catch (e) {
+      // The restore already hit the filesystem; the tab is now showing stale
+      // content. Silent failure here would let the next save write the old
+      // buffer back over the restored revision.
+      notifyApp(t('revisionReloadFailed', { message: errorMessage(e) }));
+      console.error('[extensions] failed to reload after revision restore:', e);
+    }
+  }, [activeTab, t]);
 
   /** Re-read a specific open tab's file from disk and push the fresh content to
    *  its editor (the `fileContent` prop change makes `ExtensionHost` re-post
@@ -555,7 +578,7 @@ export function ExtensionContextProvider({
       // watcher may use different casing or separators from the open tab.
       if (isTabDirty(editStateMapRef.current, t.id)) return;
       try {
-        const { content, encoding, size } = await readFileContent(t.filePath);
+        const { content, encoding, size } = await readExtensionFileContent(t.filePath);
         setTabs((prev) =>
           prev.map((x) =>
             x.id === t.id
@@ -570,7 +593,7 @@ export function ExtensionContextProvider({
         console.warn('[extension-reload] failed to reload', filePath, e);
       }
     },
-    [readFileContent]
+    []
   );
 
   // External edit sync (docs/04 §10): when a location fs.watcher reports a
@@ -618,6 +641,7 @@ export function ExtensionContextProvider({
       activateTab,
       closeTab,
       reloadContent,
+      reloadTokens,
       requestCloseCurrent,
       closeView,
       registerSaveCurrent,
@@ -637,6 +661,7 @@ export function ExtensionContextProvider({
       activateTab,
       closeTab,
       reloadContent,
+      reloadTokens,
       requestCloseCurrent,
       closeView,
       registerSaveCurrent,

@@ -95,3 +95,34 @@ describe('WorkflowManagerDialog IME commits', () => {
     assert.notEqual(document.activeElement, input);
   });
 });
+
+describe('WorkflowManagerDialog keyboard controls', () => {
+  it('changes the tag shape from the keyboard', () => {
+    const { view, actions } = renderDialog();
+    const shape = view.getByText('shape_rounded');
+
+    fireEvent.keyDown(shape, { key: 'Enter' });
+    assert.deepEqual(actions.at(-1), {
+      type: 'settings/SET_TAG_SHAPE',
+      payload: 'rounded',
+    });
+
+    fireEvent.keyDown(shape, { key: ' ' });
+    assert.equal(
+      actions.filter((action) => action.type === 'settings/SET_TAG_SHAPE')
+        .length,
+      2
+    );
+  });
+
+  it('opens the stage color palette from the keyboard', async () => {
+    const { view } = renderDialog([
+      { id: 'stage-1', value: 'Doing', color: '#123456' },
+    ]);
+    const dot = view.getByRole('button', { name: 'changeColor' });
+    fireEvent.keyDown(dot, { key: 'Enter' });
+
+    await view.findByRole('menu');
+    assert.ok(view.getAllByRole('menuitem').length > 0);
+  });
+});

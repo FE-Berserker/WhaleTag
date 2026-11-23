@@ -32,7 +32,11 @@ import {
  */
 
 export interface ConfirmRequest {
-  /** Dialog title. Defaults to the app name-free generic `confirm` key. */
+  /**
+   * Dialog title. Defaults to the localized generic `confirmTitle` ("Please
+   * confirm"); the dialog always renders a `DialogTitle` so MUI can point
+   * `aria-labelledby` at it.
+   */
   title?: string;
   /** Body text (already localized by the caller). */
   message: string;
@@ -80,7 +84,10 @@ export function ConfirmDialogProvider({ children }: { children: ReactNode }) {
         maxWidth="xs"
         fullWidth
       >
-        {req?.title ? <DialogTitle>{req.title}</DialogTitle> : null}
+        {/* Always render a title: MUI Dialog only wires `aria-labelledby` when a
+            DialogTitle exists, so a title-less confirm would be nameless for
+            screen readers. */}
+        <DialogTitle>{req?.title ?? t('confirmTitle')}</DialogTitle>
         <DialogContent>
           <DialogContentText sx={{ whiteSpace: 'pre-wrap' }}>
             {req?.message}

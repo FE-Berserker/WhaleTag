@@ -166,6 +166,11 @@ export function installBootGuard(options: BootGuardOptions = {}): BootGuard {
   const allow = createReportLimiter(() => Date.now());
   let ready = false;
   let disposed = false;
+  // Set when WE put the recovery overlay on screen because boot failed. A later
+  // `markReady()` (the tree finally mounted after all) must not wipe the
+  // evidence: the error/watchdog that triggered the overlay is still real and
+  // the user needs the Reload affordance. Only a clean boot clears the overlay.
+  let recoveryShown = false;
 
   const report = (detail: string): void => {
     if (!allow(detail)) return;
@@ -182,6 +187,7 @@ export function installBootGuard(options: BootGuardOptions = {}): BootGuard {
       detail,
       onReload: options.onReload,
     });
+    recoveryShown = true;
   };
 
   const onError = (event: Event): void => {
@@ -222,7 +228,8 @@ export function installBootGuard(options: BootGuardOptions = {}): BootGuard {
     markReady(): void {
       ready = true;
       win.clearTimeout(timer);
-      removeRecoveryOverlay(doc);
+      // Keep an overlay that a boot failure or the watchdog already rendered.
+      if (!recoveryShown) removeRecoveryOverlay(doc);
     },
     dispose(): void {
       disposed = true;

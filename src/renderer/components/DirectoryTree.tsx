@@ -39,7 +39,6 @@ import InsertDriveFileOutlinedIcon from '@mui/icons-material/InsertDriveFileOutl
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 
 import type { DirEntry } from '../../shared/ipc-types';
-import { isHiddenName } from '../../shared/whale-meta';
 import { RootState } from '-/reducers';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
 import { useDirectoryUI } from '-/hooks/DirectoryContentContextProvider';
@@ -55,6 +54,7 @@ import { basename, joinPath, isSameOrDescendant } from '-/services/path-util';
 import { changedParentsToReload } from './directory-tree-refresh';
 import {
   buildTreeRows,
+  visibleTreeChildren,
   type TreeErrorNode,
   type TreeFileNode,
   type TreeFolderNode,
@@ -229,16 +229,18 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
       // §13); wait for Root's first `setAllowedRoots` push before asking.
       await waitForAllowedRoots();
       const entries = await ipcApi.listDirectory(dirPath);
-      // Store folders and files (folders first, each alphabetical). Files are
-      // only rendered when an extension view is open (see showFiles); keeping
-      // them cached means toggling that on/off needs no reload.
-      const visible = entries
-        .filter((e) => showHiddenFiles || !isHiddenName(e.name))
-        .sort((a, b) => {
-          if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
-          return a.name.localeCompare(b.name);
-        });
-      setChildrenByPath((prev) => new Map(prev).set(dirPath, visible));
+      // Cache the RAW listing (folders first, each alphabetical) — no
+      // `showHiddenFiles` filtering here. P2-3: filtering at load time made the
+      // setting part of this callback's identity, so toggling it re-created
+      // `loadChildren`, which re-ran the location-reset effect below and wiped
+      // `childrenByPath` + `expanded` to rescan from the root. Hiding is a pure
+      // render-time concern now (`buildTreeRows` / `visibleTreeChildren`), so
+      // the toggle is a re-render and the expanded tree survives.
+      const sorted = [...entries].sort((a, b) => {
+        if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+      setChildrenByPath((prev) => new Map(prev).set(dirPath, sorted));
       setChildrenError((prev) => {
         if (!prev.has(dirPath)) return prev;
         const next = new Map(prev);
@@ -259,11 +261,13 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
         return next;
       });
     }
-  }, [showHiddenFiles]);
+  }, []);
 
   // Reset everything when the active location changes, then preload the root.
   // Depend on the path string (not the location object) so a metadata-only
   // re-emit with a fresh object identity doesn't wipe the expanded tree.
+  // `loadChildren` is intentionally in the list: it is dependency-free now, so
+  // it cannot re-fire this effect on a settings change (P2-3).
   const currentLocationPath = currentLocation?.path;
   useEffect(() => {
     requestedRef.current = new Set();
@@ -499,8 +503,16 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
       childrenByPath,
       childrenError,
       showFiles,
+      showHiddenFiles,
     });
-  }, [currentLocation, expanded, childrenByPath, childrenError, showFiles]);
+  }, [
+    currentLocation,
+    expanded,
+    childrenByPath,
+    childrenError,
+    showFiles,
+    showHiddenFiles,
+  ]);
 
   if (!currentLocation) return null;
 
@@ -612,11 +624,12 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
     const isExpanded = expanded.has(path);
     const isCurrent = normPath(path) === normPath(currentDirectoryPath);
     const kids = childrenByPath.get(path);
-    // Folders always show; files only while an extension view is open.
+    // Folders always show; files only while an extension view is open, and
+    // dot-entries only when the user opted into them. `visibleTreeChildren` is
+    // the same filter `buildTreeRows` applies, so the chevron decision can
+    // never disagree with the rows actually rendered (P2-3).
     const visibleKids = kids
-      ? showFiles
-        ? kids
-        : kids.filter((k) => k.isDirectory)
+      ? visibleTreeChildren(kids, { showFiles, showHiddenFiles })
       : undefined;
     const isLoading = loading.has(path);
     // Hide the expand chevron only once we know there are no visible children.

@@ -13,6 +13,8 @@
  * it before acking main. Module-level state (not context) because the
  * configureStore callback runs outside the React tree.
  */
+import i18n from '-/i18n';
+import { notifyApp } from '-/services/app-notice';
 
 export type ExtensionSaveFlush = () => Promise<void>;
 
@@ -37,5 +39,10 @@ export async function flushExtensionEditors(): Promise<void> {
     await flush();
   } catch (err) {
     console.error('[extensions] flush before window close failed:', err);
+    // The window is already closing and main will destroy it after its grace
+    // period: a console.error left the user with no clue that the last edits
+    // were dropped. Same wording as the close-time save failure notice, which
+    // is the closest existing string ("…changes are still open in the tab").
+    notifyApp(i18n.t('extensionSaveCloseFailed'));
   }
 }

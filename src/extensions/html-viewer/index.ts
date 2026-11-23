@@ -36,6 +36,7 @@ import {
  ZOOM_MIN,
  ZOOM_MAX,
 } from './html-stats';
+import { resolveRelativeImageSrc } from './resolve-image-src';
 
 // --- DOM refs -------------------------------------------------------------
 const contentEl = document.getElementById('content') as HTMLDivElement;
@@ -198,6 +199,10 @@ interface State {
  raw: string;
  /** Bytes reported by host via FileContentMessage.size (optional). */
  size: number | undefined;
+ /** Directory of the HTML file, supplied by the host via `dirPath`. Used to
+  * resolve document-relative `<img src>` into `whale-file://` URLs; absent
+  * for older hosts, in which case relative images are left untouched. */
+ dirPath: string | undefined;
  viewMode: ViewMode;
  zoomMode: ZoomMode;
  manualZoom: number;
@@ -210,6 +215,7 @@ interface State {
 const state: State = {
  raw: '',
  size: undefined,
+ dirPath: undefined,
  viewMode: 'preview',
  zoomMode: 'manual',
  manualZoom: 1,
@@ -401,6 +407,19 @@ function renderPreview(raw: string) {
  ALLOWED_ATTR: ALLOWED_ATTRS as string[],
  });
  contentEl.innerHTML = clean;
+
+ // A relative <img src="./pic.png"> resolves against the extension origin and
+ // 404s. Rewrite document-relative images to `whale-file://` URLs under the
+ // HTML file's directory so the host can stream sibling/local images. Absolute
+ // paths, URLs and `..` traversal are rejected by the resolver (the preview
+ // must not become a way to read arbitrary files). Only when images are on:
+ // the sanitizer already dropped every <img> when they are off.
+ if (state.imagesEnabled && state.dirPath) {
+ contentEl.querySelectorAll('img').forEach((img) => {
+ const resolved = resolveRelativeImageSrc(img.getAttribute('src'), state.dirPath);
+ if (resolved) img.setAttribute('src', resolved);
+ });
+ }
 
  // Inline styles survive sanitization (`style` is allow-listed) and
  // `style="background:url(https://tracker/…)"` still pings the network on
@@ -598,6 +617,7 @@ window.whaleExt.onMessage((msg: HostMessage) => {
  const m = msg as Extract<HostMessage, { type: 'fileContent' }>;
  state.raw = m.content;
  state.size = m.size;
+ state.dirPath = typeof m.dirPath === 'string' ? m.dirPath : undefined;
  state.viewMode = 'preview';
  state.tagCount = countTags(m.content);
  state.lineCount = extractLines(m.content).length;

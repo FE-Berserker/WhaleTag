@@ -117,20 +117,37 @@ async function readHeicWasm(): Promise<ArrayBuffer> {
   return out;
 }
 
-/** Reads the built-in extension registry from the packaged dist folder. */
-async function loadExtensionRegistry(): Promise<ExtensionRegistry | null> {
-  const registryPath = path.join(
-    __dirname,
-    '..',
-    'extensions',
-    'registry.json'
-  );
+/** Reads the built-in extension registry from the packaged dist folder.
+ *
+ *  A missing file is legitimate (a build without bundled extensions): the
+ *  renderer then shows "no extensions". A file that exists but cannot be read
+ *  or parsed is NOT "no extensions" — throwing lets the renderer surface the
+ *  failure (notice + error state) instead of silently pretending the user has
+ *  none installed.
+ *
+ *  @param registryPath overridable for tests. */
+export async function loadExtensionRegistry(
+  registryPath: string = path.join(__dirname, '..', 'extensions', 'registry.json')
+): Promise<ExtensionRegistry | null> {
   if (!existsSync(registryPath)) return null;
+  let raw: string;
   try {
-    const raw = await fsp.readFile(registryPath, 'utf8');
+    raw = await fsp.readFile(registryPath, 'utf8');
+  } catch (e) {
+    throw new Error(
+      `Failed to read extension registry at ${registryPath}: ${
+        e instanceof Error ? e.message : String(e)
+      }`
+    );
+  }
+  try {
     return JSON.parse(raw) as ExtensionRegistry;
-  } catch {
-    return null;
+  } catch (e) {
+    throw new Error(
+      `Malformed extension registry at ${registryPath}: ${
+        e instanceof Error ? e.message : String(e)
+      }`
+    );
   }
 }
 

@@ -63,7 +63,7 @@
 - `setAllowedRoots(roots: string[])` 注册可写根目录
 - `assertWithinAllowedRoot(filePath)` 校验给定路径在某个 root 下;**空集合 = 拒绝所有写**(fail-closed,`allowed-roots.ts:47-49` 抛 "Refused: no configured locations")
 - 对称路径用 `fs.realpathSync` 解析目标(不存在则递归解析存在的父目录再拼尾部,`allowed-roots.ts:27-39` `resolveGuardPath`),防止 symlink 逃逸;`setAllowedRoots` 也对 root 做 `realpathSync`(不可达 fallback 到 `path.resolve`)
-- Windows 大小写归一(`isSameOrDescendant` 调用前 `toLowerCase()`)
+- 大小写按平台归一:win32/darwin 折叠、linux 精确(主进程 [path-fold.ts](../src/main/path-fold.ts);渲染层 `isSameOrDescendant` 采用同一策略,见 [path-util.ts](../src/renderer/services/path-util.ts))
 - **只读位置**(`isReadOnly=true`)由主进程强制:`fs:setAllowedRoots` 的第二个参数携带只读子集,`allowed-roots.ts` 的 `isReadOnlyPath` / `assertWritable` 在写入口(含 sidecar、folderMeta、tagLibrary、修订 API)统一拒绝,渲染层守卫只是第一道闸
 - **读取也受限**:`fs:listDirectory` / `fs:listDirectoryRecursive` / `folderMeta:read` 与文件读取一样过 `assertWithinAllowedRoot` —— 目录枚举能揭示位置外有哪些文件,递归扫描还会把缓存写进 `<dir>/.whale/`,所以不能只防"读内容"。`fs:pathExists` 这个无校验、渲染层从未调用的死通道已删除(暴露面只减不增)。渲染层首次挂载时子 effect 早于 Root 的 `setAllowedRoots`,因此列目录前先 `await waitForAllowedRoots()`。侧车批量读(`sidecar:readMany*`)仍不校验 root:它只返回调用方已给出文件名对应的元数据,无法枚举目录。
 - **位置必须来自用户的选择**:`fs:setAllowedRoots` 不再直接信任渲染层传来的数组。[known-roots.ts](../src/main/known-roots.ts) 在 `<userData>/known-roots.json` 记录"用户真的在原生对话框里选过的目录"(`dialog:openDirectory` 处理器用 `rememberPickedRoot` 记),推送时只放行已知目录,其余丢弃并记 `console.warn`;升级/首装第一次推送做一次性 seed(TOFU)并落盘,首次推送即使是空的也会关闭 seed 窗口(否则首装无位置时被注入者还能后手以 `/` 完成 seed);记录损坏/不可读时按未 seed 重来,路径被目录占用时先改名为 `.corrupt-<时间戳>` 再记录。这样渲染层即使被注入也注册不了 `/`。
@@ -129,10 +129,17 @@ main
   └─ persistRead / persistWrite (async fs)
        ├─ persistDir() lazy   ← app.getPath('userData') 首次解析
        ├─ fsp.readFile / fsp.writeFile(.tmp) + fsp.rename(原子)
-       └─ console.error on failure
+       ├─ 首次写前 copyFile → <key>.json.bak(每会话一次)
+       └─ 错误上抛(仅 ENOENT 视为"无数据")
 ```
 
 **日志策略**(`persist-storage.ts`):每次 read/write **不**打 `console.log`(每次 state 变更 + 关机 flush 都跑,会显著拖慢主进程同步 IO);真实 IO 失败的 catch 分支保留 `console.error`(`eslint:recommended` 默认允许,且符合 plan.md §A「错误必须上抛」)。**删除(purge)失败必须上抛**:`persistDelete` 只把 `ENOENT` 当"已不存在"并正常返回,其余错误(EPERM / EBUSY / EIO)记录后**重新抛出** —— 否则 redux-persist 会以为 purge 成功,旧状态在下次启动时复活。详见 [docs/15-perf-audit.md](./15-perf-audit.md) P1-2。
+
+**读失败 ≠ 首次运行(2026-11-23 加固)**:`persistRead` 只把 `ENOENT` 视为"没有已保存数据"并返回 `null`;其余读取错误(权限 / EIO / 共享冲突)记录后**上抛**。渲染层 [storage.ts](../src/renderer/store/storage.ts) 的 `getItem` 同样把 IPC 异常、非字符串返回值转成 reject,绝不返回 `null`。这是因为 redux-persist 的 `getStoredState` 一旦 reject(或 5 秒 rehydrate 超时)会按"无持久化数据"走默认值,而 `conditionalUpdate` 紧接着会把整份默认 state 排队写回——若把读失败当首次运行,下一次状态变更就会覆盖真实文件。`configureStore` 在 `persistor` 之后注册 `createPersistFailureReporter`([persist-failure.ts](../src/renderer/store/persist-failure.ts)):读失败时 `persistor.pause()`(暂停后续写,默认值只留在内存)+ `notifyApp(t('persistReadFailed'))`;写/删失败经 `notifyApp(t('persistWriteFailed'))` 提示,30 秒内至多一次。拉起窗口前产生的错误通知会由 [app-notice.ts](../src/renderer/services/app-notice.ts) 暂存(上限 4 条),首个订阅者挂载时补发。
+
+**一次性 `.bak`**:`persistWrite` 在本次会话第一次成功写盘前,若主文件已存在则 `fsp.copyFile` 到同目录 `<key>.json.bak`(每进程每 key 只做一次;备份失败只 warn,不阻塞写)。这给"读到损坏 JSON"或误覆盖留一个最近可用的副本;`.bak` 不参与读取,也不自动恢复。
+
+**写盘节流**:`persistConfig.throttle = 1000`(毫秒),把连续 dispatch(打字、拖拽)合并进一次 `setItem`;`extensions` reducer 的 `SET_FILE_EDIT_STATE` 在 dirty/saving 未变化时返回原 state,避免无意义的 slice 更新。原子写仍是 `writeFile(.tmp)` + `rename` + `datasync`。
 
 **白名单**(`configureStore.ts`):`locations` / `settings` / `taglibrary` / `workflow` / `recent` / `savedsearches` / `extensions`。`extensions` 走 `createTransform` 只持久化 `userDefaults` + `enabledOverrides`,运行时 `registry` 重新加载。
 

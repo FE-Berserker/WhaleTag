@@ -33,6 +33,7 @@ import { useExtensionContext } from '-/hooks/ExtensionContextProvider';
 import { useDirectoryUI } from '-/hooks/DirectoryContentContextProvider';
 import { useDirectoryTreeRefresh } from '-/hooks/DirectoryTreeRefreshContextProvider';
 import { createRpcHandler } from './extension-host/rpc-cases';
+import { createPendingRequestRegistry } from '../../shared/extension-requests';
 import PromptDialog from '-/components/PromptDialog';
 import { RootState } from '-/reducers';
 import {
@@ -43,6 +44,16 @@ import {
 /** How long the extension iframe may take to post `ready` before the host
  *  shows a retry-able failure instead of an indefinite spinner. */
 const READY_TIMEOUT_MS = 12_000;
+
+/** How long a dropped-file embed may stay unanswered before the host forgets
+ *  the request. Thumbnail generation can take a few seconds for big files
+ *  (folder thumbnails render a grid), so this is deliberately generous;
+ *  expiring only means "a reply that finally arrives is no longer matched". */
+const EMBED_REQUEST_TIMEOUT_MS = 60_000;
+
+/** Upper bound on remembered `requestFile` ids per tab. The set only exists to
+ *  drop a replayed message, so a short window is plenty. */
+const MAX_TRACKED_FILE_REQUESTS = 32;
 
 interface ExtensionHostProps {
   /** Identity of the tab hosting this view; used to key the per-tab save
@@ -61,8 +72,15 @@ interface ExtensionHostProps {
    *  When provided, the host sends a `siblings` envelope to the extension on
    *  every file change, and the extension's `requestFile` messages are
    *  resolved by routing through `onRequestFile` so the active view re-renders
-   *  with the new file's content. Omit for extensions that don't navigate. */
+   *  with the new file's content. An empty array is sent as-is so the viewer
+   *  can disable its prev/next buttons; `undefined` means "this tab does not
+   *  do sibling navigation" and is never sent. Omit for extensions that don't
+   *  navigate. */
   siblings?: string[];
+  /** Bumped when the tab's content was replaced on purpose (revision restore).
+   *  The next `fileContent` envelope carries `force: true` so an editor that
+   *  keeps unsaved edits on same-path reloads still replaces its buffer. */
+  reloadToken?: number;
   theme: 'light' | 'dark';
   onRequestRevisionHistory: () => void;
   /** Re-open the extension view with a different file path (used to fulfill
@@ -134,6 +152,7 @@ export default function ExtensionHost({
   readOnly,
   fileSize,
   siblings,
+  reloadToken,
   theme,
   onRequestRevisionHistory,
   onRequestFile,
@@ -141,8 +160,12 @@ export default function ExtensionHost({
   const { t, i18n } = useTranslation();
   const locale = i18n.language;
   const dispatch = useDispatch();
-  const { openWithExtension, requestCloseCurrent, registerSaveCurrent } =
-    useExtensionContext();
+  const {
+    openWithExtension,
+    requestCloseCurrent,
+    registerSaveCurrent,
+    closeTab,
+  } = useExtensionContext();
   const { refresh } = useDirectoryUI();
   const { refreshTree } = useDirectoryTreeRefresh();
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -167,10 +190,45 @@ export default function ExtensionHost({
   const [retryKey, setRetryKey] = useState(0);
   const [saving, setSaving] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
-  const editState = useSelector(
-    (s: RootState) => s.extensions.editState[tabId]
+  // Subscribe to the primitive boolean, not to `editState[tabId]`: the
+  // selector used to return the entry object, which the reducer replaces on
+  // every keystroke report — so every keypress re-rendered the whole host even
+  // when the dirty flag had not changed.
+  const dirty = useSelector(
+    (s: RootState) => s.extensions.editState[tabId]?.dirty === true
   );
-  const dirty = editState?.dirty ?? false;
+  // Mirror for the message listener: compare against the latest value without
+  // re-subscribing the listener on each dirty toggle.
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+
+  // Correlation state for the two request/reply pairs this host answers.
+  // `fileEmbed` replies are matched by the id the extension sent; `requestFile`
+  // ids only guard against a replayed message (its answer opens a new tab, see
+  // `RequestFileMessage`). Refs, not state: the message listener must not be
+  // re-subscribed when these change.
+  const embedRequestsRef = useRef<ReturnType<
+    typeof createPendingRequestRegistry<string>
+  > | null>(null);
+  if (embedRequestsRef.current === null) {
+    embedRequestsRef.current = createPendingRequestRegistry<string>({
+      timeoutMs: EMBED_REQUEST_TIMEOUT_MS,
+      onTimeout: (id) => {
+        console.warn(
+          '[ExtensionHost] dropped an unanswered fileEmbed request:',
+          id
+        );
+      },
+    });
+  }
+  // The sibling list this host last published, so a late `requestFile` can be
+  // checked against what the extension was actually allowed to navigate to.
+  const publishedSiblingsRef = useRef<string[] | null>(null);
+  const handledFileRequestsRef = useRef<Set<string>>(new Set());
+  // Bumped by the provider after a deliberate content replacement (revision
+  // restore). Only a *change* forces the reload — an ordinary external edit
+  // must never clobber a dirty buffer.
+  const lastReloadTokenRef = useRef(reloadToken);
 
   // Boot-watchdog timer: pending until `ready` (or the user retried into a
   // failure); remounting the iframe (retryKey bump) re-arms it.
@@ -217,27 +275,48 @@ export default function ExtensionHost({
   }, [filePath]);
 
   useEffect(() => {
-    if (ready && fileContent !== lastWrittenContentRef.current) {
+    if (!ready) return;
+    // A sizeable restore (restoreRevision → reloadContent({ force: true }))
+    // may read back bytes identical to the tab's last snapshot, in which case
+    // no content change is observed — but the editor still holds unsaved edits
+    // and must be told to drop them. `force` therefore rides on a token bump,
+    // not on the content difference.
+    const force =
+      reloadToken !== undefined && reloadToken !== lastReloadTokenRef.current;
+    if (fileContent === lastWrittenContentRef.current && !force) return;
+    lastReloadTokenRef.current = reloadToken;
+    if (fileContent !== lastWrittenContentRef.current) {
       // A real external edit invalidates the self-write snapshot. Without this,
       // B(self-save) -> C(external) -> B(external) would skip the last B.
       lastWrittenContentRef.current = null;
-      postToExtension({
-        type: 'fileContent',
-        path: filePath,
-        content: fileContent,
-        encoding,
-        readOnly: fileContentReadOnlyRef.current,
-        size: fileSize,
-        // §18.2.3 — supply the file's directory so the extension can
-        // resolve `<img src="./relative.png">` into streamable
-        // `whale-file://` URLs. `parentDir` handles the trailing-separator
-        // / no-separator / Windows-drive cases identically to the rest
-        // of the path utilities (see src/renderer/services/path-util.ts).
-        // Optional in the message type; older hosts can omit it.
-        dirPath: parentDir(filePath),
-      });
     }
-  }, [ready, filePath, fileContent, encoding, fileSize, postToExtension]);
+    postToExtension({
+      type: 'fileContent',
+      path: filePath,
+      content: fileContent,
+      encoding,
+      readOnly: fileContentReadOnlyRef.current,
+      size: fileSize,
+      // §18.2.3 — supply the file's directory so the extension can
+      // resolve `<img src="./relative.png">` into streamable
+      // `whale-file://` URLs. `parentDir` handles the trailing-separator
+      // / no-separator / Windows-drive cases identically to the rest
+      // of the path utilities (see src/renderer/services/path-util.ts).
+      // Optional in the message type; older hosts can omit it.
+      dirPath: parentDir(filePath),
+      // Only present when the host deliberately replaced the document;
+      // extensions treat it as "discard your buffer and reload".
+      ...(force ? { force: true as const } : {}),
+    });
+  }, [
+    ready,
+    filePath,
+    fileContent,
+    encoding,
+    fileSize,
+    reloadToken,
+    postToExtension,
+  ]);
 
   // Read-only is view state, not a new document. Sending fileContent again on
   // this transition would make editors reload the last disk snapshot and wipe
@@ -249,12 +328,15 @@ export default function ExtensionHost({
   }, [ready, readOnly, postToExtension]);
 
   // Sibling list (image-viewer's prev/next target set). Sent on every file
-  // change so the extension can light up its navigation UI immediately. Only
-  // dispatched when the host actually supplied a list — most extensions don't
-  // need it, and we don't want to spam an irrelevant `siblings` envelope.
+  // change so the extension can light up its navigation UI immediately.
+  // `undefined` means this tab does not do sibling navigation; an EMPTY array
+  // is a real answer ("nothing to navigate to") and must be delivered —
+  // skipping it left the viewer's prev/next buttons in their previous,
+  // still-enabled state after the directory emptied out.
   useEffect(() => {
     if (!ready) return;
-    if (!siblings || siblings.length === 0) return;
+    if (!siblings) return;
+    publishedSiblingsRef.current = siblings;
     postToExtension({
       type: 'siblings',
       current: filePath,
@@ -275,7 +357,14 @@ export default function ExtensionHost({
   }, [locale, ready, postToExtension]);
 
   useEffect(() => {
+    const handledFileRequests = handledFileRequestsRef.current;
     return () => {
+      // Unmounting the host orphans any in-flight embed request: the iframe
+      // that asked for it is gone, so the ids must not survive into a remount
+      // (where they could swallow a fresh request's reply).
+      embedRequestsRef.current?.clear();
+      handledFileRequests.clear();
+      publishedSiblingsRef.current = null;
       dispatch(clearFileEditState(tabId));
     };
   }, [dispatch, tabId]);
@@ -414,6 +503,13 @@ export default function ExtensionHost({
       const newPath = `${dir}${sepChar}${newName}`;
       try {
         await ipcApi.rename(filePath, newPath);
+        // This tab still points at the OLD path. Close it before opening the
+        // renamed file: a surviving stale tab leaves two tabs for one document
+        // and, worse, its next save writes back to the old filename
+        // (`writeFileWithRevision` checks the allowed root but not that the
+        // target still exists). Dirty was rejected above, so the close path
+        // normally takes the no-confirm branch.
+        await closeTab(tabId);
         const dot = newName.lastIndexOf('.');
         const entry: DirEntry = {
           name: newName,
@@ -431,7 +527,7 @@ export default function ExtensionHost({
         alert(e instanceof Error ? e.message : String(e));
       }
     },
-    [dirty, filePath, manifest, openWithExtension, refresh, refreshTree, t]
+    [closeTab, dirty, filePath, manifest, openWithExtension, refresh, refreshTree, tabId, t]
   );
 
   // A file (or folder) was dropped into the editor. For images we embed the
@@ -439,8 +535,22 @@ export default function ExtensionHost({
   // image, like the excalidraw extension). For everything else we use the
   // 256x256 thumbnail pipeline. Folders use the folder-thumbnail pipeline
   // (`<dir>/.whale/wst.jpg`).
+  //
+  // `requestId` (when the extension sends one) is registered before the async
+  // pipeline starts and echoed on the reply, so an editor with several drops
+  // in flight can tell which reply belongs to which drop. A duplicate id is
+  // refused, and a request that expired while its thumbnail was being built
+  // produces no reply at all instead of an uncorrelatable one.
   const handleRequestFileEmbed = useCallback(
-    async (p: string, isDirectory: boolean) => {
+    async (p: string, isDirectory: boolean, requestId?: string) => {
+      const pending = embedRequestsRef.current;
+      if (requestId && pending && !pending.begin(requestId, p)) {
+        console.warn(
+          '[ExtensionHost] duplicate fileEmbed request id ignored:',
+          requestId
+        );
+        return;
+      }
       const name = basename(p);
       const isImage = !isDirectory && isImageFile(name);
       let imageDataUrl: string | null = null;
@@ -460,11 +570,18 @@ export default function ExtensionHost({
         console.warn('[extHost] embed gen failed, using generic icon:', err);
         imageDataUrl = null;
       }
+      if (requestId && pending) {
+        // Expired while generating: the editor already timed the id out, so a
+        // reply now would be treated as uncorrelated. Drop it quietly.
+        if (!pending.has(requestId)) return;
+        pending.settle(requestId);
+      }
       postToExtension({
         type: 'fileEmbed',
         path: p,
         name,
         thumbnailDataUrl: imageDataUrl ?? genericFileIcon(name),
+        ...(requestId ? { requestId } : {}),
       });
     },
     [postToExtension]
@@ -546,6 +663,17 @@ export default function ExtensionHost({
             notifyApp(t('extensionRuntimeError', { message: 'invalid save payload' }));
             break;
           }
+          // The editor's revision at save time is authoritative. The host may
+          // not have seen every intermediate revision (dirty reports are
+          // edge-triggered now); comparing the ack against a stale value would
+          // report a successfully written save as outdated.
+          if (
+            typeof msg.revision === 'number' &&
+            (latestRevisionRef.current === undefined ||
+              msg.revision > latestRevisionRef.current)
+          ) {
+            latestRevisionRef.current = msg.revision;
+          }
           handleSave(msg.content, msg.revision)
             .then((ok) => {
               saveResolverRef.current?.(ok);
@@ -558,25 +686,59 @@ export default function ExtensionHost({
           break;
         case 'requestFileEmbed':
           if (typeof msg.path !== 'string' || !msg.path) break;
-          handleRequestFileEmbed(msg.path, !!msg.isDirectory).catch(
-            () => undefined
-          );
+          handleRequestFileEmbed(
+            msg.path,
+            !!msg.isDirectory,
+            typeof msg.requestId === 'string' && msg.requestId
+              ? msg.requestId
+              : undefined
+          ).catch(() => undefined);
           break;
-        case 'requestFile':
+        case 'requestFile': {
           // Extension (e.g. image-viewer) wants to navigate to a sibling file.
           // Defer to the view panel so the active view re-renders with new
           // content + a refreshed sibling list. Ignore if the host didn't
           // supply a handler (siblings API is opt-in).
-          if (typeof msg.path === 'string' && msg.path && onRequestFile) {
-            onRequestFile(msg.path);
+          if (typeof msg.path !== 'string' || !msg.path || !onRequestFile) break;
+          // Correlation: only navigate to a path this host actually published
+          // in `siblings`. A late request built from a stale list (directory
+          // changed, or the file was filtered out) used to open an unrelated
+          // file; drop it and say so.
+          const published = publishedSiblingsRef.current;
+          if (published && !published.includes(msg.path)) {
+            console.warn(
+              '[ExtensionHost] requestFile outside the published sibling list ignored:',
+              msg.path
+            );
+            break;
           }
+          // A replayed message (double click, retried postMessage) must not
+          // open the same tab twice; ids are only remembered for a short
+          // window, but a navigation request is answered immediately.
+          if (typeof msg.requestId === 'string' && msg.requestId) {
+            const handled = handledFileRequestsRef.current;
+            if (handled.has(msg.requestId)) break;
+            handled.add(msg.requestId);
+            if (handled.size > MAX_TRACKED_FILE_REQUESTS) {
+              const oldest = handled.values().next().value;
+              if (oldest !== undefined) handled.delete(oldest);
+            }
+          }
+          onRequestFile(msg.path);
           break;
+        }
         case 'contentChangedInEditor':
           if (typeof msg.dirty !== 'boolean') break;
           if (typeof msg.revision === 'number') {
             latestRevisionRef.current = msg.revision;
           }
-          dispatch(setFileEditState(tabId, { dirty: msg.dirty }));
+          // Editors also post revision snapshots while a save is in flight;
+          // only an actual flag change needs a Redux dispatch (and the re-render
+          // it causes for this host and the tab bar).
+          if (msg.dirty !== dirtyRef.current) {
+            dirtyRef.current = msg.dirty;
+            dispatch(setFileEditState(tabId, { dirty: msg.dirty }));
+          }
           break;
         case 'openLinkExternally':
           if (typeof msg.url !== 'string' || !msg.url) break;
