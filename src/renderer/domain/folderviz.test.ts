@@ -106,7 +106,7 @@ describe('buildTree', () => {
     assert.deepEqual(root.children?.[0].children, []);
   });
 
-  it('aggregates first, filters last �?dirs get summed file sizes', () => {
+  it('aggregates first, filters last — dirs get summed file sizes', () => {
     // Multi-level test: confirms that aggregation happens before
     // filtering, so deeply nested dirs retain their file totals.
     const root = buildTree('/root', [

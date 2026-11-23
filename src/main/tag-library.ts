@@ -99,25 +99,49 @@ async function readDescriptionsForMerge(
     : {};
 }
 
-/** Reads a location's `wtaglib.json`; returns `{}` when absent or invalid. */
+/**
+ * Reads a location's `wtaglib.json` for display.
+ *
+ * A MISSING file legitimately means "no descriptions yet" → `{}`. Anything
+ * else — an unreadable file, malformed JSON, or a document whose shape is not
+ * a tag library — is THROWN with the path instead of being reported as "no
+ * descriptions": a corrupt library silently read as empty makes every
+ * description look deleted, and one edit would then quarantine/overwrite the
+ * user's whole vocabulary (docs/02 §9 "损坏 ≠ 空").
+ */
 export async function readTagLibrary(
   locationRoot: string
 ): Promise<Record<string, string>> {
+  const target = wtaglibPath(locationRoot);
+  let data: string;
   try {
-    const data = await fsp.readFile(wtaglibPath(locationRoot), 'utf8');
-    const parsed = JSON.parse(data);
-    if (
-      parsed &&
-      typeof parsed === 'object' &&
-      parsed.descriptions &&
-      typeof parsed.descriptions === 'object'
-    ) {
-      return parsed.descriptions as Record<string, string>;
-    }
-    return {};
-  } catch {
-    return {};
+    data = await fsp.readFile(target, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    throw new Error(
+      `Failed to read the tag library at ${target}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(data);
+  } catch (error) {
+    throw new Error(
+      `Malformed tag library at ${target}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+  if (!isTagLibraryShape(parsed)) {
+    throw new Error(
+      `Malformed tag library at ${target}: expected an object with a "descriptions" object`
+    );
+  }
+  // Return a copy: callers treat the result as display state and must never
+  // be able to mutate the parsed document through it.
+  return { ...(parsed as LocationTagLibrary).descriptions };
 }
 
 /**

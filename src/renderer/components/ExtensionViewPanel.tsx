@@ -8,6 +8,10 @@ import { useExtensionContext } from '-/hooks/ExtensionContextProvider';
 import { useDirectoryContent } from '-/hooks/DirectoryContentContextProvider';
 import type { RootState } from '-/reducers';
 import type { DirEntry } from '../../shared/ipc-types';
+import {
+  MAX_MOUNTED_TABS,
+  selectMountedTabIds,
+} from './extension-host/tab-mount-policy';
 
 interface ExtensionViewPanelProps {
   theme: 'light' | 'dark';
@@ -38,6 +42,39 @@ export default function ExtensionViewPanel({ theme }: ExtensionViewPanelProps) {
   );
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
+
+  // Which tab iframes stay mounted (see extension-host/tab-mount-policy): the
+  // active tab plus the most recently used clean tabs; dirty tabs are pinned
+  // because their unsaved buffer lives inside the iframe. The selector returns
+  // a flat id string so typing (which re-dispatches `dirty: true` every
+  // keystroke) re-renders this panel only when a tab actually flips clean ↔
+  // dirty, not on every character — the same reason ExtensionHost/ExtensionTab
+  // Button subscribe to primitives instead of `editState[tabId]`.
+  const dirtyTabKey = useSelector((s: RootState) => {
+    const editState = s.extensions.editState;
+    let key = '';
+    for (const id of Object.keys(editState)) {
+      if (editState[id]?.dirty === true) key += `${id}\u0000`;
+    }
+    return key;
+  });
+  const pinnedTabIds = useMemo(() => {
+    const pinned = new Set<string>();
+    for (const id of dirtyTabKey.split('\u0000')) {
+      if (id) pinned.add(id);
+    }
+    return pinned;
+  }, [dirtyTabKey]);
+  const mountedTabIds = useMemo(
+    () =>
+      selectMountedTabIds(
+        tabs.map((tab) => ({ id: tab.id, lastAccessed: tab.lastAccessed })),
+        activeTabId,
+        pinnedTabIds,
+        MAX_MOUNTED_TABS
+      ),
+    [tabs, activeTabId, pinnedTabIds]
+  );
 
   // Sibling paths the active extension can navigate to (e.g. image-viewer's
   // prev/next within the current directory). Only computed for the active tab
@@ -92,11 +129,15 @@ export default function ExtensionViewPanel({ theme }: ExtensionViewPanelProps) {
         onActivate={activateTab}
         onClose={(id) => void closeTab(id)}
       />
-      {/* Stack every tab's host absolutely; hide inactive ones with display:none
-          so their iframes stay mounted (switching back is instant, no reload). */}
+      {/* One absolutely-positioned slot per tab; only the mounted ones hold an
+          iframe (bounded by selectMountedTabIds). Inactive but mounted tabs stay
+          display:none so switching back is instant, and dirty tabs are never
+          unmounted, so an unsaved buffer or the window-close save handler can't
+          be lost to eviction. */}
       <Box sx={{ flex: 1, minHeight: 0, position: 'relative' }}>
         {tabs.map((tab) => {
           const isActive = tab.id === activeTabId;
+          const isMounted = mountedTabIds.has(tab.id);
           return (
             <Box
               key={tab.id}
@@ -107,20 +148,22 @@ export default function ExtensionViewPanel({ theme }: ExtensionViewPanelProps) {
                 flexDirection: 'column',
               }}
             >
-              <ExtensionHost
-                tabId={tab.id}
-                manifest={tab.manifest}
-                filePath={tab.filePath}
-                fileContent={tab.fileContent}
-                encoding={tab.encoding}
-                readOnly={tab.readOnly}
-                fileSize={tab.fileSize}
-                siblings={isActive ? siblings : undefined}
-                reloadToken={reloadTokens[tab.id]}
-                theme={theme}
-                onRequestRevisionHistory={() => setHistoryOpen(true)}
-                onRequestFile={isActive ? handleRequestFile : undefined}
-              />
+              {isMounted ? (
+                <ExtensionHost
+                  tabId={tab.id}
+                  manifest={tab.manifest}
+                  filePath={tab.filePath}
+                  fileContent={tab.fileContent}
+                  encoding={tab.encoding}
+                  readOnly={tab.readOnly}
+                  fileSize={tab.fileSize}
+                  siblings={isActive ? siblings : undefined}
+                  reloadToken={reloadTokens[tab.id]}
+                  theme={theme}
+                  onRequestRevisionHistory={() => setHistoryOpen(true)}
+                  onRequestFile={isActive ? handleRequestFile : undefined}
+                />
+              ) : null}
             </Box>
           );
         })}

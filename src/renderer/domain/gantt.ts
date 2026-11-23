@@ -1,7 +1,7 @@
 /**
- * Gantt (Tasks §3.3) �?pure helpers for the time-axis view.
+ * Gantt (Tasks §3.3) — pure helpers for the time-axis view.
  *
- * INVARIANTS �?DO NOT CHANGE without updating the plan in
+ * INVARIANTS — DO NOT CHANGE without updating the plan in
  * docs/05-perspectives.md §3.3:
  *
  *   1. **No new metadata.** Gantt is a READ-ONLY consumer of the existing
@@ -64,7 +64,7 @@ export interface GanttRow {
 export type GanttZoom = 'day' | 'week' | 'month';
 
 /** Pixel width of one day at a given zoom. Fixed values (no fractional
- *  scaling) �?keeps day-boundary snapping cheap and round-trippable. */
+ *  scaling) — keeps day-boundary snapping cheap and round-trippable. */
 export const PX_PER_DAY: Record<GanttZoom, number> = {
   day: 32,
   week: 12,
@@ -125,7 +125,7 @@ export function addDaysKey(key: string, n: number): string {
  *
  * `thumbDataUrl` is a `data:` URL from `FileCellData.thumbCache` (the same
  * key the list / grid / gallery views use); `null` when the cache hasn't
- * loaded a thumbnail for this entry yet �?ECharts will render a placeholder
+ * loaded a thumbnail for this entry yet — ECharts will render a placeholder
  * gray square in that case.
  */
 export interface GanttChartRow {
@@ -146,7 +146,7 @@ export interface GanttChartRow {
  *   - `entries`: the post-filter `DirEntry[]` from `FileCellData.entries`
  *   - `tagsByName`: the same path-keyed map the other shared helpers consume
  *   - `thumbCache`: optional map of `${path}|${modified}` -> data URL.
- *     Undefined / empty is fine �?rows get `thumbDataUrl: null`.
+ *     Undefined / empty is fine — rows get `thumbDataUrl: null`.
  */
 export function chartRowsFromEntries(
   entries: DirEntry[],
@@ -162,7 +162,7 @@ export function chartRowsFromEntries(
     // The old version of this helper looked up by `e.path` only and so
     // always returned `null`, dropping every thumbnail into the
     // placeholder branch (pre-existing legacy bug surfaced during the
-    // ECharts→pure-DOM rewrite �?the placeholder masking the root cause).
+    // ECharts→pure-DOM rewrite — the placeholder masking the root cause).
     const thumbDataUrl = thumbCache?.get(`${e.path}|${e.modified}`) ?? null;
     out.push({ entry: e, period, thumbDataUrl, stageValue: null, tags });
   }
@@ -173,7 +173,7 @@ export function chartRowsFromEntries(
     return d !== 0 ? d : a.entry.path.localeCompare(b.entry.path);
   });
   // Now backfill stageValue (we need the full list to do it deterministically
-  // �?first-match across the same workflow axis Kanban uses).
+  // — first-match across the same workflow axis Kanban uses).
   // Pass `[]` for stages since the chart view doesn't group by stage; the
   // raw `tags` array still carries the data the ECharts bar color needs.
   return out;
@@ -182,7 +182,7 @@ export function chartRowsFromEntries(
 /**
  * Find the first period tag (`YYYYMMDD-YYYYMMDD`) on an entry and parse it.
  * Returns null when the entry has none. The first-match ordering matters
- * because the codebase enforces "at most one period" elsewhere �?but if a
+ * because the codebase enforces "at most one period" elsewhere — but if a
  * legacy sidecar somehow has two, we keep the first so behavior stays
  * deterministic.
  */
@@ -213,7 +213,7 @@ export function entriesWithPeriod(
   return out;
 }
 
-/** Filter to entries that carry NO period tag �?i.e. the Triage population.
+/** Filter to entries that carry NO period tag — i.e. the Triage population.
  *  Order preserved from input. */
 export function entriesWithoutPeriod(
   entries: DirEntry[],
@@ -225,7 +225,7 @@ export function entriesWithoutPeriod(
 // ─── Row grouping ───────────────────────────────────────────────────────
 
 /** Pick the first matching workflow value from an entry's tags. Returns
- *  null when the entry has none �?those tasks fall into the catch-all row. */
+ *  null when the entry has none — those tasks fall into the catch-all row. */
 function firstStageValue(tags: readonly string[], stageValues: readonly string[]): string | null {
   const set = new Set(stageValues);
   for (const t of tags) if (set.has(t)) return t;
@@ -303,7 +303,7 @@ export interface GanttScale {
   widthPx: number;
 }
 
-/** The minimum span shown �?short ranges still get a 14-day view so the
+/** The minimum span shown — short ranges still get a 14-day view so the
  *  user always has context around the task. */
 const MIN_VISIBLE_DAYS = 14;
 
@@ -312,7 +312,7 @@ const MIN_VISIBLE_DAYS = 14;
  * key bounds). The output is padded to at least MIN_VISIBLE_DAYS so single-day
  * tasks don't render alone at the left edge.
  *
- * `anchorKey` (default: today) controls where the padding goes �?we expand
+ * `anchorKey` (default: today) controls where the padding goes — we expand
  * symmetrically around the anchor unless one side is constrained by the
  * natural range.
  */
@@ -330,7 +330,7 @@ export function scaleForRange(
     lo = hi;
     hi = tmp;
   }
-  // Ensure the anchor (today by default) is visible �?otherwise a far-future
+  // Ensure the anchor (today by default) is visible — otherwise a far-future
   // task range would hide "now" from the user.
   if (daysBetween(lo, anchorKey) > 0) lo = anchorKey;
   if (daysBetween(anchorKey, hi) > 0) hi = anchorKey;
@@ -416,7 +416,8 @@ export type GanttDragKind = 'body' | 'left' | 'right';
 export const DRAG_PENDING_THRESHOLD_PX = 4;
 
 /**
- * Snap a pixel delta to a whole-day count for a given zoom. Pure rounding �? *  we don't floor on a particular side because symmetric rounding keeps
+ * Snap a pixel delta to a whole-day count for a given zoom. Pure rounding —
+ *  we don't floor on a particular side because symmetric rounding keeps
  *  left/right edges consistent under the same gesture.
  */
 export function deltaDaysFromPx(deltaPx: number, zoom: GanttZoom): number {
@@ -466,7 +467,8 @@ export function periodWithResize(
   return { startKey: period.startKey, endKey: newEdgeKey };
 }
 
-/** Visual status derived from a period's relation to today. Pure read �? *  no IO �?so callers (GanttBar, tooltip text, accessibility tree) all
+/** Visual status derived from a period's relation to today. Pure read —
+ *  no IO — so callers (GanttBar, tooltip text, accessibility tree) all
  *  agree on the same definition. Mirrors §9 P0 #2 design. */
 export type PeriodStatus = 'overdue' | 'inProgress' | 'normal';
 
@@ -474,9 +476,9 @@ export type PeriodStatus = 'overdue' | 'inProgress' | 'normal';
  * Classify a `GanttPeriod` against `today` (YYYY-MM-DD string compare
  * is locale-independent for the ISO format and matches `todayKey() <
  * period.endKey` etc.):
- *   - 'overdue'    �?end is strictly before today (the work missed its window)
- *   - 'inProgress' �?today is inside [start, end] inclusive (work active)
- *   - 'normal'     �?start is strictly after today (scheduled in the future)
+ *   - 'overdue'    — end is strictly before today (the work missed its window)
+ *   - 'inProgress' — today is inside [start, end] inclusive (work active)
+ *   - 'normal'     — start is strictly after today (scheduled in the future)
  *
  * A period that ends exactly on today is `inProgress` (today is still a
  * valid working day within it). A period that starts exactly on today
@@ -496,7 +498,7 @@ export function periodStatus(period: GanttPeriod, today: string): PeriodStatus {
  *
  * Day boundaries are integer multiples of `pxPerDay`. We use `Math.floor`
  * (not `Math.round`) so a click at the right edge of day N's bar snaps to
- * day N, not day N+1 �?that matches how `rectFromPeriod` paints each day's
+ * day N, not day N+1 — that matches how `rectFromPeriod` paints each day's
  * bar in the `[day*px, (day+1)*px)` half-open interval. Negative offsets
  * and offsets past the scale's right edge clamp to the inclusive bounds.
  */
@@ -505,7 +507,7 @@ export function dayKeyAtClientX(
   scale: GanttScale
 ): string {
   const px = PX_PER_DAY[scale.zoom];
-  // floor preserves the half-open interval semantics �?x=448 maps to day
+  // floor preserves the half-open interval semantics — x=448 maps to day
   // 13 (2026-07-14), not day 14 (which is past the endKey).
   const rawOffset = Math.floor(clientXWithinSvg / px);
   const dayOffset = Math.max(0, Math.min(scale.totalDays - 1, rawOffset));
@@ -515,7 +517,7 @@ export function dayKeyAtClientX(
 // ─── Serialization (drag commit) ───────────────────────────────────────
 
 /** Build the canonical `YYYYMMDD-YYYYMMDD` period tag from a parsed range.
- *  Normalizes so start <= end (defensive �?`periodWithShift`/`periodWithResize`
+ *  Normalizes so start <= end (defensive — `periodWithShift`/`periodWithResize`
  *  already guarantee this, but a caller passing a swapped range gets a
  *  deterministic tag). */
 export function periodTagFromRange(p: GanttPeriod): string {
@@ -528,7 +530,7 @@ export function periodTagFromRange(p: GanttPeriod): string {
 // ─── Misc comparators ───────────────────────────────────────
 
 /**
- * Inclusive day delta from `anchorKey` to `targetKey` �?the inverse direction
+ * Inclusive day delta from `anchorKey` to `targetKey` — the inverse direction
  * of `daysBetween`. Specifically `dayKeyDiff(a, b) === daysBetween(b, a)`;
  * named separately so the scroll-to-Today math in the view reads as
  * "target - anchor" (the offset the user wants to jump by) rather than the

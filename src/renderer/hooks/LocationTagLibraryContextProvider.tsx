@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next';
 
 import { ipcApi } from '-/services/ipc-api';
 import { notifyApp } from '-/services/app-notice';
+import { waitForAllowedRoots } from '-/services/allowed-roots';
 import { useCurrentLocationContext } from './CurrentLocationContextProvider';
 
 /**
@@ -84,17 +85,23 @@ export function LocationTagLibraryContextProvider({
     }
     let cancelled = false;
     setLoading(true);
-    ipcApi
-      .readTagLibrary(locationRoot)
-      .then((map) => {
-        if (!cancelled) setDescriptions(map);
-      })
-      .catch((error: unknown) => {
+    void (async () => {
+      try {
+        // Child effects run before Root's, so on the first mount this IPC can
+        // beat `fs:setAllowedRoots`; main is fail-closed and would reject with
+        // "no configured locations". Await the registration the parent effect
+        // already started — same guard as DirectoryTree / TaskReminder.
+        await waitForAllowedRoots();
         if (cancelled) return;
-        // The main process returns `{}` for a missing (or unparseable)
-        // wtaglib.json, so this catch only fires on a real transport/IPC
-        // failure. Clearing the map silently made every description look
-        // deleted — say so instead.
+        const map = await ipcApi.readTagLibrary(locationRoot);
+        if (!cancelled) setDescriptions(map);
+      } catch (error) {
+        if (cancelled) return;
+        // The main process only reads a MISSING wtaglib.json as `{}`; an
+        // unreadable/corrupt file now rejects with the path. This catch
+        // therefore means the library on disk is broken, not empty. Clearing
+        // the map silently made every description look deleted — say so
+        // instead.
         console.warn(
           '[LocationTagLibrary] failed to read the tag library:',
           locationRoot,
@@ -102,10 +109,10 @@ export function LocationTagLibraryContextProvider({
         );
         setDescriptions({});
         notifyApp(translateRef.current('tagLibraryLoadFailed'));
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setLoading(false);
-      });
+      }
+    })();
     return () => {
       cancelled = true;
     };

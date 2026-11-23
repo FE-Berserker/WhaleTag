@@ -12,6 +12,9 @@
 src/extensions/
   shared/                       # 公共共享
     extension-api.js            # i18n / onLocale / postMessage 桥
+    theme.ts                    # 共享主题:detectInitialTheme + applyThemeToDocument
+    i18n.ts                     # 共享语言:pickStrings / syncDocumentLocale / onLocaleChange
+    csp-policy.json             # CSP 单一来源(baseline + 每扩展追加项),构建期合成 meta 与响应头策略
     zoom.ts                     # 共享缩放逻辑
     keymap.ts                   # 共享按键映射
     relpath.ts                  # 相对路径工具(嵌入链接跨文件移动时重算)
@@ -27,7 +30,7 @@ src/extensions/
 
 > 协议类型(`ExtensionManifest` / `HostMessage` / `ExtensionMessage` 等)统一在 [src/shared/extension-types.ts](../src/shared/extension-types.ts),不在 `shared/` 目录内。
 
-构建产物 = `release/app/dist/extensions/<id>/`,生成 `registry.json`(主进程读,renderer 经 `ext:getRegistry` 取)。注册表缺失 = 合法的空安装;文件存在但读取或 `JSON.parse` 失败时主进程抛错,renderer 置错误态并 `notifyApp` 提示,不再伪装成"没有扩展"。
+构建产物 = `release/app/dist/extensions/<id>/`,生成 `registry.json`(主进程读,renderer 经 `ext:getRegistry` 取)与 `csp-policy.generated.json`(每扩展已预合并的 CSP 响应头策略,主进程 `protocol.handle` 读,见 §1.5)。注册表缺失 = 合法的空安装;文件存在但读取或 `JSON.parse` 失败时主进程抛错,renderer 置错误态并 `notifyApp` 提示,不再伪装成"没有扩展"。
 
 **Manifest**(`ExtensionManifest`):
 
@@ -77,7 +80,15 @@ src/extensions/
 
 宿主把拖入图片转为 data URL 时走 `fs:readFileBase64`:Main 先过 allowedRoots,再用 `Buffer.toString('base64')`;Renderer 不再逐字节拼十六进制或调用 `btoa`。二进制查看器/编辑器(如 heic-viewer、font-viewer)打开文件同样走 `fs:readFileBase64`:renderer 直接拿到 base64 字符串,不返回 `ArrayBuffer`,文件大小由 base64 长度换算。
 
-**安全**:iframe sandbox = `allow-same-origin allow-scripts allow-modals allow-downloads`;Host 只接受 `event.source === iframe.contentWindow`;每个扩展 HTML 自带严格 CSP meta。
+**安全**:iframe sandbox = `allow-same-origin allow-scripts allow-modals allow-downloads`;Host 只接受 `event.source === iframe.contentWindow`;每个扩展 HTML 自带 CSP meta,协议响应另下发同一策略的 CSP 响应头(见下)。
+
+CSP 不手抄在 8 份 `index.html` 里,而是由 [src/extensions/shared/csp-policy.json](../src/extensions/shared/csp-policy.json) 单一维护,分两条通道下发同一份策略:
+
+1. **meta(兼容/声明式)**:[scripts/build-extensions.js](../scripts/build-extensions.js) 读取 baseline + 该扩展的追加项(只追加不替换),合成后替换模板里的 `content="__WHALE_CSP__"`;模板缺占位符、策略缺 baseline 或某扩展没有条目时构建直接失败,避免 dist 里留下未替换的占位符被 Chromium 当作无 CSP 丢弃。meta 强制 `object-src 'none'` / `base-uri 'none'`,并保留其余 baseline 指令(`default-src 'self'`、`img-src` 含 `whale-extension://*` 与 `whale-file:`,各扩展只在真实需要处追加 unsafe-eval 等例外);**`frame-ancestors` 由构建期从 meta 里剔除**(`META_OMITTED_DIRECTIVES`),因为 Chromium 对 meta 传递的该指令每次加载都会打印 `The Content Security Policy directive 'frame-ancestors' is ignored when delivered via a <meta> element.`,而真机 smoke 对 console error 零容忍——它只由下一节的响应头下发。
+2. **响应头(真实生效)**:`frame-ancestors`(以及 `sandbox`)经 meta 传递会被浏览器忽略,只能由响应头生效。构建期同时生成 `dist/extensions/csp-policy.generated.json`([src/main/extension-csp.ts](../src/main/extension-csp.ts) 的 `CSP_MANIFEST_FILENAME`),其中每个扩展的指令已合并好,只留 `"__APP_ORIGIN__"` 占位符;主进程 `protocol.handle('whale-extension', ...)` 启动时 `loadCspManifest` 读一次,对 `text/html` 响应按 host(=扩展 id)取策略,把占位符替换成**应用壳页的真实 origin**——生产父页是 `loadFile` 的 `file://`(scheme source 写作 `file:`,实测 `file://` 不是合法 host-source 会被忽略),开发是 `http://localhost:4002`——并设置 `Content-Security-Policy` 响应头。header 里的 `frame-ancestors` 为 `'self' <app-origin>`:`'self'` 保留给 drawio/excalidraw 同源内层 iframe,app-origin 允许 Whale 自己嵌扩展页(此前 `'none'` 只写在 meta 里、从未生效,扩展实际上可被任意同进程页面嵌入)。
+3. **fail-closed**:清单缺失/损坏 → `console.warn` 后按内置 baseline 继续服务(不静默放行);未知扩展 id 同样回退 baseline,且每个 id 只 warn 一次;非 HTML 响应(静态资源、chunk)不带 CSP,避免把策略误加到 `script-src` 之外。
+
+实证依据(Electron 42.11.18,独立探针):`protocol.handle` 返回的 CSP 响应头对 `whale-extension://` 文档生效(`frame-ancestors 'none'` 会以 `Framing ... violates ...` 拦下 iframe),`file:` scheme source 匹配 `file://` 父页,`*` 不匹配 file scheme。响应头策略与主窗口 CSP 仍是两套:[main.ts](../src/main/main.ts) 的 `onHeadersReceived` 继续跳过 `whale-extension://`(§6 硬约束 2),扩展页不会叠加主窗口策略。校验见 [build-extensions.test.ts](../scripts/build-extensions.test.ts) 的 "extension CSP policy" / "extension CSP header manifest" 组与 [extension-csp.test.ts](../src/main/extension-csp.test.ts)。
 
 ## 2. 8 个内置扩展清单
 
@@ -112,6 +123,7 @@ src/extensions/
 
 - `ExtensionHost.tsx` iframe 宿主,管理加载 / 消息桥 / 保存流程 / 工具栏;**启动看门狗**(2026-07-22):iframe 12s 内未 post `ready` → 显示可重试失败态(此前崩溃/CSP 拦截 = 永久白屏),ready 前显示加载遮罩,重试经 `retryKey` 重挂 iframe
 - 扩展页本身是懒加载边界：`ExtensionViewPanel` 的 chunk 加载失败时，ErrorBoundary 保留 `ExtensionTabBar`（可切换/关闭标签）和重试按钮，重试会重建被拒绝的 lazy 组件；`Suspense` fallback 用不透明背景而不是空白。`SearchBar` 的高级搜索对话框同样在加载失败后由工具栏按钮或错误提示重试；扩展页的正常 tab 切换仍复用同一个 lazy 组件，不重挂已有 iframe
+- **常驻 iframe 数量有上限**(2026-11)：此前每个 tab 各挂一个 `ExtensionHost`，只是把非活动 tab `display:none`，于是最多 8 个扩展同时常驻——drawio / Excalidraw 各是几十 MB JS heap，图片/HTML 还有解码后的位图。现在 [extension-host/tab-mount-policy.ts](../src/renderer/components/extension-host/tab-mount-policy.ts) 的 `selectMountedTabIds` 只让 `MAX_MOUNTED_TABS = 4` 个宿主存活：活动标签必挂；**dirty 标签无条件挂载**（即使超出上限——未保存缓冲区在 iframe 内，关窗 flush 也依赖该宿主注册的 save handler，卸载即丢）；余下名额按 `ExtensionTab.lastAccessed` 给最近的干净标签。未挂载的 tab 保留外层占位，再次激活时用 `tab.fileContent` 重建，走的就是"外部修改后刷新"那条路径。为此 `ExtensionHost.handleSave` 成功后调 provider 的 `markTabSavedContent(tabId, content)` 把缓存推进到磁盘字节：否则重建会用打开时的旧内容，下一次保存把旧字节写回文件（`savingFile` 里 stale 分支同样先更新缓存，因为写盘已经落地）。代价是被卸载的标签重建时扩展自身状态（滚动位置、undo 历史、未提交的表单）丢失，与外部刷新一致（§4：text-editor 刷新本来就会 `scrollTo(0)`）；活动标签与 dirty 标签不受影响。面板用"dirty 标签 id 串"的 selector 判断固定集合，打字（`dirty: true` 反复 dispatch）不会让面板重渲染
 - 编辑器脏状态经 `contentChangedInEditor` 上报;Save 触发 `parentSaveDocument` → `writeFileWithRevision`。脏状态按**标签 id**（`makeTabId(filePath, extensionId)`）存放，不按文件路径：同一文件可以同时用两个扩展打开（文本编辑器 + JSON 查看器），按路径存放时两个标签会互相清除 dirty/saving，关闭其一时看起来"没有未保存修改"而丢内容。关闭确认、保存后复查、fs.watch 刷新与 flush 统一经 `isTabDirty(editState, tabId)` 读取；`pickLruEvict` 同样接收 `dirtyTabIds` 并按 `tab.id` 跳过 dirty 标签，不能只改写入端而留下按路径查询的淘汰/监听逻辑。关窗前的 flush(`extension-save-flush.ts`)永不上抛,但不再把失败吞进 console:flush 自身的 rejection 与 5s 内未 ack 的标签都会 `notifyApp` 报"保存未完成、修改仍在标签里"
 - dirty 上报是**边沿触发**：text-editor 只在 `false→true` / `true→false` 时发 `contentChangedInEditor`；保存进行中继续敲键时补发一次 revision 快照，保证宿主看到的 revision 不落后，写盘回执（`savingFile`）仍能区分 stale 与当前。宿主用 `editState[tabId]?.dirty === true` 布尔派生 selector 订阅并跳过重复 dirty 报告（不 dispatch），标签栏拆成每个 tab 单独订阅 `dirty` 的按钮组件，打字不会让整条标签栏或宿主重渲染。状态栏查找计数在文档或查询变化后 debounce 200ms 重算，不再每键 `doc.toString()` + 全文正则
 - text / drawio / Excalidraw 的保存消息带内容 `revision`，宿主在 `savingFile` 回显实际写盘版本；旧回执不能清除写盘期间新产生的 dirty，stale 写盘即使已落盘也返回 false 并明确提示最新编辑仍未保存。并发保存会提示先等待当前写入；宿主报告成功后 provider 还会从 store 复查权威 dirty，仍有新编辑就取消关闭并恢复焦点。Excalidraw 每次完成写入都把比较基线推进到实际快照，再按当前 scene 重算 dirty，编辑后撤销回该快照也可正确变干净；缺省 revision 的旧扩展保留原行为。dirty 改为边沿触发后编辑器不再逐键上报 revision，宿主把 `parentSaveDocument` 携带的 revision 也纳入保存基线（取最大值），保存期间漏掉的中间 revision 不会让当前回执被误判为 stale
@@ -168,7 +180,7 @@ src/extensions/
 **四件硬约束**(缺一不可):
 
 1. **`registerSchemesAsPrivileged([{scheme:'whale-extension', privileges:{standard:true, secure:true}}])`** 必须在 `app.ready` 之前(`src/main/main.ts:207-240`);否则 origin 是 opaque,`document.cookie` 抛 `SecurityError`
-2. **不要**给 `whale-extension://` 响应套主进程 CSP;`onHeadersReceived` 跳过该协议,由各扩展 meta CSP 治理
+2. **不要**给 `whale-extension://` 响应套**主窗口** CSP;`onHeadersReceived` 跳过该协议。扩展页的安全性由 `protocol.handle` 响应里的 per-extension CSP 头 + 各扩展 meta 治理(见 §1 "安全"/CSP 段),主窗口策略对 drawio 过严(会阻断 unsafe-eval/worker)
 3. build 第三方 webapp 时**不要**过滤子目录;drawio `App.main` 同步等子资源 200,失败不发 `init`
 4. 第三方 webapp 的 embed 协议经常"遗留字符串握手"+"结构化 JSON"两套;drawio 是 `proto=json` URL 参数切换
 
@@ -188,10 +200,11 @@ Draw.io 的本地 Link/Lightbox 会请求 `drawio-assets` 目录 URL。`extensio
 - drawio `editor.modified` 默认 false(画了 shape + 1.5s autosave timer 后才翻 true),工具栏 Save 不依赖 dirty 直接允许(未修改 = no-op 写盘)
 - unmount 会注销 save/message handler、清 XML timer 并 reject pending requests；销毁后不再 postMessage，异步保存与图片插入也不得继续更新已卸载组件。`fileContent` 刷新只重绑 handler，不取消已经开始的保存或图片插入；若切换到另一文档，尚未完成的图片插入会在写 XML 前中止，避免把旧文档的拖入内容写进新文档。图片插入是 read→append→loadXml 的读改写：**读不到当前图表时中止并提示，不加载任何替换文档**（旧兜底会用一个单 cell 文档覆盖整张图）。并发拖入改走 promise 链**串行**：旧实现的 in-flight 早退会静默丢掉第二个文件（调用方收不到错误，文件就是不出现）。非图片 drop 的标签在 `html=1` 下按 HTML 渲染，文件名先做 HTML 转义再做 XML 转义（双层是刻意的：XML 解码后仍是 `&lt;…&gt;` 文本），否则名为 `<img src=x onerror=…>` 的文件会被 drawio 当标记渲染。
 
-## 7. 扩展 i18n
+## 7. 扩展 i18n 与主题
 
 - host 语言变化 → push `setLocale` → `extension-api.js` 集中 `onLocale()` + `t(I18N)` → 工具栏 / 状态栏 / 菜单文案刷新
-- 各扩展按同一模式接入(`interface Strings + I18N: Record<string, Strings> + let T + applyLocale()`)
+- 6 个 DOM 型 viewer/editor 不再各抄一份桥接代码,统一走 [src/extensions/shared/i18n.ts](../src/extensions/shared/i18n.ts):`pickStrings(I18N)` 取当前语言文案、`syncDocumentLocale()` 设 `document.documentElement.lang`、`onLocaleChange(handler)` 包装 `window.whaleExt.onLocale`;各扩展只保留自己的 `interface Strings + I18N: Record<string, Strings> + applyLocale()` 文案表(文案不同,不合并)。html-viewer / text-editor 的 locale 回调还要刷新状态栏与 CM 里已渲染的 UI,所以传的是本地包装函数
+- 主题同样收口到 [src/extensions/shared/theme.ts](../src/extensions/shared/theme.ts):`detectInitialTheme()`(首帧 matchMedia,失败兜底 light)+ `applyThemeToDocument(theme)`(设 body `data-theme`)。此前 `detectInitialTheme` 有 5 份逐字相同的副本、image-viewer 首帧还硬编码 `light`,暗色主题下会闪一下。text-editor 的本地 `applyTheme` 只保留必需的 CodeMirror `themeCompartment.reconfigure`,body 属性仍交给共享函数;drawio / excalidraw 是 React 应用、不用 `data-theme`,仅用 `detectInitialTheme()` 作为 theme state 的初值(运行时仍由 `setTheme` 驱动)
 
 ## 8. 已知坑(在本模块反复踩)
 
@@ -211,3 +224,4 @@ Draw.io 的本地 Link/Lightbox 会请求 `drawio-assets` 目录 URL。`extensio
 
 - ✅ **god-switch 已拆**(2026-07-18):`request* → reply` 类 RPC 消息下沉到 [extension-host/rpc-cases.ts](../src/renderer/components/extension-host/rpc-cases.ts) —— 通用 `forwardRpc` helper 负责 ipcApi 调用 → 成功回包 / 错误回包,各 case 只给 reply 构造器;`createRpcHandler` 返回"是否处理"判别,非 RPC 消息回落组件内 switch。当前唯一走该通道的是 `requestHeicWasm`(HEIC wasm 读取),测试见 [rpc-cases.test.ts](../src/renderer/components/extension-host/rpc-cases.test.ts)(reply 形状 / 错误兜底 / 非 RPC 回落)。
 - **postMessage `targetOrigin: '*'`**(ExtensionHost / extension-api.js 双向):接收端有 `event.source === iframe.contentWindow` 校验所以不算漏洞,但 `whale-extension://` 是特权 scheme,发往 iframe 的消息对同窗口任何 message 监听者可见,应收窄为具体 origin。
+- **扩展页 CSP 分两条通道**(2026-11-23):`frame-ancestors` / `sandbox` 只能经响应头生效,所以 `csp-policy.generated.json` 与 `extension-csp.ts` 是真正执行面;**meta 不再带 `frame-ancestors`**(Chromium 每次加载都会对该指令打 console error,真机 smoke 断言 console 零错误),meta 只保留其余指令。取舍是 **fail-closed**:清单缺失或扩展 id 未知时退回内置 baseline 并 `console.warn`——此时 unsafe-eval 类追加项(仅 drawio/heic 需要)会丢失,这两个扩展可能加载失败,宁可白屏也不静默放行任意嵌入;因此 dist 扩展产物与主进程必须同版本发布(构建脚本与 `main.ts` 读同一文件名,`build-extensions.test.ts` 断言两者一致)。

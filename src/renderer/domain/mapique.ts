@@ -38,7 +38,7 @@ export function isGeoCandidate(
 
 /**
  * Returns the subset of `entries` that carry a `geo:lat,lng` tag in their
- * sidecar. The tag is the single source of truth �?there is no parallel
+ * sidecar. The tag is the single source of truth — there is no parallel
  * sidecar lat/lng field (removed 2026-06-30; legacy sidecars are migrated on
  * read by `TagMetaContextProvider`).
  */
@@ -124,7 +124,7 @@ export function fitBounds(points: Array<{ lat: number; lng: number }>): {
  * Drop selection paths that are no longer in the current listing. Returns a
  * new Set when something was removed (so React re-renders) or the original
  * Set reference when nothing changed (avoid a needless re-render). O(prev.size)
- * �?replaces an O(prev.size × listing.size) scan that did the comparison via
+ * — replaces an O(prev.size × listing.size) scan that did the comparison via
  * `Array.some()` per path. Plan §H.21 P2-2.
  */
 export function pruneSelection(

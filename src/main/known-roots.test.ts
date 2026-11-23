@@ -170,6 +170,24 @@ describe('known-roots', () => {
     assert.ok(doc.roots.includes(root));
   });
 
+  it('surfaces the latest write failure to transactional callers', async () => {
+    const userData = await tmpdir();
+    const root = await tmpdir();
+    initKnownRoots(userData);
+    // init sees no record; squatting afterwards makes the atomic rename fail.
+    await fsp.mkdir(path.join(userData, 'known-roots.json'));
+    const originalError = console.error;
+    console.error = () => undefined;
+    try {
+      rememberPickedRoot(root);
+      await assert.rejects(flushKnownRootsWrites());
+    } finally {
+      console.error = originalError;
+      // Do not leak an intentional failure into afterEach's flush.
+      __resetKnownRootsForTest();
+    }
+  });
+
   it('treats a directory called known-roots.json as absent', async () => {
     const userData = await tmpdir();
     initKnownRoots(userData);

@@ -84,6 +84,223 @@ function copyExtensionStaticFiles(id) {
 
 const MANIFEST_PLACEHOLDER = '/* MANIFEST_INJECTED_BY_BUILD */ {}';
 
+// --- Content-Security-Policy ----------------------------------------------
+// The eight extension viewers share one CSP baseline (object-src / base-uri /
+// frame-ancestors locked down, images whitelisted for the two internal
+// protocols). Keeping the policy in one JSON file means a new viewer cannot
+// ship with a silently divergent policy, and an audit reads one file instead of
+// eight inline meta tags. The source `<id>/index.html` keeps only the
+// placeholder; the real policy is synthesized here at build time.
+const CSP_POLICY_FILE = path.join(SRC_EXTENSIONS, 'shared', 'csp-policy.json');
+/** Per-extension header policies for the `whale-extension://` protocol handler.
+ *  A meta-delivered policy cannot enforce `frame-ancestors`, so the protocol
+ *  serves `dist/extensions/csp-policy.generated.json` as a real response header
+ *  (see src/main/extension-csp.ts). The file is generated from the very same
+ *  policy JSON, so meta and header can never drift apart. */
+const CSP_MANIFEST_FILENAME = 'csp-policy.generated.json';
+/** Directives that must be present in every policy; losing one is a
+ *  security regression, so the build fails instead of shipping it. */
+const REQUIRED_CSP_DIRECTIVES = ['object-src', 'base-uri', 'frame-ancestors'];
+
+/** Directives a `<meta http-equiv>` policy cannot enforce. Chromium logs
+ *  `The Content Security Policy directive 'frame-ancestors' is ignored when
+ *  delivered via a <meta> element.` on every load, so the meta tag carries the
+ *  rest of the policy and this one is delivered only by the response header
+ *  (`csp-policy.generated.json`, see src/main/extension-csp.ts). Keeping it in
+ *  the meta too would just be console noise in the real-window smoke run. */
+const META_OMITTED_DIRECTIVES = ['frame-ancestors'];
+
+function assertCspTokenList(where, directive, tokens) {
+  if (!Array.isArray(tokens) || tokens.length === 0) {
+    throw new Error(`CSP policy: ${where} directive "${directive}" must be a non-empty array`);
+  }
+  for (const token of tokens) {
+    if (typeof token !== 'string' || token.trim() === '') {
+      throw new Error(`CSP policy: ${where} directive "${directive}" has a non-string token`);
+    }
+  }
+}
+
+function loadCspPolicy() {
+  let policy;
+  try {
+    policy = JSON.parse(fs.readFileSync(CSP_POLICY_FILE, 'utf8'));
+  } catch (error) {
+    throw new Error(
+      `CSP policy: cannot read ${CSP_POLICY_FILE}: ${error instanceof Error ? error.message : error}`
+    );
+  }
+  if (!policy || typeof policy !== 'object' || typeof policy.placeholder !== 'string') {
+    throw new Error('CSP policy: missing the `placeholder` string');
+  }
+  if (!policy.baseline || typeof policy.baseline !== 'object') {
+    throw new Error('CSP policy: missing the `baseline` object');
+  }
+  for (const [directive, tokens] of Object.entries(policy.baseline)) {
+    assertCspTokenList('baseline', directive, tokens);
+  }
+  for (const directive of REQUIRED_CSP_DIRECTIVES) {
+    if (!Array.isArray(policy.baseline[directive])) {
+      throw new Error(
+        `CSP policy: baseline is missing the required directive "${directive}"`
+      );
+    }
+  }
+  if (!policy.extensions || typeof policy.extensions !== 'object') {
+    throw new Error('CSP policy: missing the `extensions` object');
+  }
+  for (const [id, extra] of Object.entries(policy.extensions)) {
+    if (!extra || typeof extra !== 'object') {
+      throw new Error(`CSP policy: extension "${id}" entry must be an object`);
+    }
+    for (const [directive, tokens] of Object.entries(extra)) {
+      assertCspTokenList(id, directive, tokens);
+    }
+  }
+  // Header counterpart. It must name the placeholder it replaces, otherwise the
+  // protocol handler would emit a literal `__APP_ORIGIN__` source (ignored by
+  // Chromium) and every extension iframe would be blocked.
+  if (!policy.header || typeof policy.header !== 'object') {
+    throw new Error('CSP policy: missing the `header` object');
+  }
+  const { appOriginPlaceholder, frameAncestors } = policy.header;
+  if (
+    typeof appOriginPlaceholder !== 'string' ||
+    !/^__[A-Z0-9_]+__$/.test(appOriginPlaceholder)
+  ) {
+    throw new Error(
+      'CSP policy: header.appOriginPlaceholder must look like "__APP_ORIGIN__"'
+    );
+  }
+  assertCspTokenList('header', 'frame-ancestors', frameAncestors);
+  if (!frameAncestors.includes(appOriginPlaceholder)) {
+    throw new Error(
+      'CSP policy: header.frameAncestors must contain header.appOriginPlaceholder'
+    );
+  }
+  return policy;
+}
+
+/** Merge baseline + extension extras. Extras only ever append tokens, so a
+ *  per-extension entry can never drop a baseline protection. */
+function mergeCspDirectives(baseline, extra) {
+  const merged = new Map();
+  for (const [directive, tokens] of Object.entries(baseline)) {
+    merged.set(directive, [...tokens]);
+  }
+  for (const [directive, tokens] of Object.entries(extra || {})) {
+    merged.set(directive, [...(merged.get(directive) || []), ...tokens]);
+  }
+  return merged;
+}
+
+/** Serialize the policy for one extension into a `Content-Security-Policy`
+ *  attribute value (stable directive order, duplicate tokens removed). */
+function buildCspForExtension(policy, id) {
+  const extra = policy.extensions[id];
+  if (!extra) {
+    throw new Error(`CSP policy: no entry for extension "${id}"`);
+  }
+  const directives = [];
+  for (const [directive, tokens] of mergeCspDirectives(policy.baseline, extra)) {
+    const deduped = [...new Set(tokens)];
+    if (deduped.length === 0) continue;
+    directives.push(`${directive} ${deduped.join(' ')}`);
+  }
+  return `${directives.join('; ')};`;
+}
+
+/** Meta-tag serializer: same policy minus `META_OMITTED_DIRECTIVES`. Used for
+ *  the built `index.html`; the omitted directives are delivered by the protocol
+ *  response header instead (`buildCspManifest`). */
+function buildMetaCspForExtension(policy, id) {
+  const extra = policy.extensions[id];
+  if (!extra) {
+    throw new Error(`CSP policy: no entry for extension "${id}"`);
+  }
+  const directives = [];
+  for (const [directive, tokens] of mergeCspDirectives(policy.baseline, extra)) {
+    if (META_OMITTED_DIRECTIVES.includes(directive)) continue;
+    const deduped = [...new Set(tokens)];
+    if (deduped.length === 0) continue;
+    directives.push(`${directive} ${deduped.join(' ')}`);
+  }
+  return `${directives.join('; ')};`;
+}
+
+/** Header counterpart of `buildCspForExtension`. Same directives, but
+ *  `frame-ancestors` is replaced by the `header.frameAncestors` list so the app
+ *  shell that embeds the iframe is allowed (meta-delivered frame-ancestors is
+ *  dropped by Chromium, so this list can only live in the response header). */
+function buildHeaderDirectiveMap(policy, extra) {
+  const merged = mergeCspDirectives(policy.baseline, extra || {});
+  merged.set('frame-ancestors', [...policy.header.frameAncestors]);
+  return merged;
+}
+
+/** Turn a merged directive map into the plain JSON object the protocol handler
+ *  reads: directive → de-duplicated token list. */
+function directiveMapToObject(merged) {
+  const out = {};
+  for (const [directive, tokens] of merged) {
+    const deduped = [...new Set(tokens)];
+    if (deduped.length === 0) continue;
+    out[directive] = deduped;
+  }
+  return out;
+}
+
+/** Build the artifact consumed by `src/main/extension-csp.ts`: every built-in
+ *  extension's header policy, pre-merged (the main process never re-implements
+ *  the merge rules), with the app-origin placeholder left for runtime
+ *  substitution. */
+function buildCspManifest(policy) {
+  const extensions = {};
+  for (const [id, extra] of Object.entries(policy.extensions)) {
+    extensions[id] = directiveMapToObject(buildHeaderDirectiveMap(policy, extra));
+  }
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    appOriginPlaceholder: policy.header.appOriginPlaceholder,
+    baseline: directiveMapToObject(buildHeaderDirectiveMap(policy, {})),
+    extensions,
+  };
+}
+
+/** Write the generated header manifest next to the built extension folders.
+ *  `cleanDir` runs before the build, so a failed build never leaves a stale
+ *  manifest behind for the main process to trust. */
+function writeCspManifest(policy) {
+  const manifest = buildCspManifest(policy);
+  fs.writeFileSync(
+    path.join(DIST_EXTENSIONS, CSP_MANIFEST_FILENAME),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    'utf8'
+  );
+  return manifest;
+}
+
+function injectCspIntoHtml(id, policy) {
+  const htmlPath = path.join(DIST_EXTENSIONS, id, 'index.html');
+  if (!fs.existsSync(htmlPath)) {
+    throw new Error(`CSP: ${id}/index.html was not produced by webpack`);
+  }
+  const content = fs.readFileSync(htmlPath, 'utf8');
+  const placeholder = policy.placeholder;
+  if (!content.includes(placeholder)) {
+    throw new Error(
+      `Extension ${id}: CSP placeholder "${placeholder}" not found in index.html` +
+        ' (the template must use content="__WHALE_CSP__")'
+    );
+  }
+  fs.writeFileSync(
+    htmlPath,
+    content.replace(placeholder, () => buildMetaCspForExtension(policy, id)),
+    'utf8'
+  );
+}
+
 function replaceManifestPlaceholder(content, id, manifest) {
   if (!content.includes(MANIFEST_PLACEHOLDER)) {
     throw new Error(`Extension ${id}: manifest placeholder not found`);
@@ -284,6 +501,19 @@ function main() {
     return;
   }
 
+  // Fail before webpack if a viewer lacks a policy entry: the alternative is a
+  // shipped HTML file with an unresolved `__WHALE_CSP__` attribute (CSP would
+  // then be dropped entirely by Chromium, silently un-protecting the iframe).
+  const cspPolicy = loadCspPolicy();
+  const missingCsp = extensions
+    .map((entry) => entry.id)
+    .filter((id) => !Object.prototype.hasOwnProperty.call(cspPolicy.extensions, id));
+  if (missingCsp.length > 0) {
+    throw new Error(
+      `CSP policy: missing entries for ${missingCsp.join(', ')} in ${CSP_POLICY_FILE}`
+    );
+  }
+
   for (const { id } of extensions) {
     copyExtensionStaticFiles(id);
     // Symlink/copy shared api into each extension folder so relative ./extension-api.js works.
@@ -306,11 +536,18 @@ function main() {
     throw new Error('Webpack build for extensions failed');
   }
 
-  // After webpack, inject manifest into each extension's extension-api.js
-  // and fix HtmlWebpackPlugin's asset paths (it mis-computes relative paths
-  // when output.filename includes the entry name as a directory segment).
+  // After webpack, inject manifest into each extension's extension-api.js,
+  // synthesize the shared CSP into the built HTML, and fix HtmlWebpackPlugin's
+  // asset paths (it mis-computes relative paths when output.filename includes
+  // the entry name as a directory segment).
+  // Emit the per-extension header policies next to the built folders: the
+  // whale-extension:// protocol handler serves them as a real CSP header
+  // (frame-ancestors only has an effect when it is not meta-delivered).
+  writeCspManifest(cspPolicy);
+
   for (const { id, manifest } of extensions) {
     injectManifestIntoApi(id, manifest);
+    injectCspIntoHtml(id, cspPolicy);
     fixHtmlAssetPaths(id);
     copyExtensionRuntimeAssets(id);
   }
@@ -377,6 +614,17 @@ module.exports = {
   shouldCopyDrawioAsset,
   configureDrawioOfflineViewer,
   configureDrawioPreConfig,
+  // Exported for scripts/csp-policy.test.ts: the synthesis is pure, so the
+  // regression test can pin the baseline without running webpack.
+  loadCspPolicy,
+  buildCspForExtension,
+  buildMetaCspForExtension,
+  buildCspManifest,
+  writeCspManifest,
+  CSP_POLICY_FILE,
+  CSP_MANIFEST_FILENAME,
+  REQUIRED_CSP_DIRECTIVES,
+  META_OMITTED_DIRECTIVES,
 };
 
 if (require.main === module) {

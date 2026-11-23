@@ -537,6 +537,7 @@ export default function TagCloudView({ data }: TagCloudViewProps) {
 
   return (
     <Box
+      data-testid="tagcloud-view"
       onContextMenu={handleContextMenu}
       sx={{
         height: '100%',

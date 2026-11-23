@@ -57,13 +57,73 @@ describe('location tag library (wtaglib.json)', () => {
     }
   });
 
+  it('reads an absent library as empty without creating anything', async () => {
+    const dir = await tmpDir();
+    try {
+      assert.deepEqual(await readTagLibrary(dir), {});
+      assert.ok(!existsSync(libPath(dir)), 'no wtaglib.json is created by reading');
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('surfaces a corrupt library instead of reporting "no descriptions"', async () => {
+    const dir = await tmpDir();
+    try {
+      await fsp.mkdir(path.join(dir, META_DIR), { recursive: true });
+      await fsp.writeFile(libPath(dir), '{ "descriptions": ');
+      await assert.rejects(readTagLibrary(dir), (error: Error) => {
+        assert.match(error.message, /Malformed tag library at/);
+        assert.ok(error.message.includes(libPath(dir)), 'error must name the file');
+        return true;
+      });
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('surfaces a well-formed JSON that is not a tag library', async () => {
+    const dir = await tmpDir();
+    try {
+      await fsp.mkdir(path.join(dir, META_DIR), { recursive: true });
+      await fsp.writeFile(
+        libPath(dir),
+        JSON.stringify({ version: 1, descriptions: ['not', 'a', 'map'] })
+      );
+      await assert.rejects(readTagLibrary(dir), (error: Error) => {
+        assert.match(error.message, /Malformed tag library at/);
+        assert.match(error.message, /"descriptions"/);
+        return true;
+      });
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('surfaces an unreadable library (ENOENT is the only silent case)', async () => {
+    const dir = await tmpDir();
+    try {
+      await fsp.mkdir(path.join(dir, META_DIR), { recursive: true });
+      // A directory at the file's path makes readFile fail with a non-ENOENT
+      // error (EISDIR/EPERM depending on platform).
+      await fsp.mkdir(libPath(dir));
+      await assert.rejects(readTagLibrary(dir), (error: Error) => {
+        assert.match(error.message, /Failed to read the tag library at/);
+        assert.ok(error.message.includes(libPath(dir)), 'error must name the file');
+        return true;
+      });
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('quarantines a corrupt library instead of rewriting it from {}', async () => {
     const dir = await tmpDir();
     try {
       await fsp.mkdir(path.join(dir, META_DIR), { recursive: true });
       await fsp.writeFile(libPath(dir), '{ "descriptions": ');
-      // The lenient reader hides the problem (display path)…
-      assert.deepEqual(await readTagLibrary(dir), {});
+      // The display reader surfaces the problem instead of hiding it…
+      await assert.rejects(readTagLibrary(dir), /Malformed tag library at/);
       // …the setter must not let one edit clobber the unreadable file.
       await setTagLibraryDescription(dir, 'x', 'y');
       assert.deepEqual(await readTagLibrary(dir), { x: 'y' });

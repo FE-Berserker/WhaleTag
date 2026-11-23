@@ -164,6 +164,7 @@ export default function ExtensionHost({
     openWithExtension,
     requestCloseCurrent,
     registerSaveCurrent,
+    markTabSavedContent,
     closeTab,
   } = useExtensionContext();
   const { refresh } = useDirectoryUI();
@@ -387,6 +388,10 @@ export default function ExtensionHost({
       try {
         await ipcApi.writeFileWithRevision(filePath, content);
         lastWrittenContentRef.current = content;
+        // The tab may be unmounted later by the iframe mount policy and
+        // rebuilt from this cache; keep it at the bytes now on disk (also when
+        // the ack is stale — the write itself still landed).
+        markTabSavedContent(tabId, content);
         postToExtension({ type: 'savingFile', path: filePath, revision });
         const ackCurrent = isSaveAckCurrent(revision, latestRevisionRef.current);
         dispatch(
@@ -422,7 +427,7 @@ export default function ExtensionHost({
         setSaving(false);
       }
     },
-    [dispatch, filePath, postToExtension, readOnly, saving, tabId, t]
+    [dispatch, filePath, postToExtension, readOnly, saving, tabId, t, markTabSavedContent]
   );
 
   // §unsaved-close — resolver for the in-flight `requestSave` round-trip. Set
@@ -505,10 +510,10 @@ export default function ExtensionHost({
         await ipcApi.rename(filePath, newPath);
         // This tab still points at the OLD path. Close it before opening the
         // renamed file: a surviving stale tab leaves two tabs for one document
-        // and, worse, its next save writes back to the old filename
-        // (`writeFileWithRevision` checks the allowed root but not that the
-        // target still exists). Dirty was rejected above, so the close path
-        // normally takes the no-confirm branch.
+        // and its next save would hit the main process's ENOENT guard
+        // (writeFileWithRevision refuses to recreate a vanished path) instead
+        // of doing anything useful. Dirty was rejected above, so the close
+        // path normally takes the no-confirm branch.
         await closeTab(tabId);
         const dot = newName.lastIndexOf('.');
         const entry: DirEntry = {
@@ -878,6 +883,7 @@ export default function ExtensionHost({
           <span>
             <IconButton
               size="small"
+              data-testid="extension-rename"
               onClick={() => setRenameOpen(true)}
               disabled={readOnly}
             >
@@ -888,6 +894,7 @@ export default function ExtensionHost({
         <Tooltip title={t('close')}>
           <IconButton
             size="small"
+            data-testid="extension-close"
             onClick={() => {
               void requestCloseCurrent();
             }}

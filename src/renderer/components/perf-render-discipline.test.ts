@@ -42,9 +42,9 @@ describe('view render discipline', () => {
   });
 
   it('FileList does not remount MapiqueView with a key prop', () => {
-    const source = read('FileList.tsx');
-    // `lastIndexOf` skips the historical note above that quotes the old
-    // `<MapiqueView key=...>` markup.
+    // P2 split: the per-view switch (and the historical note) moved out of
+    // FileList into FileListView.
+    const source = read('file-list/FileListView.tsx');
     const start = source.lastIndexOf('<MapiqueView');
     assert.ok(start > 0, 'FileList must render MapiqueView');
     const end = source.indexOf('/>', start);
@@ -68,11 +68,17 @@ describe('view render discipline', () => {
   });
 
   it('FileList dependency bags are drift-proof, not hand-maintained', () => {
-    const source = read('FileList.tsx');
-    assert.match(source, /useStableBag<ListCommandsDeps>/);
-    assert.match(source, /useStableBag<FileCellData>/);
+    // P2 split: the two bags are built by their own hooks now.
+    const commandsDeps = read('file-list/useCommandsDeps.ts');
+    const cellData = read('file-list/useFileListCellData.ts');
+    assert.match(commandsDeps, /useStableBag<ListCommandsDeps>/);
+    assert.match(cellData, /useStableBag<FileCellData>/);
     assert.deepEqual(
-      eslintDisableDirectives(source),
+      [
+        ...eslintDisableDirectives(read('FileList.tsx')),
+        ...eslintDisableDirectives(commandsDeps),
+        ...eslintDisableDirectives(cellData),
+      ],
       [],
       'the exhaustive-deps disables were the drift risk; they must stay gone'
     );
@@ -86,7 +92,8 @@ describe('view render discipline', () => {
     // still pass every DOM assertion, hence this guard.
     for (const file of [
       'EntryCard.tsx',
-      'CalendarView.tsx',
+      'calendar/CalendarEntryItem.tsx',
+      'calendar/DayCell.tsx',
       'GanttView.tsx',
       'KnowledgeGraphView.tsx',
     ]) {

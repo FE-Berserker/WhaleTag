@@ -35,6 +35,13 @@ import {
  gotoLine,
 } from '@codemirror/search';
 import { isSaveAckCurrent, type HostMessage } from '../../shared/extension-types';
+import {
+  onLocaleChange,
+  pickStrings,
+  syncDocumentLocale,
+} from '../shared/i18n';
+import { applyThemeToDocument, detectInitialTheme } from '../shared/theme';
+
 
 import {
  STATUS_NO_VALUE,
@@ -245,8 +252,8 @@ const I18N: Record<string, Strings> = {
 let T: Strings = I18N.en;
 
 function applyLocale() {
- T = window.whaleExt.t(I18N);
- document.documentElement.lang = window.whaleExt.locale;
+ T = pickStrings(I18N);
+ syncDocumentLocale();
 
  // Toolbar buttons
  findBtn.textContent = T.find;
@@ -293,23 +300,8 @@ function applyLocale() {
 // (avoids the white-flash that plain `applyTheme('light')` shows on dark
 // hosts). The host's `setTheme` then overwrites this within milliseconds.
 
-function detectInitialTheme(): 'light' | 'dark' {
- try {
- if (
- typeof window !== 'undefined' &&
- typeof window.matchMedia === 'function' &&
- window.matchMedia('(prefers-color-scheme: dark)').matches
- ) {
- return 'dark';
- }
- } catch {
- // jsdom / older browsers: fall through to 'light'
- }
- return 'light';
-}
-
 function applyTheme(theme: 'light' | 'dark') {
- document.body.setAttribute('data-theme', theme);
+ applyThemeToDocument(theme);
  if (!view) return;
  // Reconfigure the editor's syntax-highlighting theme to match. oneDark
  // expects a dark parent; on light we pass an empty array so the CM
@@ -860,9 +852,9 @@ function handleMessage(msg: HostMessage) {
 }
 
 window.whaleExt.onMessage(handleMessage);
-window.whaleExt.onLocale(() => {
- applyLocale();
- updateStatusBar();
+onLocaleChange(() => {
+  applyLocale();
+  updateStatusBar();
 });
 
 // --- Initial paint -------------------------------------------------------

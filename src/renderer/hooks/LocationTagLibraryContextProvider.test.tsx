@@ -35,6 +35,8 @@ let libraries: Record<string, Record<string, string>> = {};
 /** When set for a root, readTagLibrary rejects. */
 let readFailures = new Map<string, Error>();
 let readCalls: string[] = [];
+let allowedRootsCalls = 0;
+let allowedRootsGate: Deferred<void> | null = null;
 let setWriteImpl: (
   locationRoot: string,
   tag: string,
@@ -119,6 +121,12 @@ before(() => {
       notices.push(message);
     },
   });
+  injectMock('-/services/allowed-roots', {
+    waitForAllowedRoots: () => {
+      allowedRootsCalls += 1;
+      return allowedRootsGate ? allowedRootsGate.promise : Promise.resolve();
+    },
+  });
   const loaded = require_('./LocationTagLibraryContextProvider') as typeof import('./LocationTagLibraryContextProvider');
   Provider = loaded.LocationTagLibraryContextProvider;
   useLibrary = loaded.useLocationTagLibrary;
@@ -131,6 +139,8 @@ afterEach(() => {
   libraries = {};
   readFailures = new Map();
   readCalls = [];
+  allowedRootsCalls = 0;
+  allowedRootsGate = null;
   setWriteImpl = async () => undefined;
   clearWriteImpl = async () => undefined;
   notices = [];
@@ -171,6 +181,26 @@ describe('LocationTagLibraryContextProvider read failures', () => {
     await waitFor(() => assert.equal(observed?.loading, false));
     assert.deepEqual(observed?.descriptions, {});
     assert.equal(notices.length, 0);
+  });
+});
+
+describe('LocationTagLibraryContextProvider allowed-roots ordering', () => {
+  it('does not read the tag library before allowed roots are registered', async () => {
+    // Root's effect can land after this child's effect on first mount; the
+    // provider must wait for `fs:setAllowedRoots` or main refuses the read.
+    allowedRootsGate = deferred<void>();
+    libraries = { [LOCATION_A.path]: { alpha: 'server value' } };
+    renderProvider();
+
+    await waitFor(() => assert.equal(allowedRootsCalls, 1));
+    assert.deepEqual(readCalls, [], 'read must wait for the registration');
+
+    allowedRootsGate.resolve();
+    await waitFor(() =>
+      assert.deepEqual(observed?.descriptions, { alpha: 'server value' })
+    );
+    assert.deepEqual(readCalls, [LOCATION_A.path]);
+    assert.equal(observed?.loading, false);
   });
 });
 

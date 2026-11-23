@@ -4,7 +4,7 @@
  * When a file has no thumbnail (either it is not a thumbnailable format, or the
  * thumbnail failed to generate / has no embedded cover), the UI falls back to a
  * per-category glyph + color instead of the same generic file icon for every
- * file. This module owns only the extension �?category decision; the actual
+ * file. This module owns only the extension → category decision; the actual
  * glyph + color live in the renderer (`FileTypeIcon.tsx`), so this file stays
  * dependency-free and unit-testable.
  *

@@ -3,15 +3,16 @@ import type { ViewMode } from '../../shared/whale-meta';
 /**
  * Configurable keyboard shortcuts for the file list (H.23 follow-up).
  *
- * The model is **key �?action**: a `Record<token, KeyAction>` map where the
+ * The model is **key → action**: a `Record<token, KeyAction>` map where the
  * key is a normalized `KeyboardEvent.key` token and the value is the action
  * that key performs. We picked key→action (not action→key) so that several
- * keys can map to the same action (e.g. both `Enter` and `ArrowRight` �? * `open`) and so there are never two actions fighting over one key.
+ * keys can map to the same action (e.g. both `Enter` and `ArrowRight` —
+ * `open`) and so there are never two actions fighting over one key.
  *
  * `FileList.handleKeyDown` resolves the incoming `KeyboardEvent` to an action
  * via `resolveAction(state.keybindings, e)` and dispatches it. The defaults
  * reflect the scheme requested for Whale:
- *   �?�?navigate, �?open, �?back (history), Tab cycle view,
+ *   ↑↓ navigate, → open, ← back (history), Tab cycle view,
  *   Enter open, Space toggle-select, Esc clear, F2 rename,
  *   Delete delete, Home/End jump.
  *
@@ -34,7 +35,7 @@ export type KeyAction =
   | 'jumpEnd'
   | 'none';
 
-/** A key the user can configure in Settings �?Keyboard. `token` is the
+/** A key the user can configure in Settings ▸ Keyboard. `token` is the
  *  normalized `KeyboardEvent.key` (see `normalizeKey`); `labelKey` is the
  *  i18n key for the key's display name. */
 export interface MappableKey {
@@ -111,10 +112,10 @@ export const DEFAULT_KEYBINDINGS: Record<string, KeyAction> = {
  * `'knowledge-graph'` on read (`migrateViewMode`), so it's intentionally
  * absent here.
  *
- * H.29: `'kanban'` and `'matrix'` were removed from the cycle �?they now
+ * H.29: `'kanban'` and `'matrix'` were removed from the cycle — they now
  * live inside the `'task'` perspective as a Kanban / Matrix sub-switch.
  * Users reach them by Tab-cycling to `'task'` and then flipping the
- * in-view SegmentedButton. Net cycle length: 10 �?9.
+ * in-view SegmentedButton. Net cycle length: 10 → 9.
  */
 export const CYCLABLE_VIEWS: readonly ViewMode[] = [
   'list',
@@ -128,7 +129,7 @@ export const CYCLABLE_VIEWS: readonly ViewMode[] = [
   'knowledge-graph',
 ];
 
-/** Next view in the cycle (wraps last �?first). Falls back to the first view
+/** Next view in the cycle (wraps last → first). Falls back to the first view
  *  if `current` somehow isn't in the cycle (defensive against legacy values). */
 export function nextView(current: ViewMode): ViewMode {
   const idx = CYCLABLE_VIEWS.indexOf(current);
@@ -141,7 +142,7 @@ export function nextView(current: ViewMode): ViewMode {
  * Browsers historically report Space as `' '` (and very old ones as
  * `'Spacebar'`); we canonicalize to `'Space'` so the binding map and the UI
  * token (`MAPPABLE_KEYS`) agree. Everything else passes through as
- * `event.key` �?we deliberately do NOT incorporate modifier keys here, so
+ * `event.key` — we deliberately do NOT incorporate modifier keys here, so
  * Shift+Arrow range-extend is handled inside the action handlers, not at the
  * binding-resolution layer.
  */
@@ -153,7 +154,7 @@ export function normalizeKey(e: { key: string }): string {
 /**
  * Look up the action bound to a key event. Returns `null` for unmapped keys
  * (and for keys explicitly bound to `'none'`, since `sanitizeKeybindings`
- * strips those �?but we also treat a stored `'none'` defensively).
+ * strips those — but we also treat a stored `'none'` defensively).
  */
 export function resolveAction(
   bindings: Record<string, KeyAction>,

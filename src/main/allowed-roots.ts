@@ -20,6 +20,7 @@ import { foldPath } from './path-fold';
  * guard entirely.
  */
 const allowedRoots = new Set<string>();
+let rawAllowedRoots: string[] = [];
 
 /**
  * Resolve `target` through symlinks for the security check.
@@ -163,6 +164,7 @@ export function assertWritable(target: string): void {
 }
 
 /** Replace the configured location roots with a new list. */export function setAllowedRoots(roots: string[]): void {
+  rawAllowedRoots = [...(roots ?? [])];
   allowedRoots.clear();
   for (const r of roots ?? []) {
     try {
@@ -184,6 +186,11 @@ export function assertWritable(target: string): void {
 /** Returns a snapshot of the currently configured location roots. */
 export function getAllowedRoots(): string[] {
   return Array.from(allowedRoots);
+}
+
+/** Display-correct paths from the latest renderer push, including for late subscribers. */
+export function getRawAllowedRoots(): string[] {
+  return [...rawAllowedRoots];
 }
 
 type RootsListener = (rawRoots: string[]) => void;

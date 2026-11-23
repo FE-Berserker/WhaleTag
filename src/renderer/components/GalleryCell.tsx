@@ -169,6 +169,8 @@ export default function GalleryCell({
           dropRef(node);
         }}
         data-testid="gallery-tile"
+        data-focused={isFocused ? 'true' : 'false'}
+        data-selected={isSelected ? 'true' : 'false'}
         tabIndex={-1}
         onClick={(e) => {
           onFocus(index);

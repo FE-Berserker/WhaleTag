@@ -47,6 +47,12 @@ const artifactsParent = path.resolve(
   process.env.WHALETAG_GUI_ARTIFACTS_DIR || path.join(ROOT, 'artifacts')
 );
 
+// 1x1 transparent PNG (the same bytes packaged-gui-smoke.js uses). The gallery
+// perspective only lists media entries, so the regression fixture needs real
+// images before the view-cycle / arrow-navigation steps can assert anything.
+const PNG_1X1_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
 function errorText(error) {
   return String((error && error.stack) || error);
 }
@@ -128,6 +134,13 @@ async function main() {
   }
   fs.writeFileSync(fixtureFile, 'WhaleTag packaged GUI regression\n', 'utf8');
   fs.writeFileSync(path.join(fixtureRoot, 'Nested folder', 'nested.md'), '# Nested\n', 'utf8');
+  // Three media fixtures: gallery navigation needs more than two tiles so a
+  // single ArrowRight step can be told apart from a wrap-around.
+  const fixtureImages = ['alpha.png', 'beta.png', 'gamma.png'].map((name) => {
+    const imagePath = path.join(fixtureRoot, name);
+    fs.writeFileSync(imagePath, Buffer.from(PNG_1X1_BASE64, 'base64'));
+    return imagePath;
+  });
   // An old, fixed timestamp stays absolute even if the user-facing list date
   // preference is relative. This makes the Chinese date assertion deterministic.
   fs.utimesSync(fixtureFile, fixtureModified, fixtureModified);
@@ -144,6 +157,11 @@ async function main() {
     steps: [],
     screenshots: [],
     console: [],
+    // Console output from extension iframes (whale-extension://…). It is kept
+    // for diagnostics but audited separately from the host renderer: extension
+    // pages are third-party content and Chromium reports some of their CSP
+    // meta-tag limitations as errors on every load.
+    extensionConsole: [],
     pageErrors: [],
     requestFailed: [],
     notFoundResponses: [],
@@ -234,9 +252,13 @@ async function main() {
     return poll(
       async () => {
         const actual = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
-        // Electron may enforce a slightly larger minimum height (720x480 has
-        // historically produced 720x482). Width and horizontal overflow remain exact.
-        return actual.width === width && actual.height >= height ? actual : null;
+        // Windows can drop one device pixel from the requested content width
+        // when the unpackaged electron.exe hosts the current build
+        // (1440 -> 1439). Treat ±1px width as the same layout bucket; height
+        // must still be at least the requested value (720x480 -> 720x482).
+        return Math.abs(actual.width - width) <= 1 && actual.height >= height
+          ? actual
+          : null;
       },
       5_000,
       `resize renderer to ${width}x${height}`
@@ -256,6 +278,87 @@ async function main() {
   async function closeSettings(dialog) {
     await page.keyboard.press('Escape');
     await dialog.waitFor({ state: 'hidden', timeout: 10_000 });
+  }
+
+  /**
+   * The view switcher folds six specialized perspectives into a "More" menu
+   * below a 720px header width. The fold state comes from the header's own
+   * ResizeObserver, so a window resize can leave it mid-transition for a frame
+   * or two. Sample the state until two observations agree before clicking.
+   */
+  async function waitForStableViewSwitcher() {
+    await poll(
+      async () => {
+        const sample = async () => ({
+          overflow: await page.getByTestId('view-overflow').count(),
+          list: await page
+            .getByRole('button', { name: 'List view', exact: true })
+            .count(),
+        });
+        const first = await sample();
+        await delay(150);
+        const second = await sample();
+        return first.overflow === second.overflow && first.list === second.list
+          ? true
+          : null;
+      },
+      5_000,
+      'file-list view switcher to settle'
+    );
+  }
+
+  /**
+   * Switch the file-list perspective through the real header control.
+   *
+   * List / grid / gallery are always inline; the six specialized perspectives
+   * are inline in the wide layout and move into the `view-overflow` menu when
+   * the header folds. Try inline first, then the menu, and retry once if the
+   * header re-renders between resolving and clicking the control.
+   */
+  async function selectView(label) {
+    await waitForStableViewSwitcher();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const inline = page.getByRole('button', { name: label, exact: true });
+      if ((await inline.count()) > 0) {
+        try {
+          await inline.first().click({ timeout: 3_000 });
+          return 'inline-toggle';
+        } catch {
+          // The header re-folded between count and click; retry below.
+        }
+      }
+      const overflow = page.getByTestId('view-overflow');
+      if ((await overflow.count()) > 0) {
+        try {
+          await overflow.first().click({ timeout: 3_000 });
+          const item = page.getByRole('menuitem', { name: label, exact: true });
+          await item.waitFor({ state: 'visible', timeout: 3_000 });
+          await item.click({ timeout: 3_000 });
+          return 'overflow-menu';
+        } catch {
+          // The menu was closed by a re-fold; retry below.
+        }
+      }
+      await waitForStableViewSwitcher();
+    }
+    throw new Error(`Could not select the "${label}" view after 3 attempts`);
+  }
+
+  /** Wait for a perspective's root container and prove it is actually visible. */
+  async function assertViewContainer(testId, label) {
+    const container = page.getByTestId(testId);
+    await poll(
+      async () => ((await container.count()) > 0 ? true : null),
+      10_000,
+      `${label} container mounted`
+    );
+    await container.first().waitFor({ state: 'visible', timeout: 10_000 });
+    assert.equal(
+      await container.first().isVisible(),
+      true,
+      `${label} container must be visible`
+    );
+    return container.first();
   }
 
   // MUI Select does not inherit the adjacent Field typography as an accessible
@@ -361,11 +464,20 @@ async function main() {
     page = await withTimeout(app.firstWindow(), 20_000, 'first renderer window');
     page.setDefaultTimeout(10_000);
     page.on('console', (message) => {
-      report.console.push({
+      const entry = {
         type: message.type(),
         text: message.text(),
         location: message.location(),
-      });
+        // Milliseconds since the report started, so a failure in the final
+        // console audit can be tied to the step that produced it.
+        elapsedMs: Date.now() - Date.parse(report.startedAt),
+      };
+      // Extension iframes share this page's console. Keep their output out of
+      // the host-renderer audit: Chromium flags e.g. `frame-ancestors` inside
+      // a <meta> CSP as an error on every extension load, which is a property
+      // of the extension HTML, not of the host app.
+      const fromExtension = (entry.location?.url ?? '').startsWith('whale-extension://');
+      (fromExtension ? report.extensionConsole : report.console).push(entry);
       saveReport();
     });
     page.on('pageerror', (error) => {
@@ -453,10 +565,32 @@ async function main() {
       const nested = page.getByTitle('Nested folder', { exact: true });
       await nested.waitFor({ state: 'visible' });
       assert.equal(await nested.count(), 1, 'Expected the nested fixture directory');
-      return { fixtureRoot, rowCount: 1, nestedDirectory: true };
+      return {
+        fixtureRoot,
+        rowCount: 1,
+        nestedDirectory: true,
+        mediaFixtures: fixtureImages.length,
+      };
     });
 
     await step('six-icon-accessible-names', async () => {
+      // The two drawing buttons render only after the extension manifest
+      // registry has resolved (useNewExcalidraw/useNewDrawio `available`).
+      // Under CPU contention that IPC round-trip can settle after the file
+      // rows are already on screen, so wait for both instead of racing them.
+      await poll(
+        async () => {
+          const excalidraw = await page
+            .getByRole('button', { name: 'New Excalidraw drawing', exact: true })
+            .count();
+          const drawio = await page
+            .getByRole('button', { name: 'New Draw.io diagram', exact: true })
+            .count();
+          return excalidraw === 1 && drawio === 1 ? true : null;
+        },
+        15_000,
+        'sidebar drawing actions to appear'
+      );
       const names = [
         'New Excalidraw drawing',
         'New Draw.io diagram',
@@ -794,6 +928,383 @@ async function main() {
       });
     }
 
+    // The five steps below intentionally run after the layout/resize matrix and
+    // before the final console audit: each one owns its view mode, window size
+    // and extension tabs, so earlier list-view/date/properties assertions keep
+    // their original preconditions, and the error audit still runs last.
+    await step('view-cycle', async () => {
+      await setContentSize(1440, 900);
+      const pageErrorsBefore = report.pageErrors.length;
+      const visited = [];
+      const record = (label, testId, control) => {
+        visited.push({
+          label,
+          testId,
+          control,
+          pageErrors: report.pageErrors.length,
+        });
+        assert.equal(
+          report.pageErrors.length,
+          pageErrorsBefore,
+          `${label} emitted a page error`
+        );
+      };
+      const visit = async (label, testId) => {
+        const control = await selectView(label);
+        await assertViewContainer(testId, label);
+        record(label, testId, control);
+        return control;
+      };
+
+      await visit('List view', 'view-list');
+      await visit('Gallery view', 'gallery-view');
+      await capture('view-cycle-gallery');
+      await visit('Task view', 'task-view');
+
+      // Board / Matrix / Gantt are Task sub-modes, not top-level perspectives.
+      const taskSubViews = [
+        ['task-toggle-kanban', 'kanban-view', 'Board'],
+        ['task-toggle-matrix', 'matrix-view', 'Matrix'],
+      ];
+      for (const [toggleTestId, containerTestId, label] of taskSubViews) {
+        const toggle = page.getByTestId(toggleTestId);
+        await toggle.waitFor({ state: 'visible' });
+        await toggle.click();
+        await assertViewContainer(containerTestId, label);
+        record(label, containerTestId, 'task-toggle');
+      }
+
+      await visit('Calendar view', 'calendar-view');
+      const ganttToggleControl = await selectView('Task view');
+      await assertViewContainer('task-view', 'Task view');
+      await page.getByTestId('task-toggle-gantt').click();
+      await assertViewContainer('gantt-view', 'Gantt');
+      record('Gantt', 'gantt-view', ganttToggleControl);
+
+      await visit('Tag cloud', 'tagcloud-view');
+      await visit('Folder visualization', 'folderviz-view');
+      await visit('Knowledge graph', 'knowledge-graph-view');
+      await capture('view-cycle-knowledge-graph');
+      // Leave the list perspective active so later steps keep their row-based
+      // locators working.
+      await visit('List view', 'view-list');
+
+      assert.deepEqual(
+        report.pageErrors.slice(pageErrorsBefore),
+        [],
+        'The perspective cycle must not emit page errors'
+      );
+      return { visited, finalView: 'list', pageErrors: 0 };
+    });
+
+    await step('tab-focus-not-trapped', async () => {
+      await selectView('List view');
+      await assertViewContainer('view-list', 'List view');
+      const list = page.getByTestId('file-list');
+      await list.waitFor({ state: 'visible' });
+
+      // Focus the element that owns the key handler. Using element.focus()
+      // avoids the row-level focus effect racing the container focus that a
+      // click would trigger.
+      await list.evaluate((element) => element.focus());
+      await poll(
+        async () =>
+          (await list.evaluate((element) => element === document.activeElement))
+            ? true
+            : null,
+        5_000,
+        'file-list container focus'
+      );
+
+      const readFocus = () =>
+        page.evaluate(() => {
+          const container = document.querySelector('[data-testid="file-list"]');
+          const active = document.activeElement;
+          return {
+            isListContainer: active === container,
+            tag: active ? active.tagName : null,
+            testid: active ? active.getAttribute('data-testid') : null,
+            role: active ? active.getAttribute('role') : null,
+            ariaLabel: active ? active.getAttribute('aria-label') : null,
+            insideListSubtree: Boolean(active && container && container.contains(active)),
+          };
+        });
+
+      const before = await readFocus();
+      assert.equal(before.isListContainer, true, 'The file-list container must start focused');
+      await page.keyboard.press('Tab');
+      const trail = [await readFocus()];
+      assert.equal(
+        trail[0].isListContainer,
+        false,
+        'Tab must move focus off the file-list container instead of being swallowed'
+      );
+      assert.equal(
+        await page.getByTestId('view-list').isVisible(),
+        true,
+        'Tab must not switch the view mode (Tab is deliberately unbound)'
+      );
+      // Repeated Tab presses must never steer focus back into the container
+      // either: the old binding swallowed Tab and cycled the perspective.
+      for (let index = 0; index < 3; index += 1) {
+        await page.keyboard.press('Tab');
+        const state = await readFocus();
+        trail.push(state);
+        assert.equal(
+          state.isListContainer,
+          false,
+          `Tab #${index + 2} must not return focus to the file-list container`
+        );
+        assert.equal(
+          await page.getByTestId('view-list').isVisible(),
+          true,
+          `Tab #${index + 2} must not switch the view mode`
+        );
+      }
+      await capture('tab-focus-left-file-list');
+      return { before, trail, viewUnchanged: true };
+    });
+
+    await step('gallery-arrow-single-step', async () => {
+      await selectView('Gallery view');
+      const gallery = await assertViewContainer('gallery-view', 'Gallery view');
+      const tiles = page.getByTestId('gallery-tile');
+      await poll(
+        async () => ((await tiles.count()) >= 3 ? await tiles.count() : null),
+        10_000,
+        'three gallery tiles'
+      );
+
+      const readTiles = () =>
+        tiles.evaluateAll((nodes) =>
+          nodes.map((node) => ({
+            focused: node.getAttribute('data-focused') === 'true',
+            selected: node.getAttribute('data-selected') === 'true',
+          }))
+        );
+
+      await tiles.nth(0).click();
+      await poll(
+        async () => {
+          const state = await readTiles();
+          const selected = state.filter((tile) => tile.selected);
+          return selected.length === 1 && state[0].selected ? true : null;
+        },
+        5_000,
+        'single gallery selection after click'
+      );
+      const selectedBefore = await readTiles();
+      const selectedIndex = selectedBefore.findIndex((tile) => tile.selected);
+      const selectionSummary = page.getByText('1 selected', { exact: true });
+      assert.ok(
+        (await selectionSummary.count()) >= 1,
+        'The header must report one selected entry'
+      );
+
+      // Give the gallery container focus so ArrowRight reaches its key handler
+      // (the same handler that must keep focus navigation single-step).
+      await gallery.evaluate((element) => element.focus());
+      await poll(
+        async () =>
+          (await gallery.evaluate((element) => element === document.activeElement))
+            ? true
+            : null,
+        5_000,
+        'gallery container focus'
+      );
+      const before = await readTiles();
+      assert.equal(
+        before.filter((tile) => tile.focused).length,
+        1,
+        'Exactly one gallery tile must carry the focus caret'
+      );
+      const firstFocusedIndex = before.findIndex((tile) => tile.focused);
+
+      await page.keyboard.press('ArrowRight');
+      const afterRight = await poll(
+        async () => {
+          const state = await readTiles();
+          return state.findIndex((tile) => tile.focused) === firstFocusedIndex + 1
+            ? state
+            : null;
+        },
+        5_000,
+        'ArrowRight moves the gallery caret exactly one tile'
+      );
+      assert.equal(
+        afterRight.filter((tile) => tile.selected).length,
+        1,
+        'ArrowRight must not extend the selection'
+      );
+      assert.equal(
+        afterRight.findIndex((tile) => tile.selected),
+        selectedIndex,
+        'ArrowRight must not move the selected tile'
+      );
+
+      await page.keyboard.press('ArrowLeft');
+      await poll(
+        async () => {
+          const state = await readTiles();
+          return state.findIndex((tile) => tile.focused) === firstFocusedIndex
+            ? state
+            : null;
+        },
+        5_000,
+        'ArrowLeft moves the gallery caret exactly one tile back'
+      );
+      const afterLeft = await readTiles();
+      assert.equal(
+        afterLeft.filter((tile) => tile.selected).length,
+        1,
+        'ArrowLeft must not extend the selection'
+      );
+
+      await capture('gallery-arrow-single-step');
+      return {
+        tileCount: before.length,
+        selectedIndex,
+        firstFocusedIndex,
+        focusedAfterRight: firstFocusedIndex + 1,
+        focusedAfterLeft: firstFocusedIndex,
+        selectionCount: 1,
+      };
+    });
+
+    await step('extension-open', async () => {
+      await selectView('List view');
+      await assertViewContainer('view-list', 'List view');
+      const pageErrorsBefore = report.pageErrors.length;
+      const row = page.getByTitle('plain.txt', { exact: true });
+      await row.dblclick();
+
+      const iframe = page.locator('iframe[title="Text Editor"]');
+      await poll(
+        async () => ((await iframe.count()) === 1 ? true : null),
+        20_000,
+        'Text Editor iframe mounted'
+      );
+      const content = page.frameLocator('iframe[title="Text Editor"]').locator('.cm-content');
+      await content.waitFor({ state: 'visible', timeout: 20_000 });
+      const text = await content.innerText();
+      assert.match(
+        text,
+        /WhaleTag packaged GUI regression/,
+        'The text editor iframe must render the fixture content'
+      );
+
+      const tab = page.locator('[role="tab"]').filter({ hasText: 'plain.txt' });
+      assert.equal(await tab.count(), 1, 'Expected exactly one tab for plain.txt');
+      await tab.waitFor({ state: 'visible' });
+      assert.equal(await tab.getAttribute('title'), fixtureFile);
+      const tabText = (await tab.innerText()).trim();
+      assert.equal(
+        tabText.includes('•'),
+        false,
+        'A freshly opened text editor must not be dirty'
+      );
+      await page.getByText('Text Editor', { exact: true }).first().waitFor({
+        state: 'visible',
+      });
+      await capture('extension-open-text-editor');
+
+      await tab.getByRole('button', { name: 'Close', exact: true }).click();
+      await poll(
+        async () => ((await iframe.count()) === 0 ? true : null),
+        10_000,
+        'extension iframe closed'
+      );
+      assert.equal(
+        await page.locator('[role="tab"]').count(),
+        0,
+        'Closing the last extension tab must empty the tab strip'
+      );
+      assert.deepEqual(
+        report.pageErrors.slice(pageErrorsBefore),
+        [],
+        'Opening and closing the extension must not emit page errors'
+      );
+      return { iframeTitle: 'Text Editor', contentMatched: true, tabsAfterClose: 0 };
+    });
+
+    await step('rename-no-stale-tab', async () => {
+      await selectView('List view');
+      await assertViewContainer('view-list', 'List view');
+      const row = page.getByTitle('plain.txt', { exact: true });
+      await row.dblclick();
+      const iframe = page.locator('iframe[title="Text Editor"]');
+      await poll(
+        async () => ((await iframe.count()) === 1 ? true : null),
+        20_000,
+        'Text Editor iframe mounted before rename'
+      );
+      const oldTab = page.locator('[role="tab"]').filter({ hasText: 'plain.txt' });
+      await oldTab.waitFor({ state: 'visible' });
+      const tabText = (await oldTab.innerText()).trim();
+      assert.equal(
+        tabText.includes('•'),
+        false,
+        'A freshly opened text editor must not be dirty before rename'
+      );
+
+      const renameButton = page.getByTestId('extension-rename');
+      await renameButton.waitFor({ state: 'visible' });
+      await renameButton.click();
+      const dialog = page.getByRole('dialog', { name: 'Rename', exact: true });
+      await dialog.waitFor({ state: 'visible' });
+      const input = dialog.getByRole('textbox', { name: 'Name', exact: true });
+      assert.equal(await input.inputValue(), 'plain.txt');
+      await input.fill('renamed.txt');
+      await dialog.getByRole('button', { name: 'OK', exact: true }).click();
+      await dialog.waitFor({ state: 'hidden' });
+
+      const renamedPath = path.join(fixtureRoot, 'renamed.txt');
+      await poll(
+        async () => (fs.existsSync(renamedPath) ? true : null),
+        10_000,
+        'renamed fixture on disk'
+      );
+      assert.equal(fs.existsSync(fixtureFile), false, 'The old path must be gone after rename');
+
+      const tabs = page.locator('[role="tab"]');
+      await poll(
+        async () => {
+          if ((await tabs.count()) !== 1) return null;
+          return (await tabs.first().getAttribute('title')) === renamedPath ? true : null;
+        },
+        15_000,
+        'single extension tab pointing at the renamed path'
+      );
+      assert.equal(await tabs.count(), 1, 'Rename must not leave a stale tab behind');
+      assert.equal(await tabs.first().getAttribute('title'), renamedPath);
+
+      // The extension workspace covers the file list while a tab is open, so
+      // screenshot the tab state first and only check the refreshed row after
+      // closing it.
+      await page.locator('iframe[title="Text Editor"]').waitFor({
+        state: 'visible',
+        timeout: 20_000,
+      });
+      await capture('rename-no-stale-tab');
+
+      await tabs.first().getByRole('button', { name: 'Close', exact: true }).click();
+      await poll(
+        async () => ((await page.locator('[role="tab"]').count()) === 0 ? true : null),
+        10_000,
+        'renamed tab closed'
+      );
+      await page.getByTitle('renamed.txt', { exact: true }).waitFor({
+        state: 'visible',
+        timeout: 10_000,
+      });
+      assert.equal(
+        await page.getByTitle('plain.txt', { exact: true }).count(),
+        0,
+        'The file list must not keep a stale plain.txt row after rename'
+      );
+      return { oldPath: fixtureFile, newPath: renamedPath, tabCount: 1, staleTab: false };
+    });
+
     await step('console-page-errors-and-404-empty', async () => {
       const consoleFailures = report.console.filter(
         (message) => message.type === 'warning' || message.type === 'error'
@@ -821,6 +1332,10 @@ async function main() {
       return {
         consoleMessages: report.console.length,
         consoleFailures: consoleFailures.length,
+        extensionConsoleMessages: report.extensionConsole.length,
+        extensionConsoleFailures: report.extensionConsole.filter(
+          (message) => message.type === 'warning' || message.type === 'error'
+        ).length,
         pageErrors: report.pageErrors.length,
         requestFailed: report.requestFailed.length,
         notFoundResponses: report.notFoundResponses.length,

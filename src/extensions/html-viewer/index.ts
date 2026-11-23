@@ -25,6 +25,13 @@ import './viewer.css';
 import DOMPurify from 'dompurify';
 import type { HostMessage } from '../../shared/extension-types';
 import { createViewerPrefs } from '../shared/viewer-prefs';
+import {
+  onLocaleChange,
+  pickStrings,
+  syncDocumentLocale,
+} from '../shared/i18n';
+import { applyThemeToDocument, detectInitialTheme } from '../shared/theme';
+
 
 import {
  formatBytes,
@@ -125,8 +132,8 @@ const I18N: Record<string, Strings> = {
 let T: Strings = I18N.en;
 
 function applyLocale() {
- T = window.whaleExt.t(I18N);
- document.documentElement.lang = window.whaleExt.locale;
+ T = pickStrings(I18N);
+ syncDocumentLocale();
  // Status bar labels
  sizeLbl.textContent = T.size;
  tagsLbl.textContent = T.tags;
@@ -166,29 +173,11 @@ function applyLocale() {
  updateZoomLevelLabel();
 }
 
-// --- Theme ----------------------------------------------------------------
+// --- Theme ---------------------------------------------------------------
+// First paint + live theme are shared (src/extensions/shared/theme.ts).
 // Initial theme is guessed from the OS so the first frame matches the host
-// (avoids the white-flash that plain `applyTheme('light')` shows on dark
+// (avoids the white-flash that plain `applyThemeToDocument('light')` shows on dark
 // hosts). The host's `setTheme` then overwrites this within milliseconds.
-function detectInitialTheme(): 'light' | 'dark' {
- try {
- if (
- typeof window !== 'undefined' &&
- typeof window.matchMedia === 'function' &&
- window.matchMedia('(prefers-color-scheme: dark)').matches
- ) {
- return 'dark';
- }
- } catch {
- // jsdom / older browsers: fall through to 'light'
- }
- return 'light';
-}
-
-function applyTheme(theme: 'light' | 'dark') {
- document.body.setAttribute('data-theme', theme);
-}
-
 // --- State ----------------------------------------------------------------
 type ViewMode = 'preview' | 'source';
 type ZoomMode = 'manual' | 'fit-width';
@@ -628,16 +617,16 @@ window.whaleExt.onMessage((msg: HostMessage) => {
  break;
  }
  case 'setTheme':
- applyTheme(msg.theme);
+ applyThemeToDocument(msg.theme);
  break;
  default:
  break;
  }
 });
 
-window.whaleExt.onLocale(() => {
- applyLocale();
- updateStatusBar();
+onLocaleChange(() => {
+  applyLocale();
+  updateStatusBar();
 });
 
 // --- Keyboard shortcuts ---------------------------------------------------
@@ -712,7 +701,7 @@ function setupToolbar() {
 // 5. setupResizeObserver() wires the ResizeObserver for fit-width
 // 6. updateStatusBar() draws the empty-state status
 // 7. post `ready` so host streams fileContent + setTheme
-applyTheme(detectInitialTheme());
+applyThemeToDocument(detectInitialTheme());
 loadPersistedState();
 applyLocale();
 setupToolbar();

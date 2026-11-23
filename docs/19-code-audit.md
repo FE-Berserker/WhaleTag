@@ -183,10 +183,8 @@ FileList 的 visible 标签过滤抽为 `file-list-filter.ts` 纯函数（6 条�
 `drawio-bridge.ts` 统一清理 XML timer / pending requests / 主题与内部状态，销毁后拒绝新请求；`useWhaleBridge.ts` 提供幂等的 save-handler 注销；`app.tsx` 区分 effect 重跑与真实卸载（刷新不取消已开始的保存）。
 
 ### P3-6. 代码清理轮（死导出 / 重复实现）✅
-- 删 20 个「声明即唯一出现」的死导出（`KNOWN_LANG_EXTENSIONS`、`WhaleExtApi`、`WORKFLOW_TAGS`、`TAG_OPEN/TAG_CLOSE`、`GanttDragState`、`CuratedThemeMode`、`ThumbWorkerResult`、`RunCommandResult`、`WhaleGlobal`、5 个 `*_STEP` 常量、3 个测试钩子等），`+27/−198`。
-- `todayIsoLocal` 7 份组件本地拷贝 → `domain/calendar.ts` 单一实现（`ymd(new Date())`）；`formatBytes` 4 份扩展拷贝 → `extensions/shared/format-bytes.ts`（`RevisionHistoryDialog` 的舍入语义不同，保留）。
-- 修 3 处指向已删 `docs/UI.md` 的源码注释指针（→ `docs/10-ui.md` §14）。
-- 仍待处理（记录不修）：U+FFFD 破损注释 86 行/16 文件（需人工判断原文）、`MapiqueContextMenu` 自带的 `NoTransition/NoBackdrop` 与 `MenuNoTransition` 重复、`pad2/ymd/addDays` 在 `shared/smart-tags.ts` 与 `domain/calendar.ts` 各一份、6 个死 preload API、未用 locale key、`CalendarView/MapiqueView/FileList` 三个 2000+ 行组件。
+清理已完成：删 20 个「声明即唯一出现」的死导出（`KNOWN_LANG_EXTENSIONS`、`WhaleExtApi`、`WORKFLOW_TAGS`、`TAG_OPEN/TAG_CLOSE`、`GanttDragState`、`CuratedThemeMode`、`ThumbWorkerResult`、`RunCommandResult`、`WhaleGlobal`、5 个 `*_STEP` 常量、3 个测试钩子等，`+27/−198`）；`todayIsoLocal` 7 份组件本地拷贝收敛到 `domain/calendar.ts` 的单一实现（`ymd(new Date())`）、`formatBytes` 4 份扩展拷贝收敛到 `extensions/shared/format-bytes.ts`（`RevisionHistoryDialog` 舍入语义不同，保留）；3 处指向已删 `docs/UI.md` 的注释指针改指 `docs/10-ui.md` §14；U+FFFD 破损注释 16 文件 91 处按上下文重建（`fs-read.ts` 3 处检测字面量改 `\uFFFD` 转义，语义不变）；5 语言各删 49–50 个无引用 locale 键（en 770→720、其余 752→703，共 −246 行；`nFilesSelected_*` 为 `nSelected` 重命名遗留，`smartTag*` 经 `smartTagI18nKey()` 动态生成故保留）。新增反向守卫 `scripts/check-unused-locale-keys.test.ts`：每个 en 键必须在非测试 `src/**` 源码中有字面量引用，`shape_*`／`tagShape*`／`smartTag*` 这类动态建键走显式 allowlist（evidence 缺失即失败，防 allowlist 腐化），复数基名按 `t('base', { count })` 调用点判定；守卫还借此暴露并清掉 4 个此前被同名标识符与测试夹具掩盖的漏网死键（`appearance`、`themePreset`、`home`、`confirmTagLocation_*`，5 语言共 −21 行；en 720→715、其余 703→699）：`PENDING_CLEANUP` 现为空数组，守卫在零债务下运行，新增条目必须「键仍存在且仍未被引用」，防债务清单腐化。
+- 仍待处理（记录不修）：`MapiqueContextMenu` 自带的 `NoTransition/NoBackdrop` 与 `MenuNoTransition` 重复、`pad2/ymd/addDays` 在 `shared/smart-tags.ts` 与 `domain/calendar.ts` 各一份、6 个死 preload API、`CalendarView/MapiqueView/FileList` 三个 2000+ 行组件。
 
 ---
 

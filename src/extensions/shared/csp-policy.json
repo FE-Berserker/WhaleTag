@@ -1,0 +1,69 @@
+{
+  "_comment": [
+    "Single source of truth for the Content-Security-Policy meta tag of every",
+    "built-in extension viewer. scripts/build-extensions.js synthesizes the real",
+    "policy from `baseline` + the extension's `extra` entry and replaces the",
+    "__WHALE_CSP__ placeholder in src/extensions/<id>/index.html.",
+    "Do not hand-edit a built dist/*/index.html: it is overwritten on every build",
+    "and a source template that lost its placeholder fails the build on purpose.",
+    "`baseline` is applied to all eight extensions; `extra` may only append tokens",
+    "to a directive (never replace baseline tokens). Directives are emitted in",
+    "baseline order, with any extra-only directive appended at the end.",
+    "`header` is the same policy as a real HTTP response header (see the",
+    "`whale-extension://` handler). A meta-delivered policy cannot enforce",
+    "frame-ancestors, so the header replaces that directive with `frameAncestors`:",
+    "`'self'` keeps draw.io's same-origin inner iframe working, and the app-shell",
+    "origin is substituted for `appOriginPlaceholder` at runtime (`file:` in",
+    "production, the dev-server origin in development). Because Chromium logs",
+    "an error for every meta-delivered frame-ancestors, the meta injection strips",
+    "that directive entirely (`META_OMITTED_DIRECTIVES` in the build script); it",
+    "is delivered only by the header."
+  ],
+  "placeholder": "__WHALE_CSP__",
+  "header": {
+    "appOriginPlaceholder": "__APP_ORIGIN__",
+    "frameAncestors": ["'self'", "__APP_ORIGIN__"]
+  },
+  "baseline": {
+    "default-src": ["'self'"],
+    "script-src": ["'self'", "whale-extension://*"],
+    "style-src": ["'self'", "'unsafe-inline'", "whale-extension://*"],
+    "img-src": [
+      "'self'",
+      "data:",
+      "blob:",
+      "whale-extension://*",
+      "whale-file:"
+    ],
+    "font-src": ["'self'", "blob:"],
+    "connect-src": ["'self'", "whale-extension:"],
+    "object-src": ["'none'"],
+    "base-uri": ["'none'"],
+    "frame-ancestors": ["'none'"]
+  },
+  "extensions": {
+    "drawio-editor": {
+      "script-src": ["'unsafe-inline'", "'unsafe-eval'"],
+      "font-src": ["data:", "whale-extension://*"],
+      "connect-src": ["data:", "blob:"],
+      "worker-src": ["'self'", "blob:", "whale-extension://*"],
+      "frame-src": ["'self'", "data:", "blob:", "whale-extension://*"]
+    },
+    "excalidraw-editor": {
+      "font-src": ["data:", "whale-extension://*"],
+      "connect-src": ["data:", "blob:"],
+      "worker-src": ["'self'", "blob:", "whale-extension://*"]
+    },
+    "font-viewer": {},
+    "heic-viewer": {
+      "script-src": ["'wasm-unsafe-eval'", "'unsafe-eval'"],
+      "connect-src": ["blob:"]
+    },
+    "html-viewer": {
+      "img-src": ["https:", "http:"]
+    },
+    "image-viewer": {},
+    "json-viewer": {},
+    "text-editor": {}
+  }
+}

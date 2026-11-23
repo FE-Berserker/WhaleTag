@@ -9,6 +9,13 @@ import {
  type PathSegment,
 } from './json-model';
 import { formatBytes } from '../shared/format-bytes';
+import {
+  onLocaleChange,
+  pickStrings,
+  syncDocumentLocale,
+} from '../shared/i18n';
+import { applyThemeToDocument, detectInitialTheme } from '../shared/theme';
+
 
 // --- DOM refs -------------------------------------------------------------
 const contentEl = document.getElementById('content') as HTMLDivElement;
@@ -121,8 +128,8 @@ const I18N: Record<string, Strings> = {
 let T: Strings = I18N.en;
 
 function applyLocale() {
- T = window.whaleExt.t(I18N);
- document.documentElement.lang = window.whaleExt.locale;
+ T = pickStrings(I18N);
+ syncDocumentLocale();
  expandAllBtn.textContent = T.expandAll;
  collapseAllBtn.textContent = T.collapseAll;
  toggleSearchBtn.textContent = T.find;
@@ -138,26 +145,8 @@ function applyLocale() {
  updateStatusBar();
 }
 
-// --- Theme ----------------------------------------------------------------
-function detectInitialTheme(): 'light' | 'dark' {
- try {
- if (
- typeof window !== 'undefined' &&
- typeof window.matchMedia === 'function' &&
- window.matchMedia('(prefers-color-scheme: dark)').matches
- ) {
- return 'dark';
- }
- } catch {
- // jsdom / older browsers: fall through to light
- }
- return 'light';
-}
-
-function applyTheme(theme: 'light' | 'dark') {
- document.body.setAttribute('data-theme', theme);
-}
-
+// --- Theme ---------------------------------------------------------------
+// First paint + live theme are shared (src/extensions/shared/theme.ts).
 // --- Status bar -----------------------------------------------------------
 const numberFormatter = new Intl.NumberFormat();
 
@@ -638,20 +627,18 @@ window.whaleExt.onMessage((msg: HostMessage) => {
  break;
  }
  case 'setTheme':
- applyTheme(msg.theme);
+ applyThemeToDocument(msg.theme);
  break;
  default:
  break;
  }
 });
 
-window.whaleExt.onLocale(() => {
- applyLocale();
-});
+onLocaleChange(applyLocale);
 
 // Initial paint: OS-guessed theme first (avoids white flash on dark hosts),
 // then labels, then announce ready so the host streams fileContent/setTheme.
-applyTheme(detectInitialTheme());
+applyThemeToDocument(detectInitialTheme());
 applyLocale();
 updateStatusBar();
 window.whaleExt.postMessage({ type: 'ready' });

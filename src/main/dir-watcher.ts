@@ -2,6 +2,7 @@ import fs, { promises as fsp } from 'fs';
 import path from 'path';
 import { request } from './index-worker-host';
 import { logInfo } from './log';
+import { isSameOrDescendantPath } from './path-fold';
 
 /**
  * External-change watcher for configured locations (docs/04 §10): one
@@ -67,14 +68,6 @@ const REINDEX_DEBOUNCE_MS = 1500;
 export function isMetaPath(rel: string): boolean {
   const norm = rel.split(path.sep).join('/');
   return norm === META_DIR || norm.startsWith(`${META_DIR}/`) || norm.includes(`/${META_DIR}/`);
-}
-
-/** True when `candidate` equals `ancestor` or sits beneath it (either slash
- *  style, segment-boundary aware, case-insensitive like the rest of the app). */
-export function isSameOrDescendantPath(ancestor: string, candidate: string): boolean {
-  const a = ancestor.split(path.sep).join('/').replace(/\/+$/, '').toLowerCase();
-  const c = candidate.split(path.sep).join('/').toLowerCase();
-  return c === a || c.startsWith(`${a}/`);
 }
 
 /** Does a flushed watcher batch require this full-text root to rebuild?

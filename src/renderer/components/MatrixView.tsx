@@ -135,6 +135,7 @@ export default function MatrixView({ data, onMoveToColumn, stages }: MatrixViewP
 
   return (
     <Box
+      data-testid="matrix-view"
       sx={{
         height: '100%',
         width: '100%',

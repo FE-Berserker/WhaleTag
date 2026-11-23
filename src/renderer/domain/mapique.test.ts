@@ -97,7 +97,7 @@ describe('mapique geoEntries', () => {
   });
 
   // `source` is a literal `'tag'` after the 2026-06-30 schema change (the
-  // sidecar no longer carries parallel lat/lng fields �?the geo: tag is the
+  // sidecar no longer carries parallel lat/lng fields — the geo: tag is the
   // single source of truth). The field stays in the type so future code can
   // distinguish EXIF-discovered vs manually-added coordinates without an
   // interface change.
@@ -193,7 +193,7 @@ describe('mapique pruneSelection (plan §H.21 P2-2)', () => {
     assert.equal(
       result,
       selected,
-      'identical reference is the whole point �?avoid a needless re-render'
+      'identical reference is the whole point — avoid a needless re-render'
     );
   });
 
@@ -217,7 +217,7 @@ describe('mapique pruneSelection (plan §H.21 P2-2)', () => {
     assert.deepEqual([...result].sort(), ['/b']);
   });
 
-  // Correctness probe �?confirms the loop visits every selected path and
+  // Correctness probe — confirms the loop visits every selected path and
   // consults validPaths.has() each time, which is the O(prev.size) contract
   // that replaces the old O(prev.size × valid.size) `Array.some()` scan.
   it('consults validPaths exactly once per selected entry', () => {

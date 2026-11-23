@@ -22,6 +22,7 @@ import {
 import { createInitialContentDeferred } from './initial-content';
 import { parseExcalidrawScene } from './scene-content';
 import { createDropRequestStore, type DropRequestStore } from './drop-requests';
+import { detectInitialTheme, type ThemeMode } from '../shared/theme';
 
 // Excalidraw's imperative API is typed in a deep subpath that doesn't resolve
 // cleanly under this project's `moduleResolution: node`; this is glue code in a
@@ -49,7 +50,7 @@ export default function App() {
     initialContentRef.current = createInitialContentDeferred();
   }
 
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [theme, setTheme] = useState<ThemeMode>(detectInitialTheme());
   const [viewMode, setViewMode] = useState(false);
 
   // A non-image file being dragged in from Whale's directory tree (path supplied

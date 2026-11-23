@@ -712,7 +712,10 @@ export default function FolderVizView({ data }: FolderVizViewProps) {
 
   if (!currentDirectoryPath) {
     return (
-      <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <Box
+        data-testid="folderviz-view"
+        sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      >
         <Typography color="text.secondary">{t('folderVizEmpty')}</Typography>
       </Box>
     );
@@ -720,6 +723,7 @@ export default function FolderVizView({ data }: FolderVizViewProps) {
 
   return (
     <Box
+      data-testid="folderviz-view"
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();

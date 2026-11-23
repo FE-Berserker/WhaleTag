@@ -471,7 +471,7 @@ describe('yearHeatmapGrid', () => {
 
   it('flags days outside the year as not in the period', () => {
     const grid = yearHeatmapGrid(2026, 0);
-    // First day (2025-12-28) is in 2025 �?inCurrentMonth false.
+    // First day (2025-12-28) is in 2025 — inCurrentMonth false.
     assert.equal(grid[0].inCurrentMonth, false);
     // Jan 1 2026 is in period.
     const jan1 = grid.find((d) => d.key === '2026-01-01');
@@ -486,7 +486,7 @@ describe('bucketByDateAndHour', () => {
       entry('b.txt', '2026-06-15T14:00:00.000Z'),
     ];
     const m = bucketByDateAndHour(entries, modifiedDateKey);
-    // Both share a day key �?one day entry with 24 hour-slots.
+    // Both share a day key — one day entry with 24 hour-slots.
     assert.equal(m.size, 1, 'two same-day entries collapse to one day');
     const day = [...m.values()][0];
     assert.equal(day.length, 24, 'each day has 24 hour slots');
@@ -511,8 +511,8 @@ describe('heatIntensity', () => {
     assert.equal(heatIntensity(10, 10), 1);
   });
 
-  it('is sub-linear (4 on a max of 16 �?0.5, not 0.25)', () => {
-    // sqrt(4)/sqrt(16) = 2/4 = 0.5 �?sqrt tames outliers.
+  it('is sub-linear (4 on a max of 16 — 0.5, not 0.25)', () => {
+    // sqrt(4)/sqrt(16) = 2/4 = 0.5 — sqrt tames outliers.
     assert.equal(heatIntensity(4, 16), 0.5);
   });
 

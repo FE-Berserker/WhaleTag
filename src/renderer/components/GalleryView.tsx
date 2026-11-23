@@ -256,6 +256,7 @@ export default function GalleryView({
   if (mediaEntries.length === 0) {
     return (
       <Box
+        data-testid="gallery-view"
         sx={{
           flex: 1,
           display: 'flex',
@@ -271,6 +272,7 @@ export default function GalleryView({
   return (
     <Box
       ref={containerRef}
+      data-testid="gallery-view"
       tabIndex={0}
       role="grid"
       aria-label={t('gallery')}

@@ -164,15 +164,15 @@ export async function readTextFile(filePath: string): Promise<string> {
   // corrupted download or mixed-encoding ebook). Forcing UTF-8 in that case
   // produces *millions* of replacement characters, so we pick whichever
   // decoding yields fewer replacements.
-  // Count U+FFFD WITHOUT `s.match(/�/g)` — that builds a giant array
+  // Count U+FFFD WITHOUT `s.match(/\uFFFD/g)` — that builds a giant array
   // (millions of entries) when a legacy/mixed-encoding file has many invalid
   // bytes. indexOf walks the string with no allocation.
   const countReplacements = (s: string): number => {
     let count = 0;
-    let idx = s.indexOf('�');
+    let idx = s.indexOf('\uFFFD');
     while (idx !== -1) {
       count++;
-      idx = s.indexOf('�', idx + 1);
+      idx = s.indexOf('\uFFFD', idx + 1);
     }
     return count;
   };

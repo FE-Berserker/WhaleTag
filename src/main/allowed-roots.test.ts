@@ -7,6 +7,7 @@ import {
   assertNotLocationRoot,
   assertWithinAllowedRoot,
   assertWritable,
+  getRawAllowedRoots,
   isConfiguredRoot,
   isReadOnlyPath,
   setAllowedRoots,
@@ -106,6 +107,16 @@ describe('allowed roots guard', () => {
     } finally {
       await fsp.rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it('keeps a display-correct raw snapshot for late MCP subscribers', () => {
+    const roots = [path.join('C:', 'MixedCase', 'Location')];
+    setAllowedRoots(roots);
+    assert.deepEqual(getRawAllowedRoots(), roots);
+    const copy = getRawAllowedRoots();
+    copy.push('mutated');
+    assert.deepEqual(getRawAllowedRoots(), roots, 'callers cannot mutate module state');
+    setAllowedRoots([]);
   });
 
   it('replaces previous roots when set again', async () => {

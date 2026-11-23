@@ -130,6 +130,7 @@ Edit 工具在 Windows 偶发写入 `\0` null 字节。修法:用 Write 重写�
 - 三形态归一(Mac/Linux `\`、Windows `\ `、云 `/` 无盘符)
 - 比较前两侧统一去尾分隔符
 - 大小写按平台归一:win32/darwin 折叠、linux 精确(与主进程 [path-fold.ts](../src/main/path-fold.ts) 一致;`isSameOrDescendant` 的 `caseInsensitive` 参数可显式覆盖)
+- 平台策略只此一份:共享 [src/shared/path-fold.ts](../src/shared/path-fold.ts) 定义 `isCaseInsensitivePlatform` / `foldPath` / `isSameOrDescendantPath`;主进程 [path-fold.ts](../src/main/path-fold.ts) 用 `process.platform` 绑定默认参数,渲染层 [path-util.ts](../src/renderer/services/path-util.ts) 镜像同一策略(platform 优先、UA 兜底),dir-watcher 的全文索引根判断也改用它(不再自带无条件 lowercase 版本)
 - Path 把 basename 解析反函数 `parentDir` 在 [src/renderer/services/path-util.ts](../src/renderer/services/path-util.ts)
 
 ---
@@ -187,6 +188,7 @@ Task reminder check failed: Error: Error invoking remote method 'index:build':
 
 - `setAllowedRootsAndWait(roots)` 在 `Root.tsx` 调用,把 in-flight promise 记到模块级变量
 - `waitForAllowedRoots()` 返回那个 promise(没有就 `Promise.resolve()`),`TaskReminder` 在 `await ipcApi.buildLocationIndex(root)` **之前**先 `await waitForAllowedRoots()`
+- `LocationTagLibraryContextProvider` 在 `await ipcApi.readTagLibrary(root)` **之前**同样先 `await waitForAllowedRoots()`;2026-11 GUI 回归在首次 Add Location 时抓到过 `tagLibrary:read` 被拒绝并弹红条的实例
 
 子 effect 已经把 IPC 排队了,await 的是**同一个** in-flight promise,不是新发一次,所以不增加一次 round trip。空 allowedRoots 的合法场景(用户没配 location)同样安全 —— TaskReminder 的 `!location` 短路,不会到 `buildLocationIndex`。
 
@@ -429,3 +431,15 @@ Internal React error: Expected static flag was missing. Please notify the React 
 - **Windows 防火墙要用户放行**:首次在 `0.0.0.0` 监听时系统会弹窗,必须勾选专用网络;拒绝后手机端表现为连不上(超时),仓库不带防火墙规则。
 - **主动内容只下载**:PDF / HTML / SVG / JS 在手机上不预览,只提供下载。
 - **移动端是独立实现**:自有 i18n 字典与样式(不共用桌面 locale 与主题),改文案 / 视觉要两边都改。
+
+---
+
+## 37. 旧编辑器标签页保存会把已改名文件"复活"(2026-11-23)
+
+**症状**:在扩展编辑器打开文件后,用文件区(或编辑器自身)把文件重命名 / 删除,再回到旧标签页保存:保存"成功",但旧文件名被重新创建出来,目录里出现重复文件。
+
+**根因**:`ext:writeFile` → `writeFileWithRevision` 只做 allowedRoots 校验 + 修订备份 + 原子写,不校验目标文件是否仍存在;`atomicWriteText` 的 tmp + rename 只要求父目录存在,于是旧路径被重新创建。
+
+**修法**:`writeFileWithRevision` 在备份前用 `existsSync` 校验父目录与目标,缺失抛带路径的 `ENOENT`;渲染层 `ExtensionHost.handleSave` 的 catch 以 `extensionSaveError` 提示并保持 dirty。渲染层重命名成功后已先关闭旧标签页(P1),主进程守卫兜住其他旧标签页 / 竞态路径。
+
+**教训**:凡是"用户给定路径"的写入口,都要先确认该路径仍指向用户以为的对象——"写成功 = 文件存在"不成立于被删 / 被改名的路径。检查与写入之间的 TOCTOU 窗口无法完全消除,但把静默复活变成可见失败已经消灭了数据语义错误。

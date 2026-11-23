@@ -481,6 +481,7 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
 
   return (
     <Box
+      data-testid="knowledge-graph-view"
       onContextMenu={handleContextMenu}
       sx={{
         height: '100%',

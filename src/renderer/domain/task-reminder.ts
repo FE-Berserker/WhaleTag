@@ -24,7 +24,7 @@ const DEFAULT_PENDING_VALUES = ['not-started', 'in-progress'];
  * 2. If none match, fall back to the first two stages (typical Kanban early
  *    columns are "to do" and "doing").
  * 3. If there are fewer than two stages, use whatever exists.
- * 4. Empty workflow �?empty selection.
+ * 4. Empty workflow — empty selection.
  */
 export function getDefaultPendingStageIds(stages: WorkflowStage[]): string[] {
   const matched = stages

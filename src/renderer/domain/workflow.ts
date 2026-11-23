@@ -1,5 +1,5 @@
 /**
- * Customizable workflow stages �?the user-editable successor to the hardcoded
+ * Customizable workflow stages — the user-editable successor to the hardcoded
  * `WORKFLOW_DEFS` in smart-tags.ts. Each stage is a tag value (the token stored
  * on a file), a display order (array position), and a color. Stages drive the
  * Kanban board columns and the workflow chips in the tag library/editor.

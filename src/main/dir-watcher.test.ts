@@ -6,7 +6,6 @@ import { promises as fsp } from 'fs';
 
 import {
   isMetaPath,
-  isSameOrDescendantPath,
   isFulltextRootTouched,
   syncWatchedRoots,
   setFulltextRoots,
@@ -68,19 +67,9 @@ describe('isMetaPath', () => {
   });
 });
 
-describe('isSameOrDescendantPath', () => {
-  it('matches same/descendant across slash styles and case', () => {
-    assert.equal(isSameOrDescendantPath('C:/Data', 'C:/Data'), true);
-    assert.equal(isSameOrDescendantPath('C:/Data', 'C:/Data/sub/a.jpg'), true);
-    assert.equal(isSameOrDescendantPath('C:/Data', 'C:/database/x'), false);
-    assert.equal(isSameOrDescendantPath('C:/Data', 'c:/data/SUB'), true);
-    assert.equal(
-      isSameOrDescendantPath('C:\\Data\\Sub', 'C:/Data/Sub/child'),
-      true
-    );
-    assert.equal(isSameOrDescendantPath('C:/Data', 'C:/Other'), false);
-  });
-});
+// `isSameOrDescendantPath` moved to src/main/path-fold.ts (shared platform
+// policy) and is unit-tested in path-fold.test.ts; here it is only exercised
+// indirectly through `isFulltextRootTouched`.
 
 describe('isFulltextRootTouched', () => {
   it("treats [''] as a blanket marker for every nested full-text root", () => {

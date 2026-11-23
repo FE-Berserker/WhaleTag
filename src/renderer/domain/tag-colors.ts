@@ -24,7 +24,7 @@ export { RATING_COLOR, PERIOD_COLOR };
 export const GEO_TAG_COLOR = '#1976d2'; // blue
 
 /**
- * Accent color for the `date:` fold chip in the tag library �?captures every
+ * Accent color for the `date:` fold chip in the tag library — captures every
  * stale (no-longer-active) smart date tag (Phase 3 / §9 user-approved).
  * Neutral grey (Material Grey 500) so it doesn't compete with the date /
  * period / rating / workflow / quadrant / geo accent families.
@@ -100,7 +100,7 @@ export const TAG_COLOR_CLEARED = '';
  * different color (repeating only after `TAG_PALETTE.length` assignments).
  *
  * Round-robin was chosen over "least used" because least-used collapses to the
- * same first-palette color for the first 18 uncolored tags �?a user adding
+ * same first-palette color for the first 18 uncolored tags — a user adding
  * several tags in a row would see them all pick the same color, which violates
  * the "each new tag gets a different color" requirement.
  */
@@ -119,12 +119,12 @@ export function pickTagColor(
  *  1. a rating value (`1star`..`5star`) -> the built-in gold (RATING_COLOR),
  *     always uniform and not overridable by per-tag or group colors
  *  2. a period tag (`YYYYMMDD-YYYYMMDD`) -> the built-in violet PERIOD_COLOR
- *     (overridable by per-tag / group �?different from rating's "always uniform"
+ *     (overridable by per-tag / group — different from rating's "always uniform"
  *     behavior, so users can pick their own period accent)
  *  3. an explicit per-tag color the user set (settings.tagColors)
  *  4. the color of the group the tag belongs to (inherited)
  *  5. a workflow value (`not-started`..`planned`) -> its per-state color
- *     (WORKFLOW_COLORS �?gray/blue/red/green/amber by convention)
+ *     (WORKFLOW_COLORS → gray/blue/red/green/amber by convention)
  *  6. a quadrant value -> its per-state color
  *  7. a geo tag -> coordinate-derived color (or GEO_TAG_COLOR fallback)
  *  8. undefined -> the caller renders a neutral default

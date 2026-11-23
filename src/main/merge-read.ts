@@ -4,11 +4,14 @@ import { existsSync, promises as fsp } from 'fs';
 /**
  * Reads a JSON file that is about to be **merged into** (read-modify-write).
  *
- * The lenient readers (`readFolderMeta`, `readTagLibrary`) return `{}` for a
- * missing OR corrupt file, which is fine for display but catastrophic for a
- * merge: `{...{}, ...patch}` would rewrite the whole file with just the one
- * changed field, silently dropping every other tag/description/perspective the
- * user had. This reader therefore distinguishes the two cases:
+ * Display readers are lax about damage — `readFolderMeta` still returns `{}`
+ * for a missing OR corrupt file — which is fine for display but catastrophic
+ * for a merge: `{...{}, ...patch}` would rewrite the whole file with just the
+ * one changed field, silently dropping every other tag/description/
+ * perspective the user had. (`readTagLibrary` used to be lenient too; it now
+ * throws for everything except a missing file — docs/02 §9 "损坏 ≠ 空" — and
+ * its write path goes through this reader as well.) This reader therefore
+ * distinguishes the two cases:
  *
  * - absent → `null` (start from empty, nothing to lose);
  * - unparsable or failing `isValid` → the file is **quarantined** to a

@@ -151,11 +151,45 @@ export async function loadExtensionRegistry(
   }
 }
 
-async function writeFileWithRevision(
+/** Error carrying Node's `ENOENT` code so IPC callers/tests can discriminate a
+ *  stale save from a permission/IO failure (the message is user-visible). */
+function fileGoneError(message: string): NodeJS.ErrnoException {
+  const error: NodeJS.ErrnoException = new Error(message);
+  error.code = 'ENOENT';
+  return error;
+}
+
+/**
+ * Writes an editor save under the allowed roots, taking a revision snapshot
+ * first.
+ *
+ * The parent directory AND the target file must still exist: an editor tab can
+ * outlive the file on disk (the user renames/moves/deletes it in the file area
+ * while the tab stays open). Renaming keeps the old-path tab open in some
+ * flows, and blindly writing would RESURRECT the file the user just renamed
+ * away — a silent duplicate is worse than a failed save. The thrown ENOENT
+ * message is surfaced verbatim by the renderer's save handler
+ * (`ExtensionHost.handleSave` → `notifyApp(t('extensionSaveError', …))`).
+ *
+ * Exported for tests; the `ext:writeFile` IPC handler is the only production
+ * caller.
+ */
+export async function writeFileWithRevision(
   filePath: string,
   content: string
 ): Promise<void> {
   assertWithinAllowedRoot(filePath);
+  const parentDir = path.dirname(filePath);
+  if (!existsSync(parentDir)) {
+    throw fileGoneError(
+      `Cannot save ${filePath}: its directory no longer exists (ENOENT)`
+    );
+  }
+  if (!existsSync(filePath)) {
+    throw fileGoneError(
+      `Cannot save ${filePath}: the file no longer exists — it may have been renamed or deleted (ENOENT)`
+    );
+  }
   await backupRevision(filePath);
   await atomicWriteText(filePath, content);
 }

@@ -89,6 +89,40 @@ Eisenhower 2×2 四象限 + 底部未分类托盘(**常显**,2026-07-22:空了�
 
 其他视角各自实现 loading/empty 状态(Gallery / Kanban / Matrix / Gantt / Calendar / Task / FolderViz)。
 
+### 3a. MapiqueView 内部拆分(P2 拆分,2026-11)
+
+`MapiqueView.tsx` 从 2120 行降到约 1190 行,内聚块抽到 [src/renderer/components/mapique/](../src/renderer/components/mapique/)(行为与 props 不变):
+
+| 文件 | 职责 |
+|---|---|
+| `useMapiqueData.ts` | 数据层 hook:sidecar / geo 候选 / 已定位集合 / marker 颜色 / tray 排序与筛选,并导出 `visibleTrayEntriesRef` / `allTrayEntriesRef` / `trayIndexByPathRef` 保持 P0-3 稳定性 |
+| `tray-data.ts` | 纯函数:`haversineKm` / `buildSidecars` / `sortTrayEntries` / `filterTrayEntries`(node:test 单测,不依赖 React) |
+| `constants.ts` | 瓦片 URL / attribution、`PANEL_WIDTH` / `PREVIEW_HEIGHT`、空 `tagColors` / `groups`、`TrayFilter` / `TraySort` / `MapiquePrefs` |
+| `GeoMarker.tsx` | 唯一 `React.memo` 边界(Leaflet marker),P0-3 的收益靠它兑现 |
+| `MapPopup.tsx` / `pin-icon.ts` | marker 弹窗与 pin DOM 图标(含 `escapeAttr` / `cssAttrValue`) |
+| `MapInterop.tsx` | 命令式 Leaflet 互操作组件:`MapContextMenuHandler` / `MapMoveTracker` / `MapClickHandler` / `AutoResize` / `InvalidateOnChange` / `FitBounds` |
+| `BatchPanel.tsx` | 多选时的批量打标面板 |
+| `MapiqueToolbar.tsx` / `MapiqueFilterBar.tsx` / `MapiqueDetailPanel.tsx` | 顶部工具条 / 侧栏筛选条 / 详情内容(空态、批量、单条预览 + 坐标 + inline tags) |
+
+`MapiqueView.tsx` 仍持有:地图画布 JSX(含 Markers 列表)、选区与键盘、EXIF 探测/回收、导出与撤销、右键菜单与 Snackbar。测试:`mapique/tray-data.test.ts`(纯函数)+`mapique/MapiqueToolbar.test.tsx`(disabled 矩阵)+ 原 `MapiqueView.test.tsx` 5 例。
+
+### 3b. CalendarView 内部拆分(P2 拆分,2026-11)
+
+`CalendarView.tsx` 从 2264 行降到约 490 行,内聚块抽到 [src/renderer/components/calendar/](../src/renderer/components/calendar/)(默认导出、props(`FileCellData`)与行为不变):
+
+| 文件 | 职责 |
+|---|---|
+| `types.ts` | `CalendarViewMode` / `GroupingSource` / `SubViewProps`(周期子视图共享 props) |
+| `constants.ts` | `CELL_MIN_HEIGHT` / `ENTRY_THUMB` / 共享 `EMPTY_ENTRIES` / `HOURS`(memo 稳定性依赖模块级恒等) |
+| `prefs.ts` | `PREFS_KEY_PREFIX` / `CalendarPrefs` / `loadCalendarPrefs`(localStorage,per-location) |
+| `CalendarToolbar.tsx` | 顶部工具条三段(日期导航 / grouping + range 筛选 / 视图模式 + year 变体 + PNG 导出),range 变化经 `onRangeChange` 交给宿主做 cursor 跳转 |
+| `MonthView.tsx` / `WeekView.tsx` / `TimelineView.tsx` / `AgendaView.tsx` / `YearView.tsx` | 五档周期视图;`YearView` 内含 `YearMonthTile` |
+| `YearCharts.tsx` | 年视图的 `YearHeatmap` 与 `YearTrendChart`(ECharts) |
+| `DayCell.tsx` | 日格:drop 目标(内部拖拽走 P1-2 批量日期回调)、左键空区新建、右键新建菜单;`CalendarEntryItem.tsx` 为格内条目行 |
+| `DatePickerPopover.tsx` | 跳转日期弹层 |
+
+`CalendarView.tsx` 仍持有:状态与派生数据(`bucketsAll` / range 过滤 `buckets` / `hourBuckets` / `entryTimeLabel`)、prefs hydrate/persist、`shouldJumpCursor`(命名导出,测试依赖)、工具栏接线、视图切换、`CalendarEntryMenu` 与 Snackbar。测试:`calendar/DayCell.test.tsx`(7 例)+ 原 `CalendarView.test.tsx`(40 例)全部保持通过。
+
 ## 4. 全局递归深度 `viewDepth`
 
 **所有 9 个有效视角受 `viewDepth ∈ [1, 5]` 控制**,默认 1(等同"只看当前目录")。`settings.viewDepth` 走 redux-persist,**全局不 per-folder**。

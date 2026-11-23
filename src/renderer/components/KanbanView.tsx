@@ -167,6 +167,7 @@ export default function KanbanView({
   return (
     <>
       <Box
+        data-testid="kanban-view"
         sx={{
           height: '100%',
           width: '100%',

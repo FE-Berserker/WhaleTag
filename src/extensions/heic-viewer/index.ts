@@ -44,6 +44,13 @@ interface LibheifLike {
 
 import { buildTransform, createViewportController, type ViewportController } from '../shared/zoom';
 import { keymapAction } from '../shared/keymap';
+import {
+  onLocaleChange,
+  pickStrings,
+  syncDocumentLocale,
+} from '../shared/i18n';
+import { applyThemeToDocument, detectInitialTheme } from '../shared/theme';
+
 
 interface Strings {
  loading: string;
@@ -147,28 +154,9 @@ function base64ToBytes(b64: string): Uint8Array {
  return bytes;
 }
 
-function detectInitialTheme(): 'light' | 'dark' {
- try {
- if (
- typeof window !== 'undefined' &&
- typeof window.matchMedia === 'function' &&
- window.matchMedia('(prefers-color-scheme: dark)').matches
- ) {
- return 'dark';
- }
- } catch {
- // jsdom / older browsers: fall through to 'light'
- }
- return 'light';
-}
-
-function applyTheme(theme: 'light' | 'dark') {
- document.body.setAttribute('data-theme', theme);
-}
-
 function applyLocale() {
- T = window.whaleExt.t(I18N);
- document.documentElement.lang = window.whaleExt.locale;
+ T = pickStrings(I18N);
+ syncDocumentLocale();
  openSystemBtn.textContent = T.systemApp;
  openNativeBtn.textContent = T.systemApp;
  zoomOutBtn.setAttribute('aria-label', T.zoomOut);
@@ -400,7 +388,7 @@ window.whaleExt.onMessage((msg) => {
  }
  break;
  case 'setTheme':
- applyTheme(msg.theme);
+ applyThemeToDocument(msg.theme);
  break;
  case 'heicWasm': {
  const pending = pendingHeicWasm.get(msg.requestId);
@@ -418,7 +406,7 @@ window.whaleExt.onMessage((msg) => {
  }
 });
 
-window.whaleExt.onLocale(() => applyLocale());
+onLocaleChange(applyLocale);
 window.whaleExt.postMessage({ type: 'ready' });
 
 // --- Initial paint ---
@@ -427,7 +415,7 @@ window.whaleExt.postMessage({ type: 'ready' });
 // 2. applyLocale() seeds labels
 // 3. The controller is created at module top with empty state; nothing to
 // do here for it.
-applyTheme(detectInitialTheme());
+applyThemeToDocument(detectInitialTheme());
 applyLocale();
 // Initial render: toolbar buttons disabled until first image decodes.
 // (onChange with the controller's initial state has already run.)

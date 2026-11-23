@@ -3,8 +3,8 @@
  *
  * The view component itself is covered by GanttView.test.tsx (rendering +
  * pointer interactions under jsdom). This file locks down the data-shape
- * helpers that run in the renderer too �?period parsing, day arithmetic,
- * row grouping, drag math �?so a regression in the SVG geometry can't slip
+ * helpers that run in the renderer too — period parsing, day arithmetic,
+ * row grouping, drag math — so a regression in the SVG geometry can't slip
  * through even when the view is mocked.
  */
 
@@ -100,7 +100,7 @@ describe('gantt daysBetween', () => {
   });
 
   it('survives a DST boundary (UTC math, not local ms math)', () => {
-    // Spring-forward in US/Eastern: 2026-03-08 �?2026-03-09 is still 1 day.
+    // Spring-forward in US/Eastern: 2026-03-08 → 2026-03-09 is still 1 day.
     assert.equal(daysBetween('2026-03-09', '2026-03-08'), 1);
   });
 });
@@ -111,7 +111,7 @@ describe('gantt dayKeyDiff', () => {
   });
 
   it('is positive when target is later than anchor', () => {
-    // Scroll-to-today use case: anchor=2026-07-01, target=2026-07-04 �?+3.
+    // Scroll-to-today use case: anchor=2026-07-01, target=2026-07-04 → +3.
     assert.equal(dayKeyDiff('2026-07-01', '2026-07-04'), 3);
   });
 
@@ -208,7 +208,7 @@ describe('gantt groupRowsByWorkflow', () => {
       { entry: entry('b.txt'), period: { startKey: '2026-07-03', endKey: '2026-07-04' } },
       { entry: entry('c.txt'), period: { startKey: '2026-07-05', endKey: '2026-07-06' } },
     ];
-    // Empty tag map �?all 3 fall into the catch-all (null) row.
+    // Empty tag map — all 3 fall into the catch-all (null) row.
     const rows = groupRowsByWorkflow(tasks, STAGES, new Map());
     assert.equal(rows.length, 1);
     assert.equal(rows[0].value, null);
@@ -243,7 +243,7 @@ describe('gantt groupRowsByWorkflow', () => {
       tags
     );
     const rows = groupRowsByWorkflow(withP, STAGES, tags);
-    // 'in-progress' has no tasks �?omitted. Order: not-started, completed.
+    // 'in-progress' has no tasks — omitted. Order: not-started, completed.
     assert.deepEqual(
       rows.map((r) => r.value),
       ['not-started', 'completed']
@@ -284,7 +284,7 @@ describe('gantt scaleForRange', () => {
   });
 
   it('expands to include "today" as anchor by default', () => {
-    // Far-future range with no anchor override �?today is included via the
+    // Far-future range with no anchor override — today is included via the
     // default anchorKey=todayKey().
     const today = todayKey();
     const scale = scaleForRange('day', '2030-01-01', '2030-12-31', today);
@@ -330,7 +330,7 @@ describe('gantt rectFromPeriod', () => {
       scale
     );
     assert.equal(r.x, 3 * PX_PER_DAY.day);
-    assert.equal(r.width, 3 * PX_PER_DAY.day); // 4, 5, 6 �?3 days
+    assert.equal(r.width, 3 * PX_PER_DAY.day); // 4, 5, 6 → 3 days
   });
 
   it('clamps a single-day bar to MIN_BAR_WIDTH', () => {
@@ -357,7 +357,7 @@ describe('gantt deltaDaysFromPx', () => {
     assert.equal(deltaDaysFromPx(0, 'day'), 0);
     assert.equal(deltaDaysFromPx(16, 'day'), 1); // half a day rounds to nearest
     assert.equal(deltaDaysFromPx(48, 'day'), 2); // 1.5 days rounds to 2
-    // JS Math.round rounds half toward +Infinity, so -1.5 �?-1 (not -2).
+    // JS Math.round rounds half toward +Infinity, so -1.5 → -1 (not -2).
     assert.equal(deltaDaysFromPx(-48, 'day'), -1);
   });
 
@@ -382,7 +382,7 @@ describe('gantt periodWithShift', () => {
       { startKey: '2026-07-01', endKey: '2026-07-05' },
       -10
     );
-    // 5-day inclusive range �?daysBetween(end, start) === 4 (number of
+    // 5-day inclusive range — daysBetween(end, start) === 4 (number of
     // day-boundaries crossed). Must stay positive regardless of sign.
     assert.equal(daysBetween(p.endKey, p.startKey), 4);
   });
@@ -419,7 +419,7 @@ describe('gantt periodWithResize', () => {
     const p = periodWithResize(
       { startKey: '2026-07-04', endKey: '2026-07-10' },
       'left',
-      '2026-07-12' // beyond end �?would invert
+      '2026-07-12' // beyond end — would invert
     );
     assert.deepEqual(p, { startKey: '2026-07-10', endKey: '2026-07-10' });
   });
@@ -428,7 +428,7 @@ describe('gantt periodWithResize', () => {
     const p = periodWithResize(
       { startKey: '2026-07-04', endKey: '2026-07-10' },
       'right',
-      '2026-07-01' // before start �?would invert
+      '2026-07-01' // before start — would invert
     );
     assert.deepEqual(p, { startKey: '2026-07-04', endKey: '2026-07-04' });
   });
@@ -444,7 +444,7 @@ describe('gantt dayKeyAtClientX', () => {
   };
 
   it('snaps to the day boundary', () => {
-    // x=64 px under day zoom (32 px/day) = day 2 �?2026-07-03
+    // x=64 px under day zoom (32 px/day) = day 2 → 2026-07-03
     assert.equal(dayKeyAtClientX(64, scale), '2026-07-03');
     // Halfway through day 2 still snaps to day 2.
     assert.equal(dayKeyAtClientX(80, scale), '2026-07-03');
@@ -493,7 +493,7 @@ describe('gantt chartRowsFromEntries', () => {
     const entries = [entry('a.txt'), entry('b.txt'), entry('c.txt')];
     const tags = tagMap({
       'a.txt': ['20260701-20260705'],
-      'b.txt': ['idea'], // no period �?skipped
+      'b.txt': ['idea'], // no period — skipped
       'c.txt': ['20260710-20260715'],
     });
     const rows = chartRowsFromEntries(entries, tags);
@@ -508,7 +508,7 @@ describe('gantt chartRowsFromEntries', () => {
     const entries = [entry('b.txt'), entry('a.txt'), entry('d.txt'), entry('c.txt')];
     const tags = tagMap({
       'a.txt': ['20260704-20260705'],
-      'b.txt': ['20260704-20260705'], // same start as a �?path tiebreak
+      'b.txt': ['20260704-20260705'], // same start as a — path tiebreak
       'c.txt': ['20260710-20260711'],
       'd.txt': ['20260701-20260702'],
     });
@@ -520,7 +520,7 @@ describe('gantt chartRowsFromEntries', () => {
   });
 
   it('attaches thumbDataUrl when the cache has it', () => {
-    // Cache key format MUST match `ThumbIcon.tsx`'s lookup �?see
+    // Cache key format MUST match `ThumbIcon.tsx`'s lookup — see
     // `${path}|${modified}` at ThumbIcon:60. Mirrors what the renderer
     // populates after a successful thumbnail load.
     const entries = [entry('a.txt')];
@@ -554,7 +554,7 @@ describe('gantt chartRowsFromEntries', () => {
   });
 
   it('uses null thumbDataUrl when an entry has a stale modified stamp', () => {
-    // Same path, different `modified` �?different cache key. A row whose
+    // Same path, different `modified` — different cache key. A row whose
     // entry's `modified` doesn't match the cached key falls back to the
     // placeholder; this mirrors `ThumbIcon`'s invalidation policy on
     // file change.
@@ -607,7 +607,7 @@ describe('gantt periodsEqual', () => {
     );
   });
 
-  it('treats a swapped range as different �?does not normalize', () => {
+  it('treats a swapped range as different — does not normalize', () => {
     // periodsEqual is a strict comparator; the docstring says it must NOT
     // normalize (periodWithShift/Resize already guarantee order upstream).
     // Pinning the behavior so a future "helpful" refactor doesn't quietly
@@ -670,7 +670,7 @@ describe('gantt periodStatus', () => {
 
   it('uses ISO date string compare (no Date object round-trip)', () => {
     // Boundary case: today is one day after the period ends, but the
-    // string compare must agree �?this proves we don't accidentally go
+    // string compare must agree — this proves we don't accidentally go
     // through `new Date(...)` (which has TZ pitfalls).
     assert.equal(
       periodStatus({ startKey: '2026-07-08', endKey: '2026-07-09' }, TODAY),

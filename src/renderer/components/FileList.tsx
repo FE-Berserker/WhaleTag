@@ -1,31 +1,21 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDispatch } from 'react-redux';
 import { useShallowEqualSelector } from '-/hooks/useShallowEqualSelector';
 import {
   Alert,
   Box,
-  Button,
   CircularProgress,
   IconButton,
-  Snackbar,
   Stack,
   Tooltip,
   Typography,
 } from '@mui/material';
-import {
-  List as VirtualList,
-  Grid as VirtualGrid,
-  type GridImperativeAPI,
-  type ListImperativeAPI,
-} from 'react-window';
-import { useDrop } from 'react-dnd';
-import { NativeTypes } from 'react-dnd-html5-backend';
+import type { GridImperativeAPI, ListImperativeAPI } from 'react-window';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 
-import type { DirEntry, SidecarIssue } from '../../shared/ipc-types';
-import type { ViewMode, SidecarMeta } from '../../shared/whale-meta';
-import { COMMAND_NOT_APPROVED, COMMAND_PATH_BLOCKED } from '../../shared/shell-types';
+import type { DirEntry } from '../../shared/ipc-types';
+import type { ViewMode } from '../../shared/whale-meta';
 import { RootState } from '-/reducers';
 import { todayKey, periodTagFromRange } from '../domain/gantt';
 import {
@@ -48,79 +38,48 @@ import { useIOActionsContext } from '-/hooks/IOActionsContextProvider';
 import { useTagMetaContext } from '-/hooks/TagMetaContextProvider';
 import { useExtensionContext } from '-/hooks/ExtensionContextProvider';
 import { useFileSelectionContext } from '-/hooks/FileSelectionContextProvider';
-import { getCompatibleExtensions, selectExtension } from '-/services/extension-dispatch';
-import PromptDialog from '-/components/PromptDialog';
-import GridCell, {
-  GRID_CELL_FOOTER,
-  GRID_CELL_GAP,
-} from '-/components/GridCell';
-import Row from '-/components/Row';
-import MediaLightbox from '-/components/MediaLightbox';
-// Perspective views are lazy-loaded so the heavy viz libs they transitively
-// pull in (echarts via Calendar/TagCloud/FolderViz, leaflet via Mapique,
-// @xyflow/react via KnowledgeGraph) load on demand when the user switches to
-// that view — not on first paint. Each is rendered behind exactly one
-// `viewMode` branch in the switch below (wrapped in <Suspense>).
-const GalleryView = lazy(() => import('./GalleryView'));
-const TaskView = lazy(() => import('./TaskView'));
-const CalendarView = lazy(() => import('./CalendarView'));
-const FolderVizView = lazy(() => import('./FolderVizView'));
-const TagCloudView = lazy(() => import('./TagCloudView'));
-const KnowledgeGraphView = lazy(() => import('./KnowledgeGraphView'));
-const MapiqueView = lazy(() => import('./MapiqueView'));
-
-/** Suspense fallback shown while a lazy perspective view's chunk loads. */
-const PerspectiveFallback = (
-  <Box
-    sx={{
-      flex: 1,
-      minHeight: 0,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-    }}
-  >
-    <CircularProgress />
-  </Box>
-);
+import { selectExtension } from '-/services/extension-dispatch';
+import { GRID_CELL_FOOTER, GRID_CELL_GAP } from '-/components/GridCell';
 import PropertiesTray from '-/components/PropertiesTray';
+import { SidecarIssuesAlert } from './file-list/SidecarIssuesAlert';
+import type { CorruptSidecarIssue } from './file-list/SidecarIssuesAlert';
+import { createKeyDownHandler } from './file-list/keyboard';
+import { useFileListSelection } from './file-list/useFileListSelection';
+import { useFileListTagActions } from './file-list/useFileListTagActions';
+import { useExternalFileDrop } from './file-list/useExternalFileDrop';
+import { useCommandsDeps } from './file-list/useCommandsDeps';
+import { useFileListCellData } from './file-list/useFileListCellData';
+import FileListView from './file-list/FileListView';
+import FileListDialogs from './file-list/FileListDialogs';
+import FileListEntryContextMenu from './file-list/FileListEntryContextMenu';
+import FileListLightbox from './file-list/FileListLightbox';
+import FileListNoticeSnackbar from './file-list/FileListNotice';
+import type { FileListNotice } from './file-list/FileListNotice';
+// Re-exported for FileListSidecarIssues.test.tsx, which loads this module and
+// expects the named export to live here.
+export { SidecarIssuesAlert };
 import FileListHeader, {
   LIST_COLUMN_BOUNDS,
   RowColumnLabels,
 } from '-/components/FileListHeader';
-import EntryContextMenu, { TagChipContextMenu } from '-/components/EntryContextMenu';
+import { TagChipContextMenu } from '-/components/EntryContextMenu';
 import { isImageFile } from '../../shared/whale-meta';
-import { isMediaEntry, mediaPlaylist } from '../domain/gallery';
+import { mediaPlaylist } from '../domain/gallery';
 import { filterEntriesByTag } from '../domain/file-list-filter';
-import { tagsAfterMove } from '../domain/kanban';
-import { formatGeoTag, withoutGeoTags, isGeoTag } from '../domain/geo-tag';
-import { isDateTypedTag } from '../domain/calendar';
-import { resolveAction, nextView, DEFAULT_KEYBINDINGS } from '../domain/keybindings';
-import type { FileCellData } from '-/components/file-cell';
-import { splitNameExt } from '-/services/tags';
+import { DEFAULT_KEYBINDINGS } from '../domain/keybindings';
 import { basename } from '-/services/path-util';
 import { useNewExcalidraw } from '-/hooks/useNewExcalidraw';
 import { useNewDrawio } from '-/hooks/useNewDrawio';
-import {
-  removeDateTagsFromEntries,
-  setDateTagForEntries,
-  useListCommands,
-  type ListCommandsDeps,
-} from '-/hooks/useListCommands';
 import { ipcApi } from '-/services/ipc-api';
-import { errorMessage } from '-/services/errors';
 import {
   withSingleRating,
   withSingleQuadrant,
   withSingleFromValues,
   withSingleDateTag,
   withSinglePeriodTag,
-  normalizeSmartTags,
-  resolveInputTag,
 } from '../../shared/smart-tags';
+import { useListCommands } from '-/hooks/useListCommands';
 import { useNow } from '-/hooks/useNow';
-import { useConfirm } from '-/components/ConfirmDialogProvider';
-import { useStableBag } from '-/hooks/useStableBag';
 import { useListColumnLabels } from '-/hooks/useListColumnLabels';
 
 const SORT_KEYS: SortKey[] = ['name', 'size', 'modified', 'extension'];
@@ -134,11 +93,6 @@ const SORT_KEYS: SortKey[] = ['name', 'size', 'modified', 'extension'];
  * depends on wall-clock boundaries.
  */
 const FROZEN_NOW = new Date(0);
-
-function copyDefaultName(name: string, suffix: string): string {
-  const { base, ext } = splitNameExt(name);
-  return `${base} ${suffix}${ext || ''}`;
-}
 
 /** H.23 P1-3: density preset → px row height. Single source of truth. */
 const rowHeightFromDensity = (
@@ -154,77 +108,6 @@ const ROW_THUMB_SIZE = 40;
 const MIN_ENTRY_SIZE = 96;
 const MAX_ENTRY_SIZE = 280;
 const ENTRY_SIZE_STEP = 32;
-
-type CorruptSidecarIssue = Extract<SidecarIssue, { kind: 'corrupt' }>;
-
-/** Persistent sidecar health warning, exported for focused component tests. */
-export function SidecarIssuesAlert({
-  issues,
-  readOnly,
-  onNavigate,
-  onRecover,
-}: {
-  issues: SidecarIssue[];
-  readOnly: boolean;
-  onNavigate: (dirPath: string) => void;
-  onRecover: (issue: CorruptSidecarIssue) => Promise<void>;
-}) {
-  const { t } = useTranslation();
-  const confirm = useConfirm();
-  const [pendingDir, setPendingDir] = useState<string | null>(null);
-  if (issues.length === 0) return null;
-  return (
-    <Alert severity="warning" sx={{ borderRadius: 0 }} data-testid="sidecar-issues-warning">
-      <Typography variant="body2">
-        {t('sidecarIssuesWarning', { count: issues.length })}
-      </Typography>
-      <Stack spacing={0.5} sx={{ mt: 1 }}>
-        {issues.map((issue) => (
-          <Stack
-            key={`${issue.dirPath}:${issue.kind}`}
-            direction={{ xs: 'column', sm: 'row' }}
-            spacing={1}
-            sx={{ alignItems: { xs: 'stretch', sm: 'center' } }}
-          >
-            <Button
-              size="small"
-              color="inherit"
-              onClick={() => onNavigate(issue.dirPath)}
-              sx={{ justifyContent: 'flex-start', overflowWrap: 'anywhere' }}
-            >
-              {issue.dirPath}
-            </Button>
-            {issue.kind === 'corrupt' && !readOnly ? (
-              <Button
-                size="small"
-                color="inherit"
-                disabled={pendingDir !== null}
-                onClick={async () => {
-                  if (pendingDir !== null) return;
-                  const approved = await confirm({
-                    title: t('sidecarRecoverTitle'),
-                    message: t('sidecarRecoverMessage', { dirPath: issue.dirPath }),
-                    confirmLabel: t('sidecarRecoverAction'),
-                    danger: true,
-                  });
-                  if (!approved) return;
-                  setPendingDir(issue.dirPath);
-                  try {
-                    await onRecover(issue);
-                  } finally {
-                    setPendingDir(null);
-                  }
-                }}
-              >
-                {t('sidecarRecoverAction')}
-              </Button>
-            ) : null}
-          </Stack>
-        ))}
-      </Stack>
-    </Alert>
-  );
-}
 
 /**
  * The file/folder list. Features:
@@ -442,30 +325,6 @@ export default function FileList() {
     [workflowValues]
   );
 
-  // P0-3: H.23 P0-3 — selected selection is `useRef<Set>` instead of
-  // `useState<Set>`. We mutate the Set in place and trigger re-render by
-  // bumping `selectedTick`. Rationale: every prior `setSelected(prev => new
-  // Set(prev))` allocated a fresh Set on every interaction; for a 1k-row
-  // directory with Ctrl+Shift multi-toggle, that's O(n) GC churn per
-  // gesture. Same Set identity → child rows can cache lookups (used by
-  // Row.dragItem via `cellData.selectedPaths`).
-  const selectedPathsRef = useRef<Set<string>>(new Set());
-  const [selectedTick, setSelectedTick] = useState(0);
-  const bumpSelection = useCallback(
-    () => setSelectedTick((x) => (x + 1) & 0xffff),
-    []
-  );
-
-  // H.23 P1-1 keyboard navigation: focusIndex is the row index the user is
-  // currently focused on (via ↑↓ / Home / End / click). Row visuals + the
-  // ref-based keyboard handler both read this. Storing in state (not just
-  // ref) so Row can react with its own outline / auto-focus when the parent
-  // toggles focus programmatically.
-  const [focusIndex, setFocusIndexState] = useState<number | null>(null);
-  const setFocusIndex = useCallback((i: number | null) => {
-    setFocusIndexState(i);
-  }, []);
-
   // Keyboard focus must also SCROLL: `<Row>` focuses with
   // `{ preventScroll: true }` and react-window only mounts visible rows, so
   // arrowing past the viewport left focus on an unmounted index — no visible
@@ -473,21 +332,6 @@ export default function FileList() {
   const listRef = useRef<ListImperativeAPI | null>(null);
   const gridRef = useRef<GridImperativeAPI | null>(null);
 
-  // Back-compat shim: a few call sites (notably `useListCommands`) update
-  // selection by passing an `updater: (prev) => Set<string>` callback. We
-  // keep that contract by reading the current ref, computing `next`, and
-  // aliasing iff changed. No allocation when the updater returns the same
-  // Set (e.g. no-op click handlers).
-  const setSelected = useCallback(
-    (updater: (prev: Set<string>) => Set<string>) => {
-      const prev = selectedPathsRef.current;
-      const next = updater(prev);
-      if (next === prev) return;
-      selectedPathsRef.current = next;
-      bumpSelection();
-    },
-    [bumpSelection]
-  );
   // NOTE: an earlier version bumped a `mapiqueVersion` counter on every
   // `geoByName` change and used it as `<MapiqueView key=...>` to force a full
   // remount. That rebuilt the Leaflet map (tiles reload, view reset) on every
@@ -508,14 +352,8 @@ export default function FileList() {
   // Structured notice: severity is decided at the call site, never inferred
   // from the localized text (prefix-matching translations mislabeled error
   // toasts as success in ja/ko and success toasts as errors in en/zh).
-  const [notice, setNotice] = useState<{
-    text: string;
-    severity: 'success' | 'info' | 'warning' | 'error';
-    /** Show the "open trash" action button. */
-    openTrash?: boolean;
-    /** Show a revealed corrupt-sidecar backup. */
-    backupPath?: string;
-  } | null>(null);
+  // The shape lives with the snackbar in ./file-list/FileListNotice.
+  const [notice, setNotice] = useState<FileListNotice | null>(null);
   // Reporter for success/warning/info + every error path (`showNotice(msg)`
   // defaults to error). `setNotice` itself stays for the close handlers.
   const showNotice = useCallback(
@@ -621,6 +459,27 @@ export default function FileList() {
     [entries, activeTag, tagsByName, nowTick]
   );
 
+  // Selection + keyboard focus (P0-3 / H.23 P1-1) live in
+  // ./file-list/useFileListSelection: the Set is mutated in place, a tick
+  // counter drives the memos, and `ensureTrayVisible` keeps selectRow's
+  // identity-churn timing identical to the previous inline implementation.
+  const ensureTrayVisible = useCallback(() => {
+    if (!trayVisible) dispatch(setTrayVisible(true));
+  }, [trayVisible, dispatch]);
+  const {
+    selectedPathsRef,
+    bumpSelection,
+    setSelected,
+    isSelected,
+    selectedEntries,
+    selectAllState,
+    toggleSelectAll,
+    clearSelection,
+    selectRow,
+    focusIndex,
+    setFocusIndex,
+  } = useFileListSelection({ visible, currentDirectoryPath, ensureTrayVisible });
+
   // Keep both playlist identities stable across unrelated FileList renders.
   // MediaLightbox also memoizes its filtered playlist, so this completes the
   // chain instead of rebuilding `mediaPlaylist(visible)` in the JSX body.
@@ -630,17 +489,6 @@ export default function FileList() {
     [lightboxEntry]
   );
 
-  const selectedEntries = useMemo(
-    () => {
-      // `selectedPathsRef` is mutated in place; `selectedTick` is the revision
-      // counter that tells this memo the Set changed. Read it so the dependency
-      // is real (exhaustive-deps otherwise flags it as unnecessary).
-      void selectedTick;
-      return visible.filter((e) => selectedPathsRef.current.has(e.path));
-    },
-    [visible, selectedTick]
-  );
-
   // Mirror the selection into FileSelectionContext so sibling surfaces
   // can read the current selection without reaching into FileList's internals.
   const { setSelectedEntries: setSelectedEntriesCtx } =
@@ -648,25 +496,6 @@ export default function FileList() {
   useEffect(() => {
     setSelectedEntriesCtx(selectedEntries);
   }, [selectedEntries, setSelectedEntriesCtx]);
-
-  // `isSelected` reads the mutated-in-place selection ref (P0-3), but its
-  // identity is keyed on `selectedTick` deliberately: react-window v2 already
-  // memoizes each row with a shallow-compare, so a selection change must flip
-  // SOME cellData field's identity to make rows re-render and re-evaluate
-  // `isSelected(entry)`. Without `selectedTick` here the callback would be
-  // stable forever and checkboxes would go stale. (This replaces the prior
-  // hand-written `arePropsEqual` + in-body `React.memo` layer, which was both
-  // redundant with react-window's built-in memo and broken — see F1/F4 in the
-  // H.23 review.)
-  const isSelected = useCallback(
-    (entry: DirEntry) => {
-      // See `selectedEntries`: `selectedTick` is read to keep this callback's
-      // identity keyed on the selection revision while the Set stays in a ref.
-      void selectedTick;
-      return selectedPathsRef.current.has(entry.path);
-    },
-    [selectedTick]
-  );
 
   // P0-4: lookup table for `cellData.resolveEntry` — drop targets use it to
   // turn dragged paths into full DirEntry objects without scanning `visible`
@@ -695,128 +524,6 @@ export default function FileList() {
     [indexByPath]
   );
 
-  // Anchor row for Shift range-selection (the last row toggled without Shift).
-  const selectAnchorRef = useRef<number | null>(null);
-
-  /**
-   * Selection gesture on the visible row at `index`:
-   *  - Shift: add the inclusive range from the anchor to here (easy multi-pick).
-   *  - Ctrl / Cmd: toggle just this row and make it the new anchor.
-   *  - Plain click: select only this row (so the properties tray updates).
-   * Range uses `visible` so it matches exactly what the user sees (post-filter).
-   *
-   * P0-3: the Set is mutated in place; rerender is triggered by `bumpSelection`.
-   * This keeps the Set identity stable across toggles, which downstream of
-   * `cellData.selectedPaths` (P0-4) means Row's dragItem memo doesn't churn on
-   * every click.
-   */
-  const selectRow = useCallback((
-    index: number,
-    mods: { shift: boolean; toggle: boolean }
-  ) => {
-    const entry = visible[index];
-    if (!entry) return;
-    // H.23 P1-1: every click also moves keyboard focus to the same row,
-    // so subsequent arrow nav starts from where the user clicked.
-    setFocusIndex(index);
-    // Clicking a file/folder should always bring the properties tray back —
-    // the user having closed it once shouldn't suppress it for every later
-    // click. (A toggle-off that empties the selection still hides the tray via
-    // the `selectedEntries.length > 0` render guard, so this is safe to set
-    // unconditionally on any selection gesture.)
-    if (!trayVisible) dispatch(setTrayVisible(true));
-    const set = selectedPathsRef.current;
-    let mutated = false;
-    if (mods.shift && selectAnchorRef.current !== null) {
-      const a = selectAnchorRef.current;
-      const [lo, hi] = a < index ? [a, index] : [index, a];
-      for (let i = lo; i <= hi; i += 1) {
-        const p = visible[i].path;
-        if (!set.has(p)) {
-          set.add(p);
-          mutated = true;
-        }
-      }
-      // anchor is preserved so a follow-up Shift-click re-extends from it.
-    } else if (mods.toggle) {
-      if (set.has(entry.path)) set.delete(entry.path);
-      else set.add(entry.path);
-      selectAnchorRef.current = index;
-      mutated = true;
-    } else {
-      // Plain click: single-select the row.
-      if (set.size !== 1 || !set.has(entry.path)) {
-        set.clear();
-        set.add(entry.path);
-        mutated = true;
-      }
-      selectAnchorRef.current = index;
-    }
-    if (mutated) bumpSelection();
-  },
-  [
-    visible,
-    trayVisible,
-    dispatch,
-    setFocusIndex,
-    bumpSelection,
-  ]);
-
-  const clearSelection = useCallback(() => {
-    const set = selectedPathsRef.current;
-    if (set.size === 0) return;
-    set.clear();
-    selectAnchorRef.current = null;
-    bumpSelection();
-  }, [bumpSelection]);
-
-  // Selection is scoped to the directory it was made in: a Set left over from
-  // the previous folder made the header claim "8 selected" (and the tri-state
-  // box claim checked) while bulk actions only touched the intersection with
-  // the new `visible` list. Reset it whenever the directory changes.
-  useEffect(() => {
-    clearSelection();
-  }, [currentDirectoryPath, clearSelection]);
-
-  // Tri-state select-all for the list-view column header. Compared against the
-  // CURRENT `visible` array so the header always reflects what the user sees
-  // (post-filter / post-search). Comparing Set size to visible.length was wrong
-  // whenever the previous folder contributed extra selected paths.
-  const selectAllState = useMemo<'checked' | 'indeterminate' | 'unchecked'>(
-    () => {
-      // Selection lives in a mutated ref; the tick is what invalidates this.
-      void selectedTick;
-      if (visible.length === 0) return 'unchecked';
-      let selectedVisible = 0;
-      for (const e of visible) {
-        if (selectedPathsRef.current.has(e.path)) selectedVisible += 1;
-      }
-      if (selectedVisible === 0) return 'unchecked';
-      return selectedVisible === visible.length ? 'checked' : 'indeterminate';
-    },
-    [visible, selectedTick]
-  );
-  const toggleSelectAll = useCallback(() => {
-    if (selectAllState === 'checked') {
-      // Fully checked → clear every selection (visible or not).
-      clearSelection();
-      return;
-    }
-    // Unchecked / indeterminate → fill every visible entry, preserving any
-    // out-of-visible selections.
-    const set = selectedPathsRef.current;
-    let mutated = false;
-    for (const e of visible) {
-      if (!set.has(e.path)) {
-        set.add(e.path);
-        mutated = true;
-      }
-    }
-    // After a fill, the shift-range anchor no longer points at a sensible row.
-    selectAnchorRef.current = null;
-    if (mutated) bumpSelection();
-  }, [selectAllState, visible, clearSelection, bumpSelection]);
-
   const trayAppliesToView = (mode: ViewMode) =>
     mode === 'list' || mode === 'grid' || mode === 'gallery';
 
@@ -837,52 +544,43 @@ export default function FileList() {
   const newExcalidraw = useNewExcalidraw();
   const newDrawio = useNewDrawio();
 
-  // P0-1d wire-up: deps bag for `useListCommands`. Stable across renders so the
-  // hook can `useMemo`-key on identity. After P0-2 this becomes even more
-  // important (handlers feed into `cellData`'s React.memo comparator).
-  //
-  // P2-10: no hand-maintained dependency array. `useStableBag` compares the
-  // object's own fields, so a new field is picked up automatically (the old
-  // array — plus its `eslint-disable-next-line react-hooks/exhaustive-deps` —
-  // silently omitted `setSelected / clearSelection / showNotice /
-  // setPackageOpen / setCreateKind / setCreateWithTag`). The generic is
-  // `ListCommandsDeps`, so a missing required field is now a type error.
-  const commandsDeps = useStableBag<ListCommandsDeps>({
-    renameEntry,
-    moveEntry,
-    // `useListCommands` doesn't read `selected` directly — it just needs the
-    // `bumpSelection` + ref pair to mutate-in-place (P0-3). After the refactor
-    // we removed the `selected: Set<string>` field from `ListCommandsDeps`.
-    copyEntry,
-    deleteEntry,
-    createFolder,
-    createFile,
-    createTaggedEntry,
-    save,
-    saveMany,
-    tagsByName,
-    descByName,
-    normalize,
-    selectedEntries,
-    setSelected,
-    clearSelection,
-    // H.23 P3-1: handleInvertSelection mutates the ref directly (single
-    // mutation + one tick bump), so we expose both the ref and the
-    // bump fn to the hook. Avoids an O(n) re-derive per click.
-    selectedPathsRef,
-    bumpSelection,
-    showNotice,
-    currentLocation,
-    currentDirectoryPath,
-    deleteToTrash,
-    refresh,
-    refreshTree,
-    setPackageOpen,
-    setCreateKind,
-    setCreateWithTag,
-    newExcalidraw,
-    newDrawio,
-    createWithTag,
+  // P0-1d wire-up: deps bag for `useListCommands`, assembled by
+  // ./file-list/useCommandsDeps. `useStableBag` compares the bag's own fields,
+  // so no hand-maintained dependency array can drift; a missing required field
+  // is a type error, and unchanged fields keep `commands` reference-stable.
+  const commandsDeps = useCommandsDeps({
+    io: {
+      renameEntry,
+      moveEntry,
+      copyEntry,
+      deleteEntry,
+      createFolder,
+      createFile,
+      createTaggedEntry,
+    },
+    tagMeta: { save, saveMany, tagsByName, descByName, normalize },
+    selection: {
+      selectedEntries,
+      setSelected,
+      clearSelection,
+      selectedPathsRef,
+      bumpSelection,
+    },
+    ui: {
+      showNotice,
+      setPackageOpen,
+      setCreateKind,
+      setCreateWithTag,
+      createWithTag,
+    },
+    location: {
+      currentLocation,
+      currentDirectoryPath,
+      deleteToTrash,
+      refresh,
+      refreshTree,
+    },
+    factories: { newExcalidraw, newDrawio },
   });
   const commands = useListCommands(commandsDeps);
 
@@ -974,443 +672,81 @@ export default function FileList() {
     }
   };
 
-  // Drop one or more entries onto a folder cell to move them inside it.
-  // External files dragged in from outside the app (OS file manager): copy them
-  // into the current directory. Never overwrites (main auto-renames on clash).
-  //
-  // In task perspective (Kanban / Matrix / Gantt), the per-column / per-
-  // quadrant / per-tray drop targets ALSO accept native files (see
-  // KanbanView / MatrixView / GanttView) and stamp the column's tag.
-  // This outer `handleExternalDrop` is the **fallback** for drops that
-  // don't land on a specific column / quadrant — e.g., the toolbar area,
-  // the toggle row, the PropertiesTray gutter, or the empty space in
-  // list / grid view. The today-period auto-tag is still applied for
-  // task view so an imported file appears on the Gantt timeline.
-  const handleExternalDrop = async (files: File[]) => {
-    if (!files?.length || !currentDirectoryPath) return;
-    let tagToApply: string | null = null;
+  const handleCreateConfirm = (name: string) => {
+    const kind = createKind;
+    setCreateKind(null);
+    if (!kind || !name) return;
+    // H.39: in task perspective (Gantt/Kanban/Matrix), auto-tag new
+    // files/folders with a today-period tag so they appear on the Gantt
+    // timeline (or in the "No schedule" tray for Kanban/Matrix) without
+    // requiring an extra drag step.
     if (viewMode === 'task') {
       const today = todayKey();
-      tagToApply = periodTagFromRange({ startKey: today, endKey: today });
-    }
-    try {
-      const { copied, errors } = await importExternalFiles(files, {
-        tagToApply,
-      });
-      if (copied > 0) {
-        showNotice(t('importedItems', { count: copied }), 'success');
-      } else if (errors.length) showNotice(errors[0]);
-    } catch (e) {
-      showNotice(e instanceof Error ? e.message : String(e));
+      const tag = periodTagFromRange({ startKey: today, endKey: today });
+      void createTaggedEntry(kind, name, tag);
+    } else {
+      void commands.handleCreate(kind, name);
     }
   };
 
-  // Drop target for OS files dragged into the file area (NativeTypes.FILE).
-  const [{ isFileOver }, nativeDropRef] = useDrop<
-    { files: File[] },
-    unknown,
-    { isFileOver: boolean }
-  >(
-    () => ({
-      accept: [NativeTypes.FILE],
-      canDrop: () => !currentLocation?.isReadOnly,
-      drop: (item) => {
-        void handleExternalDrop(item.files);
-      },
-      collect: (monitor) => ({
-        isFileOver: monitor.isOver() && monitor.canDrop(),
-      }),
-    }),
-    [currentLocation?.isReadOnly, currentDirectoryPath]
-  );
+  // OS-file drag-and-drop lives in ./file-list/useExternalFileDrop: the
+  // native FILE drop target plus the copy-into-current-directory fallback
+  // (task view stamps a today-period tag so the import reaches the Gantt
+  // timeline). The hook's useDrop deps match the pre-extraction array.
+  const { isFileOver, nativeDropRef } = useExternalFileDrop({
+    viewMode,
+    currentDirectoryPath,
+    readOnly: !!currentLocation?.isReadOnly,
+    importExternalFiles,
+    showNotice,
+    t,
+  });
 
-  // handleDropFiles / removeTagFromEntry / removeAllTags / handleDropTag moved
-  // to `useListCommands` (P0-1d).
+  // Tag / geo / date sidecar writes live in
+  // ./file-list/useFileListTagActions: read-only gate + failure surfacing per
+  // handler, with the dependency arrays of the pre-extraction inline callbacks
+  // (so cellData's reference stability is unchanged).
+  const tagActions = useFileListTagActions({
+    currentLocation,
+    tagsByName,
+    descByName,
+    normalize,
+    save,
+    saveMany,
+    showNotice,
+    now,
+  });
+  const {
+    handleMoveToColumn,
+    handleGpsFound,
+    handleSetGeo,
+    handleClearGeo,
+    handleAddTag,
+    handleRemoveTag,
+  } = tagActions;
 
-  // Kanban: drop card(s) into a column. Applies mutually-exclusive group
-  // semantics — replace the file's tags from `groupTags` with `targetTag`
-  // (null = the untagged column → clear the group). Non-group tags untouched.
-  // H.25 P0-3: wrap in useCallback so `cellData.onMoveToColumn` is a stable
-  // reference; without it the FileCellData bag would re-allocate on every
-  // render and break any future React.memo(Row, arePropsEqual) savings.
-  const handleMoveToColumn = useCallback(
-    (sources: DirEntry[], targetTag: string | null, groupTags: string[]) => {
-      if (currentLocation?.isReadOnly) return;
-      const updates = sources
-        .map((entry) => {
-          const current = tagsByName.get(entry.path) ?? [];
-          const next = tagsAfterMove(current, groupTags, targetTag);
-          // Skip files already in the target column (no tag change).
-          if (
-            next.length === current.length &&
-            next.every((tg) => current.includes(tg))
-          ) {
-            return null;
-          }
-          const description = descByName.get(entry.path);
-          return {
-            entry,
-            meta: {
-              tags: normalize(next),
-              ...(description ? { description } : {}),
-            },
-          };
-        })
-        .filter(Boolean) as { entry: DirEntry; meta: SidecarMeta }[];
-      if (updates.length === 0) return;
-      void saveMany(updates).catch((e: unknown) =>
-        showNotice(e instanceof Error ? e.message : String(e))
-      );
-    },
-    [
-      currentLocation?.isReadOnly,
-      tagsByName,
-      descByName,
-      normalize,
-      saveMany,
-      showNotice,
-    ]
-  );
-
-  const handleGpsFound = useCallback(
-    (entry: DirEntry, lat: number, lng: number) => {
-      const tags = tagsByName.get(entry.path) ?? [];
-      const description = descByName.get(entry.path);
-      // EXIF-extracted coordinates flow through a `geo:lat,lng` tag — the
-      // sidecar has no parallel lat/lng field (removed 2026-06-30). Strip any
-      // stale geo tag before appending the new one so we never end up with
-      // duplicates. Mirror `handleSetGeo`'s failure surfacing so a save error
-      // doesn't silently lose the extracted coordinate.
-      const nextTags = withoutGeoTags(tags);
-      // Skip the save when the EXIF coords match what's already tagged — common
-      // case on directory re-scans where EXIF is re-extracted for every file.
-      if (nextTags.length === tags.length && tags.some(isGeoTag)) {
-        return;
-      }
-      void save(entry, {
-        tags: normalize([...nextTags, formatGeoTag(lat, lng)]),
-        ...(description ? { description } : {}),
-      }).catch((e: unknown) =>
-        showNotice(e instanceof Error ? e.message : String(e))
-      );
-    },
-    [tagsByName, descByName, normalize, save, showNotice]
-  );
-
-  // Mapique single-entry editing: set/clear a file's location and add/remove
-  // tags directly from the map's detail panel.
-  //
-  // The location is stored exclusively as a `geo:lat,lng` tag inside the
-  // sidecar's `tags` array — single source of truth. No parallel sidecar
-  // lat/lng field (removed 2026-06-30; legacy sidecars are migrated on read
-  // by `TagMetaContextProvider`).
-  const handleSetGeo = useCallback(
-    (entry: DirEntry, lat: number, lng: number) => {
-      if (currentLocation?.isReadOnly) return;
-      const current = tagsByName.get(entry.path) ?? [];
-      const description = descByName.get(entry.path);
-      void save(entry, {
-        tags: normalize([...withoutGeoTags(current), formatGeoTag(lat, lng)]),
-        ...(description ? { description } : {}),
-      }).catch((e: unknown) =>
-        showNotice(e instanceof Error ? e.message : String(e))
-      );
-    },
-    [currentLocation, tagsByName, descByName, normalize, save, showNotice]
-  );
-
-  const handleClearGeo = useCallback(
-    (entry: DirEntry) => {
-      if (currentLocation?.isReadOnly) return;
-      const current = tagsByName.get(entry.path) ?? [];
-      const description = descByName.get(entry.path);
-      void save(entry, {
-        tags: withoutGeoTags(current),
-        ...(description ? { description } : {}),
-      }).catch((e: unknown) =>
-        showNotice(e instanceof Error ? e.message : String(e))
-      );
-    },
-    [currentLocation, tagsByName, descByName, save, showNotice]
-  );
-
-  const handleAddTag = useCallback(
-    (entry: DirEntry, tag: string) => {
-      if (currentLocation?.isReadOnly) return;
-      // Resolve user input to its stored form FIRST: `today` → `20260704`,
-      // `month-202606` → `202606`, `in-progress` → unchanged, plain tags
-      // unchanged. Without this step the互斥 chain below can't recognize
-      // the freshly-typed tag (it sees the raw template name, not the
-      // resolved shape), and the raw template would land in the sidecar.
-      const resolved = resolveInputTag(tag, now);
-      const current = tagsByName.get(entry.path) ?? [];
-      if (current.includes(resolved)) return;
-      const description = descByName.get(entry.path);
-      void save(entry, {
-        tags: normalize([...current, resolved]),
-        ...(description ? { description } : {}),
-      }).catch((e: unknown) =>
-        showNotice(e instanceof Error ? e.message : String(e))
-      );
-    },
-    [currentLocation, tagsByName, descByName, normalize, save, now, showNotice]
-  );
-
-  const handleRemoveTag = useCallback(
-    (entry: DirEntry, tag: string) => {
-      if (currentLocation?.isReadOnly) return;
-      const current = tagsByName.get(entry.path) ?? [];
-      if (!current.includes(tag)) return;
-      const description = descByName.get(entry.path);
-      void save(entry, {
-        tags: current.filter((tg) => tg !== tag),
-        ...(description ? { description } : {}),
-      }).catch((e: unknown) =>
-        showNotice(e instanceof Error ? e.message : String(e))
-      );
-    },
-    [currentLocation, tagsByName, descByName, save, showNotice]
-  );
-
-  // H.24 P0-1: rewrite the file's date-typed tag (replaces any prior date tag).
-  // Mirrors `handleAddTag`/`handleRemoveTag` for the date-tag category: keep
-  // every non-date tag, swap in the new one. Returns early on read-only.
-  const handleSetEntryDateTag = useCallback(
-    (entry: DirEntry, dateKey: string) => {
-      if (currentLocation?.isReadOnly) return;
-      const current = tagsByName.get(entry.path) ?? [];
-      const kept = current.filter((tg) => !isDateTypedTag(tg));
-      const description = descByName.get(entry.path);
-      void save(entry, {
-        tags: normalizeSmartTags([...kept, dateKey]),
-        ...(description ? { description } : {}),
-      }).catch((e: unknown) =>
-        showNotice(e instanceof Error ? e.message : String(e))
-      );
-    },
-    [currentLocation, tagsByName, descByName, save, showNotice]
-  );
-
-  // H.24 P0-1: strip every date-typed tag from the file's sidecar. Companion
-  // to `handleSetEntryDateTag`.
-  const handleRemoveEntryDateTag = useCallback(
-    (entry: DirEntry) => {
-      if (currentLocation?.isReadOnly) return;
-      const current = tagsByName.get(entry.path) ?? [];
-      const kept = current.filter((tg) => !isDateTypedTag(tg));
-      // No-op when there's nothing to remove -- avoid an unnecessary sidecar
-      // write (and the i18n notice roundtrip).
-      if (kept.length === current.length) return;
-      const description = descByName.get(entry.path);
-      void save(entry, {
-        tags: normalizeSmartTags(kept),
-        ...(description ? { description } : {}),
-      }).catch((e: unknown) =>
-        showNotice(e instanceof Error ? e.message : String(e))
-      );
-    },
-    [currentLocation, tagsByName, descByName, save, showNotice]
-  );
-
-  // handleBulkDelete / handleBulkMove / handlePackageConfirm / handleCreate /
-  // handleNewExcalidraw / handleNewDrawio / handleCreateTagged moved to
-  // `useListCommands` (P0-1d). `changeSort` moved to `FileListHeader`.
-
-  // P1-2 (gui-audit 2026-11): batch companions for the two date-tag handlers
-  // above. A Calendar day-cell / Gantt Triage drop carries N paths; one
-  // `saveMany` round-trip replaces the previous N × single-entry `save` calls
-  // (each of which separately re-read the sidecar and recomputed the listing).
-  // Read-only gate + failure surfacing mirror the single-entry paths exactly;
-  // `setDateTagForEntries` keeps the single-target `save` API, while
-  // `removeDateTagsFromEntries` skips entries that carry no date tag (so an
-  // all-already-clean drop writes nothing).
-  const handleSetEntryDateTags = useCallback(
-    (entries: DirEntry[], dateKey: string) => {
-      if (currentLocation?.isReadOnly) return;
-      void setDateTagForEntries(entries, dateKey, {
-        save,
-        saveMany,
-        tagsByName,
-        descByName,
-        normalize: normalizeSmartTags,
-      }).catch((e: unknown) =>
-        showNotice(e instanceof Error ? e.message : String(e))
-      );
-    },
-    [currentLocation, tagsByName, descByName, save, saveMany, showNotice]
-  );
-
-  const handleRemoveEntryDateTags = useCallback(
-    (entries: DirEntry[]) => {
-      if (currentLocation?.isReadOnly) return;
-      void removeDateTagsFromEntries(entries, {
-        save,
-        saveMany,
-        tagsByName,
-        descByName,
-        normalize: normalizeSmartTags,
-      }).catch((e: unknown) =>
-        showNotice(e instanceof Error ? e.message : String(e))
-      );
-    },
-    [currentLocation, tagsByName, descByName, save, saveMany, showNotice]
-  );
-
-  // Returns true for text-entry surfaces (TextField, textarea, contenteditable)
-  // so shortcuts like Delete / F2 / arrows don't fire while the user is typing
-  // in a search box, InlineTagInput, the inline rename TextField, or a
-  // PromptDialog.
-  //
-  // Checkboxes are intentionally NOT treated as input-like. The row's
-  // selection Checkbox is a common focus target after a click — if we bailed
-  // on it here, F2 rename / Space toggle / ↑↓ nav would all be silently
-  // swallowed (the user reported F2 doing nothing after clicking a row's
-  // checkbox). The Checkbox's native behavior is already suppressed by being
-  // controlled (`checked={isSelected(entry)}` with no onChange), so letting
-  // our keydown handler run is a strict UX improvement, not a regression.
-  const isInputLike = (target: EventTarget | null): boolean => {
-    if (!(target instanceof HTMLElement)) return false;
-    const tag = target.tagName.toLowerCase();
-    if (tag === 'textarea') return true;
-    if (tag === 'input' && (target as HTMLInputElement).type !== 'checkbox') {
-      return true;
-    }
-    if (target.isContentEditable) return true;
-    return false;
-  };
-
-  // H.23 keyboard navigation. Single attachment point (the outer container
-  // `onKeyDown`). Skips when focus is on an input-like element so typing in
-  // PromptDialog / InlineTagInput / the search bar never steals keys — this
-  // also means Tab inside the rename TextField still moves focus normally.
-  //
-  // Keys resolve to actions via the user-configurable keybindings map
-  // (Settings ▸ Keyboard; defaults in `renderer/domain/keybindings`). `resolveAction`
-  // ignores modifiers on purpose — Shift-range-extend stays inside the
-  // navigate cases. The bindings apply in list/grid; GalleryView etc. own
-  // their own focused-container keydown.
-  //
-  // P1-1 (gui-audit 2026-11): GalleryView is rendered *inside* this outer
-  // container, and its handler now calls `stopPropagation` for the keys it
-  // consumes (arrows / Home / End / Enter / Space). So those never reach
-  // this handler from the gallery, while list-level shortcuts it does NOT
-  // handle (Delete / F2 / Esc / Tab view-switch) still bubble up here —
-  // exactly the split the comment above promises, no `viewMode` guard needed.
-  //
-  // Default scheme: ↑/↓ navigate (Shift = range), → open, ← back (history),
-  // Tab cycle view, Enter open, Space toggle, Esc clear, F2 rename,
-  // Delete delete, Home/End jump.
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (isInputLike(e.target)) return;
-
-    const action = resolveAction(keybindings, e);
-
-    // Delete runs before the empty-list guard, matching the pre-refactor
-    // ordering (the standalone `Delete` branch returned before `last` was
-    // ever computed, so Delete worked even on an empty list).
-    if (action === 'delete') {
-      e.preventDefault();
-      void commands.handleDeleteSelected();
-      return;
-    }
-
-    const last = visible.length - 1;
-    if (last < 0) return;
-    const cur = focusIndex === null ? -1 : Math.min(focusIndex, last);
-    const stepIndex = (target: number) =>
-      Math.max(0, Math.min(target, last));
-
-    switch (action) {
-      case 'navigateDown':
-        e.preventDefault();
-        if (cur >= last) return;
-        // Shift-extend stays INSIDE the case (resolveAction ignores mods).
-        selectRow(stepIndex(cur + 1), { shift: e.shiftKey, toggle: false });
-        break;
-      case 'navigateUp':
-        e.preventDefault();
-        if (cur <= 0) return;
-        selectRow(stepIndex(cur - 1), { shift: e.shiftKey, toggle: false });
-        break;
-      case 'jumpHome':
-        e.preventDefault();
-        selectRow(0, { shift: false, toggle: false });
-        break;
-      case 'jumpEnd':
-        e.preventDefault();
-        selectRow(last, { shift: false, toggle: false });
-        break;
-      case 'open': {
-        e.preventDefault();
-        const entry = visible[cur];
-        if (entry) handleOpen(entry);
-        break;
-      }
-      // F2 starts in-place rename on the focused row. When the user is
-      // already in inline edit mode, the row's TextField owns the keystrokes
-      // (Enter commits, Esc cancels) so this is a no-op then.
-      //
-      // Fallback chain (B1, 2026-07-03): `visible[cur]` can be undefined
-      // even when the user *thinks* they have a focused row. Three common
-      // ways that happens:
-      //   1. User just opened the app and pressed F2 before any click / ↑↓.
-      //   2. User clicked a tag chip — `EntryTagChips` calls
-      //      `e.stopPropagation()` on its click handler, so the row's
-      //      `onClick` → `onSelectRow` → `setFocusIndex` never runs.
-      //   3. User applied a search / tag filter after navigating, and the
-      //      previously-focused index is now out of `visible` range.
-      // Previously we silently no-op'd; the user saw F2 do nothing. Now we
-      // walk a fallback chain — single selection, then first visible row —
-      // and only show a notice when the list is truly empty of any target.
-      case 'rename': {
-        e.preventDefault();
-        let target: DirEntry | undefined = visible[cur];
-        if (!target && selectedPathsRef.current.size === 1) {
-          const [selectedPath] = selectedPathsRef.current;
-          target = visible.find((entry) => entry.path === selectedPath);
-        }
-        if (!target) target = visible[0];
-        if (!target) {
-          showNotice(t('noRowToRename'), 'info');
-          return;
-        }
-        // Keep the keyboard cursor on the row we just started renaming so
-        // a follow-up Esc/Enter still lands on the right row.
-        if (focusIndex === null || focusIndex !== visible.indexOf(target)) {
-          setFocusIndex(visible.indexOf(target));
-        }
-        startInlineRename(target);
-        break;
-      }
-      case 'toggleSelect':
-        e.preventDefault();
-        if (cur < 0) return;
-        selectRow(cur, { shift: false, toggle: true });
-        break;
-      case 'clearSelection':
-        e.preventDefault();
-        clearSelection();
-        break;
-      case 'back':
-        // History-LRU back (toolbar ← semantics). No-op at the location root
-        // where `canGoBack === false`.
-        if (canGoBack) {
-          e.preventDefault();
-          goBack();
-        }
-        break;
-      case 'switchView':
-        // The only case that swallows Tab — mapping Tab to 'none' makes
-        // `resolveAction` return null, so we fall through to `default` and the
-        // browser keeps its native focus traversal.
-        e.preventDefault();
-        setViewMode(nextView(viewMode));
-        break;
-      case 'none':
-      default:
-        break;
-    }
-  };
+  // H.23 keyboard navigation lives in ./file-list/keyboard.ts: one attachment
+  // point (the outer container's `onKeyDown`), input-like targets skipped, and
+  // keys resolved through the user-configurable bindings map. Shift-range stays
+  // inside the navigate cases; Delete runs before the empty-list guard.
+  const handleKeyDown = createKeyDownHandler({
+    keybindings,
+    visible,
+    focusIndex,
+    setFocusIndex,
+    selectRow,
+    clearSelection,
+    selectedPathsRef,
+    onOpen: handleOpen,
+    onStartInlineRename: startInlineRename,
+    onDeleteSelected: commands.handleDeleteSelected,
+    showNotice,
+    noRowToRename: t('noRowToRename'),
+    canGoBack,
+    goBack,
+    viewMode,
+    setViewMode,
+  });
 
   // react-window v2 already wraps `rowComponent`/`cellComponent` in its OWN
   // internal `memo(...)` with a shallow comparator, keyed on the component
@@ -1472,8 +808,12 @@ export default function FileList() {
     (entry: DirEntry, x: number, y: number) => onContextEntry(entry, x, y),
     [onContextEntry]
   );
-  const cellData = useStableBag<FileCellData>({
-    entries: visible,
+  // P0-2 / P0-4: the shared cell bag is assembled by
+  // ./file-list/useFileListCellData. Every value is reference-stable, so
+  // react-window v2's per-row shallow memo short-circuits unrelated parent
+  // renders; `selectedPaths` stays the live, mutated-in-place Set.
+  const cellData = useFileListCellData({
+    visible,
     thumbCache: thumbCache.current,
     tagsByName,
     descByName,
@@ -1482,58 +822,36 @@ export default function FileList() {
     groups,
     readOnly: !!currentLocation?.isReadOnly,
     t,
-    isSelected,
-    onSelectRow: selectRow,
     onOpen: handleOpen,
-    onClickTag,
-    onTagContextMenu,
-    onCopy: setCopyTarget,
-    onMove: commands.handleMove,
-    onRename: setRenameTarget,
-    onDelete: commands.handleDelete,
-    onDropTag: commands.handleDropTag,
-    onDropFiles: commands.handleDropFiles,
-    onContextEntry,
-    onCreateTagged,
-    // H.24 P0-1: date-tag setters for the Calendar right-click menu.
-    onSetEntryDateTag: handleSetEntryDateTag,
-    onRemoveEntryDateTag: handleRemoveEntryDateTag,
-    // P1-2: batch variants for multi-entry drops (Calendar day cell / Gantt
-    // Triage) — one `saveMany` instead of N per-entry saves.
-    onSetEntryDateTags: handleSetEntryDateTags,
-    onRemoveEntryDateTags: handleRemoveEntryDateTags,
-    // H.25 P0-1: Kanban right-click menu handlers. Move/Add/Remove are
-    // backed by the existing IO handlers above; `onMoreFileActions` simply
-    // re-uses the generic `onContextEntry` so the "More file actions" item
-    // in KanbanEntryMenu pops the same EntryContextMenu the list/grid
-    // would show. Memoized above: an inline arrow here would be a fresh
-    // field value on every render and defeat `useStableBag` entirely.
-    onMoveToColumn: handleMoveToColumn,
-    onAddTag: handleAddTag,
-    onRemoveTag: handleRemoveTag,
-    onMoreFileActions: handleMoreFileActions,
-    // P0-4 plumbing:
-    selectedPaths: selectedPathsRef.current,
-    resolveEntry,
-    entryIndex,
-    // H.23 P1-5 column plumbing:
-    columnWidths,
-    hiddenColumns,
-    // H.23 P2-1 zebra striping toggle (default off).
-    listZebra,
-    // H.23 P2-3 date format preset (default 'absolute').
-    listDateFormat,
-    // H.23 P1-1: keyboard focus index. Row uses it to (1) render a focus
-    // outline and (2) auto-focus its own ListItemButton on match. Read here
-    // instead of taking a separate prop on `<VirtualList>` to keep all
-    // per-row input in one bag.
-    focusIndex,
-    // H.23 P1-4: in-place rename state. Row swaps the name Typography for
-    // a TextField when this entry's path matches `inlineRenameEntry.path`.
-    inlineRenameEntry,
-    startInlineRename,
-    cancelInlineRename,
-    commitInlineRename,
+    selection: {
+      isSelected,
+      onSelectRow: selectRow,
+      selectedPaths: selectedPathsRef.current,
+    },
+    commands,
+    tagActions,
+    cellActions: {
+      onClickTag,
+      onTagContextMenu,
+      onContextEntry,
+      onCreateTagged,
+      onMoreFileActions: handleMoreFileActions,
+    },
+    setters: { onCopy: setCopyTarget, onRename: setRenameTarget },
+    lookups: { resolveEntry, entryIndex },
+    layout: {
+      columnWidths,
+      hiddenColumns,
+      listZebra,
+      listDateFormat,
+      focusIndex,
+    },
+    inlineRename: {
+      inlineRenameEntry,
+      startInlineRename,
+      cancelInlineRename,
+      commitInlineRename,
+    },
   });
 
   const gridRowHeight = entrySize + GRID_CELL_FOOTER;
@@ -1547,6 +865,10 @@ export default function FileList() {
     Math.floor((gridWidth + GRID_CELL_GAP) / (entrySize + GRID_CELL_GAP))
   );
   const gridColumnWidth = gridWidth > 0 ? Math.floor(gridWidth / gridColumns) : entrySize;
+  const handleGridResize = useCallback(
+    (width: number) => setGridWidth((prev) => (prev === width ? prev : width)),
+    []
+  );
 
   // Keep the keyboard-focused row/cell inside the viewport. `Row` focuses with
   // `preventScroll: true` (it must not yank the page while clicking), and
@@ -1579,6 +901,7 @@ export default function FileList() {
         nativeDropRef(node);
         containerRef.current = node;
       }}
+      data-testid="file-list"
       tabIndex={-1}
       onMouseDown={() => containerRef.current?.focus()}
       onKeyDown={handleKeyDown}
@@ -1713,103 +1036,33 @@ export default function FileList() {
                 labels={columnLabels}
               />
             ) : null}
-            <Suspense fallback={PerspectiveFallback}>{viewMode === 'task' ? (
-              // H.29: Task perspective is a thin container that hosts a
-              // Kanban / Matrix sub-switch. Both child views are imported
-              // here only as type references — TaskView owns the actual
-              // mount + sub-switch UX, so the child components don't
-              // appear directly in this render chain.
-              <TaskView
-                data={cellData}
-                stages={workflowStages}
-                onMoveToColumn={handleMoveToColumn}
-              />
-            ) : viewMode === 'calendar' ? (
-              <CalendarView data={cellData} />
-            ) : viewMode === 'folderviz' ? (
-              <FolderVizView data={cellData} />
-            ) : viewMode === 'tagcloud' ? (
-              <TagCloudView data={cellData} />
-            ) : viewMode === 'knowledge-graph' ? (
-              <KnowledgeGraphView data={cellData} />
-            ) : viewMode === 'mapique' ? (
-              // P2-5: no `key` prop here on purpose. `MapiqueView` used to bump
-              // itself through an effect keyed on `geoByName`/`tagsByName`, and
-              // its comment pointed at a `key` on this site that never existed.
-              // Props are the signal: `geoByName` / `tagsByName` come from
-              // `TagMetaContextProvider` and get a fresh identity on every
-              // sidecar save, so this subtree re-renders once, normally.
-              <MapiqueView
-                entries={visible}
-                geoByName={geoByName}
-                tagsByName={tagsByName}
-                loading={loading}
-                thumbCache={thumbCache.current}
-                onGpsFound={handleGpsFound}
-                onOpen={handleOpen}
-                onDelete={commands.handleDeleteSelected}
-                provider={mapProvider}
-                tileUrl={mapTileUrl}
-                readOnly={currentLocation?.isReadOnly}
-                onSetGeo={handleSetGeo}
-                onClearGeo={handleClearGeo}
-                onAddTag={handleAddTag}
-                onRemoveTag={handleRemoveTag}
-                tagColors={tagColors}
-                groups={groups}
-              />
-            ) : viewMode === 'gallery' ? (
-              <GalleryView
-                entries={visible}
-                thumbCache={thumbCache.current}
-                entrySize={entrySize}
-                selected={selectedPathsRef.current}
-                onSelect={handleSelectForGallery}
-                onOpen={handleOpen}
-                tagsByName={tagsByName}
-                tagColors={tagColors}
-                groups={groups}
-                // §2 P0 拖拽打标 (2026-07-02): wire the same handleDropTag
-                // command that list/grid rows use, plus the location's readOnly
-                // so a drag-over on a read-only tile doesn't even show the
-                // dashed outline. command-layer defense also lives in
-                // `commands.handleDropTag` (see useListCommands.ts).
-                onDropTag={commands.handleDropTag}
-                onContextEntry={onContextEntry}
-                readOnly={!!currentLocation?.isReadOnly}
-                showTags={galleryShowTags}
-              />
-            ) : viewMode === 'grid' ? (
-              <VirtualGrid
-                gridRef={gridRef}
-                style={{ width: '100%', height: '100%' }}
-                columnCount={gridColumns}
-                columnWidth={gridColumnWidth}
-                rowCount={Math.ceil(visible.length / gridColumns)}
-                rowHeight={gridRowHeight}
-                cellComponent={GridCell}
-                onResize={({ width }) => {
-                  setGridWidth((prev) => (prev === width ? prev : width));
-                }}
-                cellProps={{
-                  ...cellData,
-                  columnCount: gridColumns,
-                  entrySize,
-                  cellWidth: gridColumnWidth,
-                }}
-              />
-            ) : (
-              <Box sx={{ flex: 1, minHeight: 0 }}>
-                <VirtualList
-                  listRef={listRef}
-                  style={{ height: '100%' }}
-                  rowCount={visible.length}
-                  rowHeight={rowHeight}
-                  rowComponent={Row}
-                  rowProps={cellData}
-                />
-              </Box>
-            )}</Suspense>
+            <FileListView
+              viewMode={viewMode}
+              data={cellData}
+              selectedPaths={selectedPathsRef.current}
+              entrySize={entrySize}
+              rowHeight={rowHeight}
+              gridRowHeight={gridRowHeight}
+              gridColumns={gridColumns}
+              gridColumnWidth={gridColumnWidth}
+              onGridResize={handleGridResize}
+              listRef={listRef}
+              gridRef={gridRef}
+              stages={workflowStages}
+              onMoveToColumn={handleMoveToColumn}
+              onSelectGallery={handleSelectForGallery}
+              onDeleteSelected={commands.handleDeleteSelected}
+              geoByName={geoByName}
+              mapProvider={mapProvider}
+              mapTileUrl={mapTileUrl}
+              loading={loading}
+              galleryShowTags={galleryShowTags}
+              onGpsFound={handleGpsFound}
+              onSetGeo={handleSetGeo}
+              onClearGeo={handleClearGeo}
+              onAddTag={handleAddTag}
+              onRemoveTag={handleRemoveTag}
+            />
 
             {!trayVisible && selectedEntries.length > 0 && trayAppliesToView(viewMode) && (
               <Tooltip title={t('showProperties')}>
@@ -1848,232 +1101,53 @@ export default function FileList() {
         </Box>
       )}
 
-      <PromptDialog
-        open={renameTarget !== null}
-        title={t('rename')}
-        label={t('name')}
-        defaultValue={renameTarget?.name ?? ''}
-        onConfirm={handleRenameConfirm}
-        onClose={() => setRenameTarget(null)}
+      <FileListDialogs
+        t={t}
+        renameTarget={renameTarget}
+        copyTarget={copyTarget}
+        createKind={createKind}
+        createWithTag={createWithTag}
+        packageOpen={packageOpen}
+        packageDefaultName={basename(currentDirectoryPath) || 'archive'}
+        onRenameConfirm={handleRenameConfirm}
+        onRenameClose={() => setRenameTarget(null)}
+        onCopyConfirm={handleCopyConfirm}
+        onCopyClose={() => setCopyTarget(null)}
+        onCreateConfirm={handleCreateConfirm}
+        onCreateClose={() => setCreateKind(null)}
+        onCreateWithTagConfirm={commands.handleCreateTagged}
+        onCreateWithTagClose={() => setCreateWithTag(null)}
+        onPackageConfirm={commands.handlePackageConfirm}
+        onPackageClose={() => setPackageOpen(false)}
       />
 
-      <PromptDialog
-        open={copyTarget !== null}
-        title={t('copy')}
-        label={t('name')}
-        defaultValue={copyTarget ? copyDefaultName(copyTarget.name, t('copySuffix')) : ''}
-        onConfirm={handleCopyConfirm}
-        onClose={() => setCopyTarget(null)}
-      />
-
-      <PromptDialog
-        open={createKind !== null}
-        title={createKind === 'folder' ? t('newFolder') : t('newFile')}
-        label={t('name')}
-        onConfirm={(name) => {
-          const kind = createKind;
-          setCreateKind(null);
-          if (!kind || !name) return;
-          // H.39: in task perspective (Gantt/Kanban/Matrix), auto-tag new
-          // files/folders with a today-period tag so they appear on the Gantt
-          // timeline (or in the "No schedule" tray for Kanban/Matrix) without
-          // requiring an extra drag step.
-          if (viewMode === 'task') {
-            const today = todayKey();
-            const tag = periodTagFromRange({ startKey: today, endKey: today });
-            void createTaggedEntry(kind, name, tag);
-          } else {
-            void commands.handleCreate(kind, name);
-          }
-        }}
-        onClose={() => setCreateKind(null)}
-      />
-
-      <PromptDialog
-        open={createWithTag !== null}
-        title={
-          createWithTag
-            ? `${createWithTag.kind === 'folder' ? t('newFolder') : t('newFile')} (${createWithTag.tag})`
-            : ''
-        }
-        label={t('name')}
-        onConfirm={commands.handleCreateTagged}
-        onClose={() => setCreateWithTag(null)}
-      />
-
-      <PromptDialog
-        open={packageOpen}
-        title={t('package')}
-        label={t('name')}
-        defaultValue={basename(currentDirectoryPath) || 'archive'}
-        onConfirm={commands.handlePackageConfirm}
-        onClose={() => setPackageOpen(false)}
-      />
-
-      <Snackbar
-        open={notice !== null}
-        autoHideDuration={6000}
+      <FileListNoticeSnackbar
+        notice={notice}
         onClose={() => setNotice(null)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        {/* Snackbar keeps its child mounted while closed (exit transition),
-            so every read here must be null-safe even though `open` is false. */}
-        <Alert
-          severity={notice?.severity ?? 'info'}
-          variant="filled"
-          onClose={() => setNotice(null)}
-          action={
-            notice?.backupPath ? (
-              <Button
-                color="inherit"
-                size="small"
-                onClick={() => {
-                  void ipcApi
-                    .revealAndSelect(notice.backupPath!)
-                    .catch((e) =>
-                      showNotice(
-                        t('operationFailed', { message: errorMessage(e) })
-                      )
-                    );
-                }}
-              >
-                {t('sidecarRevealBackup')}
-              </Button>
-            ) : notice?.openTrash ? (
-              <Button
-                color="inherit"
-                size="small"
-                onClick={() => {
-                  void ipcApi
-                    .openTrash()
-                    .catch((e) =>
-                      showNotice(
-                        t('operationFailed', { message: errorMessage(e) })
-                      )
-                    );
-                }}
-              >
-                {t('openTrash')}
-              </Button>
-            ) : undefined
-          }
-        >
-          {notice?.text ?? ''}
-        </Alert>
-      </Snackbar>
+        showNotice={showNotice}
+        t={t}
+      />
 
-      <EntryContextMenu
+      <FileListEntryContextMenu
         ctx={ctxMenu}
-        isInBulkContext={(e) =>
-          selectedPathsRef.current.has(e.path) && selectedEntries.length > 1
-        }
         onClose={() => setCtxMenu(null)}
-        readOnly={!!currentLocation?.isReadOnly}
+        selectedEntries={selectedEntries}
+        selectedPathsRef={selectedPathsRef}
         tagsByName={tagsByName}
-        thumbCacheClear={() => thumbCache.current.clear()}
-        showError={(msg) => showNotice(msg)}
+        thumbCache={thumbCache}
+        showNotice={showNotice}
         setCreateKind={setCreateKind}
+        setPackageOpen={setPackageOpen}
+        setCopyTarget={setCopyTarget}
+        setRenameTarget={setRenameTarget}
         refresh={refresh}
-        revealCurrentDir={async () => {
-          await ipcApi.revealPath(currentDirectoryPath);
-        }}
-        // H.23 P1-7: switch "Reveal in Explorer" to highlight + select the
-        // file/folder in its parent (replaces the prior open-parent-only
-        // behavior). The IPC layer (`shell:revealAndSelect`) handles the
-        // platform branch internally.
-        revealEntry={async (e) => {
-          try {
-            await ipcApi.revealAndSelect(e.path);
-          } catch {
-            // best-effort: reveal failure is non-fatal
-          }
-        }}
-        // H.23 P1-7: copy absolute entry path to the OS clipboard. Some
-        // sandboxed renderers deny `navigator.clipboard`; in that case
-        // `showError` surfaces a localized message and the menu closes
-        // so the user can retry / use the toolbar Copy-Past instead.
-        copyPath={(e) => {
-          if (!navigator.clipboard) {
-            showNotice(t('clipboardUnavailable'));
-            return;
-          }
-          navigator.clipboard.writeText(e.path).catch(() => {
-            // Permission denied / sandbox rejected the write — surface the
-            // same localized notice as the no-clipboard branch rather than
-            // a raw English error string (H.23 P1-7 clipboard checklist).
-            showNotice(t('clipboardUnavailable'));
-          });
-        }}
-        newExcalidrawAvailable={newExcalidraw.available}
-        handleNewExcalidraw={commands.handleNewExcalidraw}
-        newDrawioAvailable={newDrawio.available}
-        handleNewDrawio={commands.handleNewDrawio}
-        handleBulkMove={commands.handleBulkMove}
-        handleBulkDelete={commands.handleBulkDelete}
-        openPackageDialog={() => setPackageOpen(true)}
-        // H.23 P3-1: bulk "Invert selection" handler — flip every visible
-        // row's selection through `commands.handleInvertSelection`.
-        onInvertSelection={() => commands.handleInvertSelection(visible)}
+        visible={visible}
+        commands={commands}
         handleOpen={handleOpen}
-        openWithExtension={openWithExtension}
-        openNative={openNative}
-        setViewMode={(m) => setViewMode(m)}
-        setFolderThumbnail={async (e) => {
-          const src = await ipcApi.openImageFileDialog();
-          if (!src) return;
-          await ipcApi.setFolderThumbnail(e.path, src);
-          thumbCache.current.clear();
-          showNotice(t('folderThumbnailSet'), 'success');
-        }}
-        setFolderBackground={async (e) => {
-          const src = await ipcApi.openImageFileDialog();
-          if (!src) return;
-          await ipcApi.setFolderBackground(e.path, src);
-          showNotice(t('folderBackgroundSet'), 'success');
-        }}
-        clearFolderThumbnail={async (e) => {
-          await ipcApi.clearFolderThumbnail(e.path);
-          thumbCache.current.clear();
-          showNotice(t('folderThumbnailCleared'), 'success');
-        }}
-        clearFolderBackground={async (e) => {
-          await ipcApi.clearFolderBackground(e.path);
-          showNotice(t('folderBackgroundCleared'), 'success');
-        }}
-        removeAllTags={commands.removeAllTags}
-        // H.27 P0-1: inline "Edit tags" editor inside the file/folder
-        // right-click menu (EntryContextMenu single-entry branch). Reuses
-        // the same handlers that Kanban's per-card menu uses so the
-        // smart-tag resolution + sidecar write behaviour stays consistent
-        // across surfaces. Not surfaced on Sidebar (locations) or
-        // DirectoryTree (tree folders) — both stay out of scope here.
+        setViewMode={setViewMode}
         onAddTag={handleAddTag}
         onRemoveTag={handleRemoveTag}
-        setCopyTarget={setCopyTarget}
-        handleMove={commands.handleMove}
-        setRenameTarget={setRenameTarget}
-        handleDelete={commands.handleDelete}
-        registry={registry}
-        userDefaults={userDefaults}
-        enabledOverrides={enabledOverrides}
-        getCompatibleExtensions={getCompatibleExtensions}
         userCommands={userCommands}
-        onRunCommand={(entry, cmd) => {
-          ipcApi.runCommand(cmd.template, entry.path).catch((e: unknown) => {
-            const msg = e instanceof Error ? e.message : String(e);
-            // Main throws sentinels for the two user-visible refusals: an
-            // unsubstitutable path (COMMAND_PATH_BLOCKED) and a template the
-            // user has not approved yet (COMMAND_NOT_APPROVED). Map both to
-            // localized text instead of showing the raw sentinel.
-            showNotice(
-              msg === COMMAND_PATH_BLOCKED
-                ? t('commandPathBlocked')
-                : msg === COMMAND_NOT_APPROVED
-                  ? t('commandNotApproved')
-                  : msg
-            );
-          });
-        }}
       />
 
       {/* Per-tag context menu: right-click a row's tag chip → remove that tag. */}
@@ -2095,41 +1169,13 @@ export default function FileList() {
         showError={(msg) => showNotice(msg)}
       />
       {/* Full-screen media lightbox for double-clicking media in list/grid. */}
-      {lightboxEntry !== null
-        ? (() => {
-            const playlist = lightboxPlaylist;
-            const idx = playlist.findIndex(
-              (e) => e.path === lightboxEntry.path
-            );
-            if (idx < 0) {
-              // Entry isn't in the current visible list — happens when
-              // opening a media file from FolderViz where the file lives
-              // in a subdirectory that list/grid isn't showing. Fall back
-              // to a single-entry playlist so the preview still opens.
-              if (isMediaEntry(lightboxEntry)) {
-                return (
-                  <MediaLightbox
-                    open
-                    entries={lightboxFallbackPlaylist}
-                    initialIndex={0}
-                    onClose={() => setLightboxEntry(null)}
-                    thumbCache={thumbCache.current}
-                  />
-                );
-              }
-              return null;
-            }
-            return (
-              <MediaLightbox
-                open
-                entries={playlist}
-                initialIndex={idx}
-                onClose={() => setLightboxEntry(null)}
-                thumbCache={thumbCache.current}
-              />
-            );
-          })()
-        : null}
+      <FileListLightbox
+        entry={lightboxEntry}
+        playlist={lightboxPlaylist}
+        fallbackPlaylist={lightboxFallbackPlaylist}
+        thumbCache={thumbCache.current}
+        onClose={() => setLightboxEntry(null)}
+      />
     </Box>
   );
 }

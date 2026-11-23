@@ -37,6 +37,7 @@ let userDataDir: string | null = null;
 /** True once the persisted document exists (or was just seeded). */
 let seeded = false;
 let writeQueue: Promise<void> = Promise.resolve();
+let writeFailure: unknown = null;
 
 function knownRootsPath(): string | null {
   return userDataDir ? path.join(userDataDir, FILE_NAME) : null;
@@ -188,10 +189,16 @@ function schedulePersist(): void {
     roots: Array.from(knownRoots.values()),
   };
   writeQueue = writeQueue
-    .then(() => writeDocument(file, payload))
+    .then(async () => {
+      // A newer successful snapshot includes every known root, so it also
+      // supersedes an earlier queued failure.
+      writeFailure = null;
+      await writeDocument(file, payload);
+    })
     .catch((error) => {
-      // Never throw at the caller: a location must stay usable even when the
-      // record cannot be written (the next push re-attempts).
+      // Fire-and-forget native-picker callers stay usable; flushKnownRootsWrites
+      // rethrows the latest failure for transactional callers such as MCP.
+      writeFailure = error;
       console.error('[roots] failed to persist the known locations:', error);
     });
 }
@@ -206,9 +213,10 @@ async function writeDocument(
   await fs.promises.rename(tmp, file);
 }
 
-/** Awaits every queued write (tests + graceful shutdown). */
-export function flushKnownRootsWrites(): Promise<void> {
-  return writeQueue;
+/** Awaits every queued write and surfaces the latest persistence failure. */
+export async function flushKnownRootsWrites(): Promise<void> {
+  await writeQueue;
+  if (writeFailure) throw writeFailure;
 }
 
 /** Test seam: forget both the in-memory record and the userData directory. */
@@ -217,4 +225,5 @@ export function __resetKnownRootsForTest(): void {
   seeded = false;
   userDataDir = null;
   writeQueue = Promise.resolve();
+  writeFailure = null;
 }

@@ -1,5 +1,4 @@
-import {
-  memo,
+﻿import {
   useEffect,
   useMemo,
   useRef,
@@ -10,63 +9,28 @@ import { useTranslation } from 'react-i18next';
 import {
   Box,
   Button,
-  Checkbox,
-  Chip,
   CircularProgress,
   Divider,
   IconButton,
-  InputAdornment,
-  Link,
-  MenuItem,
-  Select,
   Snackbar,
   Stack,
-  TextField,
   Tooltip,
   Typography,
 } from '@mui/material';
-import {
-  MapContainer,
-  Marker,
-  Popup,
-  TileLayer,
-  useMap,
-  useMapEvents,
-} from 'react-leaflet';
-import L from 'leaflet';
+import { MapContainer, TileLayer } from 'react-leaflet';
 import MarkerClusterGroup from 'react-leaflet-cluster';
-import LocationOnIcon from '@mui/icons-material/LocationOn';
-import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
-import SaveIcon from '@mui/icons-material/Save';
-import DriveFileMoveIcon from '@mui/icons-material/DriveFileMove';
-import ContentCopyIcon from '@mui/icons-material/ContentCopy';
-import SearchIcon from '@mui/icons-material/Search';
-import ClearIcon from '@mui/icons-material/Close';
-import RefreshIcon from '@mui/icons-material/Refresh';
-import LockIcon from '@mui/icons-material/Lock';
-import LockOpenIcon from '@mui/icons-material/LockOpen';
 
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 
-import type { TFunction } from 'i18next';
 import type { DirEntry, ExifProcessedRecord } from '../../shared/ipc-types';
 import type { TagGroup } from '../domain/tag-library';
-import { getTagColor, getGeoColor } from '../domain/tag-colors';
-import {
-  entriesNeedingExif,
-  fitBounds,
-  geoEntries,
-  isGeoCandidate,
-  type GeoEntry,
-} from '../domain/mapique';
+import { getGeoColor } from '../domain/tag-colors';
+import { entriesNeedingExif, type GeoEntry } from '../domain/mapique';
 import { wgs84ToGcj02, gcj02ToWgs84 } from '../domain/gcj02';
 import type { MapProvider } from '-/reducers/settings';
-import { useSelector } from 'react-redux';
-import { chipSx, tagDisplayLabel } from '-/services/tag-display';
-import type { RootState } from '-/reducers';
 import { ipcApi } from '-/services/ipc-api';
 import { parentDir } from '-/services/path-util';
 import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
@@ -76,36 +40,39 @@ import { readPrefs, writePrefs } from '../domain/perspective-prefs';
 import LoadingOverlay from './perspective/LoadingOverlay';
 import EmptyHint from './perspective/EmptyHint';
 import ErrorBanner from './perspective/ErrorBanner';
-import ThumbIcon from './ThumbIcon';
-import InlineTagInput from './InlineTagInput';
 import MapiqueContextMenu, {
   type MapiqueContext,
 } from './MapiqueContextMenu';
 import MapiqueTray from './MapiqueTray';
+import { useMapiqueData } from './mapique/useMapiqueData';
+import MapiqueToolbar from './mapique/MapiqueToolbar';
+import MapiqueFilterBar from './mapique/MapiqueFilterBar';
+import MapiqueDetailPanel from './mapique/MapiqueDetailPanel';
 
-// Gaode/AutoNavi tiles — reachable in mainland China (OSM tile servers usually
-// are not), GCJ-02 datum.
-const GAODE_TILE_URL =
-  'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}';
-const GAODE_TILE_SUBDOMAINS = ['1', '2', '3', '4'];
-const GAODE_TILE_ATTRIBUTION = '&copy; <a href="https://amap.com">高德地图 AutoNavi</a>';
-// OpenStreetMap (the classic Leaflet tile source), WGS-84 datum.
-const OSM_TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-const OSM_TILE_SUBDOMAINS = ['a', 'b', 'c'];
-const OSM_TILE_ATTRIBUTION =
-  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
-
-const PANEL_WIDTH = 300;
-const PREVIEW_HEIGHT = 120;
-
-// P0-3 (perf audit): stable empty defaults. The `tagColors` / `groups`
-// props default to these constants (not inline `{}` / `[]`, which would be a
-// fresh reference each render) so the React.memo'd <GeoMarker> children that
-// receive them can bail out on unrelated re-renders. In practice FileList
-// passes shallow-stable values from useShallowEqualSelector anyway; this is
-// defense for the no-arg / test path.
-const EMPTY_TAG_COLORS: Record<string, string> = {};
-const EMPTY_GROUPS: TagGroup[] = [];
+import { cssAttrValue } from './mapique/pin-icon';
+import GeoMarker from './mapique/GeoMarker';
+import {
+  AutoResize,
+  FitBounds,
+  InvalidateOnChange,
+  MapClickHandler,
+  MapContextMenuHandler,
+  MapMoveTracker,
+} from './mapique/MapInterop';
+import {
+  EMPTY_GROUPS,
+  EMPTY_TAG_COLORS,
+  GAODE_TILE_ATTRIBUTION,
+  GAODE_TILE_SUBDOMAINS,
+  GAODE_TILE_URL,
+  OSM_TILE_ATTRIBUTION,
+  OSM_TILE_SUBDOMAINS,
+  OSM_TILE_URL,
+  PANEL_WIDTH,
+  type MapiquePrefs,
+  type TrayFilter,
+  type TraySort,
+} from './mapique/constants';
 
 export interface MapiqueViewProps {
   entries: DirEntry[];
@@ -118,7 +85,7 @@ export interface MapiqueViewProps {
    * Delete handler for the current tray selection (or active entry). Wired
    * up by FileList to the shared `handleDeleteSelected` (H.16) so the
    * Delete-key behavior in the tray matches list / grid / kanban.
-   * Plan §H.21 P1-1.
+   * Plan 搂H.21 P1-1.
    */
   onDelete?: (entries: DirEntry[]) => void;
   /** Map source; decides default tiles and whether GCJ-02 transform applies. */
@@ -135,17 +102,6 @@ export interface MapiqueViewProps {
   onRemoveTag?: (entry: DirEntry, tag: string) => void;
   tagColors?: Record<string, string>;
   groups?: TagGroup[];
-}
-
-// H.26 P1-1: per-location persisted preferences for Mapique.
-type TrayFilter = 'all' | 'located' | 'unlocated';
-// P3-5: tray sort key. `distance` is dynamic — it re-orders as the user
-// pans the map, so the closest-to-center rows surface first.
-type TraySort = 'name' | 'modified' | 'distance';
-interface MapiquePrefs {
-  panelOpen?: boolean;
-  trayFilter?: TrayFilter;
-  traySort?: TraySort;
 }
 
 /**
@@ -182,7 +138,7 @@ export default function MapiqueView({
   // (post-save), so the props are exactly the signal. A `useEffect` that
   // called a reducer with those maps as deps made any tag/geo edit render
   // twice (once for the prop change, once for the bump), and the comment used
-  // to claim a matching `key` prop existed on the FileList render site — it
+  // to claim a matching `key` prop existed on the FileList render site 鈥?it
   // never did. Keep the single mechanism: props in, render out.
   const { t } = useTranslation();
   const {
@@ -228,7 +184,7 @@ export default function MapiqueView({
   const tileSubdomains = isGcj02 ? GAODE_TILE_SUBDOMAINS : OSM_TILE_SUBDOMAINS;
   const tileAttribution = isGcj02 ? GAODE_TILE_ATTRIBUTION : OSM_TILE_ATTRIBUTION;
   // Stored coordinates are WGS-84; Gaode renders in GCJ-02. `toDisplay` shifts
-  // WGS-84 → tile datum for placing markers; `fromDisplay` shifts a map click
+  // WGS-84 鈫?tile datum for placing markers; `fromDisplay` shifts a map click
   // back to WGS-84 before storing.
   const toDisplay = useCallback(
     (lat: number, lng: number): [number, number] => {
@@ -263,16 +219,16 @@ export default function MapiqueView({
   const [extractingActive, setExtractingActive] = useState(false);
   const activeBatchesRef = useRef(0);
   // Files whose EXIF we have already attempted to extract (success or fail).
-  // Cleared when the user navigates to a different directory — EXIF reads are
+  // Cleared when the user navigates to a different directory 鈥?EXIF reads are
   // cheap and re-extracting is safer than caching a stale "already tried"
-  // flag forever (P0-3 from plan §H.21).
+  // flag forever (P0-3 from plan 搂H.21).
   const processedRef = useRef<Set<string>>(new Set());
   // Timestamp (ms) of the most recent marker dragend. Used to suppress the
-  // map's own `click` event that Leaflet fires immediately after — without
+  // map's own `click` event that Leaflet fires immediately after 鈥?without
   // this guard, dragging a marker to a new spot would write the new
   // coordinates via `dragend`, then *also* write the (possibly different)
   // map-plane click coordinate from the same mouseup via `MapClickHandler`,
-  // leaving the marker at the wrong spot (plan §H.21 P2 / Bug #2).
+  // leaving the marker at the wrong spot (plan 搂H.21 P2 / Bug #2).
   const lastDragEndAtRef = useRef(0);
   const [activeEntry, setActiveEntry] = useState<DirEntry | null>(null);
   // Place-lock (default ON): clicking the map does NOT place/move markers,
@@ -280,7 +236,7 @@ export default function MapiqueView({
   // to place the selected/active entry.
   const [placeLocked, setPlaceLocked] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  // P3-2: tray row hover → bouncing marker. Transient UI state, not persisted.
+  // P3-2: tray row hover 鈫?bouncing marker. Transient UI state, not persisted.
   const [hoveredPath, setHoveredPath] = useState<string | null>(null);
   // P3-4: bump to re-trigger EXIF extraction (e.g. after "Refresh" button
   // clears the persisted cache). Refs alone don't trigger the lazy-EXIF
@@ -332,46 +288,28 @@ export default function MapiqueView({
     return () => clearTimeout(timer);
   }, [currentLocation?.id, panelOpen, trayFilter, traySort]);
 
-  const sidecars = useMemo(() => {
-    // Built only from the merged tag list — the `geo:lat,lng` tag is the
-    // single source of truth (no parallel sidecar lat/lng field). Keyed by
-    // entry NAME because mapique.ts (isGeoCandidate / geoEntries) looks
-    // sidecars up by `entry.name`; tagsByName is path-keyed (H.24 R1), so we
-    // re-key via `entries` to bridge the two.
-    const map: Record<string, { tags?: string[] }> = {};
-    for (const e of entries) {
-      const tags = tagsByName.get(e.path);
-      if (!tags || tags.length === 0) continue;
-      map[e.name] = { tags };
-    }
-    return map;
-  }, [entries, tagsByName]);
-
-  const candidates = useMemo(
-    () => entries.filter((e) => isGeoCandidate(e, sidecars)),
-    [entries, sidecars]
-  );
-
-  const knownGeo = useMemo(
-    () => geoEntries(entries, sidecars),
-    [entries, sidecars]
-  );
-
-  const locatedPaths = useMemo(
-    () => new Set(knownGeo.map((g) => g.entry.path)),
-    [knownGeo]
-  );
-
-  // Consistent color for each geo-located entry, shared between map markers
-  // and the file tray indicators. Entries with the exact same coordinates
-  // share the same color so they visually group together.
-  const geoColorMap = useMemo(() => {
-    const map = new Map<string, string>();
-    knownGeo.forEach((g) => {
-      map.set(g.entry.path, getGeoColor(g.lat, g.lng));
-    });
-    return map;
-  }, [knownGeo]);
+  const {
+    allTrayEntriesRef,
+    candidates,
+    center,
+    geoColorMap,
+    knownGeo,
+    locatedPaths,
+    sidecars,
+    trayIndexByPathRef,
+    visibleTrayEntries,
+    visibleTrayEntriesRef,
+    zoom,
+  } = useMapiqueData({
+    entries,
+    tagsByName,
+    geoByName,
+    traySort,
+    trayFilter,
+    nameQuery,
+    mapCenter,
+    toDisplay,
+  });
 
   // P3-2: apply/remove the bounce class on the corresponding Leaflet marker
   // DOM element. Markers are not React-rendered DOM, so we mutate via querySelector.
@@ -387,91 +325,11 @@ export default function MapiqueView({
     }
   }, [hoveredPath, knownGeo]);
 
-  // Tray: every entry in the folder so any file or folder can be located
-  // without leaving the map view. Located entries first (green indicator),
-  // then alphabetical. P3-5: the secondary key is now `traySort` — the
-  // user can switch to "modified" (newest first) or "distance" (closest
-  // to the current map center first) for spatial browsing. The `distance`
-  // center is the live viewport center (pushed from `MapMoveTracker`),
-  // falling back to the initial fitBounds centroid until the first pan.
-  const trayEntries = useMemo(() => {
-    const fit = fitBounds(knownGeo.map((g) => ({ lat: g.lat, lng: g.lng })));
-    const fitCenter = { lat: fit.center[0], lng: fit.center[1] };
-    const center = mapCenter ?? fitCenter;
-    return entries.slice().sort((a, b) => {
-      if (traySort === 'modified') {
-        // Newest first; tie-break by name.
-        const am = Date.parse(a.modified) || 0;
-        const bm = Date.parse(b.modified) || 0;
-        if (am !== bm) return bm - am;
-        return a.name.localeCompare(b.name);
-      }
-      if (traySort === 'distance') {
-        const ap = geoByName.get(a.path);
-        const bp = geoByName.get(b.path);
-        if (ap && bp) {
-          const da = haversineKm(center, ap);
-          const db = haversineKm(center, bp);
-          if (da !== db) return da - db;
-        } else if (ap) return -1;
-        else if (bp) return 1;
-        // Both unlocated: fall through to name order.
-        return a.name.localeCompare(b.name);
-      }
-      // traySort === 'name' (default): located first, then alphabetical.
-      const al = locatedPaths.has(a.path) ? 1 : 0;
-      const bl = locatedPaths.has(b.path) ? 1 : 0;
-      if (al !== bl) return bl - al;
-      return a.name.localeCompare(b.name);
-    });
-  }, [entries, locatedPaths, traySort, knownGeo, geoByName, mapCenter]);
-
-  // H.26 P0-3: filter the tray to all / located / unlocated. Selection and
-  // select-all operate on the visible subset. P3-1: also apply a name search
-  // (case-insensitive substring) so the user can quickly locate a file in
-  // large folders; both filters compose (AND).
-  const visibleTrayEntries = useMemo(() => {
-    const byFilter =
-      trayFilter === 'all'
-        ? trayEntries
-        : trayEntries.filter((e) =>
-            trayFilter === 'located'
-              ? locatedPaths.has(e.path)
-              : !locatedPaths.has(e.path)
-          );
-    const q = nameQuery.trim().toLowerCase();
-    if (!q) return byFilter;
-    return byFilter.filter((e) => e.name.toLowerCase().includes(q));
-  }, [trayEntries, trayFilter, locatedPaths, nameQuery]);
-
-  // P0-3 (perf audit): hold the latest tray snapshot + path→index map in refs
-  // so `selectRow` (used by BOTH tray rows and map markers) can be
-  // referentially stable. Without this, `selectRow` rebuilds on every
-  // `setMapCenter` — a `moveend` recomputes `trayEntries` for the `distance`
-  // sort (mapCenter is in its dep list), so `visibleTrayEntries` and
-  // `selectRow` get fresh identities on every pan. The marker click handler
-  // built on `selectRow` would then bust <GeoMarker>'s React.memo on every
-  // pan, rebuilding every Leaflet marker (the exact cost P0-3 removes).
-  const visibleTrayEntriesRef = useRef(visibleTrayEntries);
-  visibleTrayEntriesRef.current = visibleTrayEntries;
-  // Unfiltered tray: a marker whose row the tray filter hid still has to be
-  // activatable from the map (the click used to be a silent no-op).
-  const allTrayEntriesRef = useRef(trayEntries);
-  allTrayEntriesRef.current = trayEntries;
-  const trayIndexByPath = useMemo(() => {
-    const m = new Map<string, number>();
-    for (let i = 0; i < visibleTrayEntries.length; i += 1) {
-      m.set(visibleTrayEntries[i].path, i);
-    }
-    return m;
-  }, [visibleTrayEntries]);
-  const trayIndexByPathRef = useRef(trayIndexByPath);
-  trayIndexByPathRef.current = trayIndexByPath;
 
   const selectRow = useCallback(
     (index: number, mods: { shift: boolean; ctrl: boolean }) => {
       // P0-3: read the tray through a ref so this callback never changes
-      // identity when the tray reorders (pan / sort / filter) — see the refs
+      // identity when the tray reorders (pan / sort / filter) 鈥?see the refs
       // above. Behaves identically to the prior closure-over-array version.
       const tray = visibleTrayEntriesRef.current;
       const entry = tray[index];
@@ -503,10 +361,14 @@ export default function MapiqueView({
       });
       setActiveEntry(entry);
     },
+    // P0-3: the tray snapshot is read through a ref on purpose; depending on
+    // it would rebuild this callback (and every memo'd marker) on each pan /
+    // sort, which is exactly the cost P0-3 removes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
 
-  // H.4 (plan §H.4) extended for Mapique: an honest 3-state select-all that
+  // H.4 (plan 搂H.4) extended for Mapique: an honest 3-state select-all that
   // doesn't lie when the user has out-of-tray selections (e.g. mid depth
   // change, or paths remembered from a previous directory).
   const inTraySelectedCount = useMemo(() => {
@@ -553,7 +415,7 @@ export default function MapiqueView({
     selectAnchorRef.current = null;
   }, [trayFilter]);
 
-  // P3-1: also clear selection when the name query changes — same rationale
+  // P3-1: also clear selection when the name query changes 鈥?same rationale
   // as `trayFilter`: don't keep rows selected that are no longer visible.
   useEffect(() => {
     setSelected(new Set());
@@ -574,10 +436,10 @@ export default function MapiqueView({
     });
   }, [entries, activeEntry]);
 
-  // P0-3 from plan §H.21: clear the EXIF "already tried" cache when the user
+  // P0-3 from plan 搂H.21: clear the EXIF "already tried" cache when the user
   // navigates to a different directory. Without this, deleting a sidecar's
   // lat/lng manually (or switching between two photo folders with the same
-  // filenames) would never trigger re-extraction — `processedRef` would keep
+  // filenames) would never trigger re-extraction 鈥?`processedRef` would keep
   // blocking it for the component's lifetime.
   //
   // P3-4: replace the pure-clear effect with a clear-then-load. The clear
@@ -598,7 +460,7 @@ export default function MapiqueView({
         processedRef.current = next;
       } catch {
         // If the load fails (db missing, permission, etc.) leave the
-        // in-memory set empty — extraction will re-attempt the work, and
+        // in-memory set empty 鈥?extraction will re-attempt the work, and
         // the user can still hit Refresh to retry.
       }
     })();
@@ -628,13 +490,6 @@ export default function MapiqueView({
     undoStack.clear();
   }, [currentDirectoryPath, undoStack]);
 
-  const { center, zoom } = useMemo(() => {
-    const fit = fitBounds(knownGeo.map((g) => ({ lat: g.lat, lng: g.lng })));
-    // fitBounds works in WGS-84; shift the center to the tile datum so the map
-    // aligns with the (also-shifted) markers.
-    const [cLat, cLng] = toDisplay(fit.center[0], fit.center[1]);
-    return { center: [cLat, cLng] as [number, number], zoom: fit.zoom };
-  }, [knownGeo, toDisplay]);
 
   // Lazy EXIF extraction for media candidates without GPS.
   useEffect(() => {
@@ -647,7 +502,7 @@ export default function MapiqueView({
     // Only mark a path as "processed" once extraction has actually succeeded
     // (or definitively returned null). Marking upfront would permanently cache
     // transient failures (file lock, IO error, malformed EXIF) and prevent
-    // re-attempts — plan §H.21 P0-2.
+    // re-attempts 鈥?plan 搂H.21 P0-2.
     const markProcessed = (path: string) => processedRef.current.add(path);
 
     // P3-4: persist the result so reopening this directory skips the file.
@@ -655,7 +510,7 @@ export default function MapiqueView({
     // never block the in-memory processedRef (which already short-circuits
     // the re-attempt within this session).
     // Batch EXIF results into one IPC (one transaction + fsync per batch)
-    // instead of one IPC per image — a folder of N photos used to fire N
+    // instead of one IPC per image 鈥?a folder of N photos used to fire N
     // fsyncs on the main thread. Flushed when the batch fills and on completion.
     const EXIF_BATCH = 25;
     const pending: ExifProcessedRecord[] = [];
@@ -663,7 +518,7 @@ export default function MapiqueView({
       if (!rootPath || pending.length === 0) return;
       const batch = pending.splice(0, pending.length);
       ipcApi.markExifProcessedMany(rootPath, batch).catch(() => {
-        // best-effort: swallow — in-memory processedRef is still correct.
+        // best-effort: swallow 鈥?in-memory processedRef is still correct.
       });
     };
     const persistExif = (path: string, gps: { lat: number; lng: number } | null) => {
@@ -692,7 +547,7 @@ export default function MapiqueView({
           if (cancelled) return;
           if (gps) onGpsFound(entry, gps.lat, gps.lng);
           // gps === null means "no GPS data" (definitively), not a transient
-          // failure — cache that too so we don't rescan the same file forever.
+          // failure 鈥?cache that too so we don't rescan the same file forever.
           markProcessed(entry.path);
           persistExif(entry.path, gps);
         } catch {
@@ -703,8 +558,8 @@ export default function MapiqueView({
       }
     }
 
-    // `.finally` always runs — even when this batch was cancelled by a
-    // dependency change — so the active-batch counter never gets stuck.
+    // `.finally` always runs 鈥?even when this batch was cancelled by a
+    // dependency change 鈥?so the active-batch counter never gets stuck.
     void Promise.all(Array.from({ length: CONCURRENCY }, worker)).finally(() => {
       // Flush records collected since the last size-triggered flush (also runs
       // on cancel, so completed extractions aren't lost on a dep change).
@@ -819,7 +674,7 @@ export default function MapiqueView({
   const handleReveal = useCallback((entry: DirEntry) => {
     void ipcApi.revealAndSelect(entry.path).catch((e) => {
       // Nothing happened visually when the native reveal failed (path gone,
-      // permission) — say so instead of leaving a dead click.
+      // permission) 鈥?say so instead of leaving a dead click.
       setNotice({ message: e instanceof Error ? e.message : String(e) });
     });
   }, []);
@@ -832,7 +687,7 @@ export default function MapiqueView({
 
   // P3-3: wrap onSetGeo / onClearGeo so every mutation is recorded on the
   // undo stack. The actual `onSetGeo` / `onClearGeo` callbacks are still
-  // called unchanged — the undo stack is purely additive metadata.
+  // called unchanged 鈥?the undo stack is purely additive metadata.
   const recordPrev = useCallback(
     (entry: DirEntry): { prevLat: number | null; prevLng: number | null } => {
       const prev = geoByName.get(entry.path);
@@ -858,7 +713,7 @@ export default function MapiqueView({
     [recordPrev, onClearGeo, undoStack]
   );
 
-  // P3-3: handle the Snackbar's Undo button — pop the most recent geo op
+  // P3-3: handle the Snackbar's Undo button 鈥?pop the most recent geo op
   // and re-apply the previous coordinates (or clear, if it had none).
   const handleUndo = useCallback(() => {
     const op = undoStack.undo();
@@ -910,7 +765,7 @@ export default function MapiqueView({
   // H.26 P0-3: when the tray filter changes, reset the keyboard focus anchor.
   // (Selection is already cleared in a dedicated effect above.)
 
-  // Click the map → set the location of all selected files, or the active file
+  // Click the map 鈫?set the location of all selected files, or the active file
   // when nothing is selected (WGS-84).
   const handleMapClick = useCallback(
     (lat: number, lng: number) => {
@@ -979,6 +834,9 @@ export default function MapiqueView({
       });
       setActiveEntry(entry);
     },
+    // P0-3: both refs are read live so this handler stays stable for the
+    // memo'd <GeoMarker>s.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [selectRow]
   );
 
@@ -1021,7 +879,7 @@ export default function MapiqueView({
       onContextMenu={handleContextMenu}
       sx={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}
     >
-      {/* P3-2: tray-row hover → bouncing marker. The class is toggled by an
+      {/* P3-2: tray-row hover 鈫?bouncing marker. The class is toggled by an
           effect above on the corresponding Leaflet marker DOM element. */}
       <style>
         {`@keyframes whalePinBounce {
@@ -1032,77 +890,18 @@ export default function MapiqueView({
             animation: whalePinBounce 200ms ease-out 2;
           }`}
       </style>
-      <Stack
-        direction="row"
-        sx={{
-          alignItems: 'center',
-          gap: 2,
-          flexShrink: 0,
-          flexWrap: 'wrap',
-          px: 1.5,
-          py: 0.75,
-        }}
-      >
-        <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
-          {t('mapique')}
-        </Typography>
-        <Box sx={{ flex: 1 }} />
-
-        <Tooltip title={t('saveImage')}>
-          <span>
-            <IconButton
-              size="small"
-              onClick={() => void handleSave()}
-              disabled={saving || loadingRecursive || readOnly}
-              aria-label={t('saveImage')}
-            >
-              <SaveIcon fontSize="small" />
-            </IconButton>
-          </span>
-        </Tooltip>
-
-        <Tooltip title={t('saveImageAs')}>
-          <span>
-            <IconButton
-              size="small"
-              onClick={() => void handleSaveAs()}
-              disabled={saving || loadingRecursive || readOnly}
-              aria-label={t('saveImageAs')}
-            >
-              <DriveFileMoveIcon fontSize="small" />
-            </IconButton>
-          </span>
-        </Tooltip>
-
-        <Tooltip title={t('mapiqueCopyMap')}>
-          <span>
-            <IconButton
-              size="small"
-              onClick={() => void onCopyToClipboard()}
-              disabled={saving || loadingRecursive}
-              aria-label={t('mapiqueCopyMap')}
-            >
-              <ContentCopyIcon fontSize="small" />
-            </IconButton>
-          </span>
-        </Tooltip>
-
-        {/* P3-4: wipe the persisted EXIF cache and re-trigger extraction.
-            Useful after sidecar / GPS-tag edits that the cache would
-            otherwise mask. Disabled while a batch is mid-flight. */}
-        <Tooltip title={t('mapiqueRefreshExifTooltip')}>
-          <span>
-            <IconButton
-              size="small"
-              onClick={() => void handleRefreshExifCache()}
-              disabled={extractingActive || loadingRecursive || !currentLocation?.path}
-              aria-label={t('mapiqueRefreshExif')}
-            >
-              <RefreshIcon fontSize="small" />
-            </IconButton>
-          </span>
-        </Tooltip>
-      </Stack>
+      <MapiqueToolbar
+        t={t}
+        saving={saving}
+        loadingRecursive={loadingRecursive}
+        readOnly={readOnly}
+        extractingActive={extractingActive}
+        hasLocation={Boolean(currentLocation?.path)}
+        onSave={handleSave}
+        onSaveAs={handleSaveAs}
+        onCopyMap={onCopyToClipboard}
+        onRefreshExif={handleRefreshExifCache}
+      />
 
       {error ? <ErrorBanner message={error} /> : null}
 
@@ -1168,7 +967,7 @@ export default function MapiqueView({
         </MapContainer>
 
         {/* Recursive scan progress. `pointer-events: none` so the chip doesn't
-              swallow map clicks — same rationale as the EXIF progress
+              swallow map clicks 鈥?same rationale as the EXIF progress
               overlay below. */}
         {loadingRecursive && (
           <Stack
@@ -1267,120 +1066,22 @@ export default function MapiqueView({
             minHeight: 0,
           }}
         >
-          {/* File tray */}
-          {/* P3-1: Name search — composes with `trayFilter` (located/unlocated) so
-              the user can locate a file in large folders without leaving the
-              map view. Search query is local state; cleared on view remount. */}
-          <Box sx={{ px: 1.5, pt: 0.75, pb: 0.5 }}>
-            <TextField
-              size="small"
-              fullWidth
-              value={nameQuery}
-              onChange={(e) => setNameQuery(e.target.value)}
-              placeholder={t('mapiqueSearchPlaceholder')}
-              slotProps={{
-                input: {
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <SearchIcon fontSize="small" sx={{ color: 'text.disabled' }} />
-                    </InputAdornment>
-                  ),
-                  endAdornment: nameQuery ? (
-                    <InputAdornment position="end">
-                      <Tooltip title={t('mapiqueClearSearch')}>
-                        <IconButton
-                          size="small"
-                          edge="end"
-                          onClick={() => setNameQuery('')}
-                          aria-label={t('mapiqueClearSearch')}
-                        >
-                          <ClearIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    </InputAdornment>
-                  ) : null,
-                },
-              }}
-            />
-          </Box>
-
-          <Stack
-            direction="row"
-            sx={{ px: 1.5, py: 0.5, alignItems: 'center', gap: 1 }}
-          >
-            <Checkbox
-              size="small"
-              checked={selectAllState === 'checked'}
-              indeterminate={selectAllState === 'indeterminate'}
-              onChange={toggleSelectAll}
-              disabled={visibleTrayEntries.length === 0}
-              slotProps={{ input: { 'aria-label': t('selectAll') } }}
-              sx={{ p: 0, mr: 0.5 }}
-            />
-            <Typography variant="overline" sx={{ flex: 1, fontSize: 10, lineHeight: 1.25 }} color="text.secondary">
-              {t('files')} ({visibleTrayEntries.length})
-              {selectedCount > 0 ? ` · ${selectedCount} ${t('selected')}` : ''}
-            </Typography>
-
-            <Select
-              size="small"
-              value={trayFilter}
-              onChange={(e) => setTrayFilter(e.target.value as TrayFilter)}
-              inputProps={{ 'aria-label': t('mapiqueFilterAll') }}
-              sx={{ fontSize: 11, '& .MuiSelect-select': { py: 0.5 } }}
-            >
-              <MenuItem value="all" dense sx={{ fontSize: 12 }}>
-                {t('mapiqueFilterAll')}
-              </MenuItem>
-              <MenuItem value="located" dense sx={{ fontSize: 12 }}>
-                {t('mapiqueFilterLocated')}
-              </MenuItem>
-              <MenuItem value="unlocated" dense sx={{ fontSize: 12 }}>
-                {t('mapiqueFilterUnlocated')}
-              </MenuItem>
-            </Select>
-
-            {/* P3-5: tray row sort. Persisted per-location. `distance` is
-                dynamic (re-orders as the map is panned). */}
-            <Select
-              size="small"
-              value={traySort}
-              onChange={(e) => setTraySort(e.target.value as TraySort)}
-              inputProps={{ 'aria-label': t('mapiqueSort') }}
-              sx={{ fontSize: 11, '& .MuiSelect-select': { py: 0.5 } }}
-            >
-              <MenuItem value="name" dense sx={{ fontSize: 12 }}>
-                {t('mapiqueSortName')}
-              </MenuItem>
-              <MenuItem value="modified" dense sx={{ fontSize: 12 }}>
-                {t('mapiqueSortModified')}
-              </MenuItem>
-              <MenuItem value="distance" dense sx={{ fontSize: 12 }}>
-                {t('mapiqueSortDistance')}
-              </MenuItem>
-            </Select>
-
-            <Tooltip title={placeLocked ? t('mapiquePlaceUnlock') : t('mapiquePlaceLock')}>
-              <IconButton
-                size="small"
-                onClick={() => setPlaceLocked((v) => !v)}
-                aria-label={placeLocked ? t('mapiquePlaceUnlock') : t('mapiquePlaceLock')}
-                color={placeLocked ? 'default' : 'primary'}
-              >
-                {placeLocked ? (
-                  <LockIcon fontSize="small" />
-                ) : (
-                  <LockOpenIcon fontSize="small" />
-                )}
-              </IconButton>
-            </Tooltip>
-
-            <Tooltip title={t('panelClose')}>
-              <IconButton size="small" onClick={() => setPanelOpen(false)}>
-                <ChevronRightIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-          </Stack>
+          <MapiqueFilterBar
+            t={t}
+            nameQuery={nameQuery}
+            onNameQueryChange={setNameQuery}
+            selectAllState={selectAllState}
+            onToggleSelectAll={toggleSelectAll}
+            visibleCount={visibleTrayEntries.length}
+            selectedCount={selectedCount}
+            trayFilter={trayFilter}
+            onTrayFilterChange={setTrayFilter}
+            traySort={traySort}
+            onTraySortChange={setTraySort}
+            placeLocked={placeLocked}
+            onTogglePlaceLocked={() => setPlaceLocked((v) => !v)}
+            onCollapse={() => setPanelOpen(false)}
+          />
 
           {loadingRecursive && visibleTrayEntries.length === 0 ? (
             <LoadingOverlay label={t('loading')} />
@@ -1415,128 +1116,25 @@ export default function MapiqueView({
           <Divider />
 
           {/* Detail content */}
-          <Box sx={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-            {selectedCount === 0 ? (
-              <Box sx={{ p: 3, textAlign: 'center' }}>
-                <Typography variant="body2" color="text.secondary">
-                  {t('selectFileHint')}
-                </Typography>
-              </Box>
-            ) : selectedCount > 1 ? (
-              <BatchPanel
-                entries={selectedEntries}
-                tagColors={tagColors}
-                groups={groups}
-                t={t}
-                canEdit={canEdit}
-                onAddTag={onAddTag}
-                onRemoveTag={onRemoveTag}
-                onClearGeo={onClearGeo}
-                tagsByName={tagsByName}
-              />
-            ) : (
-              <Stack spacing={0}>
-                <Box
-                  sx={{
-                    width: '100%',
-                    height: PREVIEW_HEIGHT,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    bgcolor: 'action.hover',
-                    cursor: onOpen ? 'pointer' : 'default',
-                    overflow: 'hidden',
-                    p: 1,
-                    flexShrink: 0,
-                  }}
-                  onClick={() => activeEntry && handleOpen(activeEntry)}
-                >
-                  <ThumbIcon
-                    entry={activeEntry!}
-                    thumbCache={thumbCache}
-                    size={PREVIEW_HEIGHT - 16}
-                    rounded={4}
-                    objectFit="contain"
-                  />
-                </Box>
-
-                <Typography
-                  variant="subtitle2"
-                  noWrap
-                  title={activeEntry?.name}
-                  sx={{ px: 1.5, pt: 1, pb: 0.5, flexShrink: 0 }}
-                >
-                  {activeEntry?.name}
-                </Typography>
-
-                <Stack
-                  direction="row"
-                  spacing={1}
-                  sx={{ px: 1.5, alignItems: 'center', flexShrink: 0 }}
-                >
-                  <LocationOnIcon
-                    fontSize="small"
-                    sx={{ color: activeGeo ? '#1976d2' : 'text.disabled' }}
-                  />
-                  <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    sx={{ flex: 1, fontSize: 12 }}
-                  >
-                    {activeGeo
-                      ? `${activeGeo.lat.toFixed(6)}, ${activeGeo.lng.toFixed(6)}`
-                      : t('noLocationSet')}
-                  </Typography>
-                  {activeGeo && canEdit && (
-                    <Button
-                      size="small"
-                      onClick={() => {
-                        if (selectedCount > 0) {
-                          selectedEntries.forEach((e) => applyClearGeo(e));
-                          setNotice({
-                            message: t('mapiqueGeoUpdatedMulti', {
-                              count: selectedCount,
-                            }),
-                            undoable: true,
-                          });
-                        } else {
-                          applyClearGeo(activeEntry!);
-                          setNotice({
-                            message: t('mapiqueGeoUpdated'),
-                            undoable: true,
-                          });
-                        }
-                      }}
-                    >
-                      {t('clearLocation')}
-                    </Button>
-                  )}
-                </Stack>
-
-                {canEdit && (
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    sx={{ px: 1.5, display: 'block', flexShrink: 0 }}
-                  >
-                    {t('clickMapToPlace')}
-                  </Typography>
-                )}
-
-                <Divider sx={{ mt: 1, mb: 0.5, flexShrink: 0 }} />
-
-                <InlineTagInput
-                  tags={activeTags}
-                  tagColors={tagColors}
-                  groups={groups}
-                  t={t}
-                  onAdd={(tag) => onAddTag?.(activeEntry!, tag)}
-                  onRemove={(tag) => onRemoveTag?.(activeEntry!, tag)}
-                  readOnly={!canEdit}
-                />
-              </Stack>
-            )}
-          </Box>
+          <MapiqueDetailPanel
+            t={t}
+            selectedCount={selectedCount}
+            selectedEntries={selectedEntries}
+            activeEntry={activeEntry}
+            activeGeo={activeGeo}
+            activeTags={activeTags}
+            canEdit={canEdit}
+            thumbCache={thumbCache}
+            tagsByName={tagsByName}
+            tagColors={tagColors}
+            groups={groups}
+            onOpen={handleOpen}
+            onAddTag={onAddTag}
+            onRemoveTag={onRemoveTag}
+            onClearGeo={onClearGeo}
+            applyClearGeo={applyClearGeo}
+            setNotice={setNotice}
+          />
         </Box>
       )}
 
@@ -1586,535 +1184,4 @@ export default function MapiqueView({
   );
 }
 
-/**
- * P0-3 (perf audit): a single geo marker, React.memo'd so it only re-renders
- * when its OWN inputs change (active/selected state, color, position,
- * draggable). The parent re-renders on every pan / select / hover / sort /
- * `setMapCenter`, but unchanged markers bail out entirely — no fresh
- * `makePinIcon` DivIcon (DOM rebuild) and no react-leaflet event rebind.
- *
- * Granularity matters: passing the primitive `state` ('normal' | 'selected'
- * | 'active') instead of the whole `selected` Set means a selection change
- * only re-renders the one marker whose state actually changed, not every
- * marker. The icon / position / event-handlers are each memoized inside so
- * that even when a re-render does occur, react-leaflet skips setIcon /
- * setPosition / (un)bind for the fields that didn't change.
- */
-const GeoMarker = memo(function GeoMarker({
-  geo,
-  color,
-  state,
-  draggable,
-  displayLat,
-  displayLng,
-  onSelect,
-  onContextMenu,
-  onDragEnd,
-  thumbCache,
-  tagsByName,
-  tagColors,
-  groups,
-  t,
-  provider,
-  onOpen,
-}: {
-  geo: GeoEntry;
-  color: string;
-  state: 'normal' | 'selected' | 'active';
-  draggable: boolean;
-  displayLat: number;
-  displayLng: number;
-  onSelect: (path: string, mods: { shift: boolean; ctrl: boolean }) => void;
-  onContextMenu: (geo: GeoEntry, x: number, y: number) => void;
-  onDragEnd: (geo: GeoEntry, lat: number, lng: number) => void;
-  thumbCache: Map<string, string>;
-  tagsByName: Map<string, string[]>;
-  tagColors?: Record<string, string>;
-  groups?: TagGroup[];
-  t: TFunction;
-  provider?: MapProvider;
-  onOpen?: (entry: DirEntry) => void;
-}) {
-  const icon = useMemo(
-    () => makePinIcon(color, state, geo.entry.path),
-    [color, state, geo.entry.path]
-  );
-  const position = useMemo<[number, number]>(
-    () => [displayLat, displayLng],
-    [displayLat, displayLng]
-  );
-  const eventHandlers = useMemo(
-    () => ({
-      click: (e: L.LeafletMouseEvent) => {
-        const native = e.originalEvent as MouseEvent | undefined;
-        onSelect(geo.entry.path, {
-          shift: native?.shiftKey ?? false,
-          ctrl: (native?.ctrlKey ?? false) || (native?.metaKey ?? false),
-        });
-      },
-      contextmenu: (e: L.LeafletMouseEvent) => {
-        const native = e.originalEvent as MouseEvent | undefined;
-        if (!native) return;
-        native.preventDefault();
-        native.stopPropagation();
-        onContextMenu(geo, native.clientX, native.clientY);
-      },
-      dragend: (e: L.DragEndEvent) => {
-        const m = e.target as L.Marker;
-        const ll = m.getLatLng();
-        onDragEnd(geo, ll.lat, ll.lng);
-      },
-    }),
-    [geo, onSelect, onContextMenu, onDragEnd]
-  );
-  return (
-    <Marker
-      position={position}
-      icon={icon}
-      draggable={draggable}
-      eventHandlers={eventHandlers}
-    >
-      <Popup maxWidth={220} minWidth={180}>
-        <MapPopup
-          geo={geo}
-          thumbCache={thumbCache}
-          tags={tagsByName.get(geo.entry.path) ?? []}
-          tagColors={tagColors}
-          groups={groups}
-          t={t}
-          provider={provider}
-          onOpen={onOpen}
-        />
-      </Popup>
-    </Marker>
-  );
-});
 
-/** H.26 P0-1: captures map blank right-clicks and forwards display coords. */
-function MapContextMenuHandler({
-  onContextMenu,
-}: {
-  onContextMenu: (lat: number, lng: number, x: number, y: number) => void;
-}) {
-  useMapEvents({
-    contextmenu(e) {
-      const native = e.originalEvent as MouseEvent | undefined;
-      if (!native) return;
-      native.preventDefault();
-      native.stopPropagation();
-      onContextMenu(e.latlng.lat, e.latlng.lng, native.clientX, native.clientY);
-    },
-  });
-  return null;
-}
-
-/**
- * P3-5: pushes the live viewport center to the parent on every pan/zoom.
- * The `distance` tray sort uses this as its reference point (falling back
- * to the initial fitBounds centroid until the first user interaction).
- * `moveend` fires after both user drags and programmatic `setView`/`fitBounds`
- * calls, so "Fit to bounds" also re-orders the tray.
- */
-function MapMoveTracker({
-  onMoveEnd,
-}: {
-  onMoveEnd: (center: { lat: number; lng: number }) => void;
-}) {
-  const map = useMap();
-  useMapEvents({
-    moveend() {
-      const c = map.getCenter();
-      onMoveEnd({ lat: c.lat, lng: c.lng });
-    },
-  });
-  return null;
-}
-
-/** Captures map clicks and forwards their coordinates. */
-function MapClickHandler({
-  onClick,
-  lastDragEndAtRef,
-}: {
-  onClick: (lat: number, lng: number) => void;
-  lastDragEndAtRef: React.MutableRefObject<number>;
-}) {
-  useMapEvents({
-    click(e) {
-      // Suppress the click Leaflet fires immediately after a marker dragend —
-      // a drag already wrote the new coordinate via its own handler, and the
-      // map-plane click would otherwise overwrite it with a different point
-      // (plan §H.21 / Bug #2).
-      if (Date.now() - lastDragEndAtRef.current < 100) return;
-      onClick(e.latlng.lat, e.latlng.lng);
-    },
-  });
-  return null;
-}
-
-/**
- * Forces Leaflet to recompute its size. A map created inside a flex/conditional
- * layout is frequently initialized before its container has settled to its
- * final dimensions; without this it renders blank (no tiles requested) until
- * the next manual resize. Runs after mount and on every container resize.
- */
-function AutoResize() {
-  const map = useMap();
-  useEffect(() => {
-    const invalidate = () => map.invalidateSize();
-    const t1 = setTimeout(invalidate, 0);
-    const t2 = setTimeout(invalidate, 250);
-    const container = map.getContainer();
-    const ro = new ResizeObserver(invalidate);
-    ro.observe(container);
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      ro.disconnect();
-    };
-  }, [map]);
-  return null;
-}
-
-/** Recomputes map size whenever `trigger` changes (e.g. the panel toggles). */
-function InvalidateOnChange({ trigger }: { trigger: unknown }) {
-  const map = useMap();
-  useEffect(() => {
-    const t1 = setTimeout(() => map.invalidateSize(), 0);
-    const t2 = setTimeout(() => map.invalidateSize(), 320);
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-    };
-  }, [trigger, map]);
-  return null;
-}
-
-/**
- * Re-centers/fits the map whenever the set of known GPS points changes.
- * Points are stored in WGS-84; `toDisplay` shifts them to the active tile
- * datum so the fitted bounds match the rendered markers.
- */
-function FitBounds({
-  geo,
-  toDisplay,
-}: {
-  geo: GeoEntry[];
-  toDisplay: (lat: number, lng: number) => [number, number];
-}) {
-  const map = useMap();
-  // Track the point SET, not its size: the old `geo.length > prev` gate never
-  // fired on first mount (prev started at geo.length), so a map opened with
-  // markers already present showed the whole world until one more tagged file
-  // appeared; replacing points (filters, re-tags) never re-fit either.
-  const prevKeysRef = useRef<Set<string>>(new Set());
-
-  useEffect(() => {
-    if (geo.length === 0) {
-      prevKeysRef.current = new Set();
-      return;
-    }
-    const keys = new Set(geo.map((g) => `${g.lat},${g.lng}`));
-    const hadPoints = prevKeysRef.current.size > 0;
-    let hasNewPoint = false;
-    for (const key of keys) {
-      if (!prevKeysRef.current.has(key)) {
-        hasNewPoint = true;
-        break;
-      }
-    }
-    prevKeysRef.current = keys;
-    // Keep the user's view when nothing new showed up (panning/zooming is
-    // theirs); refit only when the set gained a point or was empty before.
-    if (!hasNewPoint && hadPoints) return;
-    const group = L.featureGroup(geo.map((g) => L.marker(toDisplay(g.lat, g.lng))));
-    map.fitBounds(group.getBounds().pad(0.1));
-  }, [geo, map, toDisplay]);
-
-  return null;
-}
-
-function MapPopup({
-  geo,
-  thumbCache,
-  tags,
-  tagColors,
-  groups,
-  t,
-  provider,
-  onOpen,
-}: {
-  geo: GeoEntry;
-  thumbCache: Map<string, string>;
-  /** P3-7 (reverted): tag list for this entry. Kept as an optional prop
-   *  with the existing tag-chip rendering path so the parent doesn't have
-   *  to change if a future iteration of the popup-exif feature ships. */
-  tags?: string[];
-  tagColors?: Record<string, string>;
-  groups?: TagGroup[];
-  /** Pre-bound i18n function (avoids re-calling useTranslation per popup). */
-  t: TFunction;
-  /**
-   * Active map provider (mirrors Settings → Map source). When `'gaode'`,
-   * the "open in OSM" button is relabeled "open in AMap" and points at
-   * `uri.amap.com/marker` instead of `openstreetmap.org/?mlat=…` —
-   * otherwise a Gaode-only user (mainland China, no OSM access) clicks
-   * the button and gets a 451/timeout. Defaults to `'gaode'` to match
-   * `reducers/settings.ts:315` — the existing default.
-   */
-  provider?: MapProvider;
-  onOpen?: (entry: DirEntry) => void;
-}) {
-  const { entry, lat, lng } = geo;
-
-  const handleOpen = useCallback(() => {
-    onOpen?.(entry);
-  }, [entry, onOpen]);
-
-  // Provider-aware marker URL. AMap's `uri.amap.com/marker` opens the
-  // web map at the marker (and `callnative=1` falls through to the
-  // mobile app when available). `coordinate=wgs84` tells AMap the input
-  // is WGS-84 so the marker lands on the right spot (MapiqueView
-  // stores GPS lat/lng directly from EXIF, which is WGS-84).
-  // OpenStreetMap uses the `?mlat=/mlon=&=#map=` hash scheme which is
-  // stable across all OSM-hosted frontends.
-  const mapUrl =
-    provider === 'gaode'
-      ? `https://uri.amap.com/marker?position=${lng},${lat}&src=WhaleTag&coordinate=wgs84&callnative=1`
-      : `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=16/${lat}/${lng}`;
-  const mapLabelKey =
-    provider === 'gaode' ? 'openInGaode' : 'openInOsm';
-
-  const showTags = tags && tags.length > 0;
-
-  return (
-    <Stack spacing={1} sx={{ minWidth: 180 }}>
-      <Box
-        sx={{
-          width: '100%',
-          height: 140,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          bgcolor: 'action.hover',
-          borderRadius: 1,
-          overflow: 'hidden',
-          cursor: onOpen ? 'pointer' : 'default',
-        }}
-        onClick={handleOpen}
-      >
-        <ThumbIcon entry={entry} thumbCache={thumbCache} size={140} />
-      </Box>
-
-      <Typography variant="caption" noWrap title={entry.name} sx={{ fontWeight: 500 }}>
-        {entry.name}
-      </Typography>
-
-      {showTags && (
-        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, pt: 0.25 }}>
-          {tags!.map((tag) => (
-            <Chip
-              key={tag}
-              label={tagDisplayLabel(tag, t)}
-              size="small"
-              sx={chipSx(
-                getTagColor(tag, tagColors ?? {}, groups ?? []),
-                false,
-                'rounded'
-              )}
-            />
-          ))}
-        </Box>
-      )}
-
-      <Typography variant="caption" color="text.secondary">
-        {lat.toFixed(5)}, {lng.toFixed(5)}
-      </Typography>
-
-      <Stack direction="row" spacing={1} sx={{ pt: 0.5, alignItems: 'center' }}>
-        {onOpen && (
-          <Button size="small" variant="outlined" onClick={handleOpen}>
-            {t('openFile')}
-          </Button>
-        )}
-        <Link href={mapUrl} target="_blank" rel="noopener noreferrer" underline="none">
-          <Button size="small" variant="outlined">
-            {t(mapLabelKey)}
-          </Button>
-        </Link>
-      </Stack>
-    </Stack>
-  );
-}
-
-function BatchPanel({
-  entries,
-  tagsByName,
-  tagColors,
-  groups,
-  t,
-  canEdit,
-  onAddTag,
-  onRemoveTag,
-  onClearGeo,
-}: {
-  entries: DirEntry[];
-  tagsByName: Map<string, string[]>;
-  tagColors: Record<string, string>;
-  groups: TagGroup[];
-  t: TFunction;
-  canEdit: boolean;
-  onAddTag?: (entry: DirEntry, tag: string) => void;
-  onRemoveTag?: (entry: DirEntry, tag: string) => void;
-  onClearGeo?: (entry: DirEntry) => void;
-}) {
-  const [input, setInput] = useState('');
-  const tagShape = useSelector(
-    (s: RootState) => s.settings?.tagShape ?? 'rounded'
-  );
-
-  // Tags common to every selected file (intersection).
-  const commonTags = useMemo(() => {
-    if (entries.length === 0) return [];
-    const sets = entries.map((e) => new Set(tagsByName.get(e.path) ?? []));
-    const first = sets[0];
-    return [...first].filter((tag) => sets.every((s) => s.has(tag)));
-  }, [entries, tagsByName]);
-
-  const commit = () => {
-    const tag = input.trim();
-    if (!tag) return;
-    entries.forEach((entry) => onAddTag?.(entry, tag));
-    setInput('');
-  };
-
-  return (
-    <Stack spacing={0} sx={{ py: 1 }}>
-      <Typography variant="subtitle2" sx={{ px: 1.5, pb: 1 }}>
-        {t('nSelected', { count: entries.length })}
-      </Typography>
-
-      {canEdit && (
-        <Button
-          size="small"
-          variant="outlined"
-          color="error"
-          sx={{ mx: 1.5, mb: 1, alignSelf: 'flex-start' }}
-          onClick={() => entries.forEach((e) => onClearGeo?.(e))}
-        >
-          {t('clearLocation')}
-        </Button>
-      )}
-
-      {commonTags.length > 0 && (
-        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, px: 1.5, pb: 1 }}>
-          {commonTags.map((tag) => (
-            <Chip
-              key={tag}
-              label={tagDisplayLabel(tag, t)}
-              size="small"
-              onDelete={canEdit ? () => entries.forEach((e) => onRemoveTag?.(e, tag)) : undefined}
-              sx={chipSx(getTagColor(tag, tagColors, groups), false, tagShape)}
-            />
-          ))}
-        </Box>
-      )}
-
-      {canEdit && (
-        <TextField
-          size="small"
-          fullWidth
-          placeholder={t('addTagToSelection')}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              commit();
-            }
-          }}
-          onBlur={() => input.trim() && commit()}
-          sx={{ px: 1.5 }}
-        />
-      )}
-    </Stack>
-  );
-}
-
-/**
- * P3-5: great-circle distance between two WGS-84 points in kilometers.
- * Used by the `distance` tray sort to order rows by proximity to the
- * current map center. Inputs must already be in WGS-84 (no datum shift).
- */
-function haversineKm(
-  a: { lat: number; lng: number },
-  b: { lat: number; lng: number }
-): number {
-  const R = 6371; // mean Earth radius, km
-  const toRad = (deg: number) => (deg * Math.PI) / 180;
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const lat1 = toRad(a.lat);
-  const lat2 = toRad(b.lat);
-  const h =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
-}
-
-/** Escapes a value for an HTML attribute. Leaflet's DivIcon renders `html`
- *  through `innerHTML`, so an unescaped path containing a quote would break
- *  out of the attribute and become live markup. */
-function escapeAttr(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-/** Escapes a value for a double-quoted CSS attribute selector string. */
-function cssAttrValue(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
-
-/** Build a CSS-only pin marker. `color` is shared with the tray indicator;
- *  selected/active states keep the fill color and add a colored border.
- *  P3-2: the inner shape is wrapped in `.whale-pin-wrap` carrying
- *  `data-entry-path` so a parent effect can toggle `.whale-pin-bounce` to
- *  animate the pin when its tray row is hovered. */
-function makePinIcon(
-  color: string,
-  state: 'normal' | 'selected' | 'active',
-  entryPath?: string
-): L.DivIcon {
-  const isActive = state === 'active';
-  const isSelected = state === 'selected';
-  const size = isActive ? 30 : isSelected ? 26 : 24;
-  const borderColor = isActive ? '#f44336' : isSelected ? '#ff9800' : '#fff';
-  const borderWidth = isActive ? 3 : isSelected ? 3 : 2;
-  const shadow = isActive
-    ? '0 3px 6px rgba(0,0,0,0.5)'
-    : '0 2px 4px rgba(0,0,0,0.4)';
-  return L.divIcon({
-    className: `whale-map-pin-${state}`,
-    html: `<div class="whale-pin-wrap" data-entry-path="${escapeAttr(entryPath ?? '')}" style="
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: ${size}px;
-      height: ${size}px;
-    "><div style="
-      width: ${size}px;
-      height: ${size}px;
-      background: ${color};
-      border: ${borderWidth}px solid ${borderColor};
-      border-radius: 50% 50% 50% 0;
-      transform: rotate(-45deg);
-      box-shadow: ${shadow};
-    "></div></div>`,
-    iconSize: [size, size],
-    iconAnchor: [size / 2, size],
-    popupAnchor: [0, -(size * 0.85)],
-  });
-}

@@ -42,18 +42,20 @@
 [src/main/main.ts](../src/main/main.ts) 主进程:
 
 - `onHeadersReceived` 设 renderer CSP(`default-src 'self'; img-src 'self' https: http: data: blob: ...;` 等)
-- **跳过 `whale-extension://` 响应** —— 由各扩展 meta CSP 自己治理(主进程 CSP 对扩展过严)
+- **跳过 `whale-extension://` 响应** —— 不叠加主窗口策略(对扩展过严),但扩展页也不是裸奔:见下一条
 
 `whale-extension://` 协议:
 
 - `registerSchemesAsPrivileged([{ scheme: 'whale-extension', privileges: { standard: true, secure: true } }])` 在 `app.ready` 之前
 - 没这条 → origin opaque → `document.cookie` 抛 `SecurityError`,drawio/excalidraw 等双层 iframe 加载失败
+- `protocol.handle('whale-extension', ...)` 对 `text/html` 响应下发 **per-extension CSP 响应头**(来源仍是 [src/extensions/shared/csp-policy.json](../src/extensions/shared/csp-policy.json),构建期生成 `dist/extensions/csp-policy.generated.json`,主进程经 [src/main/extension-csp.ts](../src/main/extension-csp.ts) 读取并替换 `__APP_ORIGIN__`)。这是 `frame-ancestors` 唯一可执行通道:生产父级 origin 为 `file:`(scheme source;`file://` 非法被忽略),开发为 `http://localhost:4002`,策略为 `'self' <app-origin>`——`'self'` 供 drawio 同源内层 iframe,app-origin 供 Whale 壳页,其它页面无法嵌入扩展
+- **fail-closed**:清单缺失/损坏 → `console.warn` 后用内置 baseline 继续服务;未知扩展 id 回退 baseline 且每 id 只 warn 一次(宁可白屏也不静默放行);非 HTML 资源不带该头
 
 ## 4. 扩展 iframe 沙箱
 
 - `sandbox = 'allow-same-origin allow-scripts allow-modals allow-downloads'`
 - 主进程只接受 `event.source === iframe.contentWindow` 的消息
-- 每个扩展 HTML 自带严格 CSP meta(`script-src 'self' whale-extension://*`,不内联 handler)
+- 每个扩展 HTML 自带严格 CSP meta(`script-src 'self' whale-extension://*`,不内联 handler);`frame-ancestors` 不在 meta 里(该指令经 meta 被浏览器忽略且每次加载打 console error),只由协议响应头下发(含生效的 `frame-ancestors 'self' <app-origin>`,见 §3)
 
 ## 5. 数据层
 

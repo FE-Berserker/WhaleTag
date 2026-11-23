@@ -9,6 +9,8 @@
 
 import type { DirEntry } from '../../shared/ipc-types';
 import { dateTagRangeKey, parseYyyymmdd, type DateTagRange } from '../../shared/smart-tags';
+import { addDays, ymdLocal } from '../../shared/date-utils';
+export { addDays } from '../../shared/date-utils';
 
 // Period-tag parsing (`isPeriodTag` / `dateTagRangeKey` / `DateTagRange`) lives
 // in shared/smart-tags (main-process tag code uses it too) — re-exported here
@@ -24,10 +26,6 @@ export interface CalendarDay {
   key: string;
 }
 
-function pad2(n: number): string {
-  return String(n).padStart(2, '0');
-}
-
 /** Returns a new Date set to 00:00:00 local time. */
 export function startOfDay(d: Date): Date {
   const r = new Date(d);
@@ -37,7 +35,7 @@ export function startOfDay(d: Date): Date {
 
 /** Local YYYY-MM-DD for a Date. */
 export function ymd(d: Date): string {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  return ymdLocal(d);
 }
 
 /**
@@ -76,13 +74,6 @@ export function addMonthsClamped(d: Date, n: number): Date {
   target.setDate(Math.min(d.getDate(), daysInTarget));
   target.setHours(d.getHours(), d.getMinutes(), d.getSeconds(), d.getMilliseconds());
   return target;
-}
-
-/** Add/subtract days (preserves local time-of-day). */
-export function addDays(d: Date, n: number): Date {
-  const r = new Date(d);
-  r.setDate(r.getDate() + n);
-  return r;
 }
 
 /** Returns the first day of the week containing `date`. */
@@ -233,7 +224,7 @@ export function dateTagDayKey(tag: string): string | null {
   const dateTime = /^(\d{8})[T~]/.exec(tag);
   if (dateTime) return parseYyyymmdd(dateTime[1]);
 
-  // Period: 20251223-20251225 �?place on the start day.
+  // Period: 20251223-20251225 → place on the start day.
   const period = /^(\d{8})-\d{8}$/.exec(tag);
   if (period) return parseYyyymmdd(period[1]);
 
@@ -298,7 +289,7 @@ export type CalendarRange = 'today' | 'week' | 'month' | 'last30' | 'all';
 /**
  * Inclusive `YYYY-MM-DD` bounds for a relative range around `today`, or null
  * for `'all'`. Bucket keys are `YYYY-MM-DD`, so callers can filter buckets by
- * plain string comparison �?this keeps the range filter independent of the
+ * plain string comparison — this keeps the range filter independent of the
  * grouping source (modified / dateTag / auto all produce the same key shape).
  *
  * `today` is passed in (not read here) so the function stays pure and testable.
@@ -324,7 +315,7 @@ export function rangeBounds(
   return { min: ymd(addDays(t0, -29)), max: ymd(t0) };
 }
 
-/** Localized "June 2026" / "2026�?�? label. */
+/** Localized "June 2026" / "2026年6月" label. */
 export function formatMonthYear(date: Date, locale: string): string {
   return new Intl.DateTimeFormat(locale, {
     year: 'numeric',
@@ -382,7 +373,7 @@ export function weekdayLabels(
  * 53-week × 7-day grid for the year heatmap (GitHub-style). Returns exactly
  * 371 {@link CalendarDay}s starting from the first day of the week containing
  * Jan 1 of `year`. Days falling outside `year` carry `inCurrentMonth: false`
- * (the field is reused as "in the focused year" �?same shape, different
+ * (the field is reused as "in the focused year" — same shape, different
  * period). 53 weeks always covers a full year (a 52-week year + the partial
  * week at either end), matching GitHub's contribution graph.
  */

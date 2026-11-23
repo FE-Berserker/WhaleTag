@@ -42,6 +42,8 @@
  * calendar` re-exports these for its view-layer callers.
  */
 
+import { addDays, pad2, ymdCompact } from './date-utils';
+
 /** Number of days in a 1-based month. */
 function daysInMonth(year: number, month: number): number {
   return new Date(year, month, 0).getDate();
@@ -504,24 +506,9 @@ export function smartTagI18nKey(fn: SmartFunctionality): string {
   return `smartTag${fn.charAt(0).toUpperCase()}${fn.slice(1)}`;
 }
 
-function pad2(n: number): string {
-  return n < 10 ? `0${n}` : String(n);
-}
-
-/** YYYYMMDD in the host's local timezone. */
-function ymd(d: Date): string {
-  return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}`;
-}
-
 /** HHMM (24h, local). */
 function hm(d: Date): string {
   return `${pad2(d.getHours())}${pad2(d.getMinutes())}`;
-}
-
-function addDays(d: Date, days: number): Date {
-  const r = new Date(d);
-  r.setDate(r.getDate() + days);
-  return r;
 }
 
 /**
@@ -602,19 +589,19 @@ export function resolveSmartTag(
   if (quadrantValue) return quadrantValue;
   switch (fn) {
     case 'now':
-      return `${ymd(now)}T${hm(now)}`;
+      return `${ymdCompact(now)}T${hm(now)}`;
     case 'today':
-      return ymd(now);
+      return ymdCompact(now);
     case 'yesterday':
-      return ymd(addDays(now, -1));
+      return ymdCompact(addDays(now, -1));
     case 'tomorrow':
-      return ymd(addDays(now, 1));
+      return ymdCompact(addDays(now, 1));
     case 'nextWeek':
       // +7 first → same weekday next week, then snap to its Monday. Going
       // straight to `mondayOfWeek(now)` would return the current week when
       // the user is on/before Wednesday — the explicit +7 makes the
       // semantics "the Monday of the week *after* this one" unambiguous.
-      return ymd(mondayOfWeek(addDays(now, 7)));
+      return ymdCompact(mondayOfWeek(addDays(now, 7)));
     case 'currentMonth':
       return `${now.getFullYear()}${pad2(now.getMonth() + 1)}`;
     case 'currentYear':

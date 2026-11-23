@@ -78,8 +78,8 @@ function relativeSegments(root: string, target: string): string[] {
  *
  * `filter` drops individual entries before they're added to the tree:
  *   - `'all'` (default): keep everything
- *   - `'dir'`: keep only directories �?file entries are dropped
- *   - `'file'`: keep only files �?directory entries are dropped
+ *   - `'dir'`: keep only directories — file entries are dropped
+ *   - `'file'`: keep only files — directory entries are dropped
  * The root node is always present regardless of `filter`. `aggregateTree`
  * still runs at the end, so `value` and `fileCount` on directory nodes
  * reflect only the kept children. */
@@ -107,7 +107,7 @@ export function buildTree(
   // removed. (ECharts sunburst/treemap render slices proportionally
   // to `value`; if we filtered first then aggregated, every dir's
   // value would be 0 and the chart would be empty. See plan §H.20 F
-  // for the rationale �?user feedback 2026-06-30.)
+  // for the rationale — user feedback 2026-06-30.)
   for (const entry of entries) {
     const segments = relativeSegments(rootPath, entry.path);
     if (segments.length === 0) continue; // skip root itself or out-of-tree
@@ -170,7 +170,7 @@ export function buildTree(
   // do this after aggregation so dir sizes are already baked in.
   // For 'file' filter, removing a directory also removes its file
   // descendants (the file filter says "no dirs", so the dir's
-  // children are unreachable) �?files in subdirectories are
+  // children are unreachable) — files in subdirectories are
   // intentionally not visible in 'file' mode, matching the existing
   // design.
   if (filter !== 'all') {

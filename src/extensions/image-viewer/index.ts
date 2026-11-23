@@ -24,6 +24,9 @@ import {
   type ViewportController,
   type Rotation,
 } from '../shared/zoom';
+import { pickStrings, syncDocumentLocale } from '../shared/i18n';
+import { applyThemeToDocument, detectInitialTheme } from '../shared/theme';
+
 import { keymapAction, siblingTarget, type SiblingDirection } from './keymap';
 import { createObjectUrlScope, imageBlobFor } from './object-url';
 
@@ -106,8 +109,8 @@ const I18N: Record<string, Strings> = {
 let T: Strings = I18N.en;
 
 function applyLocale() {
-  T = window.whaleExt.t(I18N);
-  document.documentElement.lang = window.whaleExt.locale;
+  T = pickStrings(I18N);
+  syncDocumentLocale();
   for (const el of toolbarEl.querySelectorAll<HTMLElement>('[data-i18n-title]')) {
     const key = el.dataset.i18nTitle as keyof Strings | undefined;
     if (key && typeof T[key] === 'string') {
@@ -437,7 +440,7 @@ window.whaleExt.onMessage((msg: HostMessage) => {
       break;
     }
     case 'setTheme':
-      document.body.setAttribute('data-theme', msg.theme);
+      applyThemeToDocument(msg.theme);
       break;
     case 'setLocale':
       applyLocale();
@@ -449,7 +452,7 @@ window.whaleExt.onMessage((msg: HostMessage) => {
 
 // ── Boot ────────────────────────────────────────────────────────────────
 applyLocale();
-document.body.setAttribute('data-theme', 'light');
+applyThemeToDocument(detectInitialTheme());
 setControlsEnabled(false);
 // Closing the tab tears the iframe down; revoke the last blob URL instead of
 // leaving the decoded bitmap to the detached document's garbage collector.

@@ -14,7 +14,7 @@ import { geoPointFromTags } from './geo-tag';
  * `aggregateRecursiveEntries` used to be bundled with a React hook in
  * `src/renderer/hooks/useRecursiveEntries.ts`. H.24 R4 removed that hook and
  * moved the recursion into `DirectoryContentContextProvider` (single source
- * of truth �?no more two data flows), leaving this pure function here so it
+ * of truth — no more two data flows), leaving this pure function here so it
  * can be unit-tested without IPC / DOM mocking and reused by the context
  * provider.
  */
@@ -54,7 +54,7 @@ export function filterRecursiveEntries(
 export interface AggregatedRecursiveEntries {
   /** Files AND directories from the recursive scan, in scan order. */
   entries: DirEntry[];
-  /** Per-entry merged (filename �?sidecar) tags, keyed by full path (R1). */
+  /** Per-entry merged (filename → sidecar) tags, keyed by full path (R1). */
   tagsByName: Map<string, string[]>;
   /** Per-entry GPS coordinates, keyed by full path (R1); `null` = known to have none. */
   geoByName: Map<string, { lat: number; lng: number } | null>;
@@ -62,8 +62,8 @@ export interface AggregatedRecursiveEntries {
 
 /**
  * Pure aggregation: given the flat entry list from `listDirectoryRecursive`
- * and a path �?sidecar map, build the `tagsByName` / `geoByName` projections
- * and return them alongside the entries. Files AND directories are kept �?a
+ * and a path → sidecar map, build the `tagsByName` / `geoByName` projections
+ * and return them alongside the entries. Files AND directories are kept — a
  * previous version of this hook dropped directories here, which made the
  * MapiqueView's right-side tray show only files at depth > 1 and prevented
  * users from navigating into a subdirectory from within the map view.
@@ -91,7 +91,7 @@ export function aggregateRecursiveEntries(
     if (merged.length > 0) tagsByName.set(entry.path, merged);
 
     let point: { lat: number; lng: number } | null = null;
-    // Geo location is read exclusively from the `geo:lat,lng` tag �?single
+    // Geo location is read exclusively from the `geo:lat,lng` tag — single
     // source of truth. No parallel sidecar lat/lng field.
     if (meta?.tags) {
       point = geoPointFromTags(meta.tags);

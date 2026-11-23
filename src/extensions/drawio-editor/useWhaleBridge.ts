@@ -3,6 +3,7 @@ import type {
   ExtensionMessage,
   HostMessage,
 } from '../../shared/extension-types';
+import { detectInitialTheme, type ThemeMode } from '../shared/theme';
 
 export interface WhaleFile {
   path: string;
@@ -26,7 +27,7 @@ export interface ExternalDragInfo {
 
 export function useWhaleBridge() {
   const [file, setFile] = useState<WhaleFile | null>(null);
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [theme, setTheme] = useState<ThemeMode>(detectInitialTheme());
   const [locale, setLocale] = useState<string>('en');
   const [readOnly, setReadOnly] = useState(false);
   const requestSaveRef = useRef<(() => void) | null>(null);

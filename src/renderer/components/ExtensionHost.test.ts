@@ -42,6 +42,8 @@ const dispatchedActions: HostAction[] = [];
 const hostEditState = { dirty: true, saving: false };
 
 const savedCache = new Map<string, NodeJS.Module | undefined>();
+/** Contents `handleSave` handed back to the provider after a successful write. */
+const markedSavedContent = new Map<string, string>();
 
 function injectMock(moduleName: string, exports: unknown): void {
   const modulePath = require_.resolve(moduleName);
@@ -62,6 +64,7 @@ before(() => {
   base64Calls = [];
   legacyReadCalls = 0;
   btoaCalls = 0;
+  markedSavedContent.clear();
   readFileBase64Impl = async () => BINARY_BASE64;
   writeFileWithRevisionImpl = async () => {};
   renameImpl = async () => {};
@@ -124,6 +127,9 @@ before(() => {
       registerSaveCurrent: (tabId: string, handler: SaveCurrent | null) => {
         if (handler) registeredSaveHandlers.set(tabId, handler);
         else registeredSaveHandlers.delete(tabId);
+      },
+      markTabSavedContent: (tabId: string, content: string) => {
+        markedSavedContent.set(tabId, content);
       },
     }),
   });
@@ -361,6 +367,11 @@ describe('ExtensionHost revision protocol', () => {
     });
     view.rerender(createElement(ExtensionHostComponent, { ...props, fileContent: 'B' }));
     assert.equal(posted.filter((msg) => msg.type === 'fileContent').length, 0);
+    assert.equal(
+      markedSavedContent.get(props.tabId),
+      'B',
+      'the provider cache must follow the bytes written to disk, so a remounted tab restores the saved content'
+    );
 
     view.rerender(createElement(ExtensionHostComponent, { ...props, fileContent: 'C' }));
     view.rerender(createElement(ExtensionHostComponent, { ...props, fileContent: 'B' }));

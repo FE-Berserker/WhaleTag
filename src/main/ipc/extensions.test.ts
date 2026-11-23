@@ -13,10 +13,18 @@ import { join } from 'node:path';
 const require_ = createRequire(__filename);
 
 type LoadRegistry = (registryPath?: string) => Promise<unknown>;
+type WriteFileWithRevision = (
+  filePath: string,
+  content: string
+) => Promise<void>;
 
 let loadExtensionRegistry: LoadRegistry;
+let writeFileWithRevision: WriteFileWithRevision;
 const savedCache = new Map<string, NodeJS.Module | undefined>();
 let tempDir = '';
+
+/** Ordered side effects of the real revisions/atomic-write modules. */
+const calls: string[] = [];
 
 function injectMock(moduleName: string, exports: unknown): void {
   const modulePath = require_.resolve(moduleName);
@@ -35,13 +43,20 @@ function injectMock(moduleName: string, exports: unknown): void {
 before(() => {
   injectMock('electron', { ipcMain: { handle: () => undefined } });
   injectMock('../revisions', {
-    backupRevision: async () => null,
+    backupRevision: async (filePath: string) => {
+      calls.push(`backup:${filePath}`);
+      return null;
+    },
     listRevisions: async () => [],
     restoreRevision: async () => undefined,
     cleanupRevisionsForLocation: async () => undefined,
     deleteRevision: async () => undefined,
   });
-  injectMock('../atomic-write', { atomicWriteText: async () => undefined });
+  injectMock('../atomic-write', {
+    atomicWriteText: async (filePath: string) => {
+      calls.push(`write:${filePath}`);
+    },
+  });
   injectMock('../allowed-roots', {
     assertWritable: () => undefined,
     assertWithinAllowedRoot: () => undefined,
@@ -54,7 +69,7 @@ before(() => {
   } catch {
     // Not loaded yet.
   }
-  ({ loadExtensionRegistry } = require_('./extensions'));
+  ({ loadExtensionRegistry, writeFileWithRevision } = require_('./extensions'));
 });
 
 after(() => {
@@ -122,5 +137,40 @@ describe('loadExtensionRegistry', () => {
     // In the dev tree src/main/extensions/registry.json does not exist, so the
     // default path resolves to the legitimate "no registry" case.
     assert.equal(await loadExtensionRegistry(), null);
+  });
+});
+
+describe('writeFileWithRevision', () => {
+  it('refuses to resurrect a file that disappeared (stale editor tab)', async () => {
+    calls.length = 0;
+    const missing = join(tempDir, 'renamed-away.txt');
+    await assert.rejects(writeFileWithRevision(missing, 'stale body'), (error: NodeJS.ErrnoException) => {
+      assert.equal(error.code, 'ENOENT');
+      assert.match(error.message, /the file no longer exists/);
+      assert.ok(error.message.includes(missing), 'error must name the file');
+      return true;
+    });
+    // Never snapshot or write when the target is gone.
+    assert.deepEqual(calls, []);
+  });
+
+  it('refuses when the parent directory disappeared', async () => {
+    calls.length = 0;
+    const missingParent = join(tempDir, 'gone-dir', 'a.txt');
+    await assert.rejects(writeFileWithRevision(missingParent, 'body'), (error: NodeJS.ErrnoException) => {
+      assert.equal(error.code, 'ENOENT');
+      assert.match(error.message, /directory no longer exists/);
+      assert.ok(error.message.includes(missingParent), 'error must name the file');
+      return true;
+    });
+    assert.deepEqual(calls, []);
+  });
+
+  it('snapshots the revision before atomically writing an existing file', async () => {
+    calls.length = 0;
+    const file = join(tempDir, 'editor-save.txt');
+    writeFileSync(file, 'old', 'utf8');
+    await writeFileWithRevision(file, 'new');
+    assert.deepEqual(calls, [`backup:${file}`, `write:${file}`]);
   });
 });

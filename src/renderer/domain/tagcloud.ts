@@ -52,7 +52,7 @@ export function tagCategory(tag: string): TagCategory {
   if (isQuadrantTag(tag)) return 'priority';
   if (isGeoTag(tag)) return 'geo';
   // Date-family: any active smart date tag OR any date-shaped value (stale
-  // smart tags still count as "date" for cloud exclusion purposes �?the user
+  // smart tags still count as "date" for cloud exclusion purposes — the user
   // wants to filter them out regardless of freshness).
   if (isDateShapeTag(tag)) return 'date';
   return 'plain';
@@ -76,7 +76,7 @@ export function scaleCount(count: number, scale: SizeScale = 'sqrt'): number {
     case 'linear':
       return count;
     case 'log':
-      // log1p keeps count=1 �?~0.69 (> 0) so single-use tags still render.
+      // log1p keeps count=1 — ~0.69 (> 0) so single-use tags still render.
       return Math.log1p(count);
     case 'sqrt':
     default:
@@ -123,7 +123,7 @@ export function countTags(tagLists: Iterable<readonly string[] | undefined>): Ta
  *
  * H.22 §P2-4: categorize each *distinct* tag once (after counting) instead of
  * filtering every per-file array up front. The old path spread `tagLists` and
- * ran `tagCategory` per occurrence �?O(files × tags); this runs it once per
+ * ran `tagCategory` per occurrence — O(files × tags); this runs it once per
  * distinct tag, so a 10k-file × 10k-tag directory no longer stalls a frame.
  */
 export function tagCloudData(

@@ -71,7 +71,7 @@
 
 **renderer 侧 await helper**(`src/renderer/services/allowed-roots.ts`):
 
-`setAllowedRoots` 走 `ipcRenderer.invoke` 是异步的,而 React 子 → 父的 effect 顺序会让子组件在父 `setAllowedRoots` 之前先发出写 IPC(`index:build` / `tagLibrary:read`),被 fail-closed 拒绝后 effect 不重跑(典型表现:TaskReminder 启动警告 + 永不再弹)。
+`setAllowedRoots` 走 `ipcRenderer.invoke` 是异步的,而 React 子 → 父的 effect 顺序会让子组件在父 `setAllowedRoots` 之前先发出写 IPC(`index:build` / `tagLibrary:read`),被 fail-closed 拒绝后 effect 不重跑(典型表现:TaskReminder 启动警告 + 永不再弹)。`LocationTagLibraryContextProvider` 读取标签库前也已 `await waitForAllowedRoots()`;否则首次 Add Location 时 `tagLibrary:read` 会被拒绝并弹红条(2026-11 GUI 回归实际抓到)。
 
 为对齐"何时发写 IPC"和"何时根目录到位",提供两个 module-scope helper:
 
@@ -100,6 +100,7 @@ writeFileAtomic(path, write):
 - **队列键按 realpath 归一**:`targetKey` 先 `realpathSync` 再 `foldPath`(目标不存在时只 realpath 父目录 + 拼 basename,都失败才退回 `resolve`)。否则同一文件经符号链接 / 8.3 短名有两个键,两条队列各自 rename 同一 inode——Windows 报 `EPERM`,POSIX 上后写覆盖先写且不报错(静默丢一次写)
 - 递归缓存 `loadRecursiveScan` 在入口重新校验 IPC depth:非有限值回退 3,其余取整并限制在 1–5,避免异常 depth 影响缓存路径或扫描工作量
 - 用于 sidecar、索引迁移标志、redux-persist 写盘
+- **扩展编辑器保存前校验目标仍存在**:`writeFileWithRevision`([src/main/ipc/extensions.ts](../src/main/ipc/extensions.ts))在做修订备份 + 原子写之前用 `existsSync` 校验父目录与目标文件;文件已被重命名 / 移动 / 删除时抛带路径的 `ENOENT`(渲染层 `ExtensionHost.handleSave` 捕获并以 `extensionSaveError` 提示),避免旧标签页的保存把用户刚改名掉的文件重新创建出来。存在性检查与写入之间仍有极小竞态窗口(检查后被删除),属已知取舍。
 
 **读语义:`ENOENT` 与空白文件视为"没有已保存数据"**。`wsd.json` 的读取入口 `loadWsd(dirPath)` 在文件缺失或内容为空白时返回 `null`(空白文件可由后续写入重建);非空的 JSON 解析失败、结构不合法(`Invalid aggregated sidecar format: <path>`)、以及非 ENOENT 的 IO 错误(权限 / EIO / 共享冲突)一律上抛,绝不会被当成"空数据"覆盖。这条约束防止把读失败误判为不存在 → 迁移或覆盖写回时抹掉真实元数据。
 
@@ -107,7 +108,7 @@ writeFileAtomic(path, write):
 
 **损坏可见、恢复需确认**:UI 使用 detailed read,在健康数据正常展示的同时报告 `corrupt`(非法 JSON/结构,含 SHA-256)或 `unreadable`(IO)并保留持久 warning。只有用户对 corrupt 项确认后才调用恢复:Main 在 allowedRoots 与目录锁内重读并核对指纹,以 `wx` 排他写入 `wsd.json.corrupt-<时间>-<指纹>.bak` 保存捕获的原字节,再把可读取的 legacy 标签合并进新的有效聚合(legacy 文件本身不删除/不改动);指纹变化、已合法/空白/缺失均零写。失败保留原件和备份;成功后 UI 可定位备份并刷新。恢复保留 legacy 原文件时,删除最后一个标签会保留空聚合作为屏障,避免下次读取重新导入 legacy;无 legacy 的空目录仍删除空聚合。**legacy 迁移只删"确实解析成功"的文件**:[sidecar.ts](../src/main/sidecar.ts) 的 `readLegacySidecars` 把非法 JSON / 非对象文档归入 `corrupt`,迁移时只 `rm` 已解析路径,并把坏文件重命名为 `<name>.json.corrupt-<时间戳>`(字节原样保留,改名后不再匹配 `.json` 扫描,迁移不会反复重跑);重命名失败则留在原地并记录 warning,下次读取再试,绝不删除。
 
-**读-改-写路径:损坏 ≠ 空**。`wsm.json`(folder-meta)与 `wtaglib.json`(per-location 标签库)的展示读取仍是宽松策略:缺失 / 非法都返回空(`folder-meta.ts` / `tag-library.ts`),因为它们只是视图偏好与描述文本。但**写入路径不再复用宽松读取**:`writeFolderMeta` / `setTagLibraryDescription` / `clearTagLibraryDescription` 经 [merge-read.ts](../src/main/merge-read.ts) 的 `readJsonForMerge` 取合并基底 —— 文件缺失返回 `null`(从空开始);JSON 损坏或外形不符时把原文件**隔离**为同目录 `<name>.corrupt-<ISO 时间戳>`(字节原样保留,永不删除),记录 warning 后从空开始,因此一次单字段修改不会把其余 tags / color / description / perspective 一起抹掉;非 ENOENT 的 IO 错误(权限 / EIO / 共享冲突)直接**上抛**,绝不当"空"覆盖。`wsd.json` 承载文件级标签,沿用更严格的 §7 策略(损坏上抛 + UI 确认恢复),不容许任何降级。
+**读-改-写路径:损坏 ≠ 空**。`wsm.json`(folder-meta)的展示读取仍是宽松策略:缺失 / 非法都返回空(`folder-meta.ts`),它只是视图偏好。`wtaglib.json`(per-location 标签库)的展示读取只把**缺失**当空(`tag-library.ts` 的 `readTagLibrary`);文件不可读 / JSON 损坏 / 外形不符一律带路径抛错,渲染层 `LocationTagLibraryContextProvider` 捕获后清空展示并提示(`tagLibraryLoadFailed`),不再把损坏的标签库伪装成"没有描述"。但**写入路径不再复用宽松读取**:`writeFolderMeta` / `setTagLibraryDescription` / `clearTagLibraryDescription` 经 [merge-read.ts](../src/main/merge-read.ts) 的 `readJsonForMerge` 取合并基底 —— 文件缺失返回 `null`(从空开始);JSON 损坏或外形不符时把原文件**隔离**为同目录 `<name>.corrupt-<ISO 时间戳>`(字节原样保留,永不删除),记录 warning 后从空开始,因此一次单字段修改不会把其余 tags / color / description / perspective 一起抹掉;非 ENOENT 的 IO 错误(权限 / EIO / 共享冲突)直接**上抛**,绝不当"空"覆盖。`wsd.json` 承载文件级标签,沿用更严格的 §7 策略(损坏上抛 + UI 确认恢复),不容许任何降级。
 
 ## 8. redux-persist(主进程 IO)
 

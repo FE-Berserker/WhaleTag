@@ -26,6 +26,13 @@ import './viewer.css';
 import type { Font as OpentypeFont } from 'opentype.js';
 import type { HostMessage } from '../../shared/extension-types';
 import { createViewerPrefs } from '../shared/viewer-prefs';
+import {
+  onLocaleChange,
+  pickStrings,
+  syncDocumentLocale,
+} from '../shared/i18n';
+import { applyThemeToDocument, detectInitialTheme } from '../shared/theme';
+
 
 import {
  formatBytes,
@@ -263,8 +270,8 @@ const I18N: Record<string, Strings> = {
 let T: Strings = I18N.en;
 
 function applyLocale() {
- T = window.whaleExt.t(I18N);
- document.documentElement.lang = window.whaleExt.locale;
+ T = pickStrings(I18N);
+ syncDocumentLocale();
  // Status bar
  statusSizeLbl.textContent = T.sizeLabel;
  statusFamilyLbl.textContent = T.familyLabel;
@@ -313,25 +320,8 @@ function applyLocale() {
 }
 
 // --- Theme ---------------------------------------------------------------
-
-function detectInitialTheme(): 'light' | 'dark' {
- try {
- if (
- typeof window !== 'undefined' &&
- typeof window.matchMedia === 'function' &&
- window.matchMedia('(prefers-color-scheme: dark)').matches
- ) {
- return 'dark';
- }
- } catch {
- /* fallthrough */
- }
- return 'light';
-}
-
-function applyTheme(theme: 'light' | 'dark') {
- document.body.setAttribute('data-theme', theme);
-}
+// First paint + live theme are shared (src/extensions/shared/theme.ts).
+// First paint + live theme are shared (src/extensions/shared/theme.ts).
 
 // --- State ---------------------------------------------------------------
 
@@ -849,18 +839,18 @@ window.whaleExt.onMessage((msg: HostMessage) => {
  break;
  }
  case 'setTheme':
- applyTheme(msg.theme);
+ applyThemeToDocument(msg.theme);
  break;
  default:
  break;
  }
 });
 
-window.whaleExt.onLocale(() => applyLocale());
+onLocaleChange(applyLocale);
 
 // --- Initial paint ------------------------------------------------------
 
-applyTheme(detectInitialTheme());
+applyThemeToDocument(detectInitialTheme());
 loadPersistedState();
 applyLocale();
 applySliderToDom();

@@ -118,6 +118,11 @@ export interface ExtensionContextValue {
     tabId: string,
     fn: (() => Promise<boolean>) | null
   ) => void;
+  /** Replace the tab's cached content after an in-editor save succeeds.
+   *  A tab that gets unmounted by the iframe mount policy (or rebuilt on
+   *  activation) is restored from this cache, so it must hold the saved bytes
+   *  rather than the bytes the file was opened with. */
+  markTabSavedContent: (tabId: string, content: string) => void;
 }
 
 const ExtensionContext = createContext<ExtensionContextValue | null>(null);
@@ -223,6 +228,23 @@ export function ExtensionContextProvider({
     },
     []
   );
+
+  // Keep the tab's cached content in step with what is on disk after an
+  // in-editor save. Tab iframes are no longer all kept alive (see
+  // extension-host/tab-mount-policy): an unmounted tab is rebuilt from
+  // `tab.fileContent`, and without this the rebuild would resurrect the bytes
+  // the file was opened with — the next save would then silently write stale
+  // content over the file. No-ops when the tab is already gone (closed mid-save)
+  // or the content is unchanged.
+  const markTabSavedContent = useCallback((tabId: string, content: string) => {
+    setTabs((prev) => {
+      const index = prev.findIndex((tab) => tab.id === tabId);
+      if (index === -1 || prev[index].fileContent === content) return prev;
+      const next = prev.slice();
+      next[index] = { ...next[index], fileContent: content };
+      return next;
+    });
+  }, []);
 
   // §unsaved-close — flush every dirty tab when the WINDOW closes. Main sends
   // `app:request-flush` and destroys the window after a grace period; without
@@ -645,6 +667,7 @@ export function ExtensionContextProvider({
       requestCloseCurrent,
       closeView,
       registerSaveCurrent,
+      markTabSavedContent,
     }),
     [
       registry,
@@ -665,6 +688,7 @@ export function ExtensionContextProvider({
       requestCloseCurrent,
       closeView,
       registerSaveCurrent,
+      markTabSavedContent,
     ]
   );
 

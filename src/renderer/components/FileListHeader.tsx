@@ -562,6 +562,7 @@ function FileListHeader(props: FileListHeaderProps) {
           <Tooltip title={activeSpecialized ? activeSpecialized.label : t('more')}>
             <IconButton
               size="small"
+              data-testid="view-overflow"
               color={activeSpecialized ? 'primary' : 'default'}
               aria-label={activeSpecialized ? activeSpecialized.label : t('more')}
               aria-haspopup="menu"
