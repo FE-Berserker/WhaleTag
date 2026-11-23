@@ -434,6 +434,30 @@ async function loadFilesOrMigrate(
   return migrateLegacySidecars(dirPath);
 }
 
+/**
+ * Strictly read-only sidecar batch read for the LAN server. Unlike
+ * readSidecars(), this never takes a write lock, imports legacy JSON files,
+ * persists lat/lng conversions, or creates .whale/wsd.json. Legacy entries are
+ * returned in memory when no aggregate exists; malformed metadata still throws
+ * rather than being silently replaced.
+ */
+export async function readSidecarsReadOnly(
+  dirPath: string,
+  names: readonly string[]
+): Promise<Record<string, SidecarMeta>> {
+  if (names.length === 0) return {};
+  const loaded = await loadWsd(dirPath);
+  const files = loaded?.files ?? (await readLegacySidecars(dirPath)).files;
+  const wanted = new Set(names);
+  const out: Record<string, SidecarMeta> = {};
+  for (const [name, stored] of Object.entries(files)) {
+    if (!wanted.has(name)) continue;
+    const converted = migrateLatLngToTag(stored);
+    if (converted.next) out[name] = converted.next;
+  }
+  return out;
+}
+
 /** Reads a file's sidecar; null if the file has none. Triggers migration on miss. */
 export async function readSidecar(
   filePath: string

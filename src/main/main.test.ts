@@ -20,6 +20,7 @@ function loadMain(
     './dir-watcher',
     './thumb-worker-host',
     './mcp/mcp-server',
+    './lan',
     './auto-update',
     './menu',
     './allowed-roots',

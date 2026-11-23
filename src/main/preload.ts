@@ -234,6 +234,11 @@ const whaleApi: WhaleApi = {
   startFileDrag: (filePath: string) =>
     ipcRenderer.send('drag:startFile', filePath),
 
+  // Read-only LAN server: explicit start/stop only; token is never persisted.
+  getLanStatus: () => ipcRenderer.invoke('lan:getStatus'),
+  startLanServer: () => ipcRenderer.invoke('lan:start'),
+  stopLanServer: () => ipcRenderer.invoke('lan:stop'),
+
   // Local MCP server (docs/21) — status polling + approval decisions.
   mcpGetStatus: () => ipcRenderer.invoke('mcp:getStatus'),
   mcpSetEnabled: (enabled: boolean) =>

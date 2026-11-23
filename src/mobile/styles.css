@@ -1,0 +1,1148 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f3f6fb;
+  color: #17243a;
+  font-synthesis: none;
+  --mobile-accent: #3168d5;
+  /* >=4.5:1 on both #fff and the #f3f6fb page background (WCAG AA, 12px text). */
+  --mobile-muted: #59677b;
+  --mobile-border: #e2e9f2;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-width: 320px;
+  overscroll-behavior-y: none;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-app {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background:
+    radial-gradient(circle at 8% -10%, rgba(92, 145, 230, 0.13), transparent 32rem),
+    #f3f6fb;
+}
+
+.mobile-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding-top: env(safe-area-inset-top);
+  background: rgba(255, 255, 255, 0.92);
+  border-bottom: 1px solid rgba(218, 227, 239, 0.85);
+  backdrop-filter: blur(18px);
+}
+
+.mobile-header-inner {
+  width: 100%;
+  max-width: 1120px;
+  min-height: 68px;
+  margin: 0 auto;
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.brand-lockup,
+.header-actions,
+.location-row,
+.content-toolbar,
+.preview-header,
+.preview-footer {
+  display: flex;
+  align-items: center;
+}
+
+.brand-lockup {
+  min-width: 0;
+  gap: 9px;
+}
+
+.brand-mark {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: white;
+  background: linear-gradient(145deg, #3979df, #2855b5);
+  border-radius: 12px;
+  box-shadow: 0 5px 14px rgba(49, 104, 213, 0.25);
+}
+
+.brand-mark .MuiSvgIcon-root {
+  width: 22px;
+  height: 22px;
+}
+
+.brand-name {
+  font-size: 18px;
+  font-weight: 760;
+  letter-spacing: -0.035em;
+  white-space: nowrap;
+}
+
+.brand-lan {
+  padding: 3px 6px;
+  color: #3168d5;
+  background: #eaf1ff;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+}
+
+.header-actions {
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.readonly-chip.MuiChip-root {
+  height: 30px;
+  color: #42604f;
+  background: #edf7f0;
+  border: 1px solid #d9ecdf;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.readonly-chip .MuiChip-icon {
+  width: 14px;
+  height: 14px;
+  color: #558168;
+}
+
+.language-select.MuiInputBase-root {
+  min-height: 40px;
+  color: #526176;
+  background: #f3f6fa;
+  border-radius: 11px;
+  font-size: 12px;
+}
+
+.language-select .MuiSelect-select {
+  min-height: 40px;
+  padding: 0 25px 0 8px;
+  display: flex;
+  align-items: center;
+  max-width: 88px;
+}
+
+.language-select .MuiSelect-icon {
+  right: 5px;
+  width: 18px;
+  color: #8390a2;
+}
+
+.language-icon {
+  width: 17px;
+  height: 17px;
+  margin-left: 9px;
+  color: #738299;
+}
+
+.mobile-main {
+  width: 100%;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 20px 12px calc(32px + env(safe-area-inset-bottom));
+}
+
+.browser-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.navigation-surface,
+.browser-surface {
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid var(--mobile-border);
+  box-shadow: 0 7px 24px rgba(31, 54, 88, 0.045);
+}
+
+.navigation-surface {
+  padding: 14px;
+  border-radius: 20px;
+}
+
+.location-row {
+  gap: 8px;
+}
+
+.back-button.MuiIconButton-root {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  color: #43546d;
+  background: #eef3f9;
+}
+
+.location-select {
+  min-width: 0;
+}
+
+.location-select .MuiFilledInput-root,
+.mobile-search .MuiFilledInput-root,
+.pairing-form .MuiFilledInput-root {
+  overflow: hidden;
+  background: #eef3f8;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.location-select .MuiFilledInput-root {
+  height: 48px;
+}
+
+.location-select .MuiFilledInput-root.Mui-focused,
+.mobile-search .MuiFilledInput-root.Mui-focused,
+.pairing-form .MuiFilledInput-root.Mui-focused {
+  background: #fff;
+  border-color: #a8c2ee;
+  box-shadow: 0 0 0 3px rgba(49, 104, 213, 0.09);
+}
+
+.location-select .MuiSelect-select,
+.mobile-search .MuiFilledInput-input {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.location-select .MuiSelect-select {
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.location-select .MuiInputAdornment-root,
+.mobile-search .MuiInputAdornment-root {
+  color: #708099;
+}
+
+.location-select .MuiInputAdornment-root .MuiSvgIcon-root {
+  width: 21px;
+}
+
+.location-breadcrumbs.MuiBreadcrumbs-root {
+  margin-top: 11px;
+  padding: 0 3px;
+  color: #7a879a;
+  font-size: 12px;
+}
+
+.location-breadcrumbs .MuiBreadcrumbs-separator {
+  margin: 0 2px;
+}
+
+.location-breadcrumbs .MuiBreadcrumbs-separator .MuiSvgIcon-root {
+  width: 15px;
+  height: 15px;
+}
+
+.location-breadcrumbs .MuiLink-root {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  color: #5d6f88;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.current-breadcrumb {
+  max-width: 180px;
+  color: #263750;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.browser-surface {
+  overflow: hidden;
+  border-radius: 22px;
+}
+
+.browser-controls {
+  padding: 12px 12px 0;
+}
+
+.mobile-search .MuiFilledInput-root {
+  height: 48px;
+}
+
+.mobile-search .MuiFilledInput-input {
+  height: 48px;
+  padding-right: 12px;
+  color: #253750;
+  /* >=16px: iOS Safari must not zoom the whole page when the field focuses. */
+  font-size: 16px;
+}
+
+.mobile-search .MuiFilledInput-input::placeholder {
+  color: #8794a7;
+  opacity: 1;
+}
+
+.tag-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 12px 1px 2px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tag-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.tag-strip .MuiChip-root {
+  min-height: 44px;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.content-toolbar {
+  min-height: 54px;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.result-count {
+  color: var(--mobile-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* MUI's size="small" IconButton is 40px; keep a 44px touch target. */
+.clear-filter-control {
+  width: 44px;
+  height: 44px;
+}
+
+.view-toggle.MuiToggleButtonGroup-root {
+  flex: 0 0 auto;
+  padding: 3px;
+  gap: 2px;
+  background: #eef2f7;
+  border: 0;
+  border-radius: 12px;
+}
+
+.view-toggle .MuiToggleButton-root {
+  min-height: 44px;
+  padding: 0 10px;
+  gap: 5px;
+  color: #718095;
+  border: 0;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: none;
+}
+
+.view-toggle .MuiToggleButton-root.Mui-selected {
+  color: #2e5fbf;
+  background: #fff;
+  box-shadow: 0 2px 7px rgba(39, 60, 91, 0.11);
+}
+
+.view-toggle .MuiSvgIcon-root {
+  width: 17px;
+  height: 17px;
+}
+
+.results-area {
+  padding: 0 12px 12px;
+}
+
+.results-area > .MuiAlert-root {
+  margin: 0 0 10px;
+  border-radius: 12px;
+  font-size: 12px;
+}
+
+.tag-error.MuiAlert-root {
+  margin-top: 10px;
+  border-radius: 12px;
+  font-size: 12px;
+}
+
+/* Media that fails to load (corrupt file, unsupported codec, expired session)
+   reuses the thumbnail-fallback tile instead of leaving a broken player. */
+.preview-media-fallback {
+  min-height: 240px;
+  padding: 28px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--mobile-muted);
+  background: #eff2f6;
+  border: 1px dashed var(--mobile-border);
+  border-radius: 16px;
+  text-align: center;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.preview-media-fallback .MuiSvgIcon-root {
+  width: 54px;
+  height: 54px;
+  color: #7b8ea8;
+}
+
+.entry-grid.list {
+  display: flex;
+  flex-direction: column;
+}
+
+.entry-item {
+  position: relative;
+  min-width: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.entry-grid.list .entry-item {
+  width: 100%;
+  min-height: 76px;
+  padding: 10px 4px;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 22px;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid #edf1f5;
+  border-radius: 9px;
+  transition: background-color 120ms ease;
+}
+
+.entry-grid.list .entry-item:last-child {
+  border-bottom-color: transparent;
+}
+
+.entry-grid.list .entry-item:hover {
+  background: #f6f9fd;
+}
+
+.entry-item:focus-visible {
+  outline: 3px solid rgba(49, 104, 213, 0.35);
+  outline-offset: -2px;
+}
+
+.entry-visual {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 14px;
+}
+
+.entry-visual-image {
+  background: #e7f4ef;
+  color: #238768;
+}
+
+.entry-visual-directory {
+  background: #e9f1ff;
+  color: #3c73c9;
+}
+
+.entry-visual-video {
+  background: #f1edff;
+  color: #7b5ac7;
+}
+
+.entry-visual-audio {
+  background: #fff0e8;
+  color: #c9713e;
+}
+
+.entry-visual-pdf {
+  background: #ffedf0;
+  color: #ce5264;
+}
+
+.entry-visual-text {
+  background: #edf3f8;
+  color: #5d7895;
+}
+
+.entry-visual-other {
+  background: #eff2f6;
+  color: #718095;
+}
+
+.entry-type-icon {
+  width: 27px;
+  height: 27px;
+}
+
+.entry-visual img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.entry-extension {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  max-width: calc(100% - 8px);
+  padding: 1px 3px;
+  overflow: hidden;
+  color: #66768a;
+  background: rgba(255, 255, 255, 0.88);
+  border-radius: 4px;
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.entry-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.entry-name {
+  display: block;
+  color: #1d2c43;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: -0.012em;
+}
+
+.entry-meta {
+  display: block;
+  margin-top: 4px;
+  color: var(--mobile-muted);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.entry-chevron {
+  width: 21px;
+  height: 21px;
+  color: #acb6c4;
+}
+
+.entry-grid.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding-top: 3px;
+}
+
+.entry-grid.grid .entry-item {
+  min-height: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  overflow: hidden;
+  text-align: left;
+  background: #fff;
+  border: 1px solid #e1e8f0;
+  border-radius: 16px;
+  box-shadow: 0 4px 13px rgba(29, 50, 80, 0.055);
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+}
+
+.entry-grid.grid .entry-item:hover {
+  transform: translateY(-1px);
+  border-color: #c8d8ee;
+  box-shadow: 0 8px 20px rgba(29, 50, 80, 0.09);
+}
+
+.entry-grid.grid .entry-visual {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  border-radius: 0;
+}
+
+.entry-grid.grid .entry-type-icon {
+  width: 42px;
+  height: 42px;
+}
+
+.entry-grid.grid .entry-extension {
+  right: 9px;
+  bottom: 9px;
+  padding: 3px 6px;
+  font-size: 9px;
+}
+
+.entry-grid.grid .entry-copy {
+  min-height: 67px;
+  padding: 11px 28px 12px 12px;
+}
+
+.entry-grid.grid .entry-name {
+  font-size: 14px;
+}
+
+.entry-grid.grid .entry-meta {
+  font-size: 11px;
+}
+
+.entry-grid.grid .entry-chevron {
+  position: absolute;
+  right: 8px;
+  bottom: 25px;
+  width: 18px;
+  height: 18px;
+}
+
+.content-loading,
+.empty-state,
+.session-loading,
+.preview-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--mobile-muted);
+}
+
+.content-loading {
+  min-height: 220px;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.empty-state {
+  min-height: 230px;
+  padding: 28px 16px;
+  flex-direction: column;
+  gap: 10px;
+  text-align: center;
+  font-size: 14px;
+}
+
+.empty-state > .MuiSvgIcon-root {
+  width: 46px;
+  height: 46px;
+  margin-bottom: 4px;
+  color: #91a6c1;
+}
+
+.refresh-button.MuiButton-root {
+  min-height: 44px;
+  align-self: center;
+  padding: 0 16px;
+  color: var(--mobile-muted);
+  border-radius: 12px;
+  font-size: 12px;
+  text-transform: none;
+}
+
+.session-loading {
+  min-height: 55vh;
+}
+
+.pairing-layout {
+  min-height: calc(100vh - 110px);
+  min-height: calc(100dvh - 110px);
+  padding: 22px 0 60px;
+  display: grid;
+  place-items: center;
+}
+
+.pairing-card {
+  width: min(100%, 440px);
+  padding: 32px 26px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid var(--mobile-border);
+  border-radius: 28px;
+  box-shadow: 0 20px 55px rgba(35, 58, 92, 0.1);
+}
+
+.pairing-symbol {
+  width: 72px;
+  height: 72px;
+  margin: 0 auto 18px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: linear-gradient(145deg, #4b86e5, #2d55b4);
+  border-radius: 22px;
+  box-shadow: 0 10px 24px rgba(49, 104, 213, 0.26);
+}
+
+.pairing-symbol .MuiSvgIcon-root {
+  width: 36px;
+  height: 36px;
+}
+
+.pairing-badge.MuiChip-root {
+  height: 27px;
+  margin-bottom: 14px;
+  color: #4f6c5b;
+  background: #eef7f0;
+  font-size: 11px;
+}
+
+.pairing-title {
+  color: #172943;
+  font-size: 28px;
+  font-weight: 760;
+  letter-spacing: -0.04em;
+  line-height: 1.2;
+}
+
+.pairing-subtitle {
+  max-width: 330px;
+  margin: 12px auto 0;
+  color: #718095;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.pairing-form {
+  margin-top: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  text-align: left;
+}
+
+.pairing-form .MuiFilledInput-root {
+  min-height: 56px;
+}
+
+.pairing-form .MuiButton-root {
+  min-height: 50px;
+  background: #3168d5;
+  border-radius: 14px;
+  box-shadow: 0 7px 16px rgba(49, 104, 213, 0.2);
+  font-size: 14px;
+  font-weight: 700;
+  text-transform: none;
+}
+
+.preview-paper {
+  overflow: hidden;
+  background: #f5f8fc;
+  border-radius: 24px;
+}
+
+.preview-header {
+  min-height: 78px;
+  padding: 14px 18px;
+  gap: 12px;
+  background: #fff;
+  border-bottom: 1px solid var(--mobile-border);
+}
+
+.preview-file-badge {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: #4d72a9;
+  background: #edf3fb;
+  border-radius: 13px;
+}
+
+.preview-heading {
+  min-width: 0;
+  flex: 1;
+}
+
+.preview-kicker {
+  margin-bottom: 2px;
+  color: var(--mobile-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.preview-title {
+  color: #1d2d45;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.preview-close.MuiIconButton-root {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  color: #63738a;
+  background: #f1f4f8;
+}
+
+.preview-content.MuiDialogContent-root {
+  min-height: 260px;
+  padding: 20px;
+}
+
+.preview-loading {
+  min-height: 260px;
+}
+
+.preview-media {
+  display: block;
+  max-width: 100%;
+  max-height: 60vh;
+  margin: auto;
+  border-radius: 16px;
+}
+
+.preview-image {
+  object-fit: contain;
+}
+
+video.preview-media {
+  width: 100%;
+  background: #101722;
+}
+
+.audio-preview {
+  min-height: 250px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  color: #7187a5;
+}
+
+.audio-preview > .MuiSvgIcon-root {
+  width: 72px;
+  height: 72px;
+}
+
+.audio-preview audio {
+  width: min(100%, 480px);
+}
+
+.text-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.text-preview-content {
+  min-height: 180px;
+  max-height: 55vh;
+  margin: 0;
+  padding: 18px;
+  overflow: auto;
+  color: #263a54;
+  background: #fff;
+  border: 1px solid var(--mobile-border);
+  border-radius: 14px;
+  font: 13px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.safe-download-message {
+  min-height: 250px;
+  padding: 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  color: #6d7f96;
+  text-align: center;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.safe-download-message .MuiSvgIcon-root {
+  width: 62px;
+  height: 62px;
+  color: #8ca1ba;
+}
+
+.preview-footer {
+  min-height: 76px;
+  padding: 14px 18px calc(14px + env(safe-area-inset-bottom));
+  justify-content: space-between;
+  gap: 16px;
+  background: #fff;
+  border-top: 1px solid var(--mobile-border);
+}
+
+.preview-meta {
+  min-width: 0;
+  flex: 1;
+  color: var(--mobile-muted);
+  font-size: 12px;
+}
+
+.preview-footer .MuiButton-root {
+  min-height: 44px;
+  flex: 0 0 auto;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: none;
+}
+
+@media (max-width: 480px) {
+  .mobile-header-inner {
+    min-height: 62px;
+    padding: 7px 11px;
+    gap: 8px;
+  }
+
+  .brand-lockup {
+    gap: 7px;
+  }
+
+  .brand-mark {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+  }
+
+  .brand-name {
+    font-size: 16px;
+  }
+
+  .brand-lan {
+    display: none;
+  }
+
+  .header-actions {
+    gap: 5px;
+  }
+
+  .readonly-chip.MuiChip-root {
+    height: 28px;
+    padding: 0 2px;
+    font-size: 10px;
+  }
+
+  .readonly-chip .MuiChip-icon,
+  .language-icon {
+    display: none;
+  }
+
+  .language-select .MuiSelect-select {
+    max-width: 65px;
+    padding-left: 4px;
+    font-size: 11px;
+  }
+
+  .mobile-main {
+    padding: 12px 10px calc(24px + env(safe-area-inset-bottom));
+  }
+
+  .browser-shell {
+    gap: 10px;
+  }
+
+  .navigation-surface {
+    padding: 12px;
+    border-radius: 18px;
+  }
+
+  .browser-surface {
+    border-radius: 18px;
+  }
+
+  .browser-controls {
+    padding: 11px 10px 0;
+  }
+
+  .results-area {
+    padding: 0 10px 10px;
+  }
+
+  .entry-grid.list .entry-item {
+    min-height: 76px;
+    grid-template-columns: 50px minmax(0, 1fr) 20px;
+    gap: 11px;
+  }
+
+  .entry-visual {
+    width: 50px;
+    height: 50px;
+    border-radius: 13px;
+  }
+
+  .entry-grid.grid {
+    gap: 10px;
+  }
+
+  .entry-grid.grid .entry-copy {
+    padding-left: 10px;
+  }
+
+  .view-toggle .MuiToggleButton-root {
+    padding: 0 8px;
+  }
+
+  .pairing-card {
+    padding: 28px 20px;
+    border-radius: 24px;
+  }
+
+  .pairing-title {
+    font-size: 25px;
+  }
+
+  .preview-paper {
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+    margin: 0;
+    border-radius: 0;
+  }
+
+  .preview-header {
+    padding-top: calc(12px + env(safe-area-inset-top));
+  }
+
+  .preview-content.MuiDialogContent-root {
+    padding: 14px;
+  }
+}
+
+@media (max-width: 360px) {
+  .brand-lan {
+    display: none;
+  }
+
+  .readonly-chip.MuiChip-root {
+    display: none;
+  }
+
+  .view-toggle .MuiToggleButton-root span {
+    display: none;
+  }
+}
+
+@media (min-width: 768px) {
+  .mobile-header-inner {
+    min-height: 72px;
+    padding-right: 28px;
+    padding-left: 28px;
+  }
+
+  .brand-name {
+    font-size: 20px;
+  }
+
+  .mobile-main {
+    padding: 28px 28px 42px;
+  }
+
+  .browser-shell {
+    max-width: 1064px;
+    gap: 16px;
+  }
+
+  .navigation-surface {
+    padding: 16px 20px;
+    border-radius: 22px;
+  }
+
+  .browser-controls {
+    padding: 18px 20px 0;
+  }
+
+  .results-area {
+    padding: 0 20px 20px;
+  }
+
+  .content-toolbar {
+    min-height: 60px;
+  }
+
+  .entry-grid.list {
+    width: 100%;
+    max-width: 860px;
+    margin: 0 auto;
+  }
+
+  .entry-grid.list .entry-item {
+    min-height: 80px;
+    grid-template-columns: 56px minmax(0, 1fr) 24px;
+    padding: 12px 8px;
+  }
+
+  .entry-grid.list .entry-visual {
+    width: 56px;
+    height: 56px;
+  }
+
+  .entry-grid.grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    padding-top: 6px;
+  }
+
+  .entry-grid.grid .entry-copy {
+    min-height: 72px;
+    padding: 13px 30px 13px 14px;
+  }
+
+  .entry-grid.grid .entry-name {
+    font-size: 15px;
+  }
+
+  .pairing-card {
+    padding: 38px 36px;
+  }
+}
+
+@media (min-width: 1100px) {
+  .entry-grid.grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

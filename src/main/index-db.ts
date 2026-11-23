@@ -145,6 +145,23 @@ function getDb(rootPath: string): DB {
   return db;
 }
 
+/**
+ * Opens an existing index without creating or migrating anything. LAN reads
+ * deliberately use a short-lived connection instead of getDb(): getDb() sets
+ * WAL mode and executes SCHEMA, both of which are writes. A missing database
+ * returns null so callers can report indexUnavailable without even creating
+ * the .whale directory.
+ */
+function getReadOnlyDb(rootPath: string): DB | null {
+  if (!existsSync(dbPath(rootPath))) return null;
+  const db = new Database(dbPath(rootPath), {
+    readonly: true,
+    fileMustExist: true,
+  });
+  db.pragma('query_only = ON');
+  return db;
+}
+
 /** Closes one root's db (e.g. when its location is removed). */
 export function closeDb(rootPath: string): void {
   const db = openDbs.get(rootPath);
@@ -427,8 +444,7 @@ export function queryFiles(rootPath: string, q: string): IndexEntry[] {
 }
 
 /** Structured (advanced) search — the SearchQuery compiled to SQL WHERE. */
-export function advancedQuery(rootPath: string, q: SearchQuery): IndexEntry[] {
-  const db = getDb(rootPath);
+function advancedQueryWithDb(db: DB, q: SearchQuery): IndexEntry[] {
   const where: string[] = [];
   const params: unknown[] = [];
 
@@ -484,9 +500,26 @@ export function advancedQuery(rootPath: string, q: SearchQuery): IndexEntry[] {
   return rows.map(rowToEntry);
 }
 
-/** All distinct tags across the index (for the advanced-search tag picker). */
-export function distinctTags(rootPath: string): string[] {
-  const db = getDb(rootPath);
+/** Advanced query over the writable application connection. */
+export function advancedQuery(rootPath: string, q: SearchQuery): IndexEntry[] {
+  return advancedQueryWithDb(getDb(rootPath), q);
+}
+
+/** Advanced query over an existing index, or null when no index exists. */
+export function advancedQueryReadOnly(
+  rootPath: string,
+  q: SearchQuery
+): IndexEntry[] | null {
+  const db = getReadOnlyDb(rootPath);
+  if (!db) return null;
+  try {
+    return advancedQueryWithDb(db, q);
+  } finally {
+    db.close();
+  }
+}
+
+function distinctTagsWithDb(db: DB): string[] {
   const rows = prepareCached(db, "SELECT tags FROM files WHERE tags != ''").all() as Pick<
     FileRow,
     'tags'
@@ -498,6 +531,22 @@ export function distinctTags(rootPath: string): string[] {
     }
   }
   return [...set].sort((a, b) => a.localeCompare(b));
+}
+
+/** All distinct tags across the index (for the advanced-search tag picker). */
+export function distinctTags(rootPath: string): string[] {
+  return distinctTagsWithDb(getDb(rootPath));
+}
+
+/** Distinct tags over an existing index, or null when no index exists. */
+export function distinctTagsReadOnly(rootPath: string): string[] | null {
+  const db = getReadOnlyDb(rootPath);
+  if (!db) return null;
+  try {
+    return distinctTagsWithDb(db);
+  } finally {
+    db.close();
+  }
 }
 
 /** Prior fulltext mtimes (path → mtime) for incremental rebuild.

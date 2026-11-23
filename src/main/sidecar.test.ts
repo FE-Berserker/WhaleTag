@@ -7,6 +7,7 @@ import {
   writeSidecar,
   readSidecar,
   readSidecars,
+  readSidecarsReadOnly,
   readSidecardsForPaths,
   removeSidecar,
   moveSidecar,
@@ -585,6 +586,48 @@ describe('updateFileTags', () => {
       const p = filePath(dir, 'a.txt');
       const r = await updateFileTags(p, () => ['b', 'a', 'b', 'c', 'a']);
       assert.deepEqual(r.after, ['b', 'a', 'c']);
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('LAN read-only sidecar reads', () => {
+  it('does not create .whale for an untagged directory', async () => {
+    const dir = await tmpDir();
+    try {
+      assert.deepEqual(await readSidecarsReadOnly(dir, ['a.txt']), {});
+      assert.equal(existsSync(path.join(dir, META_DIR)), false);
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reads legacy metadata in memory without migrating or deleting it', async () => {
+    const dir = await tmpDir();
+    const legacyPath = path.join(dir, META_DIR, 'a.txt.json');
+    const legacy = '{"tags":["legacy"],"lat":1.25,"lng":2.5}';
+    try {
+      await fsp.mkdir(path.dirname(legacyPath), { recursive: true });
+      await fsp.writeFile(legacyPath, legacy, 'utf8');
+      const result = await readSidecarsReadOnly(dir, ['a.txt', 'other.txt']);
+      assert.ok(result['a.txt']?.tags?.includes('legacy'));
+      assert.equal(result['other.txt'], undefined);
+      assert.equal(await fsp.readFile(legacyPath, 'utf8'), legacy);
+      assert.equal(existsSync(wsd(dir)), false, 'no aggregate is created');
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves aggregate bytes and surfaces malformed metadata', async () => {
+    const dir = await tmpDir();
+    const malformed = '{"version":1,"files":';
+    try {
+      await fsp.mkdir(path.dirname(wsd(dir)), { recursive: true });
+      await fsp.writeFile(wsd(dir), malformed, 'utf8');
+      await assert.rejects(readSidecarsReadOnly(dir, ['a.txt']), SyntaxError);
+      assert.equal(await fsp.readFile(wsd(dir), 'utf8'), malformed);
     } finally {
       await fsp.rm(dir, { recursive: true, force: true });
     }

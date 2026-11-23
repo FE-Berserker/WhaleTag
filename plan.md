@@ -30,6 +30,7 @@
 | [docs/19-code-audit.md](docs/19-code-audit.md) | 代码质量审计与改进清单(§F 例外追踪文档) |
 | [docs/20-relative-links.md](docs/20-relative-links.md) | drawio/excalidraw 文件链接相对路径方案(§F 例外方案追踪) |
 | [docs/21-mcp.md](docs/21-mcp.md) | 本地 MCP 服务器:外部 AI 客户端经 Streamable HTTP + Bearer token 搜索/读取/打标/打包,文件级操作需审批 |
+| [docs/22-lan-access.md](docs/22-lan-access.md) | 局域网只读访问:桌面端手动开启 + 临时 token 配对,手机/平板浏览器只读浏览/搜索/预览/下载,不建索引与缓存 |
 
 > 找不到某模块的现状?直接从对应 `docs/0X-*.md` 入口找,不必翻 git 历史。
 

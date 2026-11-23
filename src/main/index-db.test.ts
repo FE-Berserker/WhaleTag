@@ -8,7 +8,9 @@ import {
   filesPrior,
   queryFiles,
   advancedQuery,
+  advancedQueryReadOnly,
   distinctTags,
+  distinctTagsReadOnly,
   ingestFulltext,
   insertFulltext,
   deleteFulltextPaths,
@@ -647,6 +649,45 @@ describe('index-db (SQLite + FTS5 trigram)', () => {
       closeDb(rootB);
       await fsp.rm(rootA, { recursive: true, force: true });
       await fsp.rm(rootB, { recursive: true, force: true });
+    }
+  });
+
+  it('LAN readonly queries report a missing index without creating metadata', async () => {
+    const root = await tmpRoot();
+    try {
+      assert.equal(advancedQueryReadOnly(root, emptyQ()), null);
+      assert.equal(distinctTagsReadOnly(root), null);
+      await assert.rejects(fsp.stat(path.join(root, '.whale')), { code: 'ENOENT' });
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('LAN readonly queries reuse existing rows without changing the database', async () => {
+    const root = await tmpRoot();
+    const dbFile = path.join(root, '.whale', 'index.db');
+    try {
+      await setup(root);
+      await ingestFiles(root, [
+        entry({ path: 'a.txt', name: 'a.txt', tags: ['alpha', 'shared'] }),
+        entry({ path: 'b.txt', name: 'b.txt', tags: ['beta', 'shared'] }),
+      ]);
+      closeDb(root);
+      const before = await fsp.readFile(dbFile);
+      const namesBefore = await fsp.readdir(path.dirname(dbFile));
+      const hits = advancedQueryReadOnly(root, { ...emptyQ(), tags: ['alpha'] });
+      assert.deepEqual(hits?.map((item) => item.path), ['a.txt']);
+      assert.deepEqual(distinctTagsReadOnly(root), ['alpha', 'beta', 'shared']);
+      assert.deepEqual(await fsp.readFile(dbFile), before);
+      // Readonly SQLite connections may materialize transient WAL shared-memory
+      // files while reading a WAL-mode database; they never create a new index.
+      const namesAfter = (await fsp.readdir(path.dirname(dbFile))).filter(
+        (name) => name !== 'index.db-shm' && name !== 'index.db-wal'
+      );
+      assert.deepEqual(namesAfter, namesBefore);
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
     }
   });
 });

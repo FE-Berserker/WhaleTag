@@ -11,6 +11,7 @@ import { foldPath } from '../path-fold';
 import { closeIndexDb } from '../index-worker-host';
 import { syncWatchedRoots } from '../dir-watcher';
 import { triggerStartupMigration } from '../migrate-date-tags';
+import { stopLanServer } from '../lan';
 
 /**
  * Location-root handlers: home/parent probes + the renderer's
@@ -56,6 +57,11 @@ export function registerFsRootsHandlers(): void {
       // different spelling (`C:\Foo` vs `c:\foo`, trailing separator). Exact
       // string comparison treated those as removals and closed a live db.
       const nextFolded = new Set(next.map((r) => foldPath(path.resolve(r))));
+      const rootsChanged =
+        lastSyncedRoots.length !== next.length ||
+        lastSyncedRoots.some(
+          (previous) => !nextFolded.has(foldPath(path.resolve(previous)))
+        );
       for (const prev of lastSyncedRoots) {
         if (next.includes(prev)) continue;
         if (nextFolded.has(foldPath(path.resolve(prev)))) continue;
@@ -63,6 +69,10 @@ export function registerFsRootsHandlers(): void {
       }
       lastSyncedRoots = [...next];
       setAllowedRoots(next);
+      // A running LAN session snapshots root ids and real paths. Never leave a
+      // removed location reachable through that snapshot: a changed root set
+      // invalidates the listener, pairing token and every web session.
+      if (rootsChanged) void stopLanServer();
       // Read-only is a property of a location the renderer already knows.
       // Accept only entries that survived the known-roots filter: a root that
       // was refused above must not be able to make anything read-only, and a

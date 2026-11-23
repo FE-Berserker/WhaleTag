@@ -29,6 +29,7 @@ import { killThumbWorker } from './thumb-worker-host';
 // search / tagging / packaging to external AI clients. Opt-in, bearer-token
 // gated — see docs/21-mcp.md.
 import { initMcpServer, shutdownMcpServer } from './mcp/mcp-server';
+import { shutdownLanServer } from './lan';
 // Phase 6: application auto-update via electron-updater + GitHub Releases.
 // The IPC handlers + startup-delayed check + dev-mode short-circuit all
 // live in this module. See docs/18-auto-update.md for the full flow.
@@ -693,12 +694,14 @@ function bootstrap(): void {
         // (bounded) — quitting while the listener still accepts a tool call
         // would run a write after the windows are gone.
         await Promise.race([
-          shutdownMcpServer(),
+          Promise.all([shutdownMcpServer(), shutdownLanServer()]).then(
+            () => undefined
+          ),
           new Promise<void>((resolve) => {
             setTimeout(resolve, 2_000).unref();
           }),
         ]).catch((e) => {
-          console.error('[main] MCP shutdown failed:', e);
+          console.error('[main] Local server shutdown failed:', e);
         });
       } finally {
         app.quit();

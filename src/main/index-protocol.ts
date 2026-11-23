@@ -24,7 +24,9 @@ export type IndexWorkerOp =
   | 'index:build'
   | 'index:query'
   | 'index:advanced'
+  | 'index:readonly-advanced'
   | 'index:tags'
+  | 'index:readonly-tags'
   | 'index:status'
   | 'index:close'
   | 'index:shutdown'
@@ -47,7 +49,9 @@ export type IndexWorkerArg =
   | { op: 'index:build'; arg: { rootPath: string } }
   | { op: 'index:query'; arg: { rootPath: string; q: string } }
   | { op: 'index:advanced'; arg: { rootPath: string; q: SearchQuery } }
+  | { op: 'index:readonly-advanced'; arg: { rootPath: string; q: SearchQuery } }
   | { op: 'index:tags'; arg: { rootPath: string } }
+  | { op: 'index:readonly-tags'; arg: { rootPath: string } }
   | { op: 'index:status'; arg: { rootPath: string } }
   | { op: 'index:close'; arg: { rootPath: string } }
   | { op: 'index:shutdown'; arg: Record<string, never> }
@@ -74,7 +78,15 @@ export type IndexWorkerResult =
   | { op: 'index:build'; result: { count: number } }
   | { op: 'index:query'; result: IndexEntry[] }
   | { op: 'index:advanced'; result: IndexEntry[] }
+  | {
+      op: 'index:readonly-advanced';
+      result: { entries: IndexEntry[]; indexUnavailable: boolean };
+    }
   | { op: 'index:tags'; result: string[] }
+  | {
+      op: 'index:readonly-tags';
+      result: { tags: string[]; indexUnavailable: boolean };
+    }
   | { op: 'index:status'; result: { count: number; ready: boolean; exists: boolean } }
   | { op: 'index:close'; result: void }
   | { op: 'index:shutdown'; result: void }

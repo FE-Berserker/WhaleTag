@@ -25,6 +25,8 @@ jobs:
         run: node scripts/packaged-gui-smoke.js
       - name: Run repeatable GUI accessibility and layout regression
         run: npm run test:gui
+      - name: Smoke read-only LAN desktop and mobile clients
+        run: npm run test:lan
       - name: Smoke Draw.io render/edit and host Save readback
         run: node scripts/packaged-drawio-smoke.js
       - name: Smoke Excalidraw edit/save and Mermaid preview/insert

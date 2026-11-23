@@ -239,12 +239,35 @@ async function dispatch(req: IndexWorkerRequest): Promise<void> {
       });
       return;
     }
+    case 'index:readonly-advanced': {
+      const { rootPath, q } = req.arg as {
+        rootPath: string;
+        q: SearchQuery;
+      };
+      const entries = db.advancedQueryReadOnly(rootPath, q);
+      post({
+        reqId: req.reqId,
+        ok: true,
+        result: { entries: entries ?? [], indexUnavailable: entries === null },
+      });
+      return;
+    }
     case 'index:tags': {
       const { rootPath } = req.arg as { rootPath: string };
       post({
         reqId: req.reqId,
         ok: true,
         result: db.distinctTags(rootPath),
+      });
+      return;
+    }
+    case 'index:readonly-tags': {
+      const { rootPath } = req.arg as { rootPath: string };
+      const tags = db.distinctTagsReadOnly(rootPath);
+      post({
+        reqId: req.reqId,
+        ok: true,
+        result: { tags: tags ?? [], indexUnavailable: tags === null },
       });
       return;
     }

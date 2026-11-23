@@ -9,6 +9,7 @@ import type {
   RevisionInfo,
 } from './extension-types';
 import type { McpApprovalRequest, McpStatus } from './mcp-types';
+import type { LanStatus } from './lan-types';
 
 export interface DirEntry {
   /** Display name, e.g. "report.pdf". */
@@ -396,6 +397,12 @@ export interface WhaleApi {
    *  be dropped into sandboxed extension iframes (e.g. an image into Excalidraw).
    *  Fire-and-forget; must be called during the renderer's dragstart. */
   startFileDrag: (filePath: string) => void;
+
+  // Opt-in read-only LAN web access. State and pairing secret stay in main
+  // memory; every application launch starts stopped.
+  getLanStatus: () => Promise<LanStatus>;
+  startLanServer: () => Promise<LanStatus>;
+  stopLanServer: () => Promise<LanStatus>;
 
   // Local MCP server (Settings → Integrations). Config is main-process
   // owned (docs/21); these poll status and push decisions only.

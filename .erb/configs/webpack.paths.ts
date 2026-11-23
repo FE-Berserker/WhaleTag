@@ -18,6 +18,10 @@ export const RENDERER_DIST = path.resolve(DIST_PATH, 'renderer');
 /** Renderer source root (also holds index.html template). */
 export const RENDERER_SRC = path.resolve(SRC_PATH, 'renderer');
 
+/** Standalone read-only LAN web client (served by the main-process HTTP server). */
+export const MOBILE_DIST = path.resolve(DIST_PATH, 'mobile');
+export const MOBILE_SRC = path.resolve(SRC_PATH, 'mobile');
+
 /** Extension source root and output. */
 export const EXTENSIONS_SRC = path.resolve(SRC_PATH, 'extensions');
 export const EXTENSIONS_DIST = path.resolve(DIST_PATH, 'extensions');
