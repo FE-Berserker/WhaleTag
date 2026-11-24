@@ -11,6 +11,7 @@ import {
   Typography,
 } from '@mui/material';
 import { useTranslation } from 'react-i18next';
+import { SettingsGroup, SettingsRow } from './settings/primitives';
 import type { LanStatus } from '../../shared/lan-types';
 import { errorMessage } from '-/services/errors';
 
@@ -218,15 +219,6 @@ export default function LanSettings() {
 
   return (
     <Stack sx={{ gap: 2 }}>
-      <Stack>
-        <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-          {t('lanTitle')}
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          {t('lanHint')}
-        </Typography>
-      </Stack>
-
       <Alert severity="warning">{t('lanSecurityWarning')}</Alert>
       {error ? (
         <Alert
@@ -248,95 +240,98 @@ export default function LanSettings() {
         </Alert>
       ) : null}
 
-      <Stack direction="row" sx={{ alignItems: 'center', gap: 2 }}>
-        <Typography role="status" variant="body2">
-          {status.running ? t('lanRunning') : t('lanStopped')}
-        </Typography>
-        <Button
-          variant="contained"
-          size="small"
-          disabled={loading || busy !== null}
-          onClick={() => void (status.running ? stop() : start())}
+      <SettingsGroup>
+        <SettingsRow
+          label={
+            <Typography role="status" variant="body2">
+              {status.running ? t('lanRunning') : t('lanStopped')}
+            </Typography>
+          }
+          hint={loading ? t('lanLoading') : undefined}
         >
-          {status.running
-            ? busy === 'stop'
-              ? t('lanStopping')
-              : t('lanStop')
-            : busy === 'start'
-              ? t('lanStarting')
-              : t('lanStart')}
-        </Button>
-      </Stack>
-      {loading ? (
-        <Typography variant="caption" color="text.secondary">
-          {t('lanLoading')}
-        </Typography>
-      ) : null}
-
-      {status.running && status.urls.length > 1 ? (
-        <FormControl size="small" fullWidth>
-          <InputLabel id="lan-base-url-label">{t('lanBaseUrl')}</InputLabel>
-          <Select
-            labelId="lan-base-url-label"
-            value={baseUrl}
-            label={t('lanBaseUrl')}
-            onChange={(event) => setSelectedUrl(event.target.value)}
+          <Button
+            variant="contained"
+            size="small"
+            disabled={loading || busy !== null}
+            onClick={() => void (status.running ? stop() : start())}
           >
-            {status.urls.map((url) => (
-              <MenuItem key={url} value={url}>
-                {url}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-      ) : null}
+            {status.running
+              ? busy === 'stop'
+                ? t('lanStopping')
+                : t('lanStop')
+              : busy === 'start'
+                ? t('lanStarting')
+                : t('lanStart')}
+          </Button>
+        </SettingsRow>
 
-      {status.running && status.urls.length === 1 && baseUrl ? (
-        <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>
-          {t('lanBaseUrl')}: {baseUrl}
-        </Typography>
-      ) : null}
+        {status.running && status.urls.length > 1 ? (
+          <SettingsRow label={t('lanBaseUrl')} fullWidth>
+            <FormControl size="small" fullWidth>
+              <InputLabel id="lan-base-url-label">{t('lanBaseUrl')}</InputLabel>
+              <Select
+                labelId="lan-base-url-label"
+                value={baseUrl}
+                label={t('lanBaseUrl')}
+                onChange={(event) => setSelectedUrl(event.target.value)}
+              >
+                {status.urls.map((url) => (
+                  <MenuItem key={url} value={url}>
+                    {url}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </SettingsRow>
+        ) : null}
+
+        {status.running && status.urls.length === 1 && baseUrl ? (
+          <SettingsRow label={t('lanBaseUrl')} hint={baseUrl} />
+        ) : null}
+      </SettingsGroup>
 
       {pairingUrl ? (
-        <Stack sx={{ alignItems: 'flex-start', gap: 1 }}>
-          <Button
-            variant="outlined"
-            size="small"
-            aria-label={t('lanCopyLink')}
-            onClick={() => void copyPairingLink()}
-          >
-            {t('lanCopyLink')}
-          </Button>
-          {copied ? (
-            <Typography role="status" variant="caption" color="success.main">
-              {t('lanLinkCopied')}
-            </Typography>
-          ) : null}
-          {qrDataUrl ? (
-            <Box
-              component="img"
-              src={qrDataUrl}
-              alt={t('lanQrCode')}
-              sx={{ width: 220, height: 220, alignSelf: 'center' }}
-            />
-          ) : null}
-          {qrError ? (
-            <Alert
-              severity="error"
-              action={
-                <Button
-                  color="inherit"
-                  size="small"
-                  onClick={() => setQrNonce((n) => n + 1)}
-                >
-                  {t('retry')}
-                </Button>
-              }
+        <SettingsGroup>
+          <Stack sx={{ alignItems: 'center', gap: 1, p: 2 }}>
+            <Button
+              variant="outlined"
+              size="small"
+              aria-label={t('lanCopyLink')}
+              onClick={() => void copyPairingLink()}
             >
-              {qrError}
-            </Alert>
-          ) : null}
-        </Stack>
+              {t('lanCopyLink')}
+            </Button>
+            {copied ? (
+              <Typography role="status" variant="caption" color="success.main">
+                {t('lanLinkCopied')}
+              </Typography>
+            ) : null}
+            {qrDataUrl ? (
+              <Box
+                component="img"
+                src={qrDataUrl}
+                alt={t('lanQrCode')}
+                sx={{ width: 220, height: 220 }}
+              />
+            ) : null}
+            {qrError ? (
+              <Alert
+                severity="error"
+                action={
+                  <Button
+                    color="inherit"
+                    size="small"
+                    onClick={() => setQrNonce((n) => n + 1)}
+                  >
+                    {t('retry')}
+                  </Button>
+                }
+              >
+                {qrError}
+              </Alert>
+            ) : null}
+          </Stack>
+        </SettingsGroup>
       ) : null}
     </Stack>
   );

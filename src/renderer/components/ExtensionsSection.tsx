@@ -4,7 +4,6 @@ import {
   Box,
   Button,
   Chip,
-  Divider,
   FormControl,
   MenuItem,
   Select,
@@ -16,6 +15,7 @@ import {
 import { RootState } from '-/reducers';
 import { setExtensionEnabled, setDefaultExtension } from '-/reducers/extensions';
 import type { ExtensionManifest } from '../../shared/extension-types';
+import { SettingsGroup, SettingsRow } from './settings/primitives';
 
 /**
  * Extensions management: enable/disable built-in extensions and choose the
@@ -35,15 +35,13 @@ export default function ExtensionsSection() {
 
   if (!registry || registry.extensions.length === 0) {
     return (
-      <>
-        <Divider />
-        <Typography variant="overline" color="text.secondary">
-          {t('extensionsSettings')}
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          {t('extensionNoRegistry')}
-        </Typography>
-      </>
+      <SettingsGroup title={t('extensionsSettings')}>
+        <Box sx={{ p: 2 }}>
+          <Typography variant="body2" color="text.secondary">
+            {t('extensionNoRegistry')}
+          </Typography>
+        </Box>
+      </SettingsGroup>
     );
   }
 
@@ -66,126 +64,94 @@ export default function ExtensionsSection() {
     .filter((ft) => byType[ft].length > 1)
     .sort();
 
-  return (
-    <>
-      <Divider />
-      <Stack
-        direction="row"
-        sx={{ alignItems: 'center', justifyContent: 'space-between' }}
-      >
-        <Typography variant="overline" color="text.secondary">
-          {t('extensionsSettings')}
-        </Typography>
-        <Button
-          size="small"
-          onClick={() => {
-            for (const ft of Object.keys(userDefaults)) {
-              dispatch(setDefaultExtension(ft, null));
-            }
-            for (const id of Object.keys(enabledOverrides)) {
-              dispatch(setExtensionEnabled(id, true));
-            }
-          }}
-        >
-          {t('resetExtensionDefaults')}
-        </Button>
-      </Stack>
+  const resetDefaults = () => {
+    for (const ft of Object.keys(userDefaults)) {
+      dispatch(setDefaultExtension(ft, null));
+    }
+    for (const id of Object.keys(enabledOverrides)) {
+      dispatch(setExtensionEnabled(id, true));
+    }
+  };
 
-      <Stack sx={{ gap: 1 }}>
+  return (
+    <Stack sx={{ gap: 2 }}>
+      <SettingsGroup
+        title={t('extensionsSettings')}
+        action={
+          <Button size="small" onClick={resetDefaults}>
+            {t('resetExtensionDefaults')}
+          </Button>
+        }
+      >
         {extensions.map((m) => (
-          <Stack
+          <SettingsRow
             key={m.id}
-            direction="row"
-            spacing={1.5}
-            sx={{ alignItems: 'center' }}
+            label={m.name}
+            hint={m.fileTypes.map((ft) => `.${ft}`).join(', ')}
           >
-            <Box
-              sx={{
-                width: 10,
-                height: 10,
-                borderRadius: '50%',
-                bgcolor: m.color,
-                flexShrink: 0,
-              }}
-            />
-            <Stack sx={{ flex: 1, minWidth: 0 }}>
-              <Typography variant="body2" noWrap>
-                {m.name}
-              </Typography>
-              <Typography variant="caption" color="text.secondary" noWrap>
-                {m.fileTypes.map((ft) => `.${ft}`).join(', ')}
-              </Typography>
+            <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+              <Box
+                sx={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: '50%',
+                  bgcolor: m.color,
+                  flexShrink: 0,
+                }}
+              />
+              <Chip
+                label={t(m.type === 'viewer' ? 'viewer' : 'editor')}
+                size="small"
+                variant="outlined"
+                sx={{ flexShrink: 0 }}
+              />
+              <Switch
+                size="small"
+                checked={isEnabled(m)}
+                onChange={(e) =>
+                  dispatch(setExtensionEnabled(m.id, e.target.checked))
+                }
+                slotProps={{
+                  input: { 'aria-label': `${m.name} enabled` },
+                }}
+              />
             </Stack>
-            <Chip
-              label={t(m.type === 'viewer' ? 'viewer' : 'editor')}
-              size="small"
-              variant="outlined"
-              sx={{ flexShrink: 0 }}
-            />
-            <Switch
-              size="small"
-              checked={isEnabled(m)}
-              onChange={(e) =>
-                dispatch(setExtensionEnabled(m.id, e.target.checked))
-              }
-              slotProps={{
-                input: { 'aria-label': `${m.name} enabled` },
-              }}
-            />
-          </Stack>
+          </SettingsRow>
         ))}
-      </Stack>
+      </SettingsGroup>
 
       {contestedTypes.length > 0 ? (
-        <>
-          <Typography variant="caption" color="text.secondary">
-            {t('extensionDefaultForHint')}
-          </Typography>
-          <Stack sx={{ gap: 1 }}>
-            {contestedTypes.map((ft) => {
-              const current = userDefaults[ft];
-              const valid = byType[ft].some((m) => m.id === current)
-                ? current
-                : '';
-              return (
-                <Stack
-                  key={ft}
-                  direction="row"
-                  spacing={1.5}
-                  sx={{ alignItems: 'center' }}
-                >
-                  <Typography
-                    variant="body2"
-                    sx={{ width: 80, flexShrink: 0 }}
+        <SettingsGroup description={t('extensionDefaultForHint')}>
+          {contestedTypes.map((ft) => {
+            const current = userDefaults[ft];
+            const valid = byType[ft].some((m) => m.id === current)
+              ? current
+              : '';
+            return (
+              <SettingsRow key={ft} label={`.${ft}`}>
+                <FormControl size="small" sx={{ minWidth: 220 }}>
+                  <Select
+                    value={valid}
+                    displayEmpty
+                    onChange={(e) =>
+                      dispatch(setDefaultExtension(ft, e.target.value || null))
+                    }
                   >
-                    .{ft}
-                  </Typography>
-                  <FormControl size="small" fullWidth>
-                    <Select
-                      value={valid}
-                      displayEmpty
-                      onChange={(e) =>
-                        dispatch(
-                          setDefaultExtension(ft, e.target.value || null)
-                        )
-                      }
-                    >
-                      <MenuItem value="">
-                        <em>{t('noDefaultExtension')}</em>
+                    <MenuItem value="">
+                      <em>{t('noDefaultExtension')}</em>
+                    </MenuItem>
+                    {byType[ft].map((m) => (
+                      <MenuItem key={m.id} value={m.id}>
+                        {m.name}
                       </MenuItem>
-                      {byType[ft].map((m) => (
-                        <MenuItem key={m.id} value={m.id}>
-                          {m.name}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                </Stack>
-              );
-            })}
-          </Stack>
-        </>
+                    ))}
+                  </Select>
+                </FormControl>
+              </SettingsRow>
+            );
+          })}
+        </SettingsGroup>
       ) : null}
-    </>
+    </Stack>
   );
 }

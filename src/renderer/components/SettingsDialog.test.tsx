@@ -54,10 +54,13 @@ function LanSettingsStub() {
   return <div>LAN pairing content</div>;
 }
 
-function renderDialog(section: 'general' | 'keyboard' | 'notifications' | 'lan') {
+function renderDialog(
+  section: 'general' | 'keyboard' | 'notifications' | 'lan',
+  onClose: () => void = () => undefined
+) {
   return render(
     <I18nextProvider i18n={i18next}>
-      <SettingsDialog open section={section} onClose={() => undefined} />
+      <SettingsDialog open section={section} onClose={onClose} />
     </I18nextProvider>
   );
 }
@@ -86,6 +89,18 @@ before(async () => {
           settingsSectionGeneral: 'General',
           settingsSectionKeyboard: 'Keyboard',
           settingsSectionLan: 'LAN',
+          settingsSectionDescGeneral:
+            'Theme, language and how files behave.',
+          settingsSectionDescKeyboard: 'Key bindings for the file list.',
+          settingsSectionDescLan:
+            'Read-only access from another device on your network.',
+          settingsSectionDescNotifications:
+            'Remind you about tasks when WhaleTag starts.',
+          settingsSearchPlaceholder: 'Search settings…',
+          settingsSearchClear: 'Clear search',
+          settingsSearchEmpty: 'No matching settings',
+          settingsSearchResults_one: '{{count}} setting found',
+          settingsSearchResults_other: '{{count}} settings found',
           keybindingsHint: 'Choose an action for each key.',
           keybindingsSearch: 'Search shortcuts…',
           resetKeybindings: 'Reset shortcuts',
@@ -94,6 +109,7 @@ before(async () => {
           showHiddenFiles: 'Show hidden files',
           showLunar: 'Show lunar calendar',
           taskReminder: 'Task reminder',
+          close: 'Close',
           dark: 'Dark',
           presetMidnightPlum: 'Midnight plum',
         },
@@ -238,12 +254,51 @@ describe('SettingsDialog theme consistency', () => {
     state.settings.themePreset = 'midnight-plum';
     const view = renderDialog('general');
 
-    fireEvent.mouseDown(view.getAllByRole('combobox')[0]);
-    fireEvent.click(view.getByRole('option', { name: 'Dark' }));
+    fireEvent.click(view.getByRole('radio', { name: 'Dark' }));
 
     assert.deepEqual(dispatchCalls, [
       setThemeMode('dark'),
       setThemePreset('whale'),
     ]);
+  });
+});
+
+describe('SettingsDialog sections and search', () => {
+  it('renders the active section title and description in the panel', () => {
+    const { getByRole, getByText } = renderDialog('general');
+
+    getByRole('heading', { name: 'General' });
+    getByText('Theme, language and how files behave.');
+  });
+
+  it('closes from the header button', () => {
+    let closed = false;
+    const view = renderDialog('general', () => {
+      closed = true;
+    });
+
+    fireEvent.click(view.getByRole('button', { name: 'Close' }));
+    assert.equal(closed, true);
+  });
+
+  it('filters settings by keyword and shows the matching section', () => {
+    const view = renderDialog('general');
+    const search = view.getByRole('textbox', { name: 'Search settings…' });
+
+    fireEvent.input(search, { target: { value: 'shortcut' } });
+
+    const panelText = view.baseElement.textContent ?? '';
+    assert.ok(panelText.includes('1 setting found'));
+    assert.ok(panelText.includes('Choose an action for each key.'));
+    assert.ok(!panelText.includes('settingsAppearance'));
+    assert.ok(view.baseElement.querySelector('#settings-section-panel button'));
+  });
+
+  it('reports when no setting matches the query', () => {
+    const view = renderDialog('general');
+    const search = view.getByRole('textbox', { name: 'Search settings…' });
+
+    fireEvent.input(search, { target: { value: 'zzzz-no-such-setting' } });
+    view.getByText('No matching settings');
   });
 });

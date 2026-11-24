@@ -20,6 +20,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import { ipcApi } from '-/services/ipc-api';
 import { errorMessage } from '-/services/errors';
 import { useConfirm } from '-/components/ConfirmDialogProvider';
+import { SettingsGroup, SettingsRow } from './settings/primitives';
 import type { McpStatus } from '../../shared/mcp-types';
 
 /**
@@ -90,112 +91,115 @@ export default function McpSection(): JSX.Element {
 
   return (
     <Stack sx={{ gap: 2 }}>
-      <Stack>
-        <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-          {t('settingsSectionMcp')}
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          {t('mcpSettingsHint')}
-        </Typography>
-      </Stack>
-
       {error ? (
         <Alert severity="error" onClose={() => setError(null)}>
           {t('operationFailed', { message: error })}
         </Alert>
       ) : null}
 
-      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2 }}>
-        <Box sx={{ flex: 1 }}>
-          <Typography variant="body2">{t('mcpEnable')}</Typography>
-          <Typography variant="caption" color="text.secondary">
-            {t('mcpEnableHint')}
-          </Typography>
-        </Box>
-        <Switch
-          checked={status?.running ?? false}
-          disabled={!status || busy}
-          onChange={(e) => apply(() => ipcApi.mcpSetEnabled(e.target.checked))}
-        />
-      </Box>
+      <SettingsGroup>
+        <SettingsRow label={t('mcpEnable')} hint={t('mcpEnableHint')}>
+          <Switch
+            checked={status?.running ?? false}
+            disabled={!status || busy}
+            onChange={(e) => apply(() => ipcApi.mcpSetEnabled(e.target.checked))}
+            slotProps={{ input: { 'aria-label': t('mcpEnable') } }}
+          />
+        </SettingsRow>
+        <SettingsRow label={t('mcpReadOnly')} hint={t('mcpReadOnlyHint')}>
+          <Switch
+            checked={status?.readOnly ?? true}
+            disabled={!status || busy}
+            onChange={(e) => apply(() => ipcApi.mcpSetReadOnly(e.target.checked))}
+            slotProps={{ input: { 'aria-label': t('mcpReadOnly') } }}
+          />
+        </SettingsRow>
+      </SettingsGroup>
 
-      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2 }}>
-        <Box sx={{ flex: 1 }}>
-          <Typography variant="body2">{t('mcpReadOnly')}</Typography>
-          <Typography variant="caption" color="text.secondary">
-            {t('mcpReadOnlyHint')}
-          </Typography>
-        </Box>
-        <Switch
-          checked={status?.readOnly ?? true}
-          disabled={!status || busy}
-          onChange={(e) => apply(() => ipcApi.mcpSetReadOnly(e.target.checked))}
-        />
-      </Box>
+      <SettingsGroup>
+        <SettingsRow label={t('mcpEndpoint')} fullWidth>
+          <TextField
+            value={status && !status.running ? t('mcpNotRunning') : endpoint}
+            slotProps={{
+              input: {
+                readOnly: true,
+                'aria-label': t('mcpEndpoint'),
+                sx: { fontFamily: 'monospace', fontSize: 13 },
+              },
+            }}
+            fullWidth
+            size="small"
+            margin="none"
+          />
+        </SettingsRow>
 
-      <TextField
-        label={t('mcpEndpoint')}
-        value={status && !status.running ? t('mcpNotRunning') : endpoint}
-        slotProps={{
-          input: { readOnly: true, sx: { fontFamily: 'monospace', fontSize: 13 } },
-          inputLabel: { shrink: true },
-        }}
-        fullWidth
-        size="small"
-        margin="none"
-      />
+        <SettingsRow label={t('mcpToken')} fullWidth>
+          <TextField
+            type={showToken ? 'text' : 'password'}
+            value={token}
+            slotProps={{
+              input: {
+                readOnly: true,
+                'aria-label': t('mcpToken'),
+                sx: { fontFamily: 'monospace', fontSize: 13 },
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <Tooltip title={t(showToken ? 'mcpHideToken' : 'mcpShowToken')}>
+                      <IconButton
+                        size="small"
+                        onClick={() => setShowToken((v) => !v)}
+                        aria-label={t(showToken ? 'mcpHideToken' : 'mcpShowToken')}
+                      >
+                        {showToken ? (
+                          <VisibilityOffIcon fontSize="small" />
+                        ) : (
+                          <VisibilityIcon fontSize="small" />
+                        )}
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title={copied === 'token' ? t('mcpCopied') : t('mcpCopy')}>
+                      <IconButton
+                        size="small"
+                        edge="end"
+                        onClick={() => copy('token', token)}
+                        aria-label={t('mcpCopy')}
+                      >
+                        <ContentCopyIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </InputAdornment>
+                ),
+              },
+            }}
+            fullWidth
+            size="small"
+            margin="none"
+          />
+        </SettingsRow>
 
-      <TextField
-        label={t('mcpToken')}
-        type={showToken ? 'text' : 'password'}
-        value={token}
-        slotProps={{
-          input: {
-            readOnly: true,
-            sx: { fontFamily: 'monospace', fontSize: 13 },
-            endAdornment: (
-              <InputAdornment position="end">
-                <Tooltip title={t(showToken ? 'mcpHideToken' : 'mcpShowToken')}>
-                  <IconButton size="small" onClick={() => setShowToken((v) => !v)}>
-                    {showToken ? (
-                      <VisibilityOffIcon fontSize="small" />
-                    ) : (
-                      <VisibilityIcon fontSize="small" />
-                    )}
-                  </IconButton>
-                </Tooltip>
-                <Tooltip title={copied === 'token' ? t('mcpCopied') : t('mcpCopy')}>
-                  <IconButton
-                    size="small"
-                    edge="end"
-                    onClick={() => copy('token', token)}
-                  >
-                    <ContentCopyIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              </InputAdornment>
-            ),
-          },
-          inputLabel: { shrink: true },
-        }}
-        fullWidth
-        size="small"
-        margin="none"
-      />
-
-      <Box sx={{ display: 'flex', flexDirection: 'row', gap: 1, alignItems: 'center' }}>
-        <Button
-          size="small"
-          startIcon={<RefreshIcon />}
-          disabled={!status || busy}
-          onClick={() => void regenerate()}
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: 'row',
+            gap: 1,
+            alignItems: 'center',
+            px: 2,
+            py: 1.5,
+          }}
         >
-          {t('mcpRegenerateToken')}
-        </Button>
-        <Typography variant="caption" color="text.secondary">
-          {t('mcpSessions', { count: status?.sessions ?? 0 })}
-        </Typography>
-      </Box>
+          <Button
+            size="small"
+            startIcon={<RefreshIcon />}
+            disabled={!status || busy}
+            onClick={() => void regenerate()}
+          >
+            {t('mcpRegenerateToken')}
+          </Button>
+          <Typography variant="caption" color="text.secondary">
+            {t('mcpSessions', { count: status?.sessions ?? 0 })}
+          </Typography>
+        </Box>
+      </SettingsGroup>
     </Stack>
   );
 }

@@ -1,1138 +1,61 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useDispatch, useSelector } from 'react-redux';
 import {
-  Avatar,
   Box,
-  Button,
-  Card,
-  CardContent,
-  CardHeader,
+  ButtonBase,
   Dialog,
   DialogContent,
   DialogTitle,
   Divider,
-  FormControl,
   IconButton,
-  List,
+  InputAdornment,
   ListItemButton,
   ListItemIcon,
-  ListItemText,
-  MenuItem,
-  Select,
-  Slider,
   Stack,
-  Switch,
   TextField,
-  ToggleButton,
-  ToggleButtonGroup,
-  Tooltip,
   Typography,
 } from '@mui/material';
-import Brightness7Icon from '@mui/icons-material/Brightness7';
-import Brightness4Icon from '@mui/icons-material/Brightness4';
-import SettingsBrightnessIcon from '@mui/icons-material/SettingsBrightness';
-import WbSunnyIcon from '@mui/icons-material/WbSunny';
-import NightsStayIcon from '@mui/icons-material/NightsStay';
-import AcUnitIcon from '@mui/icons-material/AcUnit';
-import WaterDropIcon from '@mui/icons-material/WaterDrop';
-import WbTwilightIcon from '@mui/icons-material/WbTwilight';
-import ParkIcon from '@mui/icons-material/Park';
-import ContrastIcon from '@mui/icons-material/Contrast';
-import TerminalIcon from '@mui/icons-material/Terminal';
-import TuneIcon from '@mui/icons-material/Tune';
-import UpdateSection from './UpdateSection';
-import UserCommandsSection from './UserCommandsSection';
-import McpSection from './McpSection';
-import ExtensionsSection from './ExtensionsSection';
-import VisibilityIcon from '@mui/icons-material/Visibility';
-import MapIcon from '@mui/icons-material/Map';
-import StyleIcon from '@mui/icons-material/Style';
-import NotificationsIcon from '@mui/icons-material/Notifications';
-import SettingsIcon from '@mui/icons-material/Settings';
-import AddIcon from '@mui/icons-material/Add';
-import RefreshIcon from '@mui/icons-material/Refresh';
-import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlined';
-import AccountTreeIcon from '@mui/icons-material/AccountTree';
-import KeyboardIcon from '@mui/icons-material/Keyboard';
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
-import HubIcon from '@mui/icons-material/Hub';
-import LanIcon from '@mui/icons-material/Lan';
+import CloseIcon from '@mui/icons-material/Close';
 import SearchIcon from '@mui/icons-material/Search';
+import ClearIcon from '@mui/icons-material/Clear';
+
+import McpSection from './McpSection';
 import LanSettings from './LanSettings';
-
-import { RootState } from '-/reducers';
+import UserCommandsSection from './UserCommandsSection';
+import UpdateSection from './UpdateSection';
+import WorkflowManagerDialog from './WorkflowManagerDialog';
 import {
-  setThemeMode,
-  setThemePreset,
-  setLanguage,
-  setFontSize,
-  setDefaultLocation,
-  addFulltextPath,
-  removeFulltextPath,
-  setDeleteToTrash,
-  setDefaultViewMode,
-  setShowHiddenFiles,
-  setShowLunar,
-  setTaskReminderEnabled,
-  setTaskReminderLocationId,
-  setTaskReminderStageIds,
-  setMapProvider,
-  setMapTileUrl,
-  setTagShape,
-  setDefaultEntrySize,
-  setKeybinding,
-  resetKeybindings,
-  DEFAULT_ENTRY_SIZE,
-  normalizeFsPath,
-  type ThemeMode,
-  type MapProvider,
-} from '-/reducers/settings';
-import type { ViewMode } from '../../shared/whale-meta';
+  NAV_GROUPS,
+  SEARCH_ENTRIES,
+  SECTION_BY_ID,
+  SECTIONS,
+  type SettingsSearchEntry,
+  type SettingsSectionId,
+} from './settings/meta';
 import {
-  type TagShape,
-  TAG_SHAPES,
-  tagShapeSx,
-  TAG_SHAPE_PREVIEW_COLORS,
-} from '../domain/tag-colors';
-import {
-  MAPPABLE_KEYS,
-  KEYBOARD_ACTIONS,
-  type KeyAction,
-} from '../domain/keybindings';
-import { useCurrentLocationContext } from '-/hooks/CurrentLocationContextProvider';
-import { ipcApi } from '-/services/ipc-api';
-import { errorMessage } from '-/services/errors';
-import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '-/i18n';
-import { DEFAULT_PRESET_ID, THEME_MODE_PRESET_MAP } from '-/theme/presets';
-import { tagDisplayLabel } from '-/services/tag-display';
-import { readableTextOn } from '../domain/tag-colors';
-import { getDefaultPendingStageIds } from '../domain/task-reminder';
-import WorkflowManagerDialog from '-/components/WorkflowManagerDialog';
+  GeneralSection,
+  KeyboardSection,
+  MapSection,
+  NotificationsSection,
+  TagsSection,
+  ViewSection,
+} from './settings/sections';
+import { AdvancedSection } from './settings/advanced';
+import { SettingsGroup } from './settings/primitives';
 
-const LANGUAGE_LABELS: Record<SupportedLanguage, string> = {
-  en: 'English',
-  zh: '简体中文',
-  'zh-TW': '繁體中文',
-  ja: '日本語',
-  ko: '한국어',
-};
+export type { SettingsSectionId } from './settings/meta';
 
-/** The IDs are also persisted as the "settings section to open" prop from
- *  callers (e.g. Sidebar's tag-management shortcut jumps straight to `tags`). */
-export type SettingsSectionId =
-  | 'general'
-  | 'view'
-  | 'keyboard'
-  | 'mapique'
-  | 'tags'
-  | 'notifications'
-  | 'mcp'
-  | 'lan'
-  | 'commands'
-  | 'about'
-  | 'advanced';
-
-interface SettingsDialogProps {
+export interface SettingsDialogProps {
   open: boolean;
-  /** Section to focus each time the dialog (re-)opens. */
+  /** Preselect a section (used by deep links, e.g. the MCP approval flow). */
   section?: SettingsSectionId;
   onClose: () => void;
 }
 
-// `SettingsDialogProps` is re-exported below for the provider to type its
-// `openDialog({ section })` argument without re-declaring the field. Keep
-// `interface` (not `type`) so consumers can `extends` it if needed.
-export type { SettingsDialogProps };
-
-/** A small row: a label on the left, a control on the right. */
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <Stack
-      direction="row"
-      sx={{ alignItems: 'center', justifyContent: 'space-between', gap: 2 }}
-    >
-      <Stack sx={{ minWidth: 0 }}>
-        <Typography variant="body2">{label}</Typography>
-        {hint ? (
-          <Typography variant="caption" color="text.secondary">
-            {hint}
-          </Typography>
-        ) : null}
-      </Stack>
-      {children}
-    </Stack>
-  );
-}
-
-type BuildState = 'unbuilt' | 'building' | 'ready' | 'error';
-interface FtStatus {
-  state: BuildState;
-  count?: number;
-  /** Live extraction progress during 'building' (docs/04 §10). */
-  processed?: number;
-  error?: string;
-}
-
 /**
- * Full-text settings: the list of directories with content search enabled.
- * Each path is an independent index root (may be a location root or any
- * subdirectory). Adding or rebuilding triggers a main-process build; build
- * status is kept locally (redux only stores the path list).
- */
-const EMPTY_FULLTEXT_PATHS: string[] = [];
-
-function FulltextSection() {
-  const { t } = useTranslation();
-  const dispatch = useDispatch();
-  const paths = useSelector(
-    (s: RootState) => s.settings?.fulltextPaths ?? EMPTY_FULLTEXT_PATHS
-  );
-  const { currentLocation } = useCurrentLocationContext();
-
-  const [input, setInput] = useState('');
-  // Rejected "add fulltext path" attempts are explained inline instead of
-  // silently persisting a row that can only ever show an error state.
-  const [pathError, setPathError] = useState<string | null>(null);
-  const [status, setStatus] = useState<Record<string, FtStatus>>({});
-
-  const build = useCallback(async (p: string) => {
-    const key = normalizeFsPath(p);
-    setStatus((prev) => ({ ...prev, [key]: { state: 'building' } }));
-    try {
-      const { count } = await ipcApi.buildFulltextIndex(p);
-      setStatus((prev) => ({ ...prev, [key]: { state: 'ready', count } }));
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      console.error('[SettingsDialog] build failed:', p, message, e);
-      setStatus((prev) => ({ ...prev, [key]: { state: 'error', count: undefined, error: message } }));
-    }
-  }, []);
-
-  // Reset status when the path list changes (e.g. add/remove) so we don't
-  // show stale counts from a previous session.
-  useEffect(() => {
-    setStatus({});
-  }, [paths]);
-
-  // docs/04 §10: live extraction progress for in-flight fulltext builds.
-  useEffect(() => {
-    return ipcApi.onIndexProgress((ev) => {
-      if (ev.op !== 'fulltext:build') return;
-      const key = normalizeFsPath(ev.rootPath);
-      setStatus((prev) => {
-        const cur = prev[key];
-        if (!cur || cur.state !== 'building') return prev;
-        if (ev.done) return { ...prev, [key]: { ...cur, processed: undefined } };
-        return { ...prev, [key]: { ...cur, processed: ev.processed } };
-      });
-    });
-  }, []);
-
-  // Probe existing indexes for paths we don't yet have a status for.
-  useEffect(() => {
-    for (const p of paths) {
-      const key = normalizeFsPath(p);
-      if (status[key]) continue;
-      void ipcApi
-        .hasFulltextIndex(p)
-        .then((has) => {
-          setStatus((prev) =>
-            prev[key]
-              ? prev
-              : { ...prev, [key]: { state: has ? 'ready' : 'unbuilt' } }
-          );
-        })
-        .catch((e) => {
-          // Probe failure is not "no index": show it as an error row so the
-          // user doesn't rebuild (or trust) a state we never determined.
-          setStatus((prev) =>
-            prev[key]
-              ? prev
-              : {
-                  ...prev,
-                  [key]: { state: 'error', error: errorMessage(e) },
-                }
-          );
-        });
-    }
-  }, [paths, status]);
-
-  const handleAdd = () => {
-    const v = input.trim();
-    if (!v) return;
-    // Persisted setting: validate before dispatch. `addFulltextPath` writes to
-    // redux-persist, so a typo ("D:/doc" vs "D:\doc" is fine, but "doc" or a
-    // URL is not) would otherwise stick around forever and always fail at
-    // build time with a path error.
-    const absolute =
-      /^[a-zA-Z]:[\\/]/.test(v) || v.startsWith('\\\\') || v.startsWith('/');
-    if (!absolute) {
-      setPathError(t('fulltextPathInvalid'));
-      return;
-    }
-    const key = normalizeFsPath(v);
-    if (paths.some((p) => normalizeFsPath(p) === key)) {
-      setPathError(t('fulltextPathDuplicate'));
-      return;
-    }
-    setPathError(null);
-    dispatch(addFulltextPath(v));
-    setInput('');
-    void build(v);
-  };
-
-  const statusLabel = (st: FtStatus | undefined): string => {
-    if (!st) return '';
-    if (st.state === 'building')
-      return st.processed !== undefined
-        ? `${t('fulltextBuilding')} ${st.processed}`
-        : t('fulltextBuilding');
-    if (st.state === 'error') return `${t('errorOccurred')}${st.error ? `: ${st.error}` : ''}`;
-    if (st.state === 'ready')
-      return st.count !== undefined
-        ? t('entriesIndexed', { count: st.count })
-        : t('fulltextReady');
-    return t('fulltextNotBuilt');
-  };
-
-  return (
-    <ConverterCard
-      icon={<SearchIcon />}
-      title={t('fulltextSearch')}
-      hint={t('fulltextHint')}
-    >
-      <Stack direction="row" sx={{ gap: 1 }}>
-        <TextField
-          size="small"
-          fullWidth
-          placeholder={t('fulltextPathPlaceholder')}
-          value={input}
-          onChange={(e) => {
-            setInput(e.target.value);
-            if (pathError) setPathError(null);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') handleAdd();
-          }}
-        />
-        <Tooltip title={t('add')}>
-          <span>
-            <IconButton
-              size="small"
-              color="primary"
-              aria-label={t('add')}
-              onClick={handleAdd}
-              disabled={!input.trim()}
-            >
-              <AddIcon fontSize="small" />
-            </IconButton>
-          </span>
-        </Tooltip>
-      </Stack>
-      {pathError ? (
-        <Typography variant="caption" color="error">
-          {pathError}
-        </Typography>
-      ) : null}
-      {currentLocation ? (
-        <Button
-          size="small"
-          sx={{ alignSelf: 'flex-start', mt: -1 }}
-          onClick={() => setInput(currentLocation.path)}
-        >
-          {t('useCurrentLocation')}
-        </Button>
-      ) : null}
-
-      {paths.length === 0 ? (
-        <Typography variant="caption" color="text.secondary">
-          {t('fulltextHint')}
-        </Typography>
-      ) : (
-        <Stack sx={{ gap: 0.5 }}>
-          {paths.map((p) => {
-            const st = status[normalizeFsPath(p)];
-            const busy = st?.state === 'building';
-            return (
-              <Stack
-                key={p}
-                direction="row"
-                sx={{ alignItems: 'center', gap: 0.5 }}
-              >
-                <Stack sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography variant="body2" noWrap title={p}>
-                    {p}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {statusLabel(st)}
-                  </Typography>
-                </Stack>
-                <Tooltip title={t('rebuildIndex')}>
-                  <span>
-                    <IconButton
-                      size="small"
-                      data-testid="rebuild-fulltext-button"
-                      data-path={p}
-                      onClick={() => void build(p)}
-                      disabled={busy}
-                    >
-                      <RefreshIcon fontSize="small" />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-                <Tooltip title={t('remove')}>
-                  <IconButton
-                    size="small"
-                    onClick={() => dispatch(removeFulltextPath(p))}
-                  >
-                    <DeleteOutlineIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              </Stack>
-            );
-          })}
-        </Stack>
-      )}
-      <Typography variant="caption" color="text.secondary" sx={{ mt: -1 }}>
-        {t('fulltextNote')}
-      </Typography>
-    </ConverterCard>
-  );
-}
-
-/** Section header used by each pane. */
-function SectionHeader({
-  title,
-  hint,
-}: {
-  title: string;
-  hint?: string;
-}) {
-  return (
-    <Stack sx={{ mb: 1.5 }}>
-      <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-        {title}
-      </Typography>
-      {hint ? (
-        <Typography variant="caption" color="text.secondary">
-          {hint}
-        </Typography>
-      ) : null}
-    </Stack>
-  );
-}
-
-function GeneralSection() {
-  const { t } = useTranslation();
-  const dispatch = useDispatch();
-  const themeMode = useSelector((s: RootState) => s.settings.themeMode);
-  const language = useSelector((s: RootState) => s.settings?.language ?? 'en');
-  const fontSize = useSelector((s: RootState) => s.settings?.fontSize ?? 13);
-  const defaultLocationId = useSelector(
-    (s: RootState) => s.settings?.defaultLocationId ?? null
-  );
-  const locations = useSelector((s: RootState) => s.locations.items);
-  const deleteToTrash = useSelector(
-    (s: RootState) => s.settings?.deleteToTrash ?? true
-  );
-  const showHiddenFiles = useSelector(
-    (s: RootState) => s.settings?.showHiddenFiles ?? false
-  );
-  const showLunar = useSelector((s: RootState) => s.settings?.showLunar ?? false);
-
-  const handleThemeModeChange = (value: ThemeMode) => {
-    dispatch(setThemeMode(value));
-    // Keep themePreset in sync for backward compatibility with any code that
-    // still reads it directly (e.g. extension views, persisted state consumers).
-    const preset =
-      THEME_MODE_PRESET_MAP[value as keyof typeof THEME_MODE_PRESET_MAP];
-    dispatch(setThemePreset(preset?.presetId ?? DEFAULT_PRESET_ID));
-  };
-
-  const THEME_OPTIONS: { value: ThemeMode; labelKey: string; Icon: typeof Brightness7Icon }[] = [
-    { value: 'system', labelKey: 'system', Icon: SettingsBrightnessIcon },
-    { value: 'light', labelKey: 'light', Icon: Brightness7Icon },
-    { value: 'dark', labelKey: 'dark', Icon: Brightness4Icon },
-    { value: 'warm-paper', labelKey: 'presetWarmPaper', Icon: WbSunnyIcon },
-    { value: 'midnight-plum', labelKey: 'presetMidnightPlum', Icon: NightsStayIcon },
-    { value: 'frosted-mint', labelKey: 'presetFrostedMint', Icon: AcUnitIcon },
-    { value: 'deep-ocean', labelKey: 'presetDeepOcean', Icon: WaterDropIcon },
-    { value: 'dawn-blush', labelKey: 'presetDawnBlush', Icon: WbTwilightIcon },
-    { value: 'forest-ink', labelKey: 'presetForestInk', Icon: ParkIcon },
-    { value: 'soft-amber', labelKey: 'presetSoftAmber', Icon: WbSunnyIcon },
-    { value: 'high-contrast', labelKey: 'presetHighContrast', Icon: ContrastIcon },
-  ];
-
-  return (
-    <Stack sx={{ gap: 2 }}>
-      <Field label={t('theme')}>
-        <FormControl size="small" sx={{ minWidth: 180 }}>
-          <Select
-            value={themeMode}
-            onChange={(e) => handleThemeModeChange(e.target.value as ThemeMode)}
-            renderValue={(value) => {
-              const option = THEME_OPTIONS.find((o) => o.value === value);
-              if (!option) return null;
-              const { Icon, labelKey } = option;
-              return (
-                <Stack direction="row" sx={{ alignItems: 'center', gap: 1 }}>
-                  <Icon fontSize="small" />
-                  <Typography variant="body2">{t(labelKey)}</Typography>
-                </Stack>
-              );
-            }}
-          >
-            {THEME_OPTIONS.map(({ value, labelKey, Icon }) => (
-              <MenuItem key={value} value={value}>
-                <Stack direction="row" sx={{ alignItems: 'center', gap: 1 }}>
-                  <Icon fontSize="small" />
-                  <Typography variant="body2">{t(labelKey)}</Typography>
-                </Stack>
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-      </Field>
-
-      <Field label={t('fontSize')}>
-        <ToggleButtonGroup
-          size="small"
-          exclusive
-          value={fontSize}
-          onChange={(_, value: number | null) => {
-            if (value) dispatch(setFontSize(value));
-          }}
-        >
-          <ToggleButton value={12}>{t('fontSmall')}</ToggleButton>
-          <ToggleButton value={13}>{t('fontMedium')}</ToggleButton>
-          <ToggleButton value={15}>{t('fontLarge')}</ToggleButton>
-          <ToggleButton value={17}>{t('fontXLarge')}</ToggleButton>
-        </ToggleButtonGroup>
-      </Field>
-
-      <Field label={t('language')}>
-        <FormControl size="small" sx={{ minWidth: 140 }}>
-          <Select
-            value={language}
-            onChange={(e) =>
-              dispatch(setLanguage(e.target.value as SupportedLanguage))
-            }
-          >
-            {SUPPORTED_LANGUAGES.map((lng) => (
-              <MenuItem key={lng} value={lng}>
-                {LANGUAGE_LABELS[lng]}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-      </Field>
-
-      <Divider />
-
-      <Typography variant="overline" color="text.secondary">
-        {t('defaultLocation')}
-      </Typography>
-
-      <FormControl size="small" fullWidth>
-        <Select
-          value={
-            defaultLocationId &&
-            locations.some((l) => l.id === defaultLocationId)
-              ? defaultLocationId
-              : ''
-          }
-          displayEmpty
-          onChange={(e) =>
-            dispatch(setDefaultLocation(e.target.value || null))
-          }
-        >
-          <MenuItem value="">
-            <em>{t('noDefaultLocation')}</em>
-          </MenuItem>
-          {locations.map((loc) => (
-            <MenuItem key={loc.id} value={loc.id}>
-              {loc.name}
-            </MenuItem>
-          ))}
-        </Select>
-      </FormControl>
-      <Typography variant="caption" color="text.secondary" sx={{ mt: -1.5 }}>
-        {t('defaultLocationHint')}
-      </Typography>
-
-      <Field label={t('deleteToTrash')} hint={t('deleteToTrashHint')}>
-        <Switch
-          checked={deleteToTrash}
-          onChange={(e) => dispatch(setDeleteToTrash(e.target.checked))}
-          slotProps={{ input: { 'aria-label': t('deleteToTrash') } }}
-        />
-      </Field>
-
-      <Field label={t('showHiddenFiles')} hint={t('showHiddenFilesHint')}>
-        <Switch
-          checked={showHiddenFiles}
-          onChange={(e) => dispatch(setShowHiddenFiles(e.target.checked))}
-          slotProps={{ input: { 'aria-label': t('showHiddenFiles') } }}
-        />
-      </Field>
-
-      <Field label={t('showLunar')} hint={t('showLunarHint')}>
-        <Switch
-          checked={showLunar}
-          onChange={(e) => dispatch(setShowLunar(e.target.checked))}
-          slotProps={{ input: { 'aria-label': t('showLunar') } }}
-        />
-      </Field>
-    </Stack>
-  );
-}
-
-function ViewSection() {
-  const { t } = useTranslation();
-  const dispatch = useDispatch();
-  const defaultViewMode = useSelector(
-    (s: RootState) => s.settings?.defaultViewMode ?? 'list'
-  );
-  const defaultEntrySize = useSelector(
-    (s: RootState) => s.settings?.defaultEntrySize ?? DEFAULT_ENTRY_SIZE
-  );
-  const tagShape = useSelector(
-    (s: RootState) => s.settings?.tagShape ?? 'rounded'
-  );
-
-  return (
-    <Stack sx={{ gap: 2 }}>
-      <Field label={t('defaultView')}>
-        <Select<ViewMode>
-          value={defaultViewMode}
-          onChange={(e) => dispatch(setDefaultViewMode(e.target.value as ViewMode))}
-          size="small"
-          sx={{ minWidth: 220 }}
-        >
-          <MenuItem value="list">{t('viewList')}</MenuItem>
-          <MenuItem value="grid">{t('viewGrid')}</MenuItem>
-          <MenuItem value="gallery">{t('viewGallery')}</MenuItem>
-          {/* H.29: Kanban / Matrix moved into the 'task' perspective. The
-              'task' option below hosts both layouts as a sub-switch. */}
-          <MenuItem value="task">{t('viewTask')}</MenuItem>
-          <MenuItem value="calendar">{t('viewCalendar')}</MenuItem>
-          <MenuItem value="folderviz">{t('viewFolderViz')}</MenuItem>
-          <MenuItem value="mapique">{t('viewMapique')}</MenuItem>
-          <MenuItem value="tagcloud">{t('viewTagCloud')}</MenuItem>
-          <MenuItem value="knowledge-graph">{t('viewKnowledgeGraph')}</MenuItem>
-        </Select>
-      </Field>
-
-      <Field
-        label={t('defaultEntrySize')}
-        hint={t('defaultEntrySizeHint')}
-      >
-        <Stack
-          direction="row"
-          sx={{ alignItems: 'center', gap: 1.5, minWidth: 240 }}
-        >
-          <Slider
-            size="small"
-            min={64}
-            max={320}
-            step={8}
-            value={defaultEntrySize}
-            onChange={(_e, v) =>
-              dispatch(setDefaultEntrySize(v as number))
-            }
-            sx={{ flex: 1 }}
-          />
-          <Typography
-            variant="body2"
-            sx={{ minWidth: 40, textAlign: 'right' }}
-          >
-            {defaultEntrySize}px
-          </Typography>
-        </Stack>
-      </Field>
-
-      <Field label={t('tagShape')} hint={t('tagShapeHint')}>
-        <FormControl size="small" sx={{ minWidth: 180 }}>
-          <Select
-            value={tagShape}
-            onChange={(e) => dispatch(setTagShape(e.target.value as TagShape))}
-            renderValue={(value) => {
-              const shape = value as TagShape;
-              const label = t(
-                `tagShape${shape[0].toUpperCase()}${shape.slice(1)}`,
-              );
-              return (
-                <Stack direction="row" sx={{ alignItems: 'center', gap: 1 }}>
-                  <Box
-                    component="span"
-                    sx={{
-                      px: 1,
-                      py: 0.25,
-                      bgcolor: TAG_SHAPE_PREVIEW_COLORS[shape],
-                      fontSize: 12,
-                      fontWeight: 600,
-                      color: 'text.primary',
-                      ...tagShapeSx(shape),
-                    }}
-                  >
-                    Aa
-                  </Box>
-                  <Typography variant="body2">{label}</Typography>
-                </Stack>
-              );
-            }}
-          >
-            {TAG_SHAPES.map((shape) => {
-              const label = t(
-                `tagShape${shape[0].toUpperCase()}${shape.slice(1)}`,
-              );
-              return (
-                <MenuItem key={shape} value={shape}>
-                  <Stack
-                    direction="row"
-                    sx={{ alignItems: 'center', gap: 1 }}
-                  >
-                    <Box
-                      component="span"
-                      sx={{
-                        px: 1,
-                        py: 0.25,
-                        bgcolor: TAG_SHAPE_PREVIEW_COLORS[shape],
-                        fontSize: 12,
-                        fontWeight: 600,
-                        color: 'text.primary',
-                        ...tagShapeSx(shape),
-                      }}
-                    >
-                      Aa
-                    </Box>
-                    <Typography variant="body2">{label}</Typography>
-                  </Stack>
-                </MenuItem>
-              );
-            })}
-          </Select>
-        </FormControl>
-      </Field>
-
-      <Divider />
-    </Stack>
-  );
-}
-
-function MapSection() {
-  const { t } = useTranslation();
-  const dispatch = useDispatch();
-  const mapProvider = useSelector(
-    (s: RootState) => s.settings?.mapProvider ?? 'gaode'
-  );
-  const mapTileUrl = useSelector(
-    (s: RootState) => s.settings?.mapTileUrl ?? ''
-  );
-
-  return (
-    <Stack sx={{ gap: 2 }}>
-      <Field label={t('mapProvider')}>
-        <FormControl size="small" sx={{ minWidth: 200 }}>
-          <Select
-            value={mapProvider}
-            onChange={(e) =>
-              dispatch(setMapProvider(e.target.value as MapProvider))
-            }
-          >
-            <MenuItem value="gaode">{t('mapProviderGaode')}</MenuItem>
-            <MenuItem value="osm">{t('mapProviderOsm')}</MenuItem>
-          </Select>
-        </FormControl>
-      </Field>
-
-      <Field label={t('mapTileUrl')} hint={t('mapTileUrlHint')}>
-        <TextField
-          size="small"
-          fullWidth
-          placeholder={t('mapTileUrlPlaceholder')}
-          value={mapTileUrl}
-          onChange={(e) => dispatch(setMapTileUrl(e.target.value))}
-        />
-      </Field>
-    </Stack>
-  );
-}
-
-/** Tags & Workflow section: workflows are edited inline (button opens the
- *  existing WorkflowManagerDialog as a nested dialog). Tag groups and the
- *  full library continue to live in the sidebar's Tags panel, which is where
- *  per-tag colors and drag-to-group already work — pointing at it from here
- *  keeps one source of truth. */
-function TagsSection({
-  onOpenWorkflowManager,
-}: {
-  onOpenWorkflowManager: () => void;
-}) {
-  const { t } = useTranslation();
-  const stages = useSelector((s: RootState) => s.workflow?.stages ?? []);
-
-  return (
-    <Stack sx={{ gap: 2 }}>
-      <Typography variant="body2" color="text.secondary">
-        {t('tagsSettingsSectionHint')}
-      </Typography>
-
-      <Box>
-        <SectionHeader
-          title={t('tagsWorkflowSettings')}
-          hint={t('tagsWorkflowSettingsHint')}
-        />
-        <Stack
-          direction="row"
-          sx={{ alignItems: 'center', gap: 2, flexWrap: 'wrap' }}
-        >
-          <Button
-            variant="outlined"
-            startIcon={<AccountTreeIcon />}
-            onClick={onOpenWorkflowManager}
-            data-testid="open-workflow-manager"
-          >
-            {t('openWorkflowManager')}
-          </Button>
-          <Typography variant="caption" color="text.secondary">
-            {t('taskReminderStagesCount', { count: stages.length })}
-          </Typography>
-        </Stack>
-      </Box>
-
-      <Divider />
-
-      <Box>
-        <SectionHeader title={t('tagGroups')} />
-        <Typography variant="body2" color="text.secondary">
-          {t('tagsGroupsHint')}
-        </Typography>
-      </Box>
-
-      <Box>
-        <SectionHeader title={t('tagLibrary')} />
-        <Typography variant="body2" color="text.secondary">
-          {t('tagsLibraryHint')}
-        </Typography>
-      </Box>
-
-      <Box>
-        <SectionHeader title={t('smartTags')} />
-        <Typography variant="body2" color="text.secondary">
-          {t('tagsSmartTagsHint')}
-        </Typography>
-      </Box>
-    </Stack>
-  );
-}
-
-function NotificationsSection() {
-  const { t } = useTranslation();
-  const dispatch = useDispatch();
-  const locations = useSelector((s: RootState) => s.locations.items);
-  const taskReminderEnabled = useSelector(
-    (s: RootState) => s.settings?.taskReminderEnabled ?? false
-  );
-  const taskReminderLocationId = useSelector(
-    (s: RootState) => s.settings?.taskReminderLocationId ?? null
-  );
-  const taskReminderStageIds = useSelector(
-    (s: RootState) => s.settings?.taskReminderStageIds ?? null
-  );
-  const stages = useSelector((s: RootState) => s.workflow?.stages ?? []);
-
-  return (
-    <Stack sx={{ gap: 2 }}>
-      <Field label={t('taskReminder')} hint={t('taskReminderHint')}>
-        <Switch
-          checked={taskReminderEnabled}
-          slotProps={{ input: { 'aria-label': t('taskReminder') } }}
-          onChange={(e) =>
-            dispatch(setTaskReminderEnabled(e.target.checked))
-          }
-        />
-      </Field>
-      {taskReminderEnabled ? (
-        <>
-          <FormControl size="small" fullWidth>
-            <Select
-              value={
-                taskReminderLocationId &&
-                locations.some((l) => l.id === taskReminderLocationId)
-                  ? taskReminderLocationId
-                  : ''
-              }
-              displayEmpty
-              onChange={(e) =>
-                dispatch(setTaskReminderLocationId(e.target.value || null))
-              }
-            >
-              <MenuItem value="">
-                <em>{t('taskReminderLocation')}</em>
-              </MenuItem>
-              {locations.map((loc) => (
-                <MenuItem key={loc.id} value={loc.id}>
-                  {loc.name}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-
-          <Stack sx={{ gap: 0.5 }}>
-            <Typography variant="caption" color="text.secondary">
-              {t('taskReminderStages')}
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {t('taskReminderStagesHint')}
-            </Typography>
-            {stages.length === 0 ? (
-              <Typography variant="caption" color="text.secondary">
-                {t('kanbanNoStages')}
-              </Typography>
-            ) : (
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
-                {(() => {
-                  const defaultIds = getDefaultPendingStageIds(stages);
-                  const effectiveIds =
-                    taskReminderStageIds === null
-                      ? defaultIds
-                      : taskReminderStageIds;
-                  return stages.map((stage) => {
-                    const selected = effectiveIds.includes(stage.id);
-                    return (
-                      <ToggleButton
-                        key={stage.id}
-                        value={stage.id}
-                        selected={selected}
-                        onChange={() => {
-                          const current =
-                            taskReminderStageIds === null
-                              ? defaultIds
-                              : taskReminderStageIds;
-                          const next = selected
-                            ? current.filter((id) => id !== stage.id)
-                            : [...current, stage.id];
-                          dispatch(setTaskReminderStageIds(next));
-                        }}
-                        size="small"
-                        sx={{
-                          px: 1.5,
-                          py: 0.25,
-                          borderRadius: 1,
-                          textTransform: 'none',
-                          fontSize: '0.8125rem',
-                          lineHeight: 1.25,
-                          ...(selected
-                            ? {
-                                bgcolor: stage.color,
-                                color: readableTextOn(stage.color),
-                                border: 'none',
-                                '&:hover': { bgcolor: stage.color },
-                              }
-                            : {
-                                bgcolor: 'background.paper',
-                                color: 'text.secondary',
-                                border: (theme) =>
-                                  `1px solid ${theme.palette.divider}`,
-                              }),
-                        }}
-                      >
-                        {tagDisplayLabel(stage.value, t)}
-                      </ToggleButton>
-                    );
-                  });
-                })()}
-              </Box>
-            )}
-          </Stack>
-        </>
-      ) : null}
-    </Stack>
-  );
-}
-
-/**
- * Card-wrapped section for the fulltext index manager.
- * Shows an icon avatar + title + hint subheader so users can scan the
- * "Advanced" tab and immediately tell which subsystem each card belongs
- * to. The original layout was a flat `Stack` of plain text + input rows
- * with the section title floating above — visually flat, hard to scan.
- */
-function ConverterCard({
-  icon,
-  title,
-  hint,
-  children,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  hint: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <Card variant="outlined" sx={{ borderRadius: 2 }}>
-      <CardHeader
-        sx={{ pb: 0 }}
-        avatar={
-          <Avatar
-            sx={{
-              bgcolor: 'action.hover',
-              color: 'text.primary',
-              width: 36,
-              height: 36,
-            }}
-          >
-            {icon}
-          </Avatar>
-        }
-        title={
-          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-            {title}
-          </Typography>
-        }
-        subheader={
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            sx={{ mt: 0.5 }}
-          >
-            {hint}
-          </Typography>
-        }
-      />
-      <CardContent sx={{ pt: 1.5 }}>
-        <Stack sx={{ gap: 2.5 }}>{children}</Stack>
-      </CardContent>
-    </Card>
-  );
-}
-function AdvancedSection() {
-  return (
-    <Stack sx={{ gap: 3 }}>
-      <ExtensionsSection />
-      <FulltextSection />
-    </Stack>
-  );
-}
-
-/**
- * Keyboard shortcut bindings (key → action). Each mappable key gets a row with
- * a dropdown of every available action (plus "None", which clears the binding
- * and restores that key's browser default — notably Tab focus traversal). The
- * bindings take effect in the list/grid file views.
- */
-function KeyboardSection() {
-  const { t } = useTranslation();
-  const dispatch = useDispatch();
-  const keybindings = useSelector(
-    (s: RootState) => s.settings?.keybindings
-  );
-  const [query, setQuery] = useState('');
-  const q = query.trim().toLowerCase();
-
-  return (
-    <Stack sx={{ gap: 2 }}>
-      <Typography variant="body2" color="text.secondary">
-        {t('keybindingsHint')}
-      </Typography>
-      <Box
-        component="input"
-        type="text"
-        aria-label={t('keybindingsSearch')}
-        placeholder={t('keybindingsSearch')}
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        sx={{
-          width: '100%',
-          height: 40,
-          boxSizing: 'border-box',
-          padding: '0 10px',
-          fontSize: 14,
-          fontFamily: 'inherit',
-          border: 1,
-          borderColor: 'divider',
-          borderRadius: 1,
-          background: 'transparent',
-          color: 'inherit',
-          '&:focus-visible': {
-            outline: '2px solid',
-            outlineColor: 'primary.main',
-            outlineOffset: 2,
-          },
-        }}
-      />
-      {MAPPABLE_KEYS.filter(({ labelKey }) =>
-        !q || t(labelKey).toLowerCase().includes(q)
-      ).map(({ token, labelKey }) => (
-        <Field key={token} label={t(labelKey)}>
-          <Select<KeyAction>
-            value={keybindings?.[token] ?? 'none'}
-            onChange={(e) =>
-              dispatch(setKeybinding(token, e.target.value as KeyAction))
-            }
-            size="small"
-            sx={{ minWidth: 200 }}
-          >
-            {KEYBOARD_ACTIONS.map(({ value, labelKey: actionLabelKey }) => (
-              <MenuItem key={value} value={value}>
-                {t(actionLabelKey)}
-              </MenuItem>
-            ))}
-          </Select>
-        </Field>
-      ))}
-      <Box sx={{ mt: 1 }}>
-        <Button
-          size="small"
-          variant="outlined"
-          onClick={() => dispatch(resetKeybindings())}
-        >
-          {t('resetKeybindings')}
-        </Button>
-      </Box>
-    </Stack>
-  );
-}
-
-/** The left-nav order is the order users see the categories in. Keep stable;
- *  tests reference some IDs (e.g. `data-testid="open-workflow-manager"`). */
-const SECTIONS: {
-  id: SettingsSectionId;
-  labelKey: string;
-  Icon: typeof TuneIcon;
-}[] = [
-  { id: 'general', labelKey: 'settingsSectionGeneral', Icon: TuneIcon },
-  { id: 'view', labelKey: 'settingsSectionView', Icon: VisibilityIcon },
-  { id: 'keyboard', labelKey: 'settingsSectionKeyboard', Icon: KeyboardIcon },
-  { id: 'mapique', labelKey: 'settingsSectionMapique', Icon: MapIcon },
-  { id: 'tags', labelKey: 'settingsSectionTags', Icon: StyleIcon },
-  {
-    id: 'notifications',
-    labelKey: 'settingsSectionNotifications',
-    Icon: NotificationsIcon,
-  },
-  { id: 'mcp', labelKey: 'settingsSectionMcp', Icon: HubIcon },
-  { id: 'lan', labelKey: 'settingsSectionLan', Icon: LanIcon },
-  { id: 'commands', labelKey: 'settingsSectionCommands', Icon: TerminalIcon },
-  { id: 'about', labelKey: 'settingsSectionAbout', Icon: InfoOutlinedIcon },
-  { id: 'advanced', labelKey: 'settingsSectionAdvanced', Icon: SettingsIcon },
-];
-
-/**
- * Central settings panel organized by category. The left rail lists the
- * categories; the right pane renders the corresponding section so each pane
- * stays focused and short. Each pane calls into the same Redux `settings`
- * slice — the categories here are UI scaffolding only.
+ * Settings dialog shell: fixed-size two-pane layout (grouped navigation +
+ * scrollable content). Sections render header-less; this shell owns the page
+ * title/description, the searchable navigation and the close affordance.
  */
 export default function SettingsDialog({
   open,
@@ -1140,56 +63,115 @@ export default function SettingsDialog({
   onClose,
 }: SettingsDialogProps) {
   const { t } = useTranslation();
+  const [active, setActive] = useState<SettingsSectionId>('general');
+  const [query, setQuery] = useState('');
+  const [workflowOpen, setWorkflowOpen] = useState(false);
+  const [highlightAnchor, setHighlightAnchor] = useState<string | null>(null);
 
-  const initialRef = useRef<SettingsSectionId>(section ?? 'general');
-  const [active, setActive] = useState<SettingsSectionId>(initialRef.current);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const tabRefs = useRef<Partial<Record<SettingsSectionId, HTMLDivElement | null>>>(
+    {}
+  );
 
-  // Re-focus the requested section each time the dialog re-opens. Without
-  // this the user clicking the Sidebar's "Open tag settings" shortcut would
-  // still land on whichever tab they last visited.
+  // Reset to the requested section whenever the dialog is (re)opened, so deep
+  // links and the last-viewed section don't leak into each other.
   useEffect(() => {
-    if (open) setActive(section ?? 'general');
+    if (!open) return;
+    setActive(section ?? 'general');
+    setQuery('');
+    setHighlightAnchor(null);
   }, [open, section]);
 
-  const [workflowOpen, setWorkflowOpen] = useState(false);
+  // Ctrl/Cmd+F focuses the settings search instead of the app's global find.
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        searchRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open]);
 
-  const navRef = useRef<HTMLDivElement | null>(null);
-
-  /**
-   * Move focus + selection to a section. The tabs use the WAI-ARIA
-   * "automatic activation" pattern: arrowing changes the panel immediately, so
-   * the keyboard user never has to press Enter on a tab they just focused.
-   */
-  const activateSection = (id: SettingsSectionId) => {
+  const selectTab = useCallback((id: SettingsSectionId) => {
     setActive(id);
-    navRef.current
-      ?.querySelector<HTMLElement>(`#settings-tab-${id}`)
-      ?.focus();
-  };
+    setQuery('');
+    if (panelRef.current) panelRef.current.scrollTop = 0;
+  }, []);
 
-  const handleNavKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    const index = SECTIONS.findIndex((s) => s.id === active);
-    if (index < 0) return;
-    let next: number;
-    switch (e.key) {
+  const handleNavKeyDown = (event: React.KeyboardEvent) => {
+    const current = SECTIONS.findIndex((s) => s.id === active);
+    let nextIndex: number | null = null;
+    switch (event.key) {
       case 'ArrowDown':
-        next = (index + 1) % SECTIONS.length;
+        nextIndex = (current + 1) % SECTIONS.length;
         break;
       case 'ArrowUp':
-        next = (index - 1 + SECTIONS.length) % SECTIONS.length;
+        nextIndex = (current - 1 + SECTIONS.length) % SECTIONS.length;
         break;
       case 'Home':
-        next = 0;
+        nextIndex = 0;
         break;
       case 'End':
-        next = SECTIONS.length - 1;
+        nextIndex = SECTIONS.length - 1;
         break;
       default:
         return;
     }
-    e.preventDefault();
-    activateSection(SECTIONS[next].id);
+    event.preventDefault();
+    const next = SECTIONS[nextIndex];
+    setActive(next.id);
+    tabRefs.current[next.id]?.focus();
   };
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const results = useMemo(() => {
+    if (!normalizedQuery) return [];
+    const tokens = normalizedQuery.split(/\s+/);
+    return SEARCH_ENTRIES.filter((entry) => {
+      const haystack = [
+        t(entry.titleKey),
+        entry.hintKey ? t(entry.hintKey) : '',
+        t(SECTION_BY_ID[entry.section].labelKey),
+        ...(entry.keywords ?? []),
+      ]
+        .join(' ')
+        .toLowerCase();
+      return tokens.every((token) => haystack.includes(token));
+    });
+  }, [normalizedQuery, t]);
+
+  const groupedResults = useMemo(() => {
+    const bySection = new Map<SettingsSectionId, SettingsSearchEntry[]>();
+    for (const entry of results) {
+      const bucket = bySection.get(entry.section);
+      if (bucket) bucket.push(entry);
+      else bySection.set(entry.section, [entry]);
+    }
+    return SECTIONS.filter((s) => bySection.has(s.id)).map(
+      (s) => [s, bySection.get(s.id) ?? []] as const
+    );
+  }, [results]);
+
+  const handleJump = useCallback((entry: SettingsSearchEntry) => {
+    setQuery('');
+    setActive(entry.section);
+    if (panelRef.current) panelRef.current.scrollTop = 0;
+    if (!entry.anchor) return;
+    const anchor = entry.anchor;
+    setHighlightAnchor(anchor);
+    window.setTimeout(() => {
+      document
+        .querySelector<HTMLElement>(`[data-settings-row="${anchor}"]`)
+        ?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    }, 40);
+    window.setTimeout(() => setHighlightAnchor(null), 1800);
+  }, []);
+
+  const activeMeta = SECTION_BY_ID[active];
 
   const renderSection = () => {
     switch (active) {
@@ -1197,24 +179,24 @@ export default function SettingsDialog({
         return <GeneralSection />;
       case 'view':
         return <ViewSection />;
-      case 'keyboard':
-        return <KeyboardSection />;
       case 'mapique':
         return <MapSection />;
-      case 'tags':
-        return <TagsSection onOpenWorkflowManager={() => setWorkflowOpen(true)} />;
+      case 'keyboard':
+        return <KeyboardSection />;
       case 'notifications':
         return <NotificationsSection />;
+      case 'tags':
+        return <TagsSection onOpenWorkflowManager={() => setWorkflowOpen(true)} />;
       case 'mcp':
         return <McpSection />;
       case 'lan':
         return <LanSettings />;
       case 'commands':
         return <UserCommandsSection />;
-      case 'about':
-        return <UpdateSection />;
       case 'advanced':
         return <AdvancedSection />;
+      case 'about':
+        return <UpdateSection />;
       default:
         return null;
     }
@@ -1225,91 +207,299 @@ export default function SettingsDialog({
       <Dialog
         open={open}
         onClose={onClose}
-        fullWidth
-        maxWidth="md"
         data-testid="settings-dialog"
+        aria-labelledby="settings-dialog-title"
+        fullWidth
+        maxWidth={false}
+        slotProps={{
+          paper: {
+            sx: {
+              width: 'min(1100px, 94vw)',
+              maxWidth: 'min(1100px, 94vw)',
+              height: 'min(780px, 88vh)',
+              maxHeight: 'min(780px, 88vh)',
+              borderRadius: 2,
+              overflow: 'hidden',
+            },
+          },
+        }}
       >
-        <DialogTitle>{t('settings')}</DialogTitle>
-        <DialogContent
-          dividers
-          sx={{ p: 0, overflow: 'hidden' }}
+        <DialogTitle
+          id="settings-dialog-title"
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 2,
+            px: 3,
+            py: 2,
+            flexShrink: 0,
+          }}
         >
-          <Stack
-            direction="row"
-            sx={{ minHeight: 460, alignItems: 'stretch' }}
+          <Typography component="span" variant="h6" sx={{ fontWeight: 600 }}>
+            {t('settings')}
+          </Typography>
+          <Box sx={{ flex: 1 }} />
+          <IconButton
+            size="small"
+            onClick={onClose}
+            aria-label={t('close')}
+            sx={{ color: 'text.secondary' }}
           >
-            {/* Real tablist semantics: section switching is a tab pattern, and
-                a plain List of buttons left screen readers without the
-                "tab N of M / selected" announcement. Roving tabindex keeps a
-                single tab stop in the list; Arrow/Home/End activate. */}
-            <List
-              dense
-              component="div"
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </DialogTitle>
+        <Divider />
+
+        <DialogContent
+          sx={{
+            p: 0,
+            minHeight: 0,
+            display: 'flex',
+            overflow: 'hidden',
+          }}
+        >
+          <Box
+            component="nav"
+            sx={{
+              width: { xs: 200, sm: 230, md: 260 },
+              flexShrink: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              minHeight: 0,
+              borderRight: 1,
+              borderColor: 'divider',
+              bgcolor: 'background.default',
+            }}
+          >
+            <Box sx={{ p: 1.5, pb: 1 }}>
+              <TextField
+                inputRef={searchRef}
+                data-testid="settings-search"
+                size="small"
+                fullWidth
+                value={query}
+                onInput={(e) => setQuery((e.target as HTMLInputElement).value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    setQuery('');
+                    (e.target as HTMLInputElement).blur();
+                  }
+                }}
+                placeholder={t('settingsSearchPlaceholder')}
+                slotProps={{
+                  htmlInput: {
+                    'aria-label': t('settingsSearchPlaceholder'),
+                  },
+                  input: {
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <SearchIcon sx={{ fontSize: 18 }} />
+                      </InputAdornment>
+                    ),
+                    endAdornment: query ? (
+                      <InputAdornment position="end">
+                        <IconButton
+                          size="small"
+                          edge="end"
+                          aria-label={t('settingsSearchClear')}
+                          onClick={() => {
+                            setQuery('');
+                            searchRef.current?.focus();
+                          }}
+                        >
+                          <ClearIcon sx={{ fontSize: 16 }} />
+                        </IconButton>
+                      </InputAdornment>
+                    ) : null,
+                  },
+                }}
+              />
+            </Box>
+
+            <Box
               role="tablist"
               aria-label={t('settings')}
               aria-orientation="vertical"
-              ref={navRef}
               onKeyDown={handleNavKeyDown}
               sx={{
-                width: 200,
-                flexShrink: 0,
-                borderRight: 1,
-                borderColor: 'divider',
-                py: 1,
-              }}
-            >
-              {SECTIONS.map(({ id, labelKey, Icon }) => (
-                <ListItemButton
-                  key={id}
-                  role="tab"
-                  id={`settings-tab-${id}`}
-                  aria-selected={active === id}
-                  aria-controls="settings-section-panel"
-                  tabIndex={active === id ? 0 : -1}
-                  selected={active === id}
-                  onClick={() => setActive(id)}
-                  data-testid={`settings-nav-${id}`}
-                  sx={{ px: 1.5 }}
-                >
-                  <ListItemIcon sx={{ minWidth: 32 }}>
-                    <Icon fontSize="small" />
-                  </ListItemIcon>
-                  <ListItemText
-                    primary={t(labelKey)}
-                    slotProps={{
-                      primary: {
-                        variant: 'body2',
-                        sx: { fontWeight: 500 },
-                      },
-                    }}
-                  />
-                </ListItemButton>
-              ))}
-            </List>
-
-            <Box
-              role="tabpanel"
-              id="settings-section-panel"
-              aria-labelledby={`settings-tab-${active}`}
-              // Scrollable region: focusable so keyboard users can scroll a
-              // long section (About/Advanced) without a mouse.
-              tabIndex={0}
-              sx={{
                 flex: 1,
-                minWidth: 0,
-                p: 3,
+                minHeight: 0,
                 overflowY: 'auto',
-                maxHeight: 'min(70vh, 640px)',
+                pb: 1.5,
               }}
             >
-              {renderSection()}
+              {NAV_GROUPS.map((group) => (
+                <Box key={group.titleKey} role="presentation">
+                  <Typography
+                    variant="overline"
+                    color="text.secondary"
+                    sx={{
+                      display: 'block',
+                      px: 2,
+                      pt: 1.5,
+                      pb: 0.5,
+                      fontSize: 11,
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    {t(group.titleKey)}
+                  </Typography>
+                  {group.ids.map((id) => {
+                    const meta = SECTION_BY_ID[id];
+                    const Icon = meta.Icon;
+                    const isActive = active === id;
+                    return (
+                      <ListItemButton
+                        key={id}
+                        id={`settings-tab-${id}`}
+                        role="tab"
+                        data-testid={`settings-nav-${id}`}
+                        aria-selected={isActive}
+                        aria-controls="settings-section-panel"
+                        tabIndex={isActive ? 0 : -1}
+                        selected={isActive}
+                        onClick={() => selectTab(id)}
+                        ref={(node) => {
+                          tabRefs.current[id] = node;
+                        }}
+                        sx={{
+                          mx: 1,
+                          px: 1.25,
+                          py: 0.5,
+                          minHeight: 36,
+                          borderRadius: 1,
+                          gap: 1,
+                          '&.Mui-selected': {
+                            bgcolor: 'action.selected',
+                            '&:hover': { bgcolor: 'action.selected' },
+                          },
+                        }}
+                      >
+                        <ListItemIcon
+                          sx={{
+                            minWidth: 26,
+                            color: isActive ? 'primary.main' : 'text.secondary',
+                          }}
+                        >
+                          <Icon sx={{ fontSize: 18 }} />
+                        </ListItemIcon>
+                        <Typography
+                          variant="body2"
+                          noWrap
+                          sx={{ fontWeight: isActive ? 600 : 400 }}
+                        >
+                          {t(meta.labelKey)}
+                        </Typography>
+                      </ListItemButton>
+                    );
+                  })}
+                </Box>
+              ))}
             </Box>
-          </Stack>
+          </Box>
+
+          <Box
+            ref={panelRef}
+            role="tabpanel"
+            id="settings-section-panel"
+            aria-labelledby={`settings-tab-${active}`}
+            tabIndex={0}
+            sx={{
+              flex: 1,
+              minWidth: 0,
+              overflowY: 'auto',
+              p: { xs: 2, sm: 3 },
+              bgcolor: 'background.paper',
+              ...(highlightAnchor
+                ? {
+                    [`& [data-settings-row="${highlightAnchor}"]`]: {
+                      bgcolor: 'action.hover',
+                      borderRadius: 1,
+                    },
+                  }
+                : {}),
+            }}
+          >
+            <Box sx={{ maxWidth: 780 }}>
+              <Typography
+                component="h2"
+                variant="h6"
+                sx={{ fontWeight: 600, fontSize: 18 }}
+              >
+                {t(activeMeta.labelKey)}
+              </Typography>
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ mt: 0.5, mb: 2.5 }}
+              >
+                {t(activeMeta.descKey)}
+              </Typography>
+
+              {normalizedQuery ? (
+                <Stack sx={{ gap: 2 }}>
+                  <Typography variant="caption" color="text.secondary">
+                    {t('settingsSearchResults', { count: results.length })}
+                  </Typography>
+                  {results.length === 0 ? (
+                    <Typography variant="body2" color="text.secondary">
+                      {t('settingsSearchEmpty')}
+                    </Typography>
+                  ) : (
+                    groupedResults.map(([meta, entries]) => (
+                      <Box key={meta.id}>
+                        <Typography
+                          variant="overline"
+                          color="text.secondary"
+                          sx={{ display: 'block', mb: 0.75 }}
+                        >
+                          {t(meta.labelKey)}
+                        </Typography>
+                        <SettingsGroup>
+                          {entries.map((entry) => (
+                            <ButtonBase
+                              key={entry.id}
+                              onClick={() => handleJump(entry)}
+                              sx={{
+                                width: '100%',
+                                display: 'block',
+                                textAlign: 'left',
+                                px: 2,
+                                py: 1.25,
+                              }}
+                            >
+                              <Typography
+                                component="span"
+                                variant="body2"
+                                sx={{ display: 'block', fontWeight: 500 }}
+                              >
+                                {t(entry.titleKey)}
+                              </Typography>
+                              {entry.hintKey ? (
+                                <Typography
+                                  component="span"
+                                  variant="caption"
+                                  color="text.secondary"
+                                  sx={{ display: 'block', mt: 0.25 }}
+                                >
+                                  {t(entry.hintKey)}
+                                </Typography>
+                              ) : null}
+                            </ButtonBase>
+                          ))}
+                        </SettingsGroup>
+                      </Box>
+                    ))
+                  )}
+                </Stack>
+              ) : (
+                renderSection()
+              )}
+            </Box>
+          </Box>
         </DialogContent>
       </Dialog>
 
-      {/* WorkflowManagerDialog is hosted here, not in the Sidebar, so the
-        Settings → Tags section acts as the single entry point. */}
       <WorkflowManagerDialog
         open={workflowOpen}
         onClose={() => setWorkflowOpen(false)}

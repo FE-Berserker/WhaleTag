@@ -78,11 +78,6 @@ export default function UserCommandsSection(): JSX.Element {
 
   return (
     <>
-      <Typography variant="subtitle2">{t('commandsTitle')}</Typography>
-      <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5 }}>
-        {t('commandsHint')}
-      </Typography>
-
       {commands.length === 0 ? (
         <Typography variant="body2" color="text.secondary">
           {t('commandEmpty')}
