@@ -752,8 +752,8 @@ describe('mcp tool surface (approval allow path)', () => {
     await client.close();
     assert.notEqual(res.isError, true, textOf(res));
     const parsed = jsonOf<{ name: string }>(res);
-    assert.equal(parsed.name, 'Bad��Name');
-    assert.equal(deliveredLocations.at(-1)?.name, 'Bad��Name');
+    assert.equal(parsed.name, 'Bad\uFFFD\uFFFDName');
+    assert.equal(deliveredLocations.at(-1)?.name, 'Bad\uFFFD\uFFFDName');
   });
 
   it('lists one directory level', async () => {

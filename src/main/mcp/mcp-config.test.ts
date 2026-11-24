@@ -182,6 +182,26 @@ describe('mcp-config — load + persist', () => {
     ) as { token: string };
     assert.equal(onDisk.token, cfg.token);
   });
+
+  it('a setter whose write fails rejects and leaves the cached config unchanged', async () => {
+    const configFile = path.join(TMP_USER_DATA, 'mcp-config.json');
+    const before = mod.loadMcpConfig().enabled;
+    const onDiskBefore = fs.readFileSync(configFile, 'utf8');
+    // Squat a directory on the config path: the atomic rename cannot land.
+    fs.rmSync(configFile);
+    fs.mkdirSync(configFile);
+    try {
+      await assert.rejects(mod.setMcpEnabled(!before));
+      assert.equal(mod.loadMcpConfig().enabled, before);
+    } finally {
+      fs.rmdirSync(configFile);
+      fs.writeFileSync(configFile, onDiskBefore, 'utf8');
+    }
+    const onDisk = JSON.parse(fs.readFileSync(configFile, 'utf8')) as {
+      enabled: boolean;
+    };
+    assert.equal(onDisk.enabled, before);
+  });
 });
 
 describe('mcp-config — bearer token at rest', () => {

@@ -4,19 +4,20 @@ import { promises as fsp } from 'fs';
 import { createRequire } from 'module';
 import os from 'os';
 import path from 'path';
-import { getAllowedRoots, setAllowedRoots } from '../allowed-roots';
+import { getAllowedRoots, setAllowedRoots, setReadOnlyRoots } from '../allowed-roots';
 
 const require_ = createRequire(__filename);
-const MODULE_SPECS = ['./thumbnails', './search-index', './extensions'];
+const MODULE_SPECS = ['./thumbnails', './search-index', './extensions', './meta'];
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown> | unknown;
 type CallLog = unknown[][];
 
 type ThumbnailCallName =
   | 'loadFolderThumbnail'
-  | 'loadFolderBackground'
   | 'setFolderThumbnail'
-  | 'setFolderBackground';
+  | 'setFolderBackground'
+  | 'clearFolderThumbnail'
+  | 'clearFolderBackground';
 
 interface TestRig {
   handlers: Map<string, Handler>;
@@ -74,9 +75,10 @@ function buildRig(): TestRig {
 
   const thumbnailCalls: TestRig['thumbnailCalls'] = {
     loadFolderThumbnail: [],
-    loadFolderBackground: [],
     setFolderThumbnail: [],
     setFolderBackground: [],
+    clearFolderThumbnail: [],
+    clearFolderBackground: [],
   };
   const record = (calls: CallLog) => (...args: unknown[]) => {
     calls.push(args);
@@ -85,11 +87,10 @@ function buildRig(): TestRig {
     generateThumbnail: () => undefined,
     loadThumbnail: () => undefined,
     loadFolderThumbnail: record(thumbnailCalls.loadFolderThumbnail),
-    loadFolderBackground: record(thumbnailCalls.loadFolderBackground),
     setFolderThumbnail: record(thumbnailCalls.setFolderThumbnail),
     setFolderBackground: record(thumbnailCalls.setFolderBackground),
-    clearFolderThumbnail: () => undefined,
-    clearFolderBackground: () => undefined,
+    clearFolderThumbnail: record(thumbnailCalls.clearFolderThumbnail),
+    clearFolderBackground: record(thumbnailCalls.clearFolderBackground),
   });
 
   const workerCalls: TestRig['workerCalls'] = [];
@@ -117,6 +118,7 @@ function buildRig(): TestRig {
   require_('./thumbnails').registerThumbnailHandlers();
   require_('./search-index').registerSearchIndexHandlers();
   require_('./extensions').registerExtensionHandlers();
+  require_('./meta').registerMetaHandlers();
   return { handlers, thumbnailCalls, workerCalls, revisionCalls };
 }
 
@@ -134,6 +136,7 @@ describe('IPC boundary guards', () => {
 
   afterEach(async () => {
     setAllowedRoots([]);
+    setReadOnlyRoots([]);
     clearInjectedMocks();
     clearTargetModuleCache();
     await Promise.all([
@@ -144,7 +147,6 @@ describe('IPC boundary guards', () => {
 
   const folderLoads = [
     ['thumbnail:loadFolder', 'loadFolderThumbnail'],
-    ['thumbnail:loadFolderBackground', 'loadFolderBackground'],
   ] as const;
   for (const [channel, functionName] of folderLoads) {
     it(`${channel} rejects an outside dirPath without reading through the service`, async () => {
@@ -170,6 +172,28 @@ describe('IPC boundary guards', () => {
     });
   }
 
+  const folderClears = [
+    ['thumbnail:clearFolderThumbnail', 'clearFolderThumbnail'],
+    ['thumbnail:clearFolderBackground', 'clearFolderBackground'],
+  ] as const;
+
+  // A set or clear rewrites `.whale/` inside the folder, so a read-only
+  // location refuses it before the service is called.
+  for (const [channel, functionName] of [...folderSets, ...folderClears]) {
+    it(`${channel} refuses a read-only location without calling through`, async () => {
+      setReadOnlyRoots([root]);
+      try {
+        await assert.rejects(
+          async () => rig.handlers.get(channel)!({}, root, 'ignored'),
+          /read-only/
+        );
+        assert.equal(rig.thumbnailCalls[functionName].length, 0);
+      } finally {
+        setReadOnlyRoots([]);
+      }
+    });
+  }
+
   it('folder thumbnail handlers still call through when every path is allowed', async () => {
     const source = path.join(root, 'source.jpg');
     for (const [channel, functionName] of folderLoads) {
@@ -180,6 +204,30 @@ describe('IPC boundary guards', () => {
       await rig.handlers.get(channel)!({}, root, source);
       assert.deepEqual(rig.thumbnailCalls[functionName], [[root, source]]);
     }
+    for (const [channel, functionName] of folderClears) {
+      await rig.handlers.get(channel)!({}, root);
+      assert.deepEqual(rig.thumbnailCalls[functionName], [[root]]);
+    }
+  });
+
+  // Sidecar batch reads are fenced like every other handler (docs/13 §13):
+  // one path outside every location rejects the whole call.
+  it('sidecar:readManyDetailed is fenced to configured locations', async () => {
+    const read = (dir: string) =>
+      rig.handlers.get('sidecar:readManyDetailed')!({}, dir, ['a.txt']);
+    await assert.rejects(async () => read(outside), /Refused/);
+    await read(root);
+  });
+
+  it('sidecar:readForPathsDetailed is fenced to configured locations', async () => {
+    const read = (filePaths: string[]) =>
+      rig.handlers.get('sidecar:readForPathsDetailed')!({}, filePaths);
+    const insideFile = path.join(root, 'a.txt');
+    const outsideFile = path.join(outside, 'a.txt');
+    await assert.rejects(async () => read([outsideFile]), /Refused/);
+    // One stray path is enough to reject the whole batch.
+    await assert.rejects(async () => read([insideFile, outsideFile]), /Refused/);
+    await read([insideFile]);
   });
 
   const searchCases = [

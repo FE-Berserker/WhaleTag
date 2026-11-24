@@ -27,12 +27,6 @@ export function registerExtensionHandlers(): void {
   // ---- Phase 4: Extension system (viewers / editors / revisions) ----
   ipcMain.handle('ext:loadRegistry', () => loadExtensionRegistry());
 
-  ipcMain.handle('ext:backupRevision', (_event, filePath: string) => {
-    assertWithinAllowedRoot(filePath); // writes <dir>/.whale/revisions/
-    assertWritable(filePath);
-    return backupRevision(filePath);
-  });
-
   ipcMain.handle(
     'ext:deleteRevision',
     (_event, filePath: string, revisionPath: string) => {

@@ -130,7 +130,7 @@ function visibleApprovalText(raw: string): string {
       code === 0x200f ||
       (code >= 0x202a && code <= 0x202e) ||
       (code >= 0x2066 && code <= 0x2069);
-    visible += unsafe ? '�' : char;
+    visible += unsafe ? '\uFFFD' : char;
   }
   return visible;
 }

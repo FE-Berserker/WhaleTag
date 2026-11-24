@@ -108,24 +108,6 @@ export interface ExifProcessedRecord {
   triedAt: number;
 }
 
-/**
- * P3-7: a small, render-friendly subset of EXIF metadata for the
- * map-marker popup. Every field is optional — only what the file actually
- * carries comes through. The renderer treats an all-null summary as
- * "EXIF unavailable" and hides the section.
- *
- * Kept in the shared types layer (rather than main-only) so the renderer's
- * cache can hold `ExifSummary` values directly without re-declaring.
- */
-export interface ExifSummary {
-  dateTaken: string | null;
-  camera: string | null;
-  lens: string | null;
-  focalLength: number | null;
-  iso: number | null;
-  shutterSpeed: string | null;
-}
-
 /** A configured location (root folder) Whale can browse. */
 export interface WhaleLocation {
   id: string;
@@ -170,7 +152,6 @@ export interface DirChangedEvent {
  */
 export interface WhaleApi {
   // Read / navigate
-  homeDir: () => Promise<string>;
   parentDir: (dirPath: string) => Promise<string>;
   listDirectory: (dirPath: string) => Promise<DirEntry[]>;
   /** Recursively list entries under `dirPath` up to `maxDepth` levels deep. */
@@ -253,18 +234,10 @@ export interface WhaleApi {
 
   // EXIF / GPS extraction for the Mapique perspective.
   extractGps: (filePath: string) => Promise<{ lat: number; lng: number } | null>;
-  // P3-7: popup EXIF summary (dateTaken / camera / lens / focalLength /
-  // iso / shutterSpeed). Fetched lazily on marker click — never blocks
-  // the initial map render.
-  getExifSummary: (filePath: string) => Promise<ExifSummary>;
   // P3-4: EXIF extraction cache. Persists "already tried" results in
   // `index.db` so reopening a directory doesn't re-decode every image.
   loadExifProcessed: (rootPath: string) => Promise<ExifProcessedRecord[]>;
-  markExifProcessed: (
-    rootPath: string,
-    record: ExifProcessedRecord
-  ) => Promise<void>;
-  /** Batched variant — one IPC + one SQLite transaction per batch instead of
+  /** Batched write — one IPC + one SQLite transaction per batch instead of
    *  per image (used by the Mapique folder EXIF extractor). */
   markExifProcessedMany: (
     rootPath: string,
@@ -301,10 +274,6 @@ export interface WhaleApi {
   syncFulltextPaths: (paths: string[]) => Promise<void>;
 
   // Sidecar metadata (`.whale/<file>.json`)
-  readSidecars: (
-    dirPath: string,
-    names: string[]
-  ) => Promise<Record<string, SidecarMeta>>;
   readSidecarsDetailed: (
     dirPath: string,
     names: string[]
@@ -314,9 +283,6 @@ export interface WhaleApi {
   // recursive scan's flat entry list by parent directory, but the key in the
   // returned record is the FULL input path so that two same-named files in
   // different subdirs don't collide. Missing entries are omitted.
-  readSidecardsForPaths: (
-    filePaths: string[]
-  ) => Promise<Record<string, SidecarMeta>>;
   readSidecardsForPathsDetailed: (
     filePaths: string[]
   ) => Promise<SidecarReadResult>;
@@ -355,7 +321,6 @@ export interface WhaleApi {
 
   // Folder thumbnails / backgrounds (`wst.jpg` / `wsb.jpg`).
   loadFolderThumbnail: (dirPath: string) => Promise<string | null>;
-  loadFolderBackground: (dirPath: string) => Promise<string | null>;
   setFolderThumbnail: (dirPath: string, sourcePath: string) => Promise<void>;
   setFolderBackground: (dirPath: string, sourcePath: string) => Promise<void>;
   clearFolderThumbnail: (dirPath: string) => Promise<void>;
@@ -363,7 +328,6 @@ export interface WhaleApi {
 
   // Phase 4 — Extension system (viewers / editors / revisions)
   loadExtensionRegistry: () => Promise<ExtensionRegistry | null>;
-  backupRevision: (filePath: string) => Promise<void>;
   /** Deletes one revision. `filePath` binds the revision to its owner file. */
   deleteRevision: (filePath: string, revisionPath: string) => Promise<void>;
   writeFileWithRevision: (filePath: string, content: string) => Promise<void>;

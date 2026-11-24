@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { extractGps, getExifSummary } from '../exif';
+import { extractGps } from '../exif';
 import { request } from '../index-worker-host';
 import { setFulltextRoots } from '../dir-watcher';
 import { assertWithinAllowedRoot } from '../allowed-roots';
@@ -23,31 +23,14 @@ export function registerSearchIndexHandlers(): void {
   });
 
   // P3-4: persisted EXIF extraction cache. Reads return the full record set
-  // for the current root; writes upsert a single record. The renderer reads
+  // for the current root; writes are batched below. The renderer reads
   // on directory mount to skip files already known to lack GPS, and writes
-  // back after each attempt.
+  // back after each folder's extraction pass.
   ipcMain.handle('exif:load-processed', (_event, rootPath: string) => {
     assertWithinAllowedRoot(rootPath);
     return request('exif:load-processed', { rootPath });
   });
-  // P3-7: popup EXIF summary. Lazy — the renderer fetches this when a
-  // marker is clicked, never on the initial map render.
-  ipcMain.handle('exif:get-summary', (_event, filePath: string) => {
-    assertWithinAllowedRoot(filePath); // reads the full file's bytes
-    return getExifSummary(filePath);
-  });
-  ipcMain.handle(
-    'exif:mark-processed',
-    (
-      _event,
-      rootPath: string,
-      record: { path: string; status: 'ok' | 'none'; lat: number | null; lng: number | null; triedAt: number }
-    ) => {
-      assertWithinAllowedRoot(rootPath);
-      return request('exif:mark-processed', { rootPath, record });
-    }
-  );
-  // Batched variant — one IPC + one transaction (fsync) per batch instead of
+  // Batched write — one IPC + one transaction (fsync) per batch instead of
   // per image. Used by the Mapique EXIF extractor for a whole folder at once.
   // P0-2: forwarded to the worker; the worker keeps the single-transaction
   // property (one WAL fsync per call, not per record).

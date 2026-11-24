@@ -3,13 +3,12 @@ import {
   generateThumbnail,
   loadThumbnail,
   loadFolderThumbnail,
-  loadFolderBackground,
   setFolderThumbnail,
   setFolderBackground,
   clearFolderThumbnail,
   clearFolderBackground,
 } from '../thumbnail';
-import { assertWithinAllowedRoot } from '../allowed-roots';
+import { assertWithinAllowedRoot, assertWritable } from '../allowed-roots';
 
 /**
  * Thumbnail handlers (`thumbnail:*`): single-file + folder thumbnails and
@@ -34,14 +33,15 @@ export function registerThumbnailHandlers(): void {
     assertWithinAllowedRoot(dirPath);
     return loadFolderThumbnail(dirPath);
   });
-  ipcMain.handle('thumbnail:loadFolderBackground', (_event, dirPath: string) => {
-    assertWithinAllowedRoot(dirPath);
-    return loadFolderBackground(dirPath);
-  });
+  // A set/clear rewrites `.whale/` inside the folder, so a read-only location
+  // refuses it like every other metadata write. The `sourcePath` of a set is a
+  // user-picked image and may live outside every location: only the
+  // destination folder is fenced.
   ipcMain.handle(
     'thumbnail:setFolderThumbnail',
     (_event, dirPath: string, sourcePath: string) => {
       assertWithinAllowedRoot(dirPath);
+      assertWritable(dirPath);
       return setFolderThumbnail(dirPath, sourcePath);
     }
   );
@@ -49,6 +49,7 @@ export function registerThumbnailHandlers(): void {
     'thumbnail:setFolderBackground',
     (_event, dirPath: string, sourcePath: string) => {
       assertWithinAllowedRoot(dirPath);
+      assertWritable(dirPath);
       return setFolderBackground(dirPath, sourcePath);
     }
   );
@@ -56,6 +57,7 @@ export function registerThumbnailHandlers(): void {
     'thumbnail:clearFolderThumbnail',
     (_event, dirPath: string) => {
       assertWithinAllowedRoot(dirPath);
+      assertWritable(dirPath);
       return clearFolderThumbnail(dirPath);
     }
   );
@@ -63,6 +65,7 @@ export function registerThumbnailHandlers(): void {
     'thumbnail:clearFolderBackground',
     (_event, dirPath: string) => {
       assertWithinAllowedRoot(dirPath);
+      assertWritable(dirPath);
       return clearFolderBackground(dirPath);
     }
   );

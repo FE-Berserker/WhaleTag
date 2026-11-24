@@ -1,4 +1,3 @@
-import os from 'os';
 import path from 'path';
 import { ipcMain } from 'electron';
 import { acceptRootsFromRenderer } from '../known-roots';
@@ -14,14 +13,12 @@ import { triggerStartupMigration } from '../migrate-date-tags';
 import { stopLanServer } from '../lan';
 
 /**
- * Location-root handlers: home/parent probes + the renderer's
+ * Location-root handlers: the parent probe + the renderer's
  * `fs:setAllowedRoots` sync push. Split out of the old god-registrar `ipc.ts`
  * (docs/01 §12) — behavior is verbatim; only the module boundary is new.
  */
 
 export function registerFsRootsHandlers(): void {
-  ipcMain.handle('fs:homeDir', () => os.homedir());
-
   ipcMain.handle('fs:parentDir', (_event, dirPath: string) =>
     path.dirname(dirPath)
   );
@@ -88,7 +85,7 @@ export function registerFsRootsHandlers(): void {
       syncWatchedRoots(next);
       // The startup date-tag migration must wait for this push: at bootstrap
       // the root set is always still empty (the renderer hasn't mounted yet),
-      // so running it there silently did nothing (docs/09 §26). The trigger's
+      // so running it there silently did nothing (docs/09 §24). The trigger's
       // once-guard keeps later re-pushes (location add/remove) from re-running.
       void triggerStartupMigration(getAllowedRoots());
     }

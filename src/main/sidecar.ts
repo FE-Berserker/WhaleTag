@@ -852,6 +852,9 @@ export async function updateFileTags(
  * if the file had none; also clears a stray legacy per-file file if one lingers.
  */
 export async function removeSidecar(filePath: string): Promise<void> {
+  // Rewrites wsd.json like every other metadata write, so a read-only
+  // location refuses it too.
+  assertWritable(filePath);
   const dir = path.dirname(filePath);
   const name = path.basename(filePath);
   await withLock(dir, async () => {

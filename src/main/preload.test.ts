@@ -151,7 +151,7 @@ describe('preload bridge — exposed shape', () => {
       'openNative',
       'zipEntries',
       'writeSidecar',
-      'readSidecars',
+      'readSidecarsDetailed',
       'generateThumbnail',
       'buildLocationIndex',
       'getLanStatus',

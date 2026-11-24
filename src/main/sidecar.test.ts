@@ -15,6 +15,7 @@ import {
   updateFileTags,
 } from './sidecar';
 import { META_DIR, MIGRATION_STATE_FILE, SIDECAR_VERSION } from '../shared/whale-meta';
+import { setReadOnlyRoots } from './allowed-roots';
 
 /** Per-test scratch directory under the OS temp root. */
 async function tmpDir(): Promise<string> {
@@ -144,6 +145,20 @@ describe('aggregated sidecar store (wsd.json)', () => {
       assert.equal(map['a.txt'], undefined);
       assert.deepEqual(map['b.txt']?.tags, ['y']);
     } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to remove an entry inside a read-only location', async () => {
+    const dir = await tmpDir();
+    try {
+      await writeSidecar(filePath(dir, 'a.txt'), { tags: ['x'] });
+      setReadOnlyRoots([dir]);
+      await assert.rejects(removeSidecar(filePath(dir, 'a.txt')), /read-only/);
+      const map = await readSidecars(dir, ['a.txt']);
+      assert.deepEqual(map['a.txt']?.tags, ['x']);
+    } finally {
+      setReadOnlyRoots([]);
       await fsp.rm(dir, { recursive: true, force: true });
     }
   });

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { atomicWriteJson } from './atomic-write';
 import { foldPath } from './path-fold';
 
 /**
@@ -207,10 +208,10 @@ async function writeDocument(
   file: string,
   payload: PersistedKnownRoots
 ): Promise<void> {
-  const tmp = `${file}.tmp`;
   await fs.promises.mkdir(path.dirname(file), { recursive: true });
-  await fs.promises.writeFile(tmp, JSON.stringify(payload, null, 2), 'utf8');
-  await fs.promises.rename(tmp, file);
+  // Shared tmp + datasync + rename writer: the same durability as every other
+  // persisted document, and stale `.tmp` siblings are swept before each write.
+  await atomicWriteJson(file, payload);
 }
 
 /** Awaits every queued write and surfaces the latest persistence failure. */

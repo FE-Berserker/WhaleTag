@@ -285,22 +285,37 @@ export async function flushMcpConfigWrites(): Promise<void> {
   await writeQueue;
 }
 
-export async function setMcpEnabled(enabled: boolean): Promise<McpConfig> {
-  loadMcpConfig().enabled = enabled;
-  await persistNow();
-  return { ...loadMcpConfig() };
+/**
+ * Apply one field change and persist it. When the write fails the caller sees
+ * the error (the renderer must not show a switch disk never received), and the
+ * cached value is put back so status reads keep describing the config on disk.
+ */
+async function commitField<K extends keyof McpConfig>(
+  key: K,
+  value: McpConfig[K]
+): Promise<McpConfig> {
+  const cfg = loadMcpConfig();
+  const previous = cfg[key];
+  cfg[key] = value;
+  try {
+    await persistNow();
+  } catch (e) {
+    cfg[key] = previous;
+    throw e;
+  }
+  return { ...cfg };
 }
 
-export async function setMcpReadOnly(readOnly: boolean): Promise<McpConfig> {
-  loadMcpConfig().readOnly = readOnly;
-  await persistNow();
-  return { ...loadMcpConfig() };
+export function setMcpEnabled(enabled: boolean): Promise<McpConfig> {
+  return commitField('enabled', enabled);
 }
 
-export async function regenerateMcpToken(): Promise<McpConfig> {
-  loadMcpConfig().token = generateToken();
-  await persistNow();
-  return { ...loadMcpConfig() };
+export function setMcpReadOnly(readOnly: boolean): Promise<McpConfig> {
+  return commitField('readOnly', readOnly);
+}
+
+export function regenerateMcpToken(): Promise<McpConfig> {
+  return commitField('token', generateToken());
 }
 
 /**

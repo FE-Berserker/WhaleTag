@@ -1,8 +1,6 @@
 import { ipcMain } from 'electron';
 import {
-  readSidecars,
   readSidecarsDetailed,
-  readSidecardsForPaths,
   readSidecardsForPathsDetailed,
   recoverCorruptSidecar,
   writeSidecar,
@@ -24,31 +22,33 @@ import type { RecoverCorruptSidecarRequest } from '../../shared/ipc-types';
 /**
  * `.whale/` metadata handlers: sidecars, folder meta, per-location tag
  * library. Split out of the old god-registrar `ipc.ts` (docs/01 §12) —
- * behavior is verbatim.
+ * behavior is verbatim; since then the two batch reads are fenced like every
+ * other handler in this file.
  */
+
+/** Every path must sit inside a configured location — one stray path rejects
+ *  the whole batch before any read happens. */
+function assertEachWithinAllowedRoot(paths: string[]): void {
+  for (const target of paths) assertWithinAllowedRoot(target);
+}
 
 export function registerMetaHandlers(): void {
   // ---- Sidecar metadata (`.whale/<file>.json`) ----
-  ipcMain.handle(
-    'sidecar:readMany',
-    (_event, dirPath: string, names: string[]) => readSidecars(dirPath, names)
-  );
   // H.24 R7: batch-read sidecars for a recursive scan (files spread across
   // many subdirs) in one IPC round trip. Falls back to per-file legacy reads
   // for subdirs whose aggregated wsd.json doesn't exist yet (plan §N1).
-  ipcMain.handle(
-    'sidecar:readForPaths',
-    (_event, filePaths: string[]) => readSidecardsForPaths(filePaths)
-  );
+  // Reads are confined like every other handler in this file (docs/13 §2, §10).
   ipcMain.handle(
     'sidecar:readManyDetailed',
-    (_event, dirPath: string, names: string[]) =>
-      readSidecarsDetailed(dirPath, names)
+    (_event, dirPath: string, names: string[]) => {
+      assertWithinAllowedRoot(dirPath);
+      return readSidecarsDetailed(dirPath, names);
+    }
   );
-  ipcMain.handle(
-    'sidecar:readForPathsDetailed',
-    (_event, filePaths: string[]) => readSidecardsForPathsDetailed(filePaths)
-  );
+  ipcMain.handle('sidecar:readForPathsDetailed', (_event, filePaths: string[]) => {
+    assertEachWithinAllowedRoot(filePaths);
+    return readSidecardsForPathsDetailed(filePaths);
+  });
   // Recovery is a separate explicit channel: only the renderer's confirmed
   // corrupt-issue action calls it. The service repeats all root/hash checks.
   ipcMain.handle(

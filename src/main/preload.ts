@@ -38,7 +38,6 @@ import type {
  */
 const whaleApi: WhaleApi = {
   // Read / navigate
-  homeDir: () => ipcRenderer.invoke('fs:homeDir'),
   parentDir: (dirPath: string) =>
     ipcRenderer.invoke('fs:parentDir', dirPath),
   listDirectory: (dirPath: string) =>
@@ -105,15 +104,9 @@ const whaleApi: WhaleApi = {
 
   // EXIF / GPS extraction for the Mapique perspective.
   extractGps: (filePath: string) => ipcRenderer.invoke('exif:extractGps', filePath),
-  // P3-7: popup EXIF summary (dateTaken / camera / lens / focalLength /
-  // iso / shutterSpeed). Lazy — only fetched when the user opens a popup.
-  getExifSummary: (filePath: string) =>
-    ipcRenderer.invoke('exif:get-summary', filePath),
   // P3-4: EXIF extraction cache persisted in `index.db`.
   loadExifProcessed: (rootPath: string) =>
     ipcRenderer.invoke('exif:load-processed', rootPath),
-  markExifProcessed: (rootPath: string, record: unknown) =>
-    ipcRenderer.invoke('exif:mark-processed', rootPath, record),
   markExifProcessedMany: (rootPath: string, records: unknown) =>
     ipcRenderer.invoke('exif:mark-processed-many', rootPath, records),
   clearExifProcessed: (rootPath: string) =>
@@ -142,10 +135,6 @@ const whaleApi: WhaleApi = {
     ipcRenderer.invoke('fulltext:syncPaths', paths),
 
   // Sidecar metadata
-  readSidecars: (dirPath: string, names: string[]) =>
-    ipcRenderer.invoke('sidecar:readMany', dirPath, names),
-  readSidecardsForPaths: (filePaths: string[]) =>
-    ipcRenderer.invoke('sidecar:readForPaths', filePaths),
   readSidecarsDetailed: (dirPath: string, names: string[]) =>
     ipcRenderer.invoke('sidecar:readManyDetailed', dirPath, names),
   readSidecardsForPathsDetailed: (filePaths: string[]) =>
@@ -187,8 +176,6 @@ const whaleApi: WhaleApi = {
   // Folder thumbnails / backgrounds
   loadFolderThumbnail: (dirPath: string) =>
     ipcRenderer.invoke('thumbnail:loadFolder', dirPath),
-  loadFolderBackground: (dirPath: string) =>
-    ipcRenderer.invoke('thumbnail:loadFolderBackground', dirPath),
   setFolderThumbnail: (dirPath: string, sourcePath: string) =>
     ipcRenderer.invoke('thumbnail:setFolderThumbnail', dirPath, sourcePath),
   setFolderBackground: (dirPath: string, sourcePath: string) =>
@@ -201,8 +188,6 @@ const whaleApi: WhaleApi = {
   // Phase 4 — Extension system (viewers / editors / revisions)
   loadExtensionRegistry: () =>
     ipcRenderer.invoke('ext:loadRegistry') as Promise<ExtensionRegistry | null>,
-  backupRevision: (filePath: string) =>
-    ipcRenderer.invoke('ext:backupRevision', filePath),
   deleteRevision: (filePath: string, revisionPath: string) =>
     ipcRenderer.invoke('ext:deleteRevision', filePath, revisionPath),
   writeFileWithRevision: (filePath: string, content: string) =>
