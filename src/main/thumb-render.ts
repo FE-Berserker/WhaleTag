@@ -28,6 +28,12 @@ const pdfRootDir = path.join(path.dirname(pdfWorkerPath), '..', '..');
 const pdfStandardFontDataUrl = path.join(pdfRootDir, 'standard_fonts') + '/';
 // Predefined CMaps for decoding non-embedded CID-keyed CJK fonts.
 const pdfCMapUrl = path.join(pdfRootDir, 'cmaps') + '/';
+// The JBIG2 / JPEG 2000 / CCITT-fax image decoders are WebAssembly modules in
+// pdfjs (the ICC profile parser too). Without `wasmUrl` they never initialise:
+// pdfjs logs "Unable to decode image", drops the picture and still resolves the
+// render, so a scanned PDF came out as an all-white thumbnail. Same plain-path
+// rule as above.
+const pdfWasmUrl = path.join(pdfRootDir, 'wasm') + '/';
 
 type PdfjsLib = typeof import('pdfjs-dist/legacy/build/pdf.mjs');
 let _pdfjs: PdfjsLib | undefined;
@@ -57,6 +63,7 @@ export async function renderPdfThumb(srcPath: string): Promise<Buffer> {
     cMapUrl: pdfCMapUrl,
     cMapPacked: true,
     standardFontDataUrl: pdfStandardFontDataUrl,
+    wasmUrl: pdfWasmUrl,
   });
 
   let doc: Awaited<typeof loadingTask.promise> | null = null;
