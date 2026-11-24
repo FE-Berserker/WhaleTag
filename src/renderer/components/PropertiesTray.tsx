@@ -157,9 +157,9 @@ function useTagActions({
         //   - `month-202606` / `today-20260704` → compact `202606` / `20260704`
         //   - `in-progress` / `urgent-important` → unchanged (resolved tokens)
         //   - `vacation` / `idea` → unchanged (plain tags)
-        // Then apply互斥 if the resolved tag is in the date family — the
-        // date family is互斥 (last-wins) so two date tags in the same file
-        // would always collapse to one. The period family互斥 separately.
+        // Then apply exclusion if the resolved tag is in the date family — the
+        // date family is exclusive (last-wins) so two date tags in the same file
+        // would always collapse to one. The period family excludes separately.
         const resolved = resolveInputTag(tag, now);
         if (current.includes(resolved)) return current;
         if (isAnyDateShapeTag(resolved)) {
@@ -191,7 +191,7 @@ function useTagActions({
       return applyToTargets((current) => withSingleQuadrant([...current, tag]));
     },
     setPeriod: (period: string) => {
-      // Period tag is its own互斥 family — `normalizeSmartTags` collapses
+      // Period tag is its own exclusive family — `normalizeSmartTags` collapses
       // any prior period tag on the file to the newly-confirmed one. The
       // dialog (PeriodTagDialog) is opened by the caller; this action only
       // owns the write side, mirroring how `addSmartTag` / `setRating` etc.
@@ -266,14 +266,33 @@ export default function PropertiesTray({
   const displayedWidth = previewWidth ?? effectiveWidth;
 
   const single = entries.length === 1 ? entries[0] : null;
+  const selectionKey = single?.path ?? null;
+  const singleName = single?.name;
 
+  // The edit buffers belong to the selected entry, not to the latest refresh.
+  // `entries` and `descByName` take new identities on every directory refresh
+  // (any tag save, an external file change), so resetting on them threw away a
+  // typed description and closed a half-typed rename the moment the list
+  // refreshed. Reset only when the selection moves to another entry, or away
+  // from the single selection.
+  const selectionKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (single) {
-      setDesc(descByName.get(single.path) ?? '');
-      setRenaming(false);
-      setNewName(stripTagsFromName(single.name));
-    }
-  }, [single, descByName]);
+    if (selectionKeyRef.current === selectionKey) return;
+    selectionKeyRef.current = selectionKey;
+    setRenaming(false);
+    if (selectionKey === null) return;
+    setDesc(descByName.get(selectionKey) ?? '');
+    setNewName(stripTagsFromName(singleName ?? ''));
+  }, [selectionKey, descByName, singleName]);
+
+  // Same entry, refreshed metadata (a save elsewhere, undo, an external
+  // change): follow the stored description — unless the user is inside the
+  // field, where their unsaved text must win.
+  const descFocusedRef = useRef(false);
+  useEffect(() => {
+    if (selectionKey === null || descFocusedRef.current) return;
+    setDesc(descByName.get(selectionKey) ?? '');
+  }, [selectionKey, descByName]);
 
   // Tags shown in the chip row:
   //  - single selection: every tag of that file
@@ -307,7 +326,7 @@ export default function PropertiesTray({
 
   // Period tag picker: lives in a global provider (mounted in MainLayout);
   // we just open it and route the confirmed `YYYYMMDD-YYYYMMDD` token back
-  // through `tagActions.setPeriod` so互斥 + multi-target saves are uniform
+  // through `tagActions.setPeriod` so exclusion + multi-target saves are uniform
   // with the other quick-add rows.
   const { openDialog: openPeriodDialog } = usePeriodTagDialog();
 
@@ -323,6 +342,16 @@ export default function PropertiesTray({
       onError?.(e instanceof Error ? e.message : String(e));
     }
   }, [single, desc, descByName, save, onError]);
+
+  // Focus lives in a ref because the store-following effect reads it when a
+  // refresh lands, which is not tied to a re-render of this component.
+  const handleDescFocus = useCallback(() => {
+    descFocusedRef.current = true;
+  }, []);
+  const handleDescBlur = useCallback(() => {
+    descFocusedRef.current = false;
+    void handleSaveDescription();
+  }, [handleSaveDescription]);
 
   const handleAddTag = useCallback(
     (tag: string) => {
@@ -728,7 +757,7 @@ export default function PropertiesTray({
               </QuickRow>
             )}
 
-            
+
             {/* Per-tag metadata: each chip opens the shared TagMetaDialog
                 (color + description in one surface, same as TagLibrary's
                 right-click flow). The chip's color reflects the current
@@ -775,7 +804,8 @@ export default function PropertiesTray({
                 maxRows={8}
                 value={desc}
                 onChange={(e) => setDesc(e.target.value)}
-                onBlur={handleSaveDescription}
+                onFocus={handleDescFocus}
+                onBlur={handleDescBlur}
                 onKeyDown={(e) => {
                   if (isImeComposing(e)) return;
                   if (e.key === 'Enter' && e.ctrlKey) {
@@ -922,7 +952,7 @@ export default function PropertiesTray({
               </QuickRow>
             )}
 
-            
+
             <Typography variant="caption" color="text.secondary">
               {t('selectedSummary', {
                 folders: entries.filter((e) => e.isDirectory).length,

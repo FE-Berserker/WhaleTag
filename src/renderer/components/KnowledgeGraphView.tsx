@@ -32,6 +32,7 @@ import {
   type Edge,
   type Node,
   type NodeProps,
+  type OnNodeDrag,
   type ReactFlowInstance,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -372,15 +373,21 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
 
   const [nodes, setNodes, onNodesChange] = useNodesState(rfNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(rfEdges);
-  // Persist user-dragged positions per location. Fires once per drag gesture
-  // (not per mousemove), so the 200ms-debounced prefs write stays cheap.
-  const handleNodeDragStop = useCallback(() => {
-    setStoredPositions((prev) => {
-      const next = { ...prev };
-      for (const n of nodes) next[n.id] = { x: n.position.x, y: n.position.y };
-      return next;
-    });
-  }, [nodes]);
+  // Persist user-dragged positions per location — only the nodes that were
+  // actually dragged. Storing every node pinned the whole graph to its layout
+  // at the moment of the first drag, so later graph changes (new files, a
+  // filter toggle) could no longer re-flow around it. Fires once per drag
+  // gesture (not per mousemove), so the 200ms-debounced prefs write stays cheap.
+  const handleNodeDragStop = useCallback<OnNodeDrag>(
+    (_event, _node, draggedNodes) => {
+      setStoredPositions((prev) => {
+        const next = { ...prev };
+        for (const n of draggedNodes) next[n.id] = { x: n.position.x, y: n.position.y };
+        return next;
+      });
+    },
+    []
+  );
   const flowRef = useRef<ReactFlowInstance<Node, Edge> | null>(null);
   const fitTimer = useRef<number | undefined>(undefined);
   // Tracks the last node count we fitView'd to. fitView only re-runs when

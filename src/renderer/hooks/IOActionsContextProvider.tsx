@@ -163,6 +163,41 @@ export async function importExternalCore(
   return { ...result, tagWriteFailures };
 }
 
+export interface CreateTaggedEntryCoreDeps {
+  kind: 'file' | 'folder';
+  targetPath: string;
+  tag: string;
+  /** Creates the empty entry; rejects when the creation itself fails. */
+  creator: (kind: 'file' | 'folder', targetPath: string) => Promise<void>;
+  sidecarWriter: (filePath: string, tags: string[]) => Promise<void>;
+}
+
+/**
+ * Create an empty file / folder and stamp it with one tag — the "new with
+ * tag" action behind the Kanban / Matrix / Gantt columns and the list
+ * toolbar.
+ *
+ * The entry is the primary effect and the tag is best-effort, exactly like
+ * `importExternalCore`: the entry is already on disk when the sidecar write
+ * runs, so rejecting there would skip the refresh (the new entry invisible
+ * in the listing) and make a retry fail with "already exists". Resolves with
+ * `false` when the tag write failed — after logging — so the caller can warn
+ * the user; only a failed creation rejects. `creator` and `sidecarWriter`
+ * are injected for the same reason as in `importExternalCore`.
+ */
+export async function createTaggedEntryCore(
+  deps: CreateTaggedEntryCoreDeps
+): Promise<boolean> {
+  await deps.creator(deps.kind, deps.targetPath);
+  try {
+    await deps.sidecarWriter(deps.targetPath, normalizeSmartTags([deps.tag]));
+  } catch (error) {
+    console.warn('[IOActions] failed to write tags for', deps.targetPath, error);
+    return false;
+  }
+  return true;
+}
+
 export function IOActionsContextProvider({
   children,
 }: {
@@ -282,21 +317,31 @@ export function IOActionsContextProvider({
     [currentDirectoryPath, runAndRefresh]
   );
 
+  // Create an empty file / folder and stamp it with one tag. See
+  // `createTaggedEntryCore` for why a failed tag write does not reject.
   const createTaggedEntry = useCallback(
     (kind: 'file' | 'folder', name: string, tag: string) =>
       runAndRefresh(async () => {
         const targetPath = joinPath(currentDirectoryPath, name);
-        if (kind === 'folder') {
-          await ipcApi.createDirectory(targetPath);
-          refreshTree(currentDirectoryPath);
-        } else {
-          await ipcApi.createTextFile(targetPath, '');
-        }
-        await ipcApi.writeSidecar(targetPath, {
-          tags: normalizeSmartTags([tag]),
+        const stamped = await createTaggedEntryCore({
+          kind,
+          targetPath,
+          tag,
+          creator: async (entryKind, entryPath) => {
+            if (entryKind === 'folder') {
+              await ipcApi.createDirectory(entryPath);
+              // A new folder is a new tree node; a new file is not.
+              refreshTree(currentDirectoryPath);
+            } else {
+              await ipcApi.createTextFile(entryPath, '');
+            }
+          },
+          sidecarWriter: (filePath, tags) =>
+            ipcApi.writeSidecar(filePath, { tags }),
         });
+        if (!stamped) notifyApp(t('createdTagWriteFailed'), 'warning');
       }),
-    [currentDirectoryPath, runAndRefresh, refreshTree]
+    [currentDirectoryPath, runAndRefresh, refreshTree, t]
   );
 
   // Native (OS file manager) → Whale directory import. The single entry

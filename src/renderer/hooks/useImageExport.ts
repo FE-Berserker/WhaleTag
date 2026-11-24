@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useCurrentLocationContext } from './CurrentLocationContextProvider';
 import { useDirectoryUI } from './DirectoryContentContextProvider';
 import { ipcApi } from '-/services/ipc-api';
@@ -50,6 +51,9 @@ export function useImageExport({
 }: UseImageExportOptions): UseImageExportReturn {
   const { currentDirectoryPath } = useCurrentLocationContext();
   const { refresh } = useDirectoryUI();
+  // The capture-failure text is rendered verbatim by several views (error
+  // banner / snackbar), so it has to be localized like the rest of the UI.
+  const { t } = useTranslation();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,12 +61,12 @@ export function useImageExport({
     async (destPath: string) => {
       const base64 = await capture();
       if (!base64) {
-        throw new Error('Failed to capture image');
+        throw new Error(t('imageExportCaptureFailed'));
       }
       await ipcApi.writeBinaryFile(destPath, base64);
       await refresh();
     },
-    [capture, refresh]
+    [capture, refresh, t]
   );
 
   /**
@@ -82,7 +86,7 @@ export function useImageExport({
 
   const handleCopyToClipboard = useCallback(async (): Promise<ClipboardKind> => {
     const base64 = await capture();
-    if (!base64) throw new Error('Failed to capture image');
+    if (!base64) throw new Error(t('imageExportCaptureFailed'));
     // `.slice()` gives a fresh Uint8Array backed by a plain ArrayBuffer;
     // TS 5.7+ tightened Blob's BlobPart to require ArrayBuffer (not the
     // wider ArrayBufferLike that atob result exposes), so without this copy
@@ -103,7 +107,7 @@ export function useImageExport({
     }
     await navigator.clipboard.writeText(`data:image/png;base64,${base64}`);
     return 'text';
-  }, [capture, base64ToPngBytes]);
+  }, [capture, base64ToPngBytes, t]);
 
   const handleSave = useCallback(async () => {
     if (!currentDirectoryPath) return;

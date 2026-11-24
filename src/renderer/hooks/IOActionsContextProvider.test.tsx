@@ -1,9 +1,9 @@
 /**
- * Tests for `importExternalCore` — the pure helper that powers
- * IOActionsContextProvider.importExternalFiles. The helper is extracted
- * from the React provider so the algorithm can be unit-tested without
- * standing up the React tree (which has act()/cleanup() inter-test
- * quirks in jsdom).
+ * Tests for `importExternalCore` and `createTaggedEntryCore` — the pure
+ * helpers behind IOActionsContextProvider.importExternalFiles and
+ * .createTaggedEntry. They are extracted from the React provider so the
+ * algorithm can be unit-tested without standing up the React tree (which
+ * has act()/cleanup() inter-test quirks in jsdom).
  *
  * This is the regression coverage for the Kanban / Matrix / Gantt native
  * drop bug: previously, native drops on those columns bubbled up to
@@ -16,7 +16,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { importExternalCore } from './IOActionsContextProvider';
+import { createTaggedEntryCore, importExternalCore } from './IOActionsContextProvider';
 
 interface Recorder {
   importer: (
@@ -301,5 +301,109 @@ describe('importExternalCore', () => {
     const tags = r.sidecarCalls[0].tags;
     assert.equal(tags.length, 1);
     assert.equal(tags[0], 'period:2026-07-06');
+  });
+});
+
+describe('createTaggedEntryCore', () => {
+  interface CreateRecorder {
+    createCalls: Array<{ kind: 'file' | 'folder'; targetPath: string }>;
+    createImpl?: (kind: 'file' | 'folder', targetPath: string) => Promise<void>;
+    sidecarCalls: Array<{ filePath: string; tags: string[] }>;
+    sidecarImpl?: (filePath: string) => Promise<void>;
+    creator: (kind: 'file' | 'folder', targetPath: string) => Promise<void>;
+    sidecarWriter: (filePath: string, tags: string[]) => Promise<void>;
+  }
+
+  function makeCreateRecorder(): CreateRecorder {
+    const r: CreateRecorder = {
+      createCalls: [],
+      sidecarCalls: [],
+      creator: (kind, targetPath) => {
+        r.createCalls.push({ kind, targetPath });
+        return r.createImpl ? r.createImpl(kind, targetPath) : Promise.resolve();
+      },
+      sidecarWriter: (filePath, tags) => {
+        r.sidecarCalls.push({ filePath, tags });
+        return r.sidecarImpl ? r.sidecarImpl(filePath) : Promise.resolve();
+      },
+    };
+    return r;
+  }
+
+  it('creates the entry first, then stamps the normalized tag', async () => {
+    const order: string[] = [];
+    const r = makeCreateRecorder();
+    r.createImpl = () => {
+      order.push('create');
+      return Promise.resolve();
+    };
+    r.sidecarImpl = () => {
+      order.push('sidecar');
+      return Promise.resolve();
+    };
+
+    const stamped = await createTaggedEntryCore({
+      kind: 'folder',
+      targetPath: '/work/Today',
+      tag: 'period:2026-07-06',
+      creator: r.creator,
+      sidecarWriter: r.sidecarWriter,
+    });
+
+    assert.equal(stamped, true);
+    assert.deepEqual(order, ['create', 'sidecar']);
+    assert.deepEqual(r.createCalls, [{ kind: 'folder', targetPath: '/work/Today' }]);
+    assert.deepEqual(r.sidecarCalls, [
+      { filePath: '/work/Today', tags: ['period:2026-07-06'] },
+    ]);
+  });
+
+  it('keeps the entry and resolves false when the tag write fails', async () => {
+    // Regression: a sidecar failure used to reject after the entry was
+    // already on disk — the listing was never refreshed and a retry hit
+    // "already exists".
+    const r = makeCreateRecorder();
+    r.sidecarImpl = () => Promise.reject(new Error('EACCES'));
+    const originalWarn = console.warn;
+    const warnings: unknown[][] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args);
+    };
+
+    try {
+      const stamped = await createTaggedEntryCore({
+        kind: 'file',
+        targetPath: '/work/a.md',
+        tag: 'todo',
+        creator: r.creator,
+        sidecarWriter: r.sidecarWriter,
+      });
+      assert.equal(stamped, false);
+      assert.equal(r.createCalls.length, 1);
+      assert.equal(
+        warnings.length,
+        1,
+        'a failed tag write must be logged, not swallowed'
+      );
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  it('rejects without touching the sidecar when the creation itself fails', async () => {
+    const r = makeCreateRecorder();
+    r.createImpl = () => Promise.reject(new Error('EEXIST'));
+
+    await assert.rejects(
+      createTaggedEntryCore({
+        kind: 'file',
+        targetPath: '/work/a.md',
+        tag: 'todo',
+        creator: r.creator,
+        sidecarWriter: r.sidecarWriter,
+      }),
+      /EEXIST/
+    );
+    assert.equal(r.sidecarCalls.length, 0);
   });
 });

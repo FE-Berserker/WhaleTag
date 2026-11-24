@@ -184,6 +184,18 @@ describe('useGanttTagFilter defaults', () => {
     // it (otherwise removing a stage could hide unrelated entries).
     assert.equal(ref.current.passes(['archived']), true);
   });
+
+  it('a deleted value lingering in the persisted selection is not narrowed', () => {
+    // 'archived' was removed from the workflow stages after the prefs were
+    // written. Every remaining stage is still selected, so the filter is
+    // neutral and tag-less rows stay visible.
+    localStorage.setItem(
+      PREFS_KEY,
+      JSON.stringify({ workflow: ['in-progress', 'archived'] })
+    );
+    const { ref } = mountProbe('workflow', ['in-progress']);
+    assert.equal(ref.current.passes(['idea']), true);
+  });
 });
 
 // ─── toggle ─────────────────────────────────────────────────────────
@@ -224,6 +236,18 @@ describe('useGanttTagFilter.toggle', () => {
     act(() => w.current.toggle('a'));
     const { ref: q } = mountProbe('quadrant', ['x', 'y']);
     assert.deepEqual(Array.from(q.current.selected).sort(), ['x', 'y']);
+  });
+
+  it('keeps the OTHER family\'s persisted selection when toggling', () => {
+    // Both dimensions share one localStorage document; a toggle must
+    // only replace its own field.
+    const { ref: q } = mountProbe('quadrant', ['x', 'y']);
+    act(() => q.current.toggle('x')); // quadrant narrowed to ['y']
+    const { ref: w } = mountProbe('workflow', ['a', 'b']);
+    act(() => w.current.toggle('a'));
+    const parsed = JSON.parse(localStorage.getItem(PREFS_KEY)!);
+    assert.deepEqual(parsed.workflow, ['b']);
+    assert.deepEqual(parsed.quadrant, ['y']);
   });
 });
 

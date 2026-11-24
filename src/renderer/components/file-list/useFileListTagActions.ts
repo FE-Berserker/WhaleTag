@@ -12,7 +12,7 @@ import {
   setDateTagForEntries,
 } from '-/hooks/useListCommands';
 import { tagsAfterMove } from '../../domain/kanban';
-import { formatGeoTag, withoutGeoTags, isGeoTag } from '../../domain/geo-tag';
+import { formatGeoTag, withoutGeoTags } from '../../domain/geo-tag';
 import { isDateTypedTag } from '../../domain/calendar';
 
 /**
@@ -120,6 +120,9 @@ export function useFileListTagActions({
 
   const handleGpsFound = useCallback(
     (entry: DirEntry, lat: number, lng: number) => {
+      // EXIF extraction is a background sidecar write: a read-only location
+      // refuses it, so do not even try (same gate as `handleSetGeo`).
+      if (currentLocation?.isReadOnly) return;
       const tags = tagsByName.get(entry.path) ?? [];
       const description = descByName.get(entry.path);
       // EXIF-extracted coordinates flow through a `geo:lat,lng` tag — the
@@ -127,20 +130,18 @@ export function useFileListTagActions({
       // stale geo tag before appending the new one so we never end up with
       // duplicates. Mirror `handleSetGeo`'s failure surfacing so a save error
       // doesn't silently lose the extracted coordinate.
-      const nextTags = withoutGeoTags(tags);
-      // Skip the save when the EXIF coords match what's already tagged — common
-      // case on directory re-scans where EXIF is re-extracted for every file.
-      if (nextTags.length === tags.length && tags.some(isGeoTag)) {
-        return;
-      }
+      // Skip the save when the EXIF coords match what is already tagged — the
+      // common case when "Refresh EXIF cache" re-extracts every file.
+      const geoTag = formatGeoTag(lat, lng);
+      if (tags.includes(geoTag)) return;
       void save(entry, {
-        tags: normalize([...nextTags, formatGeoTag(lat, lng)]),
+        tags: normalize([...withoutGeoTags(tags), geoTag]),
         ...(description ? { description } : {}),
       }).catch((e: unknown) =>
         showNotice(e instanceof Error ? e.message : String(e))
       );
     },
-    [tagsByName, descByName, normalize, save, showNotice]
+    [currentLocation?.isReadOnly, tagsByName, descByName, normalize, save, showNotice]
   );
 
   // Mapique single-entry editing: set/clear a file's location and add/remove
@@ -185,7 +186,7 @@ export function useFileListTagActions({
       if (currentLocation?.isReadOnly) return;
       // Resolve user input to its stored form FIRST: `today` → `20260704`,
       // `month-202606` → `202606`, `in-progress` → unchanged, plain tags
-      // unchanged. Without this step the互斥 chain below can't recognize
+      // unchanged. Without this step the exclusion chain below can't recognize
       // the freshly-typed tag (it sees the raw template name, not the
       // resolved shape), and the raw template would land in the sidecar.
       const resolved = resolveInputTag(tag, now);

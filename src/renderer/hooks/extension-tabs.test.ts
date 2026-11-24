@@ -78,6 +78,20 @@ describe('extension-tabs', () => {
       assert.equal(pickLruEvict(tabs, 'new', new Set()), 'b');
     });
 
+    it('evicts by access time, not by position in the list', () => {
+      // The tab list is newest-opened-first and is not reordered on
+      // activation, so its last entry is merely the one opened earliest. `a`
+      // was opened first but used a moment ago; `b` was opened later and has
+      // been idle since.
+      const tabs = [mk('new', '/new', 300), mk('b', '/b', 100), mk('a', '/a', 250)];
+      assert.equal(pickLruEvict(tabs, 'new', new Set()), 'b');
+    });
+
+    it('breaks a timestamp tie towards the tab opened earlier', () => {
+      const tabs = [mk('new', '/new', 300), mk('b', '/b', 100), mk('a', '/a', 100)];
+      assert.equal(pickLruEvict(tabs, 'new', new Set()), 'a');
+    });
+
     it('skips the newly-added tab', () => {
       // Even if `new` were the oldest, it must never be evicted.
       const tabs = [mk('a', '/a', 100), mk('new', '/new', 50)];

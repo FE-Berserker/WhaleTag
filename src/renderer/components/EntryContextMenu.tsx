@@ -293,6 +293,9 @@ export default function EntryContextMenu(props: EntryContextMenuProps) {
       setCmdAnchor(null);
     }
   }, [ctx]);
+  // A grace timer still pending at unmount would fire setCmdAnchor on a gone
+  // component — cancel it with the component.
+  useEffect(() => () => cancelCmdClose(), []);
 
   return (
     <>
@@ -885,7 +888,7 @@ export function TagChipContextMenu(props: TagChipContextMenuProps) {
               shown for tags whose shape is a period (YYYYMMDD-YYYYMMDD).
               Opens the same PeriodTagDialog used by drop, pre-filled with
               the current bounds; on confirm we replace the old token
-              (remove + add) in a single write via `save()`. The互斥
+              (remove + add) in a single write via `save()`. The exclusion
               family rule guarantees only one period per file, so the
               remove + add pattern keeps invariant. Multi-select edit
               is left as a follow-up (would need a separate add-many
@@ -910,7 +913,7 @@ export function TagChipContextMenu(props: TagChipContextMenuProps) {
                     }
                     const oldTags = tagsByName.get(ctx.entry.path) ?? [];
                     // Drop the existing period token (the tag we
-                    // right-clicked on) and append the new one. The互斥
+                    // right-clicked on) and append the new one. The exclusion
                     // family rule is implicit here: a file carries at
                     // most one period, so after this write it's exactly
                     // the new token.

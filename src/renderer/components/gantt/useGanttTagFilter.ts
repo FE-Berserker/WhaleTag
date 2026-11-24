@@ -95,6 +95,28 @@ function readSelection(key: GanttFilterKey): Set<string> | null {
   return new Set(sanitized);
 }
 
+/** Persist one dimension without clobbering the other one stored under the
+ *  same key — `writePrefs` replaces the whole document, so merge first. */
+function persistSelection(key: GanttFilterKey, values: Iterable<string>): void {
+  const next: FilterPrefsShape = {
+    ...(readPrefs<FilterPrefsShape>(PREFS_KEY) ?? {}),
+  };
+  next[key] = Array.from(values);
+  writePrefs<FilterPrefsShape>(PREFS_KEY, next);
+}
+
+/** True when every known value is selected — the "neutral" state in which
+ *  tag-less rows stay visible. Compared against the live known list rather
+ *  than the selection's size: a value that was deleted after the prefs were
+ *  written lingers in the persisted Set, and counting it would report the
+ *  filter as narrowed forever (tag-less rows hidden, Reset always shown). */
+export function isSelectionNeutral(
+  selected: ReadonlySet<string>,
+  known: readonly string[]
+): boolean {
+  return known.every((value) => selected.has(value));
+}
+
 /** The hook.
  *
  * @param key        Which filter dimension ('workflow' or 'quadrant').
@@ -172,31 +194,27 @@ export function useGanttTagFilter<T extends string>(
   }, []);
 
   // ─── Mutations ───────────────────────────────────────────────────
-  const toggle = useCallback((value: T) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
+  const toggle = useCallback(
+    (value: T) => {
+      // Derive the next selection, set it, then persist — same pattern as
+      // useGanttZoom.setZoom (the state updater stays free of side effects).
+      const next = new Set(selected);
       if (next.has(value)) next.delete(value);
       else next.add(value);
-      // Persist AFTER deriving the next state — same pattern as
-      // useGanttZoom.setZoom, so a quota error doesn't half-apply.
-      writePrefs<FilterPrefsShape>(PREFS_KEY, {
-        workflow: undefined,
-        quadrant: undefined,
-        [key]: Array.from(next),
-      } as FilterPrefsShape);
-      return next;
-    });
-  }, [key]);
+      setSelected(next);
+      persistSelection(key, next);
+    },
+    [key, selected]
+  );
 
-  const setAll = useCallback((values: Iterable<T>) => {
-    const next = new Set(values);
-    setSelected(next);
-    writePrefs<FilterPrefsShape>(PREFS_KEY, {
-      workflow: undefined,
-      quadrant: undefined,
-      [key]: Array.from(next),
-    } as FilterPrefsShape);
-  }, [key]);
+  const setAll = useCallback(
+    (values: Iterable<T>) => {
+      const next = new Set(values);
+      setSelected(next);
+      persistSelection(key, next);
+    },
+    [key]
+  );
 
   // ─── Predicate ───────────────────────────────────────────────────
   // A row PASSES when:
@@ -205,7 +223,7 @@ export function useGanttTagFilter<T extends string>(
   //      in the current `selected` set, OR
   //   2. The row carries NO known value AND the filter is in its
   //      "neutral" state (the user has not actively un-selected
-  //      anything — `selected.size === knownValues.length`). In other
+  //      anything — `isSelectionNeutral(selected, knownValues)`). In other
   //      words: tag-less rows are visible when the user hasn't done
   //      anything, but become hidden the moment the user narrows the
   //      filter. Without this rule, un-selecting every workflow stage
@@ -230,7 +248,7 @@ export function useGanttTagFilter<T extends string>(
       }
       if (hasKnownValue) return hasSelectedValue;
       // Tag-less row: pass only in the neutral state.
-      return selected.size === known.length;
+      return isSelectionNeutral(selected, known);
     },
     [selected]
   );

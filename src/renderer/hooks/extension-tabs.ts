@@ -74,20 +74,23 @@ export interface LruCandidate {
  *  not the tab being added), or null if every candidate is dirty (the caller
  *  then allows the limit to be temporarily exceeded).
  *
- *  `tabs` is expected newest-first ([0] = most recently used). Pure. */
+ *  "Used" means `lastAccessed`, not the position in `tabs`: the list is
+ *  newest-opened-first and is not reordered when a tab is activated, so its
+ *  last entry is merely the one opened earliest. The list is still walked
+ *  from the end so that a timestamp tie goes to the earlier-opened tab.
+ *  Pure. */
 export function pickLruEvict(
   tabs: ReadonlyArray<LruCandidate>,
   newTabId: string,
   dirtyTabIds: ReadonlySet<string>
 ): string | null {
-  // Iterate oldest-first (last entry = LRU) and return the first non-dirty,
-  // non-new victim. Dirty state is keyed by tab id, so two extensions viewing
-  // the same path retain independent eviction protection.
+  // Dirty state is keyed by tab id, so two extensions viewing the same path
+  // retain independent eviction protection.
+  let victim: LruCandidate | null = null;
   for (let i = tabs.length - 1; i >= 0; i -= 1) {
     const t = tabs[i];
-    if (t.id === newTabId) continue;
-    if (dirtyTabIds.has(t.id)) continue;
-    return t.id;
+    if (t.id === newTabId || dirtyTabIds.has(t.id)) continue;
+    if (!victim || t.lastAccessed < victim.lastAccessed) victim = t;
   }
-  return null;
+  return victim ? victim.id : null;
 }

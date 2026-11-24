@@ -1,4 +1,4 @@
-﻿import {
+import {
   useEffect,
   useMemo,
   useRef,
@@ -85,7 +85,7 @@ export interface MapiqueViewProps {
    * Delete handler for the current tray selection (or active entry). Wired
    * up by FileList to the shared `handleDeleteSelected` (H.16) so the
    * Delete-key behavior in the tray matches list / grid / kanban.
-   * Plan 搂H.21 P1-1.
+   * Plan §H.21 P1-1.
    */
   onDelete?: (entries: DirEntry[]) => void;
   /** Map source; decides default tiles and whether GCJ-02 transform applies. */
@@ -138,7 +138,7 @@ export default function MapiqueView({
   // (post-save), so the props are exactly the signal. A `useEffect` that
   // called a reducer with those maps as deps made any tag/geo edit render
   // twice (once for the prop change, once for the bump), and the comment used
-  // to claim a matching `key` prop existed on the FileList render site 鈥?it
+  // to claim a matching `key` prop existed on the FileList render site — it
   // never did. Keep the single mechanism: props in, render out.
   const { t } = useTranslation();
   const {
@@ -219,16 +219,16 @@ export default function MapiqueView({
   const [extractingActive, setExtractingActive] = useState(false);
   const activeBatchesRef = useRef(0);
   // Files whose EXIF we have already attempted to extract (success or fail).
-  // Cleared when the user navigates to a different directory 鈥?EXIF reads are
+  // Cleared when the user navigates to a different directory — EXIF reads are
   // cheap and re-extracting is safer than caching a stale "already tried"
-  // flag forever (P0-3 from plan 搂H.21).
+  // flag forever (P0-3 from plan §H.21).
   const processedRef = useRef<Set<string>>(new Set());
   // Timestamp (ms) of the most recent marker dragend. Used to suppress the
-  // map's own `click` event that Leaflet fires immediately after 鈥?without
+  // map's own `click` event that Leaflet fires immediately after — without
   // this guard, dragging a marker to a new spot would write the new
   // coordinates via `dragend`, then *also* write the (possibly different)
   // map-plane click coordinate from the same mouseup via `MapClickHandler`,
-  // leaving the marker at the wrong spot (plan 搂H.21 P2 / Bug #2).
+  // leaving the marker at the wrong spot (plan §H.21 P2 / Bug #2).
   const lastDragEndAtRef = useRef(0);
   const [activeEntry, setActiveEntry] = useState<DirEntry | null>(null);
   // Place-lock (default ON): clicking the map does NOT place/move markers,
@@ -329,7 +329,7 @@ export default function MapiqueView({
   const selectRow = useCallback(
     (index: number, mods: { shift: boolean; ctrl: boolean }) => {
       // P0-3: read the tray through a ref so this callback never changes
-      // identity when the tray reorders (pan / sort / filter) 鈥?see the refs
+      // identity when the tray reorders (pan / sort / filter) — see the refs
       // above. Behaves identically to the prior closure-over-array version.
       const tray = visibleTrayEntriesRef.current;
       const entry = tray[index];
@@ -368,7 +368,7 @@ export default function MapiqueView({
     []
   );
 
-  // H.4 (plan 搂H.4) extended for Mapique: an honest 3-state select-all that
+  // H.4 (plan §H.4) extended for Mapique: an honest 3-state select-all that
   // doesn't lie when the user has out-of-tray selections (e.g. mid depth
   // change, or paths remembered from a previous directory).
   const inTraySelectedCount = useMemo(() => {
@@ -415,7 +415,7 @@ export default function MapiqueView({
     selectAnchorRef.current = null;
   }, [trayFilter]);
 
-  // P3-1: also clear selection when the name query changes 鈥?same rationale
+  // P3-1: also clear selection when the name query changes — same rationale
   // as `trayFilter`: don't keep rows selected that are no longer visible.
   useEffect(() => {
     setSelected(new Set());
@@ -436,10 +436,10 @@ export default function MapiqueView({
     });
   }, [entries, activeEntry]);
 
-  // P0-3 from plan 搂H.21: clear the EXIF "already tried" cache when the user
+  // P0-3 from plan §H.21: clear the EXIF "already tried" cache when the user
   // navigates to a different directory. Without this, deleting a sidecar's
   // lat/lng manually (or switching between two photo folders with the same
-  // filenames) would never trigger re-extraction 鈥?`processedRef` would keep
+  // filenames) would never trigger re-extraction — `processedRef` would keep
   // blocking it for the component's lifetime.
   //
   // P3-4: replace the pure-clear effect with a clear-then-load. The clear
@@ -460,7 +460,7 @@ export default function MapiqueView({
         processedRef.current = next;
       } catch {
         // If the load fails (db missing, permission, etc.) leave the
-        // in-memory set empty 鈥?extraction will re-attempt the work, and
+        // in-memory set empty — extraction will re-attempt the work, and
         // the user can still hit Refresh to retry.
       }
     })();
@@ -493,6 +493,10 @@ export default function MapiqueView({
 
   // Lazy EXIF extraction for media candidates without GPS.
   useEffect(() => {
+    // A read-only location refuses every sidecar write, so extracting here
+    // would only raise one "read-only" notice per photo. Viewing the map and
+    // placing markers by hand keep working.
+    if (readOnly) return;
     const rootPath = currentLocation?.path;
     const missing = entriesNeedingExif(candidates, sidecars).filter(
       (e) => !processedRef.current.has(e.path)
@@ -502,7 +506,7 @@ export default function MapiqueView({
     // Only mark a path as "processed" once extraction has actually succeeded
     // (or definitively returned null). Marking upfront would permanently cache
     // transient failures (file lock, IO error, malformed EXIF) and prevent
-    // re-attempts 鈥?plan 搂H.21 P0-2.
+    // re-attempts — plan §H.21 P0-2.
     const markProcessed = (path: string) => processedRef.current.add(path);
 
     // P3-4: persist the result so reopening this directory skips the file.
@@ -510,7 +514,7 @@ export default function MapiqueView({
     // never block the in-memory processedRef (which already short-circuits
     // the re-attempt within this session).
     // Batch EXIF results into one IPC (one transaction + fsync per batch)
-    // instead of one IPC per image 鈥?a folder of N photos used to fire N
+    // instead of one IPC per image — a folder of N photos used to fire N
     // fsyncs on the main thread. Flushed when the batch fills and on completion.
     const EXIF_BATCH = 25;
     const pending: ExifProcessedRecord[] = [];
@@ -518,7 +522,7 @@ export default function MapiqueView({
       if (!rootPath || pending.length === 0) return;
       const batch = pending.splice(0, pending.length);
       ipcApi.markExifProcessedMany(rootPath, batch).catch(() => {
-        // best-effort: swallow 鈥?in-memory processedRef is still correct.
+        // best-effort: swallow — in-memory processedRef is still correct.
       });
     };
     const persistExif = (path: string, gps: { lat: number; lng: number } | null) => {
@@ -547,7 +551,7 @@ export default function MapiqueView({
           if (cancelled) return;
           if (gps) onGpsFound(entry, gps.lat, gps.lng);
           // gps === null means "no GPS data" (definitively), not a transient
-          // failure 鈥?cache that too so we don't rescan the same file forever.
+          // failure — cache that too so we don't rescan the same file forever.
           markProcessed(entry.path);
           persistExif(entry.path, gps);
         } catch {
@@ -558,8 +562,8 @@ export default function MapiqueView({
       }
     }
 
-    // `.finally` always runs 鈥?even when this batch was cancelled by a
-    // dependency change 鈥?so the active-batch counter never gets stuck.
+    // `.finally` always runs — even when this batch was cancelled by a
+    // dependency change — so the active-batch counter never gets stuck.
     void Promise.all(Array.from({ length: CONCURRENCY }, worker)).finally(() => {
       // Flush records collected since the last size-triggered flush (also runs
       // on cancel, so completed extractions aren't lost on a dep change).
@@ -574,7 +578,7 @@ export default function MapiqueView({
     // exifRefreshKey is the re-entry hook for the "Refresh EXIF cache"
     // button (P3-4): bumping it re-runs this effect with an empty
     // processedRef so every file gets re-extracted.
-  }, [candidates, sidecars, onGpsFound, exifRefreshKey, currentLocation?.path]);
+  }, [candidates, sidecars, onGpsFound, exifRefreshKey, currentLocation?.path, readOnly]);
 
   const canEdit = !readOnly;
 
@@ -674,7 +678,7 @@ export default function MapiqueView({
   const handleReveal = useCallback((entry: DirEntry) => {
     void ipcApi.revealAndSelect(entry.path).catch((e) => {
       // Nothing happened visually when the native reveal failed (path gone,
-      // permission) 鈥?say so instead of leaving a dead click.
+      // permission) — say so instead of leaving a dead click.
       setNotice({ message: e instanceof Error ? e.message : String(e) });
     });
   }, []);
@@ -687,7 +691,7 @@ export default function MapiqueView({
 
   // P3-3: wrap onSetGeo / onClearGeo so every mutation is recorded on the
   // undo stack. The actual `onSetGeo` / `onClearGeo` callbacks are still
-  // called unchanged 鈥?the undo stack is purely additive metadata.
+  // called unchanged — the undo stack is purely additive metadata.
   const recordPrev = useCallback(
     (entry: DirEntry): { prevLat: number | null; prevLng: number | null } => {
       const prev = geoByName.get(entry.path);
@@ -713,7 +717,7 @@ export default function MapiqueView({
     [recordPrev, onClearGeo, undoStack]
   );
 
-  // P3-3: handle the Snackbar's Undo button 鈥?pop the most recent geo op
+  // P3-3: handle the Snackbar's Undo button — pop the most recent geo op
   // and re-apply the previous coordinates (or clear, if it had none).
   const handleUndo = useCallback(() => {
     const op = undoStack.undo();
@@ -967,7 +971,7 @@ export default function MapiqueView({
         </MapContainer>
 
         {/* Recursive scan progress. `pointer-events: none` so the chip doesn't
-              swallow map clicks 鈥?same rationale as the EXIF progress
+              swallow map clicks — same rationale as the EXIF progress
               overlay below. */}
         {loadingRecursive && (
           <Stack

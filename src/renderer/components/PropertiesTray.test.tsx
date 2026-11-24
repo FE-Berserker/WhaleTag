@@ -128,6 +128,8 @@ afterEach(() => {
   renameCalls.length = 0;
   saveMetaCalls.length = 0;
   renameEntryImpl = async () => undefined;
+  directoryContent.tagsByName = new Map();
+  directoryContent.descByName = new Map();
 });
 after(() => {
   if (componentId) delete require_.cache[componentId];
@@ -174,11 +176,11 @@ function renderTray(
     taglibrary: { groups: [] },
     workflow: { stages: [] },
   }));
-  const view = render(
+  const tray = (nextEntries: DirEntry[]) => (
     <Provider store={store}>
       <I18nextProvider i18n={i18next}>
         <PropertiesTrayComponent
-          entries={options.entries ?? entries}
+          entries={nextEntries}
           thumbCache={new Map()}
           readOnly={options.readOnly ?? true}
           width={width}
@@ -191,6 +193,7 @@ function renderTray(
       </I18nextProvider>
     </Provider>
   );
+  const view = render(tray(options.entries ?? entries));
   const root = view.container.firstElementChild as HTMLElement;
   const handle = view.getByTestId('properties-tray-resize-handle');
   const capture = { set: 0, release: 0 };
@@ -201,7 +204,9 @@ function renderTray(
   handle.releasePointerCapture = () => {
     capture.release += 1;
   };
-  return { view, root, handle, commits, capture };
+  /** Re-render with new entry objects, the way a directory refresh does. */
+  const rerenderWith = (nextEntries: DirEntry[]) => view.rerender(tray(nextEntries));
+  return { view, root, handle, commits, capture, rerenderWith };
 }
 
 function watchDocumentDragListeners() {
@@ -506,5 +511,101 @@ describe('PropertiesTray list date format', () => {
     });
     assert.equal(explicit.view.queryByText(/days ago/), null);
     assert.ok(explicit.view.getByText(/2026/));
+  });
+});
+
+describe('PropertiesTray edit buffers across a directory refresh', () => {
+  // Regression: the buffers were re-synced from `descByName` and the `entries`
+  // object identity, so any refresh (a tag save, an external file change)
+  // discarded a typed description and closed a half-typed rename.
+  const fresh = (entry: DirEntry): DirEntry => ({ ...entry }) as DirEntry;
+  const descriptionField = (
+    view: ReturnType<typeof render>
+  ): HTMLTextAreaElement =>
+    view.getByPlaceholderText('No description') as HTMLTextAreaElement;
+
+  it('keeps a typed description while the field is being edited', async () => {
+    directoryContent.descByName = new Map([['/root/a.txt', 'stored']]);
+    const { view, rerenderWith } = renderTray(320, false, {
+      entries: [fresh(entries[0])],
+      readOnly: false,
+    });
+    const description = descriptionField(view);
+    fireEvent.focusIn(description);
+    fireEvent.change(description, { target: { value: 'typed, not saved yet' } });
+
+    // A refresh lands: same entry, new objects, stored text unchanged.
+    directoryContent.descByName = new Map([['/root/a.txt', 'stored']]);
+    rerenderWith([fresh(entries[0])]);
+    assert.equal(
+      descriptionField(view).value,
+      'typed, not saved yet',
+      'a refresh must not discard unsaved text'
+    );
+
+    // Leaving the field still saves what the user typed.
+    fireEvent.focusOut(description);
+    await waitFor(() =>
+      assert.deepEqual(
+        getSaveMetaCalls().map((call) => call.meta),
+        [{ description: 'typed, not saved yet' }]
+      )
+    );
+  });
+
+  it('keeps an open rename with its typed name', () => {
+    const { view, rerenderWith } = renderTray(320, false, {
+      entries: [fresh(entries[0])],
+      readOnly: false,
+    });
+    const input = startRename(view);
+    fireEvent.change(input, { target: { value: 'renamed.txt' } });
+
+    rerenderWith([fresh(entries[0])]);
+    assert.equal(
+      view.getByDisplayValue('renamed.txt'),
+      input,
+      'the rename box stays open'
+    );
+    assert.deepEqual(renameCalls, [], 'a refresh must not commit the rename');
+  });
+
+  it('follows a refreshed description when the field is not being edited', () => {
+    directoryContent.descByName = new Map([['/root/a.txt', 'before']]);
+    const { view, rerenderWith } = renderTray(320, false, {
+      entries: [fresh(entries[0])],
+      readOnly: false,
+    });
+    const description = descriptionField(view);
+    assert.equal(description.value, 'before');
+
+    // Saved elsewhere, undone, or changed by another program.
+    directoryContent.descByName = new Map([['/root/a.txt', 'after']]);
+    rerenderWith([fresh(entries[0])]);
+    assert.equal(description.value, 'after');
+    assert.deepEqual(getSaveMetaCalls(), [], 'following is not a write');
+  });
+
+  it('resets the buffers when the selection moves to another entry', () => {
+    directoryContent.descByName = new Map([
+      ['/root/a.txt', 'a notes'],
+      ['/root/b.txt', 'b notes'],
+    ]);
+    const { view, rerenderWith } = renderTray(320, false, {
+      entries: [fresh(entries[0])],
+      readOnly: false,
+    });
+    assert.equal(descriptionField(view).value, 'a notes');
+    const input = startRename(view);
+    fireEvent.change(input, { target: { value: 'renamed.txt' } });
+
+    rerenderWith([fresh(entries[1])]);
+    assert.equal(
+      view.queryByDisplayValue('renamed.txt'),
+      null,
+      'the rename box closes with the selection it belonged to'
+    );
+    assert.equal(descriptionField(view).value, 'b notes');
+    assert.deepEqual(renameCalls, []);
   });
 });

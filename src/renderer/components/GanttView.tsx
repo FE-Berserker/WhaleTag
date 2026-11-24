@@ -130,7 +130,10 @@ import {
   RANGE_LABEL_KEYS,
   type GanttRangePreset,
 } from './gantt/useGanttRange';
-import { useGanttTagFilter } from './gantt/useGanttTagFilter';
+import {
+  isSelectionNeutral,
+  useGanttTagFilter,
+} from './gantt/useGanttTagFilter';
 import { tagDisplayLabel } from '-/services/tag-display';
 import { usePeriodTagDialog } from './PeriodTagDialog';
 
@@ -382,7 +385,7 @@ export default function GanttView({ data, stages, onMoveToColumn }: GanttViewPro
   // which feels disconnected from the bar they just clicked). Same
   // dialog the right-click menu's "Set period" item uses (see
   // GanttEntryMenu.openPeriod) — reusing it keeps a single source of
-  // truth for date-tag editing and the互斥 family rule in
+  // truth for date-tag editing and the exclusion family rule in
   // useListCommands runs as usual on commit.
   //
   // We keep `targetsRef` so the onConfirm closure (defined inside the
@@ -730,10 +733,14 @@ export default function GanttView({ data, stages, onMoveToColumn }: GanttViewPro
             has been narrowed (i.e. NOT the default "all"). Click → both
             dimensions back to "all". Persists via the hook's setAll. */}
         {(() => {
-          const workflowNarrowed =
-            workflowFilter.selected.size < stageValues.length;
-          const quadrantNarrowed =
-            quadrantFilter.selected.size < QUADRANT_VALUES.length;
+          const workflowNarrowed = !isSelectionNeutral(
+            workflowFilter.selected,
+            stageValues
+          );
+          const quadrantNarrowed = !isSelectionNeutral(
+            quadrantFilter.selected,
+            QUADRANT_VALUES
+          );
           if (!workflowNarrowed && !quadrantNarrowed) return null;
           return (
             <Tooltip title={t('ganttFilterReset')}>
@@ -863,7 +870,7 @@ export default function GanttView({ data, stages, onMoveToColumn }: GanttViewPro
         // Drop target for unscheduled files: GanttTimeline resolves the
         // drag item to DirEntry[] + a dayKey under the cursor; we just
         // translate to a 1-day period (startKey=endKey=dayKey) and
-        // route through `data.onSetEntryDateTag` so the互斥 family rule
+        // route through `data.onSetEntryDateTag` so the exclusion family rule
         // (one period per file) and any sidecar persistence run as usual.
         // `dayKey === null` means the cursor was over the thumb column
         // or past the chart's right edge — we treat that as a no-op

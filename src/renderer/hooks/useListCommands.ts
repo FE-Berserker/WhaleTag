@@ -565,7 +565,11 @@ export function useListCommands(deps: ListCommandsDeps): ListCommands {
       // handleDropFiles/handleAddTag/handleRemoveTag/handleDeleteSelected 同型。
       // 这是个跨 list/grid/Gallery 的统一守卫;drop target 的 `canDrop` 是
       // 视觉短路,这里是最后一道防线。
-      if (d.currentLocation?.isReadOnly) return;
+      if (d.currentLocation?.isReadOnly) {
+        // Never a silent no-op: say why the drop did nothing.
+        d.showNotice(t('readOnlyLocation'), 'warning');
+        return;
+      }
       const resolved = functionality
         ? resolveSmartTag(functionality as SmartFunctionality, new Date()) ??
           tag
@@ -594,7 +598,11 @@ export function useListCommands(deps: ListCommandsDeps): ListCommands {
       sources
     ) => {
       if (!target.isDirectory || sources.length === 0) return;
-      if (d.currentLocation?.isReadOnly) return;
+      if (d.currentLocation?.isReadOnly) {
+        // Never a silent no-op: say why the drop did nothing.
+        d.showNotice(t('readOnlyLocation'), 'warning');
+        return;
+      }
       const outcome = await runBatchWithRefresh(
         sources,
         async (src) => {
