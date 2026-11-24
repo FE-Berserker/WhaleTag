@@ -10,7 +10,6 @@
  * excalidraw-icon.svg), and component tests reach them transitively, so we stub
  * every asset extension to an empty string URL — matching webpack's "URL" shape.
  */
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const stub = (module) => {
   module._compile('module.exports = ""', 'asset-stub');
 };
@@ -39,7 +38,6 @@ for (const ext of [
 // The tests don't exercise wordcloud series, so short-circuit the bare
 // specifier to an empty exports object — the real index.js never runs, so its
 // bad internal import never fires.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const Module = require('module');
 const __originalModuleLoad = Module._load;
 Module._load = function (request) {

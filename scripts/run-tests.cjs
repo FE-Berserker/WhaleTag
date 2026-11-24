@@ -21,8 +21,9 @@ const ROOT = path.resolve(__dirname, '..');
 // Deliberately dependency-free. Discovery used to `require('glob')`, which was
 // never declared in package.json — it only worked because a transitive dev
 // dependency happened to be hoisted. If that ever changed, `npm test` would die
-// with MODULE_NOT_FOUND, and this repo has no CI: type-check/lint/test ARE the
-// gate. A 15-line walker removes the single point of failure.
+// with MODULE_NOT_FOUND, and every gate — local and
+// .github/workflows/ci.yml — starts here. A 15-line walker removes the single
+// point of failure.
 const TEST_FILE_RE = /\.test\.tsx?$/;
 const SEARCH_DIRS = ['src', 'scripts'];
 

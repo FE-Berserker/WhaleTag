@@ -41,6 +41,7 @@ module.exports = {
     'WhaleTag_Page/',
     'UI_Design/',
     'LightWork/',
+    'artifacts/',
     'build-cache/',
     'samples/',
     'tools/',
@@ -51,7 +52,7 @@ module.exports = {
       // CLI build / verification scripts print progress and PASS/FAIL
       // summaries to stdout by design; the app-level no-console policy covers
       // src/ only.
-      files: ['scripts/**/*.js', 'scripts/**/*.ts'],
+      files: ['scripts/**/*.js', 'scripts/**/*.cjs', 'scripts/**/*.ts'],
       rules: { 'no-console': 'off' },
     },
   ],

@@ -25,20 +25,20 @@ describe('SVG thumbnail regression', () => {
       assert.ok(url?.startsWith('data:image/jpeg;base64,'));
     } finally { await fsp.rm(dir, { recursive: true, force: true }); }
   });
-  it('viewBox-only SVG (Test/svg/viewbox-only.svg) → JPEG thumb', async () => {
+  it('viewBox-only SVG (samples/svg/viewbox-only.svg) → JPEG thumb', async () => {
     const dir = await tmpDir();
     try {
       const src = path.join(dir, 'vb.svg');
-      await fsp.copyFile('Test/svg/viewbox-only.svg', src);
+      await fsp.copyFile('samples/svg/viewbox-only.svg', src);
       await generateThumbnail(src);
       assert.ok(existsSync(thumbPathFor(src)));
     } finally { await fsp.rm(dir, { recursive: true, force: true }); }
   });
-  it('real-world SVG (Test/svg/whale-test.svg) → JPEG thumb', async () => {
+  it('real-world SVG (samples/svg/whale-test.svg) → JPEG thumb', async () => {
     const dir = await tmpDir();
     try {
       const src = path.join(dir, 'whale.svg');
-      await fsp.copyFile('Test/svg/whale-test.svg', src);
+      await fsp.copyFile('samples/svg/whale-test.svg', src);
       await generateThumbnail(src);
       const url = await loadThumbnail(src);
       assert.ok(url?.startsWith('data:image/jpeg;base64,'));

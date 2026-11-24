@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fsp } from 'fs';
+import os from 'os';
 import path from 'path';
 
 /**
@@ -28,7 +29,10 @@ describe('useNewDrawio placeholder', () => {
       '</mxfile>',
     ].join('');
 
-    const tmp = path.join(__dirname, '..', 'Test', '_verify.drawio');
+    // The OS temp dir, not a folder in the checkout: a fresh clone has no
+    // `Test/` directory, and this test must not depend on another one having
+    // created it first.
+    const tmp = path.join(os.tmpdir(), `whale-verify-newdrawio-${process.pid}.drawio`);
     await fsp.writeFile(tmp, expected, 'utf8');
     const onDisk = await fsp.readFile(tmp, 'utf8');
     assert.equal(onDisk, expected);

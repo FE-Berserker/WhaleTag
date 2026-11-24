@@ -252,7 +252,7 @@ describe('Font thumbnails (.whale/thumbs/<file>.jpg)', () => {
     const dir = await tmpDir();
     try {
       const src = path.join(dir, 'calligraphic.ttf');
-      await fsp.copyFile('Test/fonts/calligraphic.ttf', src);
+      await fsp.copyFile('samples/fonts/calligraphic.ttf', src);
       await generateThumbnail(src);
       assert.ok(existsSync(thumbPathFor(src)), 'ttf thumb file created');
       const url = await loadThumbnail(src);
@@ -271,7 +271,7 @@ describe('Font thumbnails (.whale/thumbs/<file>.jpg)', () => {
     const dir = await tmpDir();
     try {
       const src = path.join(dir, 'calligraphic.woff2');
-      await fsp.copyFile('Test/fonts/calligraphic.woff2', src);
+      await fsp.copyFile('samples/fonts/calligraphic.woff2', src);
       await generateThumbnail(src);
       assert.ok(existsSync(thumbPathFor(src)), 'woff2 thumb file created');
       const url = await loadThumbnail(src);
@@ -782,12 +782,12 @@ describe('SVG thumbnails (.whale/thumbs/<file>.jpg)', () => {
   it('handles viewBox-only SVGs without explicit width/height', async () => {
     // Common case for icons and exports from design tools: only a viewBox,
     // no width/height. librsvg uses the viewBox as the default rasterization
-    // size. The fixed sample `Test/svg/viewbox-only.svg` covers this — copy
+    // size. The fixed sample `samples/svg/viewbox-only.svg` covers this — copy
     // it into the scratch dir so the test is self-contained.
     const dir = await tmpDir();
     try {
       const src = path.join(dir, 'viewbox-only.svg');
-      await fsp.copyFile('Test/svg/viewbox-only.svg', src);
+      await fsp.copyFile('samples/svg/viewbox-only.svg', src);
       await generateThumbnail(src);
       assert.ok(
         existsSync(thumbPathFor(src)),
@@ -804,12 +804,12 @@ describe('SVG thumbnails (.whale/thumbs/<file>.jpg)', () => {
   });
 
   it('rasterizes a rich real-world SVG (gradients + paths + text)', async () => {
-    // `Test/svg/whale-test.svg` exercises gradient defs, polylines, paths,
+    // `samples/svg/whale-test.svg` exercises gradient defs, polylines, paths,
     // and text rendering. If librsvg chokes on any of those, this fails.
     const dir = await tmpDir();
     try {
       const src = path.join(dir, 'whale-test.svg');
-      await fsp.copyFile('Test/svg/whale-test.svg', src);
+      await fsp.copyFile('samples/svg/whale-test.svg', src);
       await generateThumbnail(src);
       const url = await loadThumbnail(src);
       assert.ok(
