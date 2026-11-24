@@ -59,6 +59,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **扫描版 PDF 的缩略图不再空白**:JPEG 2000 / JBIG2 / CCITT 传真编码的页面依赖 pdfjs 的 WebAssembly 解码器,而缩略图渲染从未设置 `wasmUrl`,pdfjs 丢弃图片后照常返回,整页显示为纯白。`renderPdfThumb` 现在指向随包分发的 `pdfjs-dist/wasm/`;新增 JPEG 2000 与 CCITT G4 两个样本回归测试,并验证移除该配置后两例都会失败。
+  **Scanned PDFs no longer render as blank thumbnails**: pages encoded with JPEG 2000, JBIG2 or CCITT fax need pdfjs's WebAssembly decoders, but the thumbnail renderer never set `wasmUrl`; pdfjs dropped the picture, still resolved, and returned an all-white page. `renderPdfThumb` now points at the bundled `pdfjs-dist/wasm/`. New JPEG 2000 and CCITT G4 fixture tests cover the regression, and both fail when the setting is removed.
+
 - **移动端目录栈、搜索范围与会话恢复**：子目录面包屑改由完整目录栈驱动，深层返回和中间层级跳转不再丢名称或父级；在子目录激活搜索 / 标签过滤会明确切到整个位置查询，清除后回根目录。已建立会话的 list / search / tags / text / roots 遇到 `401` 统一清理并回配对页提示重新配对；roots 与目录 loading 分离，错误用消息键保存，切换语言不再重取数据。预览错误不再反射底层异常，关闭未完成的文本预览会复位 loading，文件按钮改为合法的 phrasing 内容，标签组补 group 语义，DOCX 等扩展徽章不再截断，英文单条目计数使用 `1 item`。
   **Mobile directory stack, search scope and session recovery**: breadcrumbs now use a complete directory stack, so deep Back and intermediate-level navigation retain names and parents. Activating search or a tag inside a folder explicitly switches to a whole-location query, and clearing filters returns to the root. Established list / search / tags / text / roots requests now consistently clear local state and return to pairing with a session-expired notice on `401`. Roots and directory loading are independent, errors are stored as message keys, and language changes no longer refetch data. Preview failures no longer reflect raw exceptions, closing a pending text preview resets loading, file buttons use valid phrasing content, tag filters expose group semantics, DOCX-style extension badges are no longer truncated, and English uses `1 item` for a single result.
 

@@ -109,13 +109,13 @@ Edit 工具在 Windows 偶发写入 `\0` null 字节。修法:用 Write 重写�
 
 ✅ 应用内 PDF 浏览扩展(pdf-viewer)已随 0.4.9 瘦身移除,`.pdf` 双击回退系统默认应用;iframe 内用 Chromium 渲染的方案随之归档(见 §15)。现在 PDF 只走**主进程侧的 `pdfjs-dist` Node 构建**,两处调用:[thumb-render.ts](../src/main/thumb-render.ts) 的 `renderPdfThumb(srcPath)`(跑在 whale-thumb utilityProcess,画到 `@napi-rs/canvas`)与 [fulltext.ts](../src/main/fulltext.ts) 的文本抽取。
 
-**`pdfjs-dist` 主进程路径**(`cMapUrl` / `standardFontDataUrl`,[thumb-render.ts:57-59](../src/main/thumb-render.ts#L57-L59) / [fulltext.ts:27](../src/main/fulltext.ts#L27)):
+**`pdfjs-dist` 主进程路径**(`cMapUrl` / `standardFontDataUrl` / `wasmUrl`,[thumb-render.ts:28-36](../src/main/thumb-render.ts#L28-L36) / [fulltext.ts:27](../src/main/fulltext.ts#L27)):
 
 - 必须是**纯文件系统路径 + 结尾 `/`**(不是 `file://` URL)
 - 也不能用 `path.sep` 反斜杠 —— pdfjs 强制结尾 `/`
 - `builder.json` 的 `asarUnpack` 必须带上 `pdfjs-dist` 的 `cmaps/` `standard_fonts/` `wasm/` 三目录([builder.json:24-26](../resources/builder.json#L24-L26)),改打包配置时别删
 
-**仍然成立的限制**:Node 端**没有 CJK 字体替换表** —— 非嵌入字体(如 CAJ 导出 PDF 里的黑体/宋体标题)在缩略图里只能画成 notdef 方框(已接受的取舍,见 [docs/15](./15-perf-audit.md)「已接受的取舍」);文本型 PDF 的全文抽取不受影响。扫描型图片 PDF(JBIG2 / JPEG2000)的解码依赖 `pdfjs-dist/wasm/`,而这两处都没有设置 `wasmUrl`,这类文件的缩略图可能不完整——排查时先看这里。
+**仍然成立的限制**:Node 端**没有 CJK 字体替换表** —— 非嵌入字体(如 CAJ 导出 PDF 里的黑体/宋体标题)在缩略图里只能画成 notdef 方框(已接受的取舍,见 [docs/15](./15-perf-audit.md)「已接受的取舍」);文本型 PDF 的全文抽取不受影响。扫描型图片 PDF(JPEG 2000 / JBIG2 / CCITT 传真)的图片解码依赖 `pdfjs-dist/wasm/`。此前 `renderPdfThumb` 未设置 `wasmUrl`,pdfjs 丢弃图片后仍完成渲染,整页空白;2026-11-24 已修复,并有 JPEG 2000 / CCITT G4 样本回归([thumb-render.test.ts](../src/main/thumb-render.test.ts))。[fulltext.ts](../src/main/fulltext.ts) 只抽文本,不需要 `wasmUrl`。
 
 ---
 

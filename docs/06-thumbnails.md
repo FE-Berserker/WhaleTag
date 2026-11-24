@@ -56,6 +56,7 @@ type ThumbKind = 'image' | 'svg' | 'video' | 'pdf' | 'font';
 - **主进程并发闸门**([src/main/concurrency.ts](../src/main/concurrency.ts) 的 `Semaphore`):`thumbnailSemaphore` 限制同时进行的缩略图编码数(sharp / ffmpeg / pdfjs),只包住编码那一段,后续写盘不持锁。`setFolderBackground` 的 sharp 读取/旋转/缩放/JPEG 编码也进入同一个 4 路信号量,异常经 `finally` 释放许可;目标 `wsb.jpg` 的小型原子写不持锁。
 - **ffmpeg 路径**:`ffmpegPath()` 取 `ffmpeg-static` 自带二进制,打包态把路径里的 `app.asar` 换成 `app.asar.unpacked`;缺失时返回 `null`,视频缩略图直接回退类型图标(不做 PATH 探测)。
 - **pdfjs 惰性**:PDF 缩略图用的 pdfjs-dist 经 `getPdfjs()`(`nodeRequire`)在首次 PDF 缩略图时才 load,不在启动顶层(见 [docs/01 §4](./01-architecture.md))
+- **扫描版 PDF 需要 wasm 解码器**:`renderPdfThumb` 通过 `wasmUrl` 指向 `pdfjs-dist/wasm/`(普通路径 + 结尾 `/`),JPEG 2000 / JBIG2 / CCITT 传真图像由其中的模块解码。未设置时 pdfjs 丢弃图片但仍完成渲染,曾导致整页空白;2026-11-24 已修复,并由 [thumb-render.test.ts](../src/main/thumb-render.test.ts) 配合 [samples/pdf](../samples/pdf/) 的 JPEG 2000 / CCITT G4 样本覆盖。
 
 ## 4. ThumbIcon 加载机制(前端)
 

@@ -203,6 +203,11 @@ FileList 的 visible 标签过滤抽为 `file-list-filter.ts` 纯函数（6 条�
 - 注释清理：英文注释与测试标题里夹生的「互斥」38 处改为 exclusion / exclusive family；6 处源码注释的章节号对齐现状（docs/09 §24/§25、docs/13 §10）。
 - 文档：docs/09、10、13–16、18、20 完成语义审计并修复（docs/09 §8 的 PDF iframe 方案归档、docs/10 的过期数字与引用、docs/20 的行号与 excalidraw 加载 / 保存描述、docs/15/16/18 的过期计数与章节号）。
 
+### P3-9. 构建验证与扫描版 PDF 修复（2026-11-24）✅
+
+- 构建验证：前两轮的 7 个提交在隔离 worktree 中逐个通过 type-check；最终树通过 lint、2478 个测试（2475 pass / 3 skipped / 0 fail）与 `npm run build`，main / extensions / renderer / mobile 四路产物均成功生成。
+- 扫描版 PDF：`renderPdfThumb` 补上 `wasmUrl`，修复 JPEG 2000 / JBIG2 / CCITT 图像被 pdfjs 丢弃后仍返回全白缩略图的问题；新增 JPEG 2000 与 CCITT G4 两个二进制样本及 2 个回归测试，并验证移除该配置后两例都会失败。
+
 ---
 
 ## ✅ 已记录在 docs、不在本篇重复
