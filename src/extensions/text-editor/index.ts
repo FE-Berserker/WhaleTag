@@ -399,7 +399,7 @@ function toggleWrap() {
 }
 
 // --- Toast (replace feedback) ------------------------------------------
-// 
+//
 // Mirrors the pattern from json-viewer/index.ts:236-244 — a single shared
 // timer ensures rapid-fire toasts reset the hide countdown rather than
 // stacking or hiding prematurely.
@@ -415,13 +415,13 @@ function showToast(msg: string) {
 }
 
 // --- Replace-all + matches counting ------------------------------------
-// 
+//
 // The replace-all button does its own count-and-replace:
 // 1. Read the current SearchQuery from view state
 // 2. Count matches in the current doc via editor-stats.countMatches
 // 3. Call CM's replaceAll
 // 4. Show a toast with the count
-// 
+//
 // For replace-alls triggered from the search panel itself (the "Replace All"
 // button inside the panel's replace row), we listen for transactions with
 // userEvent 'input.replace.all' and recompute the count from the doc the

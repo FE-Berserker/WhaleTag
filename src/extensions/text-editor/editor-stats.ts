@@ -76,14 +76,14 @@ export function parseEncoding(enc: 'utf8' | 'base64'): string {
 }
 
 // --- Search match counting -----------------------------------------------
-// 
+//
 // The status bar's "Matches" field and the replace-all toast both need to
 // know how many occurrences of a search pattern exist in the current
 // document. CodeMirror's `SearchQuery.matchAll` exists but requires a full
 // `EditorState` and parses the document as a CodeMirror `Text`. For the
 // status bar we only need a fast pure-function count, so we re-implement
 // just the counting half here.
-// 
+//
 // Behavior mirrors the @codemirror/search search cursor (see
 // node_modules/@codemirror/search/dist/index.js:609-740):
 // - `caseSensitive` toggles lowercase normalization

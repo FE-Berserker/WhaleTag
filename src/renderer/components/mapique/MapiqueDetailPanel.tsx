@@ -1,4 +1,4 @@
-﻿import { Box, Button, Divider, Stack, Typography } from '@mui/material';
+import { Box, Button, Divider, Stack, Typography } from '@mui/material';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import type { TFunction } from 'i18next';
 
