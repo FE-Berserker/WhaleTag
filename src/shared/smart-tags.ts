@@ -342,7 +342,7 @@ export function smartTagColor(fn: SmartFunctionality): string | undefined {
  * the previous one; non-member tags keep their position. No-op for 0/1 members.
  *
  * Exported because the Phase-4 migration (`main/migrate-date-tags.ts`) reuses
- * this generic互斥 function with a custom predicate.
+ * this generic exclusion function with a custom predicate.
  */
 export function withSingleFrom(
   tags: string[],
@@ -421,11 +421,11 @@ export function isSmartDateTag(tag: string, now: Date = new Date()): boolean {
  * `isSmartDateTag` — so an active `today` plus a stale `month-202606`
  * collapse to the last-applied one, instead of co-existing.
  *
- * Period tags (`YYYYMMDD-YYYYMMDD`) are an independent互斥 family and
+ * Period tags (`YYYYMMDD-YYYYMMDD`) are an independent exclusive family and
  * pass through here — they have their own `withSinglePeriodTag`.
  *
  * Predicates: `isAnyDateShapeTag` is the *broader* predicate also used by
- * the Phase-4 migration's互斥 path, so behavior here matches.
+ * the Phase-4 migration's exclusion path, so behavior here matches.
  */
 export function withSingleDateTag(tags: string[]): string[] {
   return withSingleFrom(tags, isAnyDateShapeTag);
@@ -657,7 +657,7 @@ export function isSmartFunctionalityName(tag: string): boolean {
  * compact form (`20260704` / `202606` / `2026` / `20260704T1430`). Returns
  * `null` if `tag` doesn't look like any of the 7 date functionalities (in
  * either prefix or compact form) — callers use this to decide whether to
- * treat `tag` as a date-shaped input that needs互斥 / prefix-stripping.
+ * treat `tag` as a date-shaped input that needs exclusion / prefix-stripping.
  *
  * Exported because `addTag` in PropertiesTray needs to resolve user-typed
  * prefix forms (`month-202606`) to compact form on the way in. The
@@ -698,7 +698,7 @@ export function normalizeDateTag(tag: string): string | null {
  *
  * Used by `addTag` in PropertiesTray so that typing `today` resolves to
  * `20260704` and typing `month-202606` resolves to `202606` — the
- * resulting compact form is then a candidate for互斥 via
+ * resulting compact form is then a candidate for exclusion via
  * `normalizeSmartTags`.
  */
 export function resolveInputTag(tag: string, now: Date = new Date()): string {

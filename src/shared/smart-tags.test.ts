@@ -310,9 +310,9 @@ describe('withSingleDateTag — date family exclusivity (covers active + stale)'
     const out = withSingleDateTag(tags);
     assert.deepEqual(out, ['month-202607', 'idea']);
   });
-  it('互斥 across active + stale: an active today and a stale month collapse to one', () => {
+  it('exclusion across active + stale: an active today and a stale month collapse to one', () => {
     // Files migrated from Phase 4 may carry a mix: `today-20260704` (active)
-    // and `month-202606` (stale). The互斥 covers both — only the last-
+    // and `month-202606` (stale). The exclusion covers both — only the last-
     // applied date-shaped tag stays. This is the post-2026-07-04 spec
     // change: previously stale date tags passed through, leading to the
     // "active + stale coexist" UX bug.
@@ -320,8 +320,8 @@ describe('withSingleDateTag — date family exclusivity (covers active + stale)'
     const out = withSingleDateTag(tags);
     assert.deepEqual(out, ['idea', 'month-202606']);
   });
-  it('互斥 across multiple stale date tags: keeps last', () => {
-    // Two stale tags, both fail `isSmartDateTag`, but互斥 still applies
+  it('exclusion across multiple stale date tags: keeps last', () => {
+    // Two stale tags, both fail `isSmartDateTag`, but the exclusion rule still applies
     // because `isAnyDateShapeTag` is broad.
     const tags = ['idea', 'today-20251223', 'month-202512'];
     const out = withSingleDateTag(tags);
@@ -540,9 +540,9 @@ describe('resolveInputTag — input → storage normalization', () => {
   });
 });
 
-describe('addTag-style互斥 after resolveInputTag — full chain', () => {
-  it('typing `today` then `tomorrow` collapses to one date tag (互斥 works)', () => {
-    // Simulate the addTag flow: resolve → check dup → apply互斥.
+describe('addTag-style exclusion after resolveInputTag — full chain', () => {
+  it('typing `today` then `tomorrow` collapses to one date tag (exclusion works)', () => {
+    // Simulate the addTag flow: resolve → check dup → apply exclusion.
     // (This is what PropertiesTray.addTag now does.)
     const apply = (current: string[], input: string) => {
       const resolved = resolveInputTag(input, TODAY);
@@ -573,14 +573,14 @@ describe('addTag-style互斥 after resolveInputTag — full chain', () => {
     tags = apply(tags, 'today');
     assert.deepEqual(tags, ['20260704'], 'today replaces the legacy month tag');
   });
-  it('period tags are NOT互斥 by date互斥 (independent family)', () => {
+  it('period tags are not subject to date exclusion (independent family)', () => {
     const tags = ['20260701-20260703']; // period
     const resolved = resolveInputTag('today', TODAY);
     if (isAnyDateShapeTag(resolved)) {
-      // would互斥 with date, but period is NOT a date shape — so they coexist.
+      // would collide with date, but period is NOT a date shape — so they coexist.
     }
     const next = withSingleDateTag([...tags, resolved]);
-    // period stays, date互斥 applies within date family
+    // period stays, date exclusion applies within date family
     assert.deepEqual(next, ['20260701-20260703', '20260704']);
   });
 });

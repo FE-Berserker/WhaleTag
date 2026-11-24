@@ -22,7 +22,7 @@
  *
  * ±1 day shifts go through `onCommit` (same persistence path as a
  * drag commit). The arithmetic uses the shared `periodWithShift`
- * helper so the period tag goes through the same互斥 family rule
+ * helper so the period tag goes through the same exclusion family rule
  * (`withSinglePeriodTag`) the drag handler does.
  */
 import { useCallback, useMemo, useState } from 'react';

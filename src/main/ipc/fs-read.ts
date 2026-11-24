@@ -185,7 +185,7 @@ export async function readTextFile(filePath: string): Promise<string> {
 export function registerFsReadHandlers(): void {
   // Listing is a read too, and `listDirectoryRecursive` even writes its scan
   // cache into `<dir>/.whale/index-recursive/` — so both are confined exactly
-  // like file reads (docs/13 §13). Before 2026-11 they were bare `readdir`
+  // like file reads (docs/13 §10). Before 2026-11 they were bare `readdir`
   // calls, which let a compromised renderer enumerate any directory on disk.
   ipcMain.handle('fs:listDirectory', (_event, dirPath: string) => {
     assertWithinAllowedRoot(dirPath);

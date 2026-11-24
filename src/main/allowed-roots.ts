@@ -163,7 +163,8 @@ export function assertWritable(target: string): void {
   }
 }
 
-/** Replace the configured location roots with a new list. */export function setAllowedRoots(roots: string[]): void {
+/** Replace the configured location roots with a new list. */
+export function setAllowedRoots(roots: string[]): void {
   rawAllowedRoots = [...(roots ?? [])];
   allowedRoots.clear();
   for (const r of roots ?? []) {

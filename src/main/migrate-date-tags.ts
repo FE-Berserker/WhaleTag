@@ -4,10 +4,10 @@
  *   1. Strip legacy template prefixes (`today-YYYYMMDD` → `YYYYMMDD`,
  *      `now-YYYYMMDDTHHMM` → `YYYYMMDDTHHMM`, `month-YYYYMM` → `YYYYMM`,
  *      `year-YYYY` → `YYYY`).
- *   2. Apply互斥 family convergence: keep at most ONE date-shaped tag
+ *   2. Apply the exclusive-family convergence: keep at most ONE date-shaped tag
  *      (`isAnyDateShapeTag`) and at most ONE period tag
  *      (`isPeriodTag`) on a file — the last one wins. Stale tags are
- *      collapsed here too (the read-time互斥 in `normalizeSmartTags` uses
+ *      collapsed here too (the read-time exclusion in `normalizeSmartTags` uses
  *      `isSmartDateTag`, which is freshness-aware; the migration uses the
  *      broader `isAnyDateShapeTag` because the user explicitly said
  *      "如遇到多个日期标签,保留其中一个就行" — keep one regardless of
@@ -19,12 +19,12 @@
  * Trigger: first non-empty `fs:setAllowedRoots` push (`triggerStartupMigration`
  * below) — main-process bootstrap runs before the renderer mounts, so the
  * root set is always still empty there (the original bootstrap-time call
- * silently never ran; see docs/09-known-issues.md §26). Per-file writes are
+ * silently never ran; see docs/09-known-issues.md §24). Per-file writes are
  * wrapped in `withLock` + `atomicWriteJson`; one file's failure does not
  * abort the rest of the migration.
  *
  * Idempotency: a second pass over an already-migrated file finds nothing to
- * change — the prefix-strip regex doesn't match the bare form, the互斥
+ * change — the prefix-strip regex doesn't match the bare form, the exclusion
  * function is stable on a 0-or-1-element date set, and the resulting tags
  * array deep-equals the input.
  *

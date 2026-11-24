@@ -82,7 +82,7 @@ const DEV_SERVER_URL = 'http://localhost:4002';
 // parent dies — routine with accumulated dev instances (docs/01 §8) — any
 // `console.*` write raises EPIPE as an *uncaught* exception (seen in the
 // field as a Mapique crash from extractGps' per-file console.debug,
-// docs/09 §27). Swallow EPIPE on both streams: a GUI app losing log output
+// docs/09 §25). Swallow EPIPE on both streams: a GUI app losing log output
 // beats crashing.
 for (const stream of [process.stdout, process.stderr]) {
   stream.on('error', (err: NodeJS.ErrnoException) => {
@@ -637,7 +637,7 @@ function bootstrap(): void {
   // Phase 4 date-tag migration is NOT launched here: it is triggered by the
   // first non-empty `fs:setAllowedRoots` push (see ipc.ts) — at bootstrap the
   // renderer hasn't mounted yet, so the root set would always be empty and
-  // the migration would silently no-op (docs/09 §26).
+  // the migration would silently no-op (docs/09 §24).
 
   // Renderer has finished flushing redux-persist; finish closing the window.
   // The storage adapter is async (invoke), so this handshake drains in-flight

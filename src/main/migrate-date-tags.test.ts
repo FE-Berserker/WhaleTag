@@ -38,10 +38,10 @@ describe('migrateSidecarTags — pure transform', () => {
     assert.equal(r.changed, false);
   });
 
-  it('collapses multiple bare date tags to the last (互斥 applies to new format too)', () => {
-    // Once the互斥 family rule is in effect, it applies regardless of whether
+  it('collapses multiple bare date tags to the last (exclusion applies to new format too)', () => {
+    // Once the exclusion family rule is in effect, it applies regardless of whether
     // the data is in old-prefix or new-bare form. The migration re-runs the
-    //互斥 on already-migrated files, which is fine because the result is
+    // exclusion on already-migrated files, which is fine because the result is
     // idempotent (the LAST date tag stays as-is, everything else dropped).
     const r = migrateSidecarTags(['20260704', '202607', '2026', '20260704T1430']);
     assert.deepEqual(r.tags, ['20260704T1430']);
@@ -54,8 +54,8 @@ describe('migrateSidecarTags — pure transform', () => {
     assert.equal(r.changed, false);
   });
 
-  it('collapses multiple period tags to the last (period family互斥)', () => {
-    // Period family互斥 is also enforced as part of the migration.
+  it('collapses multiple period tags to the last (period family exclusion)', () => {
+    // Period family exclusion is also enforced as part of the migration.
     const r = migrateSidecarTags(['20260701-20260703', '20260710-20260701']);
     assert.deepEqual(r.tags, ['20260710-20260701']);
     assert.equal(r.changed, true);
@@ -82,12 +82,12 @@ describe('migrateSidecarTags — pure transform', () => {
   });
 
   it('cross-family isolation: date + period kept independent', () => {
-    // Date and period互斥 families are independent — one of each is allowed.
+    // Date and period exclusion families are independent — one of each is allowed.
     const r = migrateSidecarTags(['today-20260704', '20260701-20260703']);
     assert.deepEqual(r.tags, ['20260704', '20260701-20260703']);
   });
 
-  it('period family互斥 within itself (last wins)', () => {
+  it('period family exclusion within itself (last wins)', () => {
     const r = migrateSidecarTags(['20260701-20260703', '20260710-20260720']);
     assert.deepEqual(r.tags, ['20260710-20260720']);
   });
@@ -131,7 +131,7 @@ describe('migrateSidecarTags — end-to-end over the existing fixture data', () 
     const original = JSON.parse(raw);
     // Read tags per entry, then run the pure function per entry; verify
     // output is either the original (no legacy prefix anywhere) or a
-    // stripped form. Per-entry (not flattened): the互斥 collapse is a
+    // stripped form. Per-entry (not flattened): the exclusion collapse is a
     // per-file rule, so flattening every file's tags into one array would
     // falsely collapse unrelated period/date tags across files.
     const entries = Object.values(original.files ?? {}) as Array<{
@@ -205,7 +205,7 @@ describe('runMigration — integration over a tmp directory', () => {
     const after = JSON.parse(await fsp.readFile(wsdPath, 'utf-8'));
     assert.deepEqual(after.files['a.txt'].tags, ['20260704', 'idea']);
     // b.txt: had [month-202606, work, today-20251223] → after strip
-    //   [202606, work, 20251223] → date互斥: keep last date tag
+    //   [202606, work, 20251223] → date exclusion: keep last date tag
     //   (`20251223`), drop `202606`
     assert.deepEqual(after.files['b.txt'].tags, ['work', '20251223']);
     // c.txt unchanged

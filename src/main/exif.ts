@@ -114,7 +114,7 @@ export function buildExifSummary(raw: unknown): ExifSummary {
  *
  * No per-file logging: batch scans would drown the main-process log, and any
  * `console.*` write is an EPIPE crash vector once the parent process owning
- * the stdio pipe has died (docs/09 §27). Real parse failures still log via
+ * the stdio pipe has died (docs/09 §25). Real parse failures still log via
  * `console.error` below; the renderer surfaces routine "no GPS" through the
  * standard notice channel.
  */

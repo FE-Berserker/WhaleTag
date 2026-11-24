@@ -207,8 +207,9 @@ export function DirectoryContentContextProvider({
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<SortState>({ key: 'name', dir: 'asc' });
   // H.24 R1/R2: sidecarsByPath is the single source of truth keyed by
-  // FULL path. Both the depth=1 fast path (`ipcApi.readSidecards`) and
-  // the depth>1 path (`ipcApi.readSidecardsForPaths`) feed into this.
+  // FULL path. Both the depth=1 fast path (`ipcApi.readSidecarsDetailed`)
+  // and the depth>1 path (`ipcApi.readSidecardsForPathsDetailed`) feed into
+  // this.
   const [sidecarsByPath, setSidecarsByPath] = useState<
     ReadonlyMap<string, SidecarMeta | undefined>
   >(new Map());
