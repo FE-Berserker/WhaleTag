@@ -15,6 +15,7 @@ src/extensions/
     theme.ts                    # 共享主题:detectInitialTheme + applyThemeToDocument
     i18n.ts                     # 共享语言:pickStrings / syncDocumentLocale / onLocaleChange
     csp-policy.json             # CSP 单一来源(baseline + 每扩展追加项),构建期合成 meta 与响应头策略
+    format-bytes.ts             # 共享字节格式化(formatBytes)
     zoom.ts                     # 共享缩放逻辑
     keymap.ts                   # 共享按键映射
     relpath.ts                  # 相对路径工具(嵌入链接跨文件移动时重算)
@@ -42,8 +43,8 @@ src/extensions/
   color: string;                // 主题色
   fileTypes: string[];          // ['txt','log','csv','tsv','json','js','ts','css','html','xml','yaml','yml']
   entryPoint: string;           // 相对目录的 index.html
-  enabled?: boolean;
-  isDefault?: boolean;          // 用户未指定时该扩展默认打开
+  enabled: boolean;             // 必填
+  isDefault: boolean;           // 必填;用户未指定时该扩展默认打开
 }
 ```
 
@@ -53,7 +54,7 @@ src/extensions/
 
 **Host ↔ Extension 协议**:统一 envelope `ExtensionEnvelope<T> { protocolVersion: 1, source: 'host' | 'extension', message }`,走 `window.postMessage`。
 
-**Host → Ext 全部消息类型**(`HostMessage` 联合,`src/shared/extension-types.ts:151-161`):
+**Host → Ext 全部消息类型**(`HostMessage` 联合,`src/shared/extension-types.ts:176-186`):
 
 | 消息 | 用途 |
 |---|---|
@@ -124,7 +125,7 @@ CSP 不手抄在 8 份 `index.html` 里,而是由 [src/extensions/shared/csp-pol
 - `ExtensionHost.tsx` iframe 宿主,管理加载 / 消息桥 / 保存流程 / 工具栏;**启动看门狗**(2026-07-22):iframe 12s 内未 post `ready` → 显示可重试失败态(此前崩溃/CSP 拦截 = 永久白屏),ready 前显示加载遮罩,重试经 `retryKey` 重挂 iframe
 - 扩展页本身是懒加载边界：`ExtensionViewPanel` 的 chunk 加载失败时，ErrorBoundary 保留 `ExtensionTabBar`（可切换/关闭标签）和重试按钮，重试会重建被拒绝的 lazy 组件；`Suspense` fallback 用不透明背景而不是空白。`SearchBar` 的高级搜索对话框同样在加载失败后由工具栏按钮或错误提示重试；扩展页的正常 tab 切换仍复用同一个 lazy 组件，不重挂已有 iframe
 - **常驻 iframe 数量有上限**(2026-11)：此前每个 tab 各挂一个 `ExtensionHost`，只是把非活动 tab `display:none`，于是最多 8 个扩展同时常驻——drawio / Excalidraw 各是几十 MB JS heap，图片/HTML 还有解码后的位图。现在 [extension-host/tab-mount-policy.ts](../src/renderer/components/extension-host/tab-mount-policy.ts) 的 `selectMountedTabIds` 只让 `MAX_MOUNTED_TABS = 4` 个宿主存活：活动标签必挂；**dirty 标签无条件挂载**（即使超出上限——未保存缓冲区在 iframe 内，关窗 flush 也依赖该宿主注册的 save handler，卸载即丢）；余下名额按 `ExtensionTab.lastAccessed` 给最近的干净标签。未挂载的 tab 保留外层占位，再次激活时用 `tab.fileContent` 重建，走的就是"外部修改后刷新"那条路径。为此 `ExtensionHost.handleSave` 成功后调 provider 的 `markTabSavedContent(tabId, content)` 把缓存推进到磁盘字节：否则重建会用打开时的旧内容，下一次保存把旧字节写回文件（`savingFile` 里 stale 分支同样先更新缓存，因为写盘已经落地）。代价是被卸载的标签重建时扩展自身状态（滚动位置、undo 历史、未提交的表单）丢失，与外部刷新一致（§4：text-editor 刷新本来就会 `scrollTo(0)`）；活动标签与 dirty 标签不受影响。面板用"dirty 标签 id 串"的 selector 判断固定集合，打字（`dirty: true` 反复 dispatch）不会让面板重渲染
-- 编辑器脏状态经 `contentChangedInEditor` 上报;Save 触发 `parentSaveDocument` → `writeFileWithRevision`。脏状态按**标签 id**（`makeTabId(filePath, extensionId)`）存放，不按文件路径：同一文件可以同时用两个扩展打开（文本编辑器 + JSON 查看器），按路径存放时两个标签会互相清除 dirty/saving，关闭其一时看起来"没有未保存修改"而丢内容。关闭确认、保存后复查、fs.watch 刷新与 flush 统一经 `isTabDirty(editState, tabId)` 读取；`pickLruEvict` 同样接收 `dirtyTabIds` 并按 `tab.id` 跳过 dirty 标签，不能只改写入端而留下按路径查询的淘汰/监听逻辑。关窗前的 flush(`extension-save-flush.ts`)永不上抛,但不再把失败吞进 console:flush 自身的 rejection 与 5s 内未 ack 的标签都会 `notifyApp` 报"保存未完成、修改仍在标签里"
+- 编辑器脏状态经 `contentChangedInEditor` 上报;Save 触发 `parentSaveDocument` → `writeFileWithRevision`。脏状态按**标签 id**（`makeTabId(filePath, extensionId)`）存放，不按文件路径：同一文件可以同时用两个扩展打开（文本编辑器 + JSON 查看器），按路径存放时两个标签会互相清除 dirty/saving，关闭其一时看起来"没有未保存修改"而丢内容。关闭确认、保存后复查、fs.watch 刷新与 flush 统一经 `isTabDirty(editState, tabId)` 读取；`pickLruEvict` 同样接收 `dirtyTabIds` 并按 `tab.id` 跳过 dirty 标签，不能只改写入端而留下按路径查询的淘汰/监听逻辑。淘汰对象是除新标签与 dirty 标签之外 `lastAccessed` 最早的那个(真按访问时间,不按列表位置;时间戳相同时偏向更早打开的标签),激活标签只更新 `lastAccessed`、不重排列表。关窗前的 flush(`extension-save-flush.ts`)永不上抛,但不再把失败吞进 console:flush 自身的 rejection 与 5s 内未 ack 的标签都会 `notifyApp` 报"保存未完成、修改仍在标签里"
 - dirty 上报是**边沿触发**：text-editor 只在 `false→true` / `true→false` 时发 `contentChangedInEditor`；保存进行中继续敲键时补发一次 revision 快照，保证宿主看到的 revision 不落后，写盘回执（`savingFile`）仍能区分 stale 与当前。宿主用 `editState[tabId]?.dirty === true` 布尔派生 selector 订阅并跳过重复 dirty 报告（不 dispatch），标签栏拆成每个 tab 单独订阅 `dirty` 的按钮组件，打字不会让整条标签栏或宿主重渲染。状态栏查找计数在文档或查询变化后 debounce 200ms 重算，不再每键 `doc.toString()` + 全文正则
 - text / drawio / Excalidraw 的保存消息带内容 `revision`，宿主在 `savingFile` 回显实际写盘版本；旧回执不能清除写盘期间新产生的 dirty，stale 写盘即使已落盘也返回 false 并明确提示最新编辑仍未保存。并发保存会提示先等待当前写入；宿主报告成功后 provider 还会从 store 复查权威 dirty，仍有新编辑就取消关闭并恢复焦点。Excalidraw 每次完成写入都把比较基线推进到实际快照，再按当前 scene 重算 dirty，编辑后撤销回该快照也可正确变干净；缺省 revision 的旧扩展保留原行为。dirty 改为边沿触发后编辑器不再逐键上报 revision，宿主把 `parentSaveDocument` 携带的 revision 也纳入保存基线（取最大值），保存期间漏掉的中间 revision 不会让当前回执被误判为 stale
 - `fileContent` 用于真实文件切换/外部刷新，只读切换走独立 `setReadOnly`；text 同路径仍有未保存修改时不重灌旧磁盘内容，drawio 只读用 iframe `inert` 阻止继续编辑。text-editor 在同路径外部刷新（缓冲区干净、内容被替换）时也会重建 undo 历史：否则 Ctrl+Z 能撤回重载前的旧文本，下一次保存把过期内容写回刚被外部修改的文件。ExtensionHost 还记录最近一次成功写盘的内容：`fs.watch` 回读若与之逐字相同就跳过 `fileContent`，避免保存后重载编辑器（例如关掉刚插入的 Mermaid 预览）；不同内容的外部修改仍会刷新并立即作废旧自写快照（因此 B→C→B 的最后一次外部 B 不会被吞），切换文件或重试加载时也会清空这条记录；唯一的强制例外是 `fileContent.force`(revision 恢复):缓冲区再脏也重灌并清 dirty
@@ -136,7 +137,7 @@ CSP 不手抄在 8 份 `index.html` 里,而是由 [src/extensions/shared/csp-pol
 
 **修订历史**:
 
-- IPC `ext:backupRevision` / `ext:writeFile` / `ext:listRevisions` / `ext:restoreRevision` / `ext:deleteRevision`——均过 `assertWithinAllowedRoot`;`deleteRevision` 把 revision 路径绑定到所属文件的 `.whale/revisions/` 前缀(与 restore 相同),拒绝删除任意路径
+- IPC `ext:writeFile` / `ext:listRevisions` / `ext:restoreRevision` / `ext:deleteRevision`——均过 `assertWithinAllowedRoot`(备份没有独立 IPC:保存路径直接调用主进程函数 `backupRevision`);`deleteRevision` 把 revision 路径绑定到所属文件的 `.whale/revisions/` 前缀(与 restore 相同),拒绝删除任意路径
 - **恢复会先自备份**:`restoreRevision` 覆盖前先 `backupRevision(filePath)` 把当前内容写进同一修订列表(写不成就拒绝恢复并上抛)——恢复本身因此可回退,误点不会永久丢掉最新版本;UI 侧 `RevisionHistoryDialog` 的恢复按钮还带二次确认(`danger`,显示所选版本时间)
 - **脏标签恢复**:标签有未保存修改时,同一条二次确认会额外说明"恢复会覆盖未保存修改";确认后 provider 重新读文件并把 `fileContent.force` 发给编辑器(text-editor 的 `shouldLoadContent` 因此为 true,丢弃缓冲区并清 dirty),读盘失败会 `notifyApp` 报错——此前恢复在脏编辑器上静默无效,下一次保存把旧缓冲写回、覆盖刚恢复的版本
 - **恢复保留文件权限**:覆盖用的是 `atomicWriteBytes`(tmp + rename),临时文件带的是默认 mode;恢复前先 `fsp.stat(filePath).mode & 0o777`,有值就作为 `atomicWriteBytes` 的 `{ mode }` 传入,否则一次 `chmod 0600` 的敏感文件会被恢复动作悄悄放宽回 umask 默认(stat 失败只回退默认 mode,不阻断恢复)
@@ -179,7 +180,7 @@ CSP 不手抄在 8 份 `index.html` 里,而是由 [src/extensions/shared/csp-pol
 
 **四件硬约束**(缺一不可):
 
-1. **`registerSchemesAsPrivileged([{scheme:'whale-extension', privileges:{standard:true, secure:true}}])`** 必须在 `app.ready` 之前(`src/main/main.ts:207-240`);否则 origin 是 opaque,`document.cookie` 抛 `SecurityError`
+1. **`registerSchemesAsPrivileged([{scheme:'whale-extension', privileges:{standard:true, secure:true}}])`** 必须在 `app.ready` 之前(`src/main/main.ts:787`);否则 origin 是 opaque,`document.cookie` 抛 `SecurityError`
 2. **不要**给 `whale-extension://` 响应套**主窗口** CSP;`onHeadersReceived` 跳过该协议。扩展页的安全性由 `protocol.handle` 响应里的 per-extension CSP 头 + 各扩展 meta 治理(见 §1 "安全"/CSP 段),主窗口策略对 drawio 过严(会阻断 unsafe-eval/worker)
 3. build 第三方 webapp 时**不要**过滤子目录;drawio `App.main` 同步等子资源 200,失败不发 `init`
 4. 第三方 webapp 的 embed 协议经常"遗留字符串握手"+"结构化 JSON"两套;drawio 是 `proto=json` URL 参数切换
@@ -204,6 +205,7 @@ Draw.io 的本地 Link/Lightbox 会请求 `drawio-assets` 目录 URL。`extensio
 
 - host 语言变化 → push `setLocale` → `extension-api.js` 集中 `onLocale()` + `t(I18N)` → 工具栏 / 状态栏 / 菜单文案刷新
 - 6 个 DOM 型 viewer/editor 不再各抄一份桥接代码,统一走 [src/extensions/shared/i18n.ts](../src/extensions/shared/i18n.ts):`pickStrings(I18N)` 取当前语言文案、`syncDocumentLocale()` 设 `document.documentElement.lang`、`onLocaleChange(handler)` 包装 `window.whaleExt.onLocale`;各扩展只保留自己的 `interface Strings + I18N: Record<string, Strings> + applyLocale()` 文案表(文案不同,不合并)。html-viewer / text-editor 的 locale 回调还要刷新状态栏与 CM 里已渲染的 UI,所以传的是本地包装函数
+- 扩展文案表目前只有 `en` / `zh` 两套:6 个 DOM 扩展的 `I18N` 都只有这两个键,`extension-api.js` 的 `t()` 按「当前 locale → 基础语言(`zh-TW` → `zh`)→ `en`」回落,所以 zh-TW 看到简体、ja / ko 看到英文;drawio 桥同样只传 `zh` / `en`(`drawio-bridge.ts` 的 `lang: lang.startsWith('zh') ? 'zh' : 'en'`)。主应用的 5 语言不覆盖扩展内部文案
 - 主题同样收口到 [src/extensions/shared/theme.ts](../src/extensions/shared/theme.ts):`detectInitialTheme()`(首帧 matchMedia,失败兜底 light)+ `applyThemeToDocument(theme)`(设 body `data-theme`)。此前 `detectInitialTheme` 有 5 份逐字相同的副本、image-viewer 首帧还硬编码 `light`,暗色主题下会闪一下。text-editor 的本地 `applyTheme` 只保留必需的 CodeMirror `themeCompartment.reconfigure`,body 属性仍交给共享函数;drawio / excalidraw 是 React 应用、不用 `data-theme`,仅用 `detectInitialTheme()` 作为 theme state 的初值(运行时仍由 `setTheme` 驱动)
 
 ## 8. 已知坑(在本模块反复踩)

@@ -34,7 +34,7 @@
 └────────────────────────────────────────────────────┘
 ```
 
-**Shared 层** (`src/shared/`):纯逻辑 + 类型,与进程无关,可以直跑 node:test。包含 ipc-types、whale-meta、kanban、calendar、mapique、tag-colors、smart-tags、recursive-entries、knowledge-graph、tagcloud、gantt、lunar、gcj02 等 ~30 模块。
+**Shared 层** (`src/shared/`):纯逻辑 + 类型,与进程无关,可以直跑 node:test。共 14 个模块:ipc-types、whale-meta、smart-tags、tags、extension-types、extension-requests、lan-types、mcp-types、shell-types、path-fold、search-query、date-utils、dedupe-name、whale-file-url;视角 / 领域纯逻辑(kanban、calendar、mapique、tag-colors、recursive-entries、knowledge-graph、tagcloud、gantt、lunar、gcj02 等)在 `src/renderer/domain/`(见 §13)。
 
 ## 2. 元数据目录 `.whale/`
 
@@ -70,7 +70,7 @@ folder/
 - **单实例锁**:紧跟其后 `app.requestSingleInstanceLock()`;拿不到锁的第二个进程 `app.quit()` 且**不进入** `bootstrap()`,避免重复注册 IPC handler、并发写同一个 `index.db` / `wsd.json`、抢 MCP 端口;持锁实例收到 `second-instance` 就把窗口 `restore/show/focus`(窗口已销毁则重建)。锁文件在 `userData` 内,所以必须在 `pinUserDataToProductName()` 之后取
 - **CSP**:`onHeadersReceived` 设 renderer CSP(`default-src 'self'; img-src 'self' https: http: data: blob: ...`;`whale-extension://` 响应跳过,见 §3)
 - **whale-file 网关**:`protocol.handle('whale-file')` 经 `assertWithinAllowedRoot` 后从磁盘 Range 读;Range 逻辑抽到 `protocol-range.ts`(`createFileRangeResponse`)
-- **冷启动惰性加载**:pdfjs-dist(~1MB+)与 ffmpeg-static **不在** main.ts 顶层 import——pdfjs 经 `nodeRequire`(`createRequire(__filename)`)在首次 PDF 缩略图 / 全文抽取时才 load([src/main/fulltext.ts](../src/main/fulltext.ts) 与 [src/main/thumbnail.ts](../src/main/thumbnail.ts) 的 `getPdfjs()`),ffmpeg-static 只为诊断日志惰性 `import()`([src/main/main.ts](../src/main/main.ts))。sharp / better-sqlite3 / @napi-rs/canvas 仍随 `./ipc` eager 加载(IPC handler 启动即要用)。
+- **冷启动惰性加载**:pdfjs-dist(~1MB+)与 ffmpeg-static **不在** main.ts 顶层 import——pdfjs 经 `nodeRequire`(`createRequire(__filename)`)在首次 PDF 缩略图 / 全文抽取时才 load([src/main/fulltext.ts](../src/main/fulltext.ts) 与 [src/main/thumb-render.ts](../src/main/thumb-render.ts) 的 `getPdfjs()`),ffmpeg-static 只为诊断日志惰性 `import()`([src/main/main.ts](../src/main/main.ts))。sharp / better-sqlite3 / @napi-rs/canvas 仍随 `./ipc` eager 加载(IPC handler 启动即要用)。
 
 ## 5. 渲染层桥
 
@@ -99,7 +99,7 @@ CurrentLocation → DirectoryContent → DirectoryTreeRefresh → IOActions
 
 - `contextIsolation: true` `nodeIntegration: false` `sandbox: true`
 - 渲染层**永不**直接碰 Node,只经 `window.whale`
-- 所有文件 IO 集中在 [src/main/ipc/](../src/main/ipc/)(按域拆分:fs-read / fs-write / fs-roots / dialogs / shell / search-index / meta / thumbnails / extensions / window / persist),写操作经 `assertWithinAllowedRoot` 限制在已注册位置内
+- 所有文件 IO 集中在 [src/main/ipc/](../src/main/ipc/)(按域拆分:fs-read / fs-write / fs-roots / dialogs / shell / search-index / meta / thumbnails / extensions / window / persist / lan),写操作经 `assertWithinAllowedRoot` 限制在已注册位置内
 - 扩展 iframe sandbox = `allow-same-origin allow-scripts allow-modals allow-downloads`;主进程只接受 `event.source === iframe.contentWindow` 的消息
 - 外部链接走 `shell.openExternal` / 系统浏览器,不在扩展内跳转
 - 局域网只读访问(docs/22)是**另一个**网络面:主进程在临时端口上开 HTTP 服务,只接受私网来源与字面 IP 的 Host,只提供只读 API 与 `dist/mobile` 静态资源;它不复用 `whale-file://` 协议、也不经过 `window.whale` 桥,写 / 删 / 打标路径一概不存在
@@ -145,7 +145,7 @@ npm run build:extensions       # 重新生成 release/app/dist/extensions/<id>/
 
 ## 9. 扩展加载失败的可见化
 
-每个扩展的 `index.ts` 顶层应该包一层 try/catch,捕获 `applyLocale()` / DOM 引用 / first-paint 任意时点抛出的异常,统一经 `window.whaleExt.postMessage({ type: 'error', path, message })` 通知 host([`ExtensionHost.tsx:750`](../src/renderer/components/ExtensionHost.tsx) 接收并 console.error + toast,避免"白屏无解释")。**`extension-api.js` 已经把 `onMessage` / `onLocale` handler 包了 try/catch**(`src/extensions/shared/extension-api.js:44-51, 79-83`),但**模块顶层 + init 阶段抛出的同步异常不在它的保护范围内** —— 那种异常会一路冒到 `window.onerror`,主窗口看到一个死 iframe 不知道原因。
+每个扩展的 `index.ts` 顶层应该包一层 try/catch,捕获 `applyLocale()` / DOM 引用 / first-paint 任意时点抛出的异常,统一经 `window.whaleExt.postMessage({ type: 'error', path, message })` 通知 host([`ExtensionHost.tsx:764`](../src/renderer/components/ExtensionHost.tsx) 接收并 console.error + toast,避免"白屏无解释")。**`extension-api.js` 已经把 `onMessage` / `onLocale` handler 包了 try/catch**(`src/extensions/shared/extension-api.js:44-48, 77-81`),但**模块顶层 + init 阶段抛出的同步异常不在它的保护范围内** —— 那种异常会一路冒到 `window.onerror`,主窗口看到一个死 iframe 不知道原因。
 
 最小写法:
 
@@ -210,12 +210,12 @@ try {
 
 ## 13. 架构审阅遗留(2026-07-18)
 
-> 2026-07-18 全仓架构审阅发现的结构项(性能项见 docs/15,不重复)已全部修复,以下记录修复后的当前结构与防复发 gotcha。模块级遗留记在各模块文档:索引生命周期 → [docs/04 §10](./04-search-index.md);扩展宿主 → [docs/07 §10](./07-extensions.md);读侧边界 → [docs/13 §10](./13-security.md)。审阅发现的迁移时序 bug 与 persist 同步链路已修,分别见 [docs/09 §24](./09-known-issues.md) / [docs/02 §10](./02-file-io.md)。
+> 2026-07-18 全仓架构审阅发现的结构项(性能项见 docs/15,不重复)已全部修复,以下记录修复后的当前结构与防复发 gotcha。模块级遗留记在各模块文档:索引生命周期 → [docs/04 §10](./04-search-index.md);扩展宿主 → [docs/07 §9](./07-extensions.md);读侧边界 → [docs/13 §10](./13-security.md)。审阅发现的迁移时序 bug 与 persist 同步链路已修,分别见 [docs/09 §24](./09-known-issues.md) / [docs/02 §10](./02-file-io.md)。
 
 **主进程结构**
 
-- `src/main/ipc/` 按域拆分(11 个域模块,清单见 §7),各域持有自己的业务逻辑与闭包;[index.ts](../src/main/ipc/index.ts) 是 ~40 行薄注册器,`import './ipc'` 经目录解析到 index(调用方零改)。**测试坑**:`ipc.test.ts` 的 require.cache 失效必须枚举全部 12 个模块(只清 `./ipc` 会让域模块钉在旧 stub 上)。**路径坑**:`readHeicWasm` / registry 的 `__dirname/../extensions` 随目录加深为 `../../extensions`。
-- `drawio-thumb.ts` / `excalidraw-thumb.ts` 为未接入主流程的死代码(thumbnail.ts 无 drawio/excalidraw kind 分支,缩略图走品牌图标),已删。
+- `src/main/ipc/` 按域拆分(12 个域模块,清单见 §7),各域持有自己的业务逻辑与闭包;[index.ts](../src/main/ipc/index.ts) 是 37 行薄注册器,`import './ipc'` 经目录解析到 index(调用方零改)。**测试坑**:`ipc.test.ts` 的 require.cache 失效必须枚举 `./ipc` + 11 个域模块共 12 条 spec(`IPC_MODULE_SPECS`,当前不含 `./ipc/lan`;只清 `./ipc` 会让域模块钉在旧 stub 上)。**路径坑**:`readHeicWasm` 的 `__dirname/../../extensions/heic-viewer/libheif.wasm` 是双层 `..`,`loadExtensionRegistry` 的 `__dirname/../extensions/registry.json` 仍是单层。
+- 缩略图无 drawio / excalidraw kind 分支(`thumbnail.ts` 不处理这两类),`.drawio` / `.excalidraw` 在列表里走 `FileTypeIcon` 的品牌图标,不生成缩略图。
 - index / thumb 两个 worker host 的 reqId 关联 / spawn 生命周期同构,公共层在 [worker-protocol.ts](../src/main/worker-protocol.ts)(newRequest / completeRequest / failRequest / rejectAllPending);spawn / 传输层各写一遍是有意的(utilityProcess vs 外部子进程)。
 
 **状态管理(§6)**
@@ -239,7 +239,7 @@ try {
 
 **Shared 层(§1)**
 
-- 19 个视角 / 领域模块已迁入 `src/renderer/domain/`;contracts(ipc-types / whale-meta / extension-types 等)留 shared;smart-tags 因 main 仍引用故留下。
+- 21 个视角 / 领域模块已迁入 `src/renderer/domain/`;contracts(ipc-types / whale-meta / extension-types 等)留 shared;smart-tags 因 main 仍引用故留下。
 - period 解析(`isPeriodTag` / `dateTagRangeKey` / `DateTagRange` / `parseYyyymmdd`)在 [smart-tags.ts](../src/shared/smart-tags.ts)(main 的日期标签迁移要用),[calendar.ts](../src/renderer/domain/calendar.ts) import + re-export,渲染层调用点零改动;全库不再有 shared → renderer/domain 反向依赖。
 
 ## 14. 崩溃与恢复
@@ -267,12 +267,12 @@ try {
 
 - React 错误边界只覆盖 root 之下的渲染错误。[boot-guard.ts](../src/renderer/services/boot-guard.ts) 在 `createRoot` 之前安装全局 `error` / `unhandledrejection` 监听与启动看门狗:`Root` 渲染期抛错、`PersistGate` 卡在 rehydrate、React 之外的异步错误,都不再只是 DevTools 里一行字。
 - 边界说明:bundle 自身的静态 `import` 在 `index.tsx` 执行之前就会求值,那一层的抛错这层兜底覆盖不到(要覆盖得在 HTML 里内联脚本,当前未做)。
-- 就绪前(以 `BootReady` 的 effect 调用 `markReady` 为准)发生错误、或 15 秒内始终未就绪(`BOOT_WATCHDOG_MS`),会在 `#root` 上覆盖一层纯 DOM 的恢复界面——inline style,不依赖 React / MUI / i18n / theme,因为出错的可能正是其中任意一个——显示原因与 `Reload / 重载` 按钮;`markReady` 时移除覆盖层。就绪之后的错误只上报,不遮挡界面。
+- 就绪前(以 `BootReady` 的 effect 调用 `markReady` 为准)发生错误、或 15 秒内始终未就绪(`BOOT_WATCHDOG_MS`),会在 `#root` 上覆盖一层纯 DOM 的恢复界面——inline style,不依赖 React / MUI / i18n / theme,因为出错的可能正是其中任意一个——显示原因与 `Reload / 重载` 按钮;`markReady` 只取消启动看门狗,已显示的恢复覆盖层不会因此移除。就绪之后的错误只上报,不遮挡界面。
 - 上报经 preload 的 `reportRendererError` → IPC `app:report-renderer-error` → 主进程 `sanitizeErrorDetail`(任意类型转字符串、逐行保留、去控制字符、上限 4000 字符)写入同一个 `crash.log`。渲染层用滑动窗口限制每分钟最多 20 条(`MAX_REPORTS_PER_MINUTE`),防止错误循环把日志撑爆。错误边界 `componentDidCatch` 也走这条通道,附带 component stack。
 
 **测试**
 
 - [crash-guard.test.ts](../src/main/crash-guard.test.ts) 24 例:reload 预算递增 / 窗口边界(恰好 60 秒仍算窗口内)/ 超窗重置 / `clean-exit` 不动作、日志格式与追加、小阈值轮换与唯一备份、恰好阈值不轮换、rotation 失败仍保留当前记录并警告、POSIX 写前 0600 与 chmod 失败不追加、致命路径的调用顺序(`log → append → box → exit`)、日志与弹窗同时失败时仍然 `exit(1)`、`sanitizeErrorDetail` 的类型归一 / 控制字符 / 截断与主进程 detail/summary 脱敏。
-- [boot-guard.test.ts](../src/renderer/services/boot-guard.test.ts) 18 例:错误详情归一、滑动窗口限流与窗口回填、覆盖层的标题/详情/Reload/幂等与移除、`error` 与 `unhandledrejection` 的就绪前上报+遮罩、`markReady` 后只上报不遮罩、看门狗超时触发、就绪后不触发、`dispose` 后静默。
+- [boot-guard.test.ts](../src/renderer/services/boot-guard.test.ts) 15 例:错误详情归一、滑动窗口限流与窗口回填、覆盖层的标题/详情/Reload/幂等与移除、`error` 与 `unhandledrejection` 的就绪前上报+遮罩、`markReady` 后只上报不遮罩、看门狗超时触发、就绪后不触发、`dispose` 后静默。
 - [main.test.ts](../src/main/main.test.ts):权限只绑定当前主窗口与预期顶层/frame origin;主界面/json-viewer 剪贴板写、image-viewer fullscreen 放行,其余及异常 fail closed。
 

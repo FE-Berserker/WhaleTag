@@ -95,7 +95,7 @@ npm run package:win > package.log 2>&1
 
 | 文件 | 作用 |
 |---|---|
-| `resources/builder.json` | electron-builder 配置(icon / asarUnpack / files 白名单 / win.signAndEditExecutable) |
+| `resources/builder.json` | electron-builder 配置(icon / asarUnpack / files 白名单 / win.target) |
 | `.erb/configs/webpack.config.main.{dev,prod}.ts` | main bundle webpack(externals,与 files 白名单联动,见 §5) |
 | `.erb/configs/webpack.config.mobile.{dev,prod}.ts` | 移动端(只读局域网 Web 客户端)bundle → `dist/mobile`;`target: 'web'`,由主进程 HTTP 服务同源提供,无 dev server |
 | `scripts/build-extensions.js` | 扩展独立构建;manifest 占位符未命中会立即抛错,drawio 只剔除经 copy-filter 与真实冒烟核对的未使用资源 |

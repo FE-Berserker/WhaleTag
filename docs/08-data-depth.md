@@ -18,19 +18,20 @@ interface DirectoryContentMetaValue {
   dirs: DirEntry[];                      // 仅目录(FolderViz 重建树用)
   tagsByName: Map<string, string[]>;     // path → tags
   descByName: Map<string, string>;       // path → description
-  geoByName: Map<string, GeoPoint|null>;// path → geo
+  geoByName: Map<string, { lat: number; lng: number } | null>; // path → geo
   recursiveTruncated: boolean;
+  sidecarIssues?: SidecarIssue[];        // 最近一次加载里损坏 / 读不出的 wsd.json
 }
 interface DirectoryUIValue {
   loading: boolean;
   error: string | null;
   sort: SortState;
   setSort: (sort: SortState) => void;
-  refresh: () => void;                   // 触发重新扫描
-  viewMode: ViewMode;                    // per-folder 视角
-  entrySize: EntrySize;                  // per-folder 条目尺寸
+  refresh: () => Promise<void>;          // 触发重新扫描
+  viewMode: ViewMode;                    // per-folder 视角(wsm.json 覆盖 ?? 全局默认)
+  entrySize: number;                     // per-folder 网格单元边长(px)
   setViewMode: (mode: ViewMode) => void;
-  setEntrySize: (size: EntrySize) => void;
+  setEntrySize: (px: number) => void;
 }
 // 合并(legacy,读两片):
 type DirectoryContentContextValue = DirectoryContentMetaValue & DirectoryUIValue;
@@ -53,8 +54,8 @@ type DirectoryContentContextValue = DirectoryContentMetaValue & DirectoryUIValue
 
 **视图消费**:
 
-- 深度 = 1:走现有 `listDirectory` + 单 `readSidecars(dir)`,行为等同历史(逐像素一致承诺)
-- 深度 > 1:走 `listDirectoryRecursive(currentDirectoryPath, { maxDepth: viewDepth })` + 批量 `readSidecarsForPaths(...)` 拼 `aggregateRecursiveEntries`
+- 深度 = 1:走现有 `listDirectory` + 单 `ipcApi.readSidecarsDetailed(dir, names)`,行为等同历史(逐像素一致承诺)
+- 深度 > 1:走 `listDirectoryRecursive(currentDirectoryPath, { maxDepth: viewDepth })` + 批量 `ipcApi.readSidecardsForPathsDetailed(allPaths)`;`aggregateRecursiveEntries`([recursive-entries.ts](../src/renderer/domain/recursive-entries.ts))已无生产调用,只剩测试在用
 
 **性能护栏**:
 
@@ -66,7 +67,7 @@ type DirectoryContentContextValue = DirectoryContentMetaValue & DirectoryUIValue
 
 ## 3. 批量 sidecar 读取 IPC
 
-[src/main/ipc/meta.ts](../src/main/ipc/meta.ts) 注册 `sidecar:readForPaths` handler;主进程侧 [src/main/sidecar.ts](../src/main/sidecar.ts) 的 `readSidecardsForPaths(paths)` 并行执行两遍:
+[src/main/ipc/meta.ts](../src/main/ipc/meta.ts) 注册 `sidecar:readForPathsDetailed` handler(入参逐个过 `assertWithinAllowedRoot`,任一路径在已配置位置之外整批拒绝);主进程侧 [src/main/sidecar.ts](../src/main/sidecar.ts) 的 `readSidecardsForPathsDetailed(paths)` 并行执行两遍:
 
 - **Pass 1**(并行 `Promise.all`):按父目录分组,每个目录 bulk 读 `wsd.json`
 - **Pass 2**(并行 `Promise.all`,仅当 Pass 1 后仍有 `missing` 时):凡 wsd.json 没命中的 path,逐个调 `readSidecar(filePath)`(内部已经实现"先试 wsd.json → 失败就 withLock(loadFilesOrMigrate) 读 legacy per-file")
@@ -77,9 +78,9 @@ type DirectoryContentContextValue = DirectoryContentMetaValue & DirectoryUIValue
 
 ## 4. IPC 注册教训
 
-`readSidecarsForPaths` 定义在 `sidecar.ts` 但 **必须** 在 `ipc.ts` 用 `ipcMain.handle('sidecar:readForPaths', ...)` 真正注册(N12 bug 教训:曾因主进程漏注册,深度≥2 时所有 tag 静默丢失)。
+`readSidecardsForPathsDetailed` 定义在 `sidecar.ts`,handler **必须** 真正注册——现在在 `src/main/ipc/meta.ts`(`ipcMain.handle('sidecar:readForPathsDetailed', ...)`,由 `src/main/ipc/index.ts` 调用 `registerMetaHandlers()`;出 N12 bug 时注册点还在 `ipc.ts`)。N12 教训:曾因主进程漏注册,深度≥2 时所有 tag 静默丢失。新增 IPC 模块时记得同步两处:`src/main/ipc/index.ts` 里调用它的注册函数,`src/main/ipc.test.ts` 的 `IPC_MODULE_SPECS`(每个用例前清 require 缓存的模块清单)里加上它。
 
-`preload.ts` 暴露的桥名是 `readSidecardsForPaths`(沿用 `sidecar.ts:readSidecards` 的 typo,**不纠**,见 [docs/09-known-issues.md](./09-known-issues.md) §N2)。
+`preload.ts` 暴露的桥名是 `readSidecardsForPathsDetailed`(`cards`,沿用早期 `sidecar.ts` 的拼写混乱,**不纠**:改名要同时动渲染层调用点、preload 与文档)。注意拼写并不统一——主进程函数 `readSidecars` / `readSidecarsDetailed` 是 `cars`,而 `readSidecardsForPaths` / `readSidecardsForPathsDetailed` 是 `cards`。
 
 ## 5. 排序行为
 
@@ -103,7 +104,7 @@ context 暴露:
 
 - 工具栏 Refresh 按钮旁 spinner(loading 状态)
 - FileList 容器半透明 Backdrop(loading 期间)
-- **FileList 内容区顶部 `<Alert severity="warning">`**([FileList.tsx](../src/renderer/components/FileList.tsx) ~L1433):context `recursiveTruncated` 触发,**在 header 之上、各视角 body 之上,对所有视角都显**(unconditional on viewMode——list / grid / gallery / Kanban / Matrix / Gantt / Calendar / Mapique / TagCloud / KG / FolderViz 全覆盖;各视角根组件不需要自带 Alert,因为它在共享的 FileList 容器顶部)。
+- **FileList 内容区顶部 `<Alert severity="warning">`**([FileList.tsx](../src/renderer/components/FileList.tsx) 第 943 行起):context `recursiveTruncated` 触发,**在 header 之上、各视角 body 之上,对所有视角都显**(unconditional on viewMode——list / grid / gallery / Kanban / Matrix / Gantt / Calendar / Mapique / TagCloud / KG / FolderViz 全覆盖;各视角根组件不需要自带 Alert,因为它在共享的 FileList 容器顶部)。
 - Mapique 的 in-flight loading 经 FileList 新增 `loading` prop 透传
 
 ## 8. 工具栏 Slider
@@ -118,12 +119,12 @@ context 暴露:
 ## 9. 空 / 边界
 
 - `currentDirectoryPath === ''`(无 location 选中)提前 return 清空状态,不进 IPC
-- 单层空子目录场景下深度 1 ≡ 深度 2 的 `entries` / `tagsByName` / `visible` —— `viewDepthEquivalence.test.ts` 锁住
+- 单层空子目录场景下深度 1 ≡ 深度 2 的 `entries` / `tagsByName` / `visible` —— 目前没有专门的等价性测试(本文曾引用的 `viewDepthEquivalence.test.ts` 不存在);深度切换的关键路径由 [DirectoryContentContextProvider.test.tsx](../src/renderer/hooks/DirectoryContentContextProvider.test.tsx) 覆盖(空递归扫描回读根 wsd、递归 sidecar 保留、隐藏后代剪枝、过期结果丢弃)
 - 深度 5 的大工程目录(`node_modules`)有 200-500ms 扫描延迟 + 截断 + loading 反馈,可感知但不卡死
 
 ## 10. 历史清理
 
-启动一次性清掉 `whale.folderViz.<id>` / `whale.tagCloud.<id>` / `whale.kg.<id>` localStorage 中的 `maxDepth` 字段(老 per-view 设置已废弃,迁到全局)。`vizType` 在 folderviz 仍保留 per-location localStorage。
+老的 per-view 深度设置已废弃并迁到全局 `viewDepth`。`whale.folderViz.<id>` / `whale.tagCloud.<id>` / `whale.kg.<id>` 里遗留的 `maxDepth` 字段**没有启动清理**:三个视图启动时只读各自其余字段(`vizType` 等),遗留字段留在 localStorage 里无害。`vizType` 在 folderviz 仍保留 per-location localStorage。
 
 ## 11. 已知取舍
 

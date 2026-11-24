@@ -4,7 +4,7 @@
 
 > **2026-07-12** 的跨平台可行性评估,覆盖 `src/main` + `src/shared` 的平台相关代码、`resources/builder.json`、webpack 配置、原生模块。
 >
-> ⚠️ **文档定位**:同 [docs/15](./15-perf-audit.md),是 plan.md §F「不做未来计划」的**经确认例外**——一份评估 + 可勾选追踪清单。每项完成后勾 `- [x]` 并回写对应模块 doc;评估**不做**的移到文末「已接受的取舍」。
+> ⚠️ **文档定位**:同 [docs/15](./15-perf-audit.md),是 plan.md §D「文档维护约定」第 4 条的**经确认例外**——一份评估 + 可勾选追踪清单。每项完成后勾 `- [x]` 并回写对应模块 doc;评估**不做**的移到文末「已接受的取舍」。
 >
 > **验证边界**:本评估基于静态代码分析,**尚未实际在 mac/linux 上跑过** `package:mac` / `package:linux`。结论需一次冒烟构建验证。
 
@@ -25,9 +25,9 @@
 | ffmpeg | [thumbnail.ts](../src/main/thumbnail.ts) | `ffmpeg-static` 包自带各平台二进制,asarUnpack 已含(视频首帧缩略图) |
 | 7za | —— | 已随 archive 模块移除:应用内不再解压归档,`7zip-bin` 依赖已删(打包脚本若需解 `.7z` 请用系统 7-Zip) |
 | shell-quote | [shell-quote.ts](../src/main/shell-quote.ts) | 路径引号按平台分:win32 cmd 双引号 + 内嵌 `"` 翻倍,POSIX 单引号 close-reopen |
-| userData / 菜单 / 回收站 / reveal | [main.ts](../src/main/main.ts) ~L349-369 / [menu.ts](../src/main/menu.ts) / [shell.ts](../src/main/ipc/shell.ts) | 三分支齐全;mac「关窗不退出」行为正确 |
+| userData / 菜单 / 回收站 / reveal | [main.ts](../src/main/main.ts) ~L601 / ~L810-840 / [menu.ts](../src/main/menu.ts) / [shell.ts](../src/main/ipc/shell.ts) | 三分支齐全;mac「关窗不退出」行为正确 |
 | webpack externals | [.erb/configs/](../.erb/configs/) | [docs/14 坑4](./14-packaging.md) 的 pdfjs 子路径修是 OS 无关正则,无 `file:///C:/` 泄漏 |
-| asarUnpack globs | [builder.json](../resources/builder.json) ~L16-25 | `@img/**` / `@napi-rs/**` 正确覆盖 mac/linux prebuild 路径 |
+| asarUnpack globs | [builder.json](../resources/builder.json) ~L18-27 | `@img/**` / `@napi-rs/**` 正确覆盖 mac/linux prebuild 路径 |
 | 原生模块 rebuild | better-sqlite3 / sharp / @napi-rs/canvas | electron-builder 26 打包时自动按 Electron ABI rebuild;`occt-import-js` 是 WASM 全便携 |
 
 ---
@@ -49,8 +49,8 @@
 
 ### C-1. Linux 大小写敏感路径守卫过宽(安全相关)✅ 已解决
 - **原问题**:[allowed-roots.ts](../src/main/allowed-roots.ts) `assertWithinAllowedRoot` 与 [extension-protocol.ts](../src/main/extension-protocol.ts) `isWithinRoot` 都把 target 和 root 整体 `toLowerCase()` 再比。Windows/mac(默认大小写不敏感)没问题;**Linux ext4 大小写敏感**,注册 `/home/u/Photos` 会连 `/home/u/photos/...` 也放进写白名单——是不同路径,破坏写保护语义。
-- **修法**(2026-07-16):新增 [path-fold.ts](../src/main/path-fold.ts) 的 `foldPath(p)`——`win32`/`darwin` 小写、其它(linux)原样,两处守卫(allowed-roots 3 个位点 + extension-protocol `isWithinRoot`)都改用它。**为什么 darwin 也 fold**:mac 默认 APFS 大小写不敏感,且 `realpath` 已把 case 归一到磁盘真实大小写,故 fold 与 exact 在 mac 上结果一致(fold 是 no-op-after-realpath);只在罕见的 case-sensitive mac 上 fold 略宽(= 改前风险,可接受),linux 则从过宽修成精确。`better-sqlite3` 之类无关。测试:[path-fold.test.ts](../src/main/path-fold.test.ts) 覆盖两分支(经 test-seam param);allowed-roots / extension-protocol 的 case 断言改成平台条件(`CASE_INSENSITIVE_FS` ? 接受 : 拒绝),32/32 过。
-- **渲染层镜像**(2026-11-23):[path-util.ts](../src/renderer/services/path-util.ts) 的 `isSameOrDescendant` 原先无条件 `toLowerCase()`,与主进程策略漂移(linux 上把 `/Foo` 与 `/foo` 当同一目录);现采用同一平台策略——`win32`/`darwin` 折叠、linux 精确,平台由 `process.platform`(Node/测试环境)或 `navigator.userAgent`(纯浏览器)解析,并保留 `caseInsensitive` test-seam 参数。[path-util.test.ts](../src/renderer/services/path-util.test.ts) 覆盖两分支。
+- **修法**(2026-07-16):新增 [path-fold.ts](../src/main/path-fold.ts) 的 `foldPath(p)`——`win32`/`darwin` 小写、其它(linux)原样,两处守卫(allowed-roots 3 个位点 + extension-protocol `isWithinRoot`)都改用它。**为什么 darwin 也 fold**:mac 默认 APFS 大小写不敏感,且 `realpath` 已把 case 归一到磁盘真实大小写,故 fold 与 exact 在 mac 上结果一致(fold 是 no-op-after-realpath);只在罕见的 case-sensitive mac 上 fold 略宽(= 改前风险,可接受),linux 则从过宽修成精确。`better-sqlite3` 之类无关。测试:[path-fold.test.ts](../src/main/path-fold.test.ts) 覆盖两分支(经 test-seam param);allowed-roots / extension-protocol 的 case 断言改成平台条件(`CASE_INSENSITIVE_FS` ? 接受 : 拒绝),43/43 过。
+- **渲染层共用同一模块**(2026-11-23 先做镜像,2026-11-24 合并为一份):[path-util.ts](../src/renderer/services/path-util.ts) 的 `isSameOrDescendant` 原先无条件 `toLowerCase()`,与主进程策略漂移(linux 上把 `/Foo` 与 `/foo` 当同一目录);现在它直接委托 [shared/path-fold.ts](../src/shared/path-fold.ts) 的 `isSameOrDescendantPath`——主进程 [path-fold.ts](../src/main/path-fold.ts) 包装的也是这个模块,两侧不可能再漂移(`win32`/`darwin` 折叠、linux 精确)。平台仍由渲染层解析(`process.platform`,纯浏览器回落 `navigator.userAgent`)成 `CASE_INSENSITIVE_FS`,`caseInsensitive` test-seam 参数保留。[path-util.test.ts](../src/renderer/services/path-util.test.ts) 覆盖两分支与重复尾分隔符。
 
 ### C-2. Linux 桌面环境 fallback 链 ✅ 已解决(2026-11-12)
 - **修复前**:
@@ -88,8 +88,8 @@
 
 ## 🟢 零碎 / 纯装饰(可不改)
 
-- [ ] [ipc-types.ts](../src/shared/ipc-types.ts) ~L30:JSDoc 举例 Windows 路径,无运行时影响。
-- [ ] [thumbnail.ts](../src/main/thumbnail.ts) ~L662-674:`loadFolderThumbnail` 的 EBUSY 重试循环在 mac/linux 是死代码(读取不会 EBUSY),无害,无需改。
+- [ ] [ipc-types.ts](../src/shared/ipc-types.ts) ~L21:JSDoc 举例 Windows 路径,无运行时影响。
+- [ ] [thumbnail.ts](../src/main/thumbnail.ts) ~L505-521:`loadFolderThumbnail` 的 EBUSY 重试循环在 mac/linux 是死代码(读取不会 EBUSY),无害,无需改。
 - [ ] [webpack.config.renderer.prod.ts](../.erb/configs/) `favicon: icon.ico`:`.ico` 在 mac/linux Chromium 也认,纯风格问题,可换 `.png`。
 
 ---

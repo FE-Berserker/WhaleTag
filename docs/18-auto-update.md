@@ -54,12 +54,12 @@ To publish a new version:
 + push first, then run `package:win` to attach artifacts:
 
 ```bash
-git tag v0.3.2 && git push --tags
+git tag v<version> && git push --tags
 npm run package:win
 ```
 
-`electron-builder` then uploads `WhaleTag-Setup-0.3.2.exe` +
-`latest.yml` to the existing `v0.3.2` release. End-users running an
+`electron-builder` then uploads `WhaleTag-Setup-<version>.exe` +
+`latest.yml` to the existing `v<version>` release. End-users running an
 older build see the manifest change on the next startup check.
 
 ## Wire shape
@@ -183,10 +183,10 @@ never when disabled).
 - **macOS (DMG):** blocked on Apple notarization (see `docs/16` §hard
   block). The renderer is fully wired; the *publish* step needs the
   notarized DMG to exist on the GitHub release.
-- **Linux (AppImage):** `electron-updater` supports AppImage but the
-  cross-platform doc (`docs/16`) lists it as "needs a Linux
-  maintainer". Same as macOS — code is in place, the build pipeline
-  is the gating dependency.
+- **Linux (AppImage):** `electron-updater` supports AppImage. The
+  remaining Linux work is tracked in `docs/16` (icon resources C-3
+  and a Linux CI runner). Same as macOS — code is in place, the build
+  pipeline is the gating dependency.
 
 ## Security considerations
 
@@ -194,7 +194,7 @@ never when disabled).
   HTTPS and `sha512`-verified by `electron-updater` before the
   download is used. Tampering with the manifest is detectable.
 - **Code signing:** Windows NSIS builds are **not code-signed** in
-  the current pipeline (also flagged in `docs/16` §hard block).
+  the current pipeline (`resources/builder.json` only sets `win.target`).
   Windows will show an "Unknown publisher" SmartScreen warning on
   first install of a new version. Update flow itself is unaffected;
   users who clicked through once will not see the warning on
@@ -219,11 +219,10 @@ never when disabled).
 
 ## See also
 
-- `docs/01-architecture.md` §B — three-process model + window.whale
-  bridge (the IPC plumbing this feature rides on).
+- `docs/01-architecture.md` §1 and §5 — three-process model +
+  window.whale bridge (the IPC plumbing this feature rides on).
 - `docs/14-packaging.md` — the build pipeline that produces the
   manifests this module consumes.
-- `docs/16-cross-platform.md` §hard block — macOS notarization,
-  Linux maintainer gap.
+- `docs/16-cross-platform.md` §hard block — macOS notarization.
 - `src/main/auto-update.ts` — the main-side state machine.
 - `src/renderer/components/UpdateSection.tsx` — the renderer UI.

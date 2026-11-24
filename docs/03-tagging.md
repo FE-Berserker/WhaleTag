@@ -40,7 +40,7 @@
 | 象限 quadrant | `urgent-important` 等 4 值 | 1 文件至多 1 个 | red / amber / blue / grey |
 | smart date | `20260704` 等 7 种日期紧凑形 | 1 文件至多 1 个 | 无内置色,按 group / per-tag |
 | 期间 period | `20260704-20260710` | 1 文件至多 1 个 | 紫 `#8b5cf6`(可被 per-tag / group 覆盖) |
-| 坐标 geo | `geo:lat,lng` | 多份 | 红(`<LocationOnIcon>`) |
+| 坐标 geo | `geo:lat,lng` | 多份 | 无边框的 `<LocationOnIcon>` 图钉;颜色按坐标哈希取 `GEO_MARKER_PALETTE`(与地图标记同色),解析不出坐标时回落蓝 `#1976d2`(`GEO_TAG_COLOR`);可被 per-tag / group 覆盖 |
 
 **实现位置**:`[src/shared/smart-tags.ts](../src/shared/smart-tags.ts)` 暴露:
 
@@ -56,17 +56,18 @@
 [src/renderer/domain/tag-colors.ts](../src/renderer/domain/tag-colors.ts) `getTagColor(tag, tagColors, groups)` 优先级:
 
 1. `isRatingTag(tag)` → `RATING_COLOR = '#ffcc24'`(永远统一金,**不允许覆盖**)
-2. `isPeriodTag(tag)` → `PERIOD_COLOR = '#8b5cf6'`(可被 per-tag / group 覆盖)
-3. `tagColors[tag]` —— 用户自定义 per-tag 色(`''` = 用户显式清过色,见下)
-4. 组内 → 继承组色
-5. workflow / quadrant / geo → 各自专用色 / fallback
-6. `undefined` → 使用默认 outlined
+2. `tagColors[tag]` —— 用户自定义 per-tag 色(`''` = 用户显式清过色,见下)
+3. 组内 → 继承组色
+4. `isPeriodTag(tag)` → `PERIOD_COLOR = '#8b5cf6'`(可被 per-tag / group 覆盖)
+5. workflow / quadrant → `WORKFLOW_COLORS[tag]` / `QUADRANT_COLORS[tag]` 各自专用色
+6. geo → 按坐标哈希取 `GEO_MARKER_PALETTE`,解析不出坐标时回落 `GEO_TAG_COLOR`
+7. `undefined` → 使用默认 outlined
 
 每条分支都有 `getTagColor.test.ts` 单测覆盖。
 
 **清色标记**:用户在 TagMetaDialog 里点「清除颜色」时,[appearance.ts](../src/renderer/reducers/settings/appearance.ts) 不再 `delete tagColors[tag]`,而是写入 `TAG_COLOR_CLEARED`(`''`,见 [tag-colors.ts](../src/renderer/domain/tag-colors.ts))。原因是自动上色用「这个 tag 有没有 key」判断新 tag:删 key 会被下一帧重新染色,清色按钮等于无效。`getTagColor` 对 `''` 仍按未上色处理(落到组色 / 内置色),展示端(TagMetaDialog / PropertiesTray)用 `||` 取值;两处自动上色(TagMetaContextProvider 的批量、TagGroups 加标签)改用 `tag in tagColors` 判定。
 
-**自动上色(M9)**:[TagMetaContextProvider](../src/renderer/hooks/TagMetaContextProvider.tsx) 发现未上色的新 tag 时,`pickTagColor` 选"最少用"的调色板色,并**攒成一个 `setTagColors` 批量 action 一次 dispatch**(累加着算 → 每个 tag 拿到不同色),而非逐个 `setTagColor` 各触发一次 persist 写 —— 打开多新 tag 的目录从 N 次 fsync → 1 次。
+**自动上色(M9)**:[TagMetaContextProvider](../src/renderer/hooks/TagMetaContextProvider.tsx) 发现未上色的新 tag 时,`pickTagColor` 按已有颜色数 round-robin 取 `TAG_PALETTE` 的下一个色,并**攒成一个 `setTagColors` 批量 action 一次 dispatch**(累加着算 → 每个 tag 拿到不同色),而非逐个 `setTagColor` 各触发一次 persist 写 —— 打开多新 tag 的目录从 N 次 fsync → 1 次。
 
 ## 6. Smart Date 与 `日期` 折叠
 
@@ -82,7 +83,7 @@
 | `currentMonth` | `202607` | `now` 的本地年月 ≡ 存储值 | 折叠到 `日期` chip |
 | `currentYear` | `2026` | `now` 的本地年 ≡ 存储值 | 折叠到 `日期` chip |
 
-**鲜度谓词**内联在 `smartFunctionalityOfTag` 内(`smart-tags.ts:688` 用 `resolveSmartTag(fn, now)` 直接比较)。
+**鲜度谓词**内联在 `smartFunctionalityOfTag` 内(`smart-tags.ts:733-768`,其中 `:765` 用 `resolveSmartTag(fn, now)` 直接比较)。
 
 `useNow()` hook([src/renderer/hooks/useNow.ts](../src/renderer/hooks/useNow.ts))每分钟 tick 提供 `now`(共享单定时器 + `useSyncExternalStore`)。唯一直挂调用点是 `FileList.tsx`(经 `FROZEN_NOW` 门控,仅 `date:`/`smart:*` 过滤消费 tick);`TagMetaContextProvider` 仅在存在日期族标签时用 `subscribeNow` / `getNowSnapshot` 条件订阅,`PropertiesTray` 只在 addTag 动作时取 `new Date()`。
 
@@ -195,7 +196,7 @@ runMigration(allowedRoots): Promise<MigrationResult>
 ## 12. 已知取舍
 
 - `tagDisplayLabel` 不在 `now` 状态下显示 i18n 模板名(因为精度到分钟,显示原 `2026-07-04 14:30` 比"此刻"更有信息量)
-- 期间家族"过期"无专门折叠(与 `date:` 共用 `isDateLikeShape` 边界,但通过 `isPeriodTag` 排除)
+- 期间家族"过期"无专门折叠(与 `date:` 共用 `isAnyDateShapeTag` 边界,但通过 `isPeriodTag` 排除)
 - 文件夹元数据(`.whale/wsm.json` 的 `tags`)也对日期家族做互斥收敛,批量子目录打标时每个子目录各自互斥
 - 裸 4 位(`2026`)/ 6 位(`202606`)数字既是 year/month smart tag 的**规范存储形式**([migrate-date-tags.ts](../src/main/migrate-date-tags.ts) 把 `year-2026` / `month-202606` 重写成裸串),"单日期"收敛也必须认得它们;但用户自建的编码标签(`2019`、`123456`)与之一模一样,收敛时会被当成旧日期清掉。字符串无法区分 provenance,属已知取舍;根治需改为带前缀存储 + 数据迁移,本轮不做
 - `nextWeek` 在它指向的那个**周一**就会 stale(过了当日 0:00 立刻降级)

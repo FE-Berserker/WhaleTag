@@ -62,7 +62,7 @@
 - **添加位置串行确认**:添加调用排队执行,审批后再查一次重复 root,避免并发产生同名重复位置;渲染层确认等待最长 15s,服务停止立即拒绝等待者。超时后迟到的确认可能被忽略,因此错误会明确提示先用 `whale_roots` 核查再重试,绝不把未确认状态报告为已持久化。
 - **索引状态不伪装**:`whale_roots` 对每个位置单独 try/catch,索引 worker 失败时返回该位置的 `error` 字段,而不是把它伪装成"文件数为 0 的空位置"。`whale_search` / `whale_advanced_search` 要求文件/标签索引已 ready,`whale_fulltext_search` 要求正文索引;新加位置不会由添加工具隐式建索引,客户端必须先检查状态,不能把未索引位置的 0 条结果解释为目录为空。
 - **审批弹窗不乐观消失**:作答先发 IPC 并等主进程确认(`mcpResolveApproval` 返回 `{ ok, settled }`)。`settled: true` 才关闭弹窗;请求已超时/被清空时关闭并提示"已超时";**IPC 失败时弹窗留在原地**并提示失败——此时客户端仍被阻塞,静默消失会让人误以为已答复,工具调用却要等到 60s 超时才失败。弹窗显示剩余秒数(每秒按渲染时的时钟重算,不用挂载时的快照——否则挂载后才到达的请求会先显示 61s),作答在途时两个按钮都禁用,避免重复提交;挂载时拉取队首补回 reload 前后的未决请求,拉取失败会报错而不是装作没有请求。
-- **配置容错**:`mcp-config.json` 读入后经 `normalizeMcpConfig()` 归一——非对象 JSON(`null` / 数组 / 标量)回退默认值并告警(此前会在 bootstrap 抛 TypeError),端口限定 1..65535 整数,token 过短/含空白则重新生成;损坏文件会带错误日志回退,不再静默换 token。写入走串行队列(`schedulePersist`/`persistNow`),后写的设置不会被先发起的落盘覆盖;落盘失败时 `persistNow` **重新抛错**,`mcp:*` 调用 reject 而不是返回一个只存在于内存的状态(旧行为只记日志:UI 显示已切换,重启后回退)。
+- **配置容错**:`mcp-config.json` 读入后经 `normalizeMcpConfig()` 归一——非对象 JSON(`null` / 数组 / 标量)回退默认值并告警(此前会在 bootstrap 抛 TypeError),端口限定 1..65535 整数,token 过短/含空白则重新生成;损坏文件会带错误日志回退,不再静默换 token。写入走串行队列(`schedulePersist`/`persistNow`),后写的设置不会被先发起的落盘覆盖;落盘失败时 `persistNow` **重新抛错**,`mcp:*` 调用 reject 而不是返回一个只存在于内存的状态(旧行为只记日志:UI 显示已切换,重启后回退)。三个 setter(`setMcpEnabled` / `setMcpReadOnly` / `regenerateMcpToken`)落盘失败时按字段把缓存改回原值,内存状态与磁盘保持一致。
 
 ## 6. 外部客户端接入示例
 

@@ -17,7 +17,7 @@ type ThumbKind = 'image' | 'svg' | 'video' | 'pdf' | 'font';
 | `image` | `sharp` | 内置 | 失败静默回退 image icon |
 | `svg` | `encodeSvgThumb`(librsvg via sharp) | 内置 | vector,密度 oversample |
 | `video` | `encodeVideoThumb`:`ffmpeg -ss 1 -frames:v 1` | `ffmpeg-static` | 短视频回退 `-ss 0` |
-| `pdf` | `encodePdfThumb`:pdfjs 渲染首页 → napi canvas → sharp | `pdfjs-dist` + `@napi-rs/canvas` | |
+| `pdf` | `renderPdfThumb(srcPath)`:pdfjs 渲染首页 → napi canvas → sharp,跑在 `whale-thumb` utilityProcess | `pdfjs-dist` + `@napi-rs/canvas` | |
 | `font` | `renderFontToPng`(`@napi-rs/canvas.GlobalFonts.registerFromPath`)→ "Aa" + pangram + 数字 | `@napi-rs/canvas` | `.eot` 不被支持 |
 
 `thumbKindOf` 优先级:`svg` 单独排第一(via librsvg),然后 raster → video → pdf → font。`svg` 同时留在 `IMAGE_EXT`(让 `isImageFile` 仍返 true);`BINARY_EXT` 不含 `drawio/dio`(mxfile 是 UTF-8 文本,详见 [docs/07-extensions.md §8](./07-extensions.md))。
@@ -46,12 +46,12 @@ type ThumbKind = 'image' | 'svg' | 'video' | 'pdf' | 'font';
 
 [src/main/thumbnail.ts](../src/main/thumbnail.ts):
 
-- `thumbPathFor(dir, basename)` → `<dir>/.whale/thumbs/<basename>.jpg`
+- `thumbPathFor(filePath)`(单参,内部拆出目录与文件名)→ `<dir>/.whale/thumbs/<basename>.jpg`
 - 原子写 / mtime 缓存 / in-flight 去重 / delete/rename/move/copy 清理钩子**全部格式无关**
 - **复用判据是 mtime + size**(`generatedFrom` 上限 5000 条):同一进程内生成过的 thumb 只有源文件 `mtimeMs` 与字节数都没变才复用;进程重启后内存无记录,退回 `target.mtimeMs >= source.mtimeMs` 的旧启发式(代价是保存后同秒内改内容仍可能显示旧图,换来冷启动不额外 stat 源文件)
 - **ffmpeg 有超时**:`execFile` 带 `timeout: 10_000, killSignal: 'SIGKILL'`,损坏视频不再无限占住 worker 队列
 - **渲染层缓存有上界**:[ThumbIcon.tsx](../src/renderer/components/ThumbIcon.tsx) 的 data-URL `Map` 在写入端淘汰(`THUMB_CACHE_LIMIT = 800`,FIFO),单条 256px/q80 约 10–20KB → 上限约 8–16MB;此前只在目录切换时清空
-- `loadFolderThumbnail` / `loadFolderBackground` 以各自 target path 为 key,只合并同目录**尚未 settle** 的加载:同目录并发共享一次 copy/read,thumbnail 与 background 不混用,不同目录互不影响;成功或失败都在 `finally` 清除 Map,失败会传给所有等待方且下一次可立即重试。后续调用会重新读盘,不把结果持久缓存在 JS;空目录的 `null` 也不做跨批次缓存,因此新增首张可缩略文件后不会被旧空结果遮住,代价是分离的多次空目录加载仍可能各自扫描。
+- `loadFolderThumbnail` / `loadFolderBackground`(主进程函数,各自 target path 为 key;后者目前只有测试调用——设置背景的 IPC 仍在,但应用内没有读取 `wsb.jpg` 的路径,原 `thumbnail:loadFolderBackground` preload API 因渲染层零调用已删除):只合并同目录**尚未 settle** 的加载:同目录并发共享一次 copy/read,thumbnail 与 background 不混用,不同目录互不影响;成功或失败都在 `finally` 清除 Map,失败会传给所有等待方且下一次可立即重试。后续调用会重新读盘,不把结果持久缓存在 JS;空目录的 `null` 也不做跨批次缓存,因此新增首张可缩略文件后不会被旧空结果遮住,代价是分离的多次空目录加载仍可能各自扫描。
 - 失败一律静默回退类型图标(FileTypeIcon),不阻塞其它缩略图
 - **主进程并发闸门**([src/main/concurrency.ts](../src/main/concurrency.ts) 的 `Semaphore`):`thumbnailSemaphore` 限制同时进行的缩略图编码数(sharp / ffmpeg / pdfjs),只包住编码那一段,后续写盘不持锁。`setFolderBackground` 的 sharp 读取/旋转/缩放/JPEG 编码也进入同一个 4 路信号量,异常经 `finally` 释放许可;目标 `wsb.jpg` 的小型原子写不持锁。
 - **ffmpeg 路径**:`ffmpegPath()` 取 `ffmpeg-static` 自带二进制,打包态把路径里的 `app.asar` 换成 `app.asar.unpacked`;缺失时返回 `null`,视频缩略图直接回退类型图标(不做 PATH 探测)。
@@ -81,17 +81,19 @@ type ThumbKind = 'image' | 'svg' | 'video' | 'pdf' | 'font';
 
 **`font` 类**:`file-icon.ts` 自带本地 `FONT_EXT = {ttf, otf, woff, woff2, eot}`(比 `whale-meta.FONT_EXT` 多 `.eot`,因为 `.eot` 是 legacy IE 格式,**能被 Chromium font-face 解析**,但 `@napi-rs/canvas` 解不出来所以不出缩略图)。**`font-viewer` 扩展接受 ttf/otf/woff/woff2**,`.eot` 不被打开(manifest 不含)。
 
-**`model3d` 类大表细分**(品牌色优先,非品牌色共用 `#00897b` `ViewInArIcon`):
+**`model3d` 类大表细分**(品牌色优先,非品牌色共用 `#00897b` `ViewInArIcon`;图标取 `brand?.Icon ?? 类图标`,所以只配了品牌色的条目仍显示 `ViewInArIcon`):
 
 | 扩展 | 品牌 | 图标 |
 |---|---|---|
 | `blend` | Blender 橙 | `DesignServicesIcon` |
-| `ma`, `mb` | Maya 青 | `ArchitectureIcon` |
-| `max` | 3ds Max 蓝 | `ArchitectureIcon` |
-| `skp` | SketchUp 红 | `ArchitectureIcon` |
-| `c4d` | Cinema 4D 蓝 | `ArchitectureIcon` |
-| `3dm` | Rhino 黑 | `ArchitectureIcon` |
-| `ztl`, `zpr` | ZBrush 橙 | `ArchitectureIcon` |
+| `ma`, `mb` | Maya 青 | `ViewInArIcon`(未配专属图标) |
+| `max` | 3ds Max 蓝 | `ViewInArIcon`(未配专属图标) |
+| `skp` | SketchUp 红 | `ViewInArIcon`(未配专属图标) |
+| `c4d` | Cinema 4D 蓝 | `ViewInArIcon`(未配专属图标) |
+| `3dm` | Rhino 黑 | `ViewInArIcon`(未配专属图标) |
+| `ztl`, `zpr` | ZBrush 橙 | `ViewInArIcon`(未配专属图标) |
+| `catpart`, `catproduct`, `catdrawing` | CATIA 深蓝 | `ArchitectureIcon` |
+| `prt` | Creo 橙 | `DesignServicesIcon` |
 | `sldprt`, `sldasm`, `slddrw` | SolidWorks 红 | `PrecisionManufacturingIcon` |
 | DWG / DXF (`dwg`, `dxf`) | AutoCAD 红 | `ArchitectureIcon` |
 | 通用 stl/obj/glb/gltf/ply/step/stp/iges/igs/brep/fbx/dae/3ds/3mf | — | `ViewInArIcon` |
@@ -112,7 +114,7 @@ type ThumbKind = 'image' | 'svg' | 'video' | 'pdf' | 'font';
 ## 7. 已知取舍
 
 - `.eot` 出图但 `font-viewer` 不打开;`whale-meta.FONT_EXT` 不收它(避免无人看的缩略图)
-- PDF 渲染器在主进程(@napi-rs/canvas),不带 CJK 字体替换表 —— 部分 PDF 标题可能显示为 notdef 方框;PDF 渲染扩展走 Chromium 自动字体补字形,缩略图级别可接受
+- PDF 渲染器在 `whale-thumb` utilityProcess(@napi-rs/canvas,见 §8),不带 CJK 字体替换表 —— 部分 PDF 标题可能显示为 notdef 方框;PDF 渲染扩展走 Chromium 自动字体补字形,缩略图级别可接受
 - 缩略图大小写不敏感(`.PDF`/`.Pdf` 同样识别);多段名 / dotfile 归并规则见 §5
 - 同类别内不同格式暂不细分(JS/Python/Go 都是青色 `Code`),如需字母角标则在 `FileTypeIcon.tsx` 叠加 `Typography`,不改 `file-icon.ts` 类别映射
 - 大文件保护不在缩略图管线(只有 video 首帧快)

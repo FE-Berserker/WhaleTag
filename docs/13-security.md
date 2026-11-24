@@ -23,11 +23,11 @@
 
 **位置来历(provenance)**:`fs:setAllowedRoots` 只接受主进程记录在案的目录——用户在原生文件夹对话框里选过的(处理器在返回路径前用 [known-roots.ts](../src/main/known-roots.ts) 的 `rememberPickedRoot` 记录,持久化到 `<userData>/known-roots.json`),或升级/首装后第一次推送时的一次性种子(TOFU,写入记录后再以记录为准)。未知目录记 `console.warn` 后丢弃,不进入 `allowedRoots`——渲染层即使被注入,也无法把 `/` 注册成位置。记录文件损坏或不可读时按"未 seed"重来,而不是把用户锁在门外(若该路径被目录占用,先把目录改名为 `known-roots.json.corrupt-<时间戳>` 再重新记录,否则之后每次写入都会失败);位置目录改名后旧路径不再是已知目录,需重新添加。
 
-**只读位置**:仍会注册进 `allowedRoots` 以允许读取；`allowedRoots` 只界定“哪些位置可访问”，不等同于只读权限。**只读权限现在也由主进程强制**：`Root.tsx` 推送 `setAllowedRoots(roots, readOnlyRoots)`，`allowed-roots.ts` 的 `isReadOnlyPath` / `assertWritable` 在文件写入、建目录、删除、移动/复制目的端、打包、sidecar 写入、目录元数据、标签库描述、修订备份/恢复/清理等入口统一抛 ``Refused: the location containing this path is read-only``；MCP 变更工具复用同一批函数，因此同样被拒。渲染层 IOActions / FileList / useListCommands 守卫仍是第一道闸。**例外**：索引缓存(`.whale/index.db`)与缩略图缓存属可重建缓存，仍可写；legacy sidecar 迁移在只读位置直接跳过且不改名(`migrateLegacySidecars` 早返回)，避免"读一下就写盘"。
+**只读位置**:仍会注册进 `allowedRoots` 以允许读取；`allowedRoots` 只界定“哪些位置可访问”，不等同于只读权限。**只读权限现在也由主进程强制**：`Root.tsx` 推送 `setAllowedRoots(roots, readOnlyRoots)`，`allowed-roots.ts` 的 `isReadOnlyPath` / `assertWritable` 在文件写入、建目录、删除、移动/复制目的端、打包、sidecar 写入与删除、目录元数据、标签库描述、修订备份/恢复/清理、目录缩略图与背景的设置/清除等入口统一抛 ``Refused: the location containing this path is read-only``；MCP 变更工具复用同一批函数，因此同样被拒。渲染层 IOActions / FileList / useListCommands 守卫仍是第一道闸。**例外**：索引缓存(`.whale/index.db`)与缩略图缓存属可重建缓存，仍可写；legacy sidecar 迁移在只读位置直接跳过且不改名(`migrateLegacySidecars` 早返回)，避免"读一下就写盘"。
 
-修订历史 IPC(`ext:backupRevision` / `ext:listRevisions` / `ext:restoreRevision` / `ext:deleteRevision`)过同一闸;`deleteRevision` 额外把 revision 路径绑定到所属文件的 `<dir>/.whale/revisions/` 前缀(与 restore 相同)——`rm --force` 不进回收站,不做绑定就是任意路径强删。`ext:cleanupRevisions` 只接受有限、非负的 number，非法天数在删除前 reject。详见 [docs/07-extensions.md](./07-extensions.md)。
+修订历史 IPC(`ext:listRevisions` / `ext:restoreRevision` / `ext:deleteRevision`)过同一闸;`deleteRevision` 额外把 revision 路径绑定到所属文件的 `<dir>/.whale/revisions/` 前缀(与 restore 相同)——`rm --force` 不进回收站,不做绑定就是任意路径强删。`ext:cleanupRevisions` 只接受有限、非负的 number，非法天数在删除前 reject。详见 [docs/07-extensions.md](./07-extensions.md)。
 
-读取入口也遵守同一位置边界：`fs:readFile` / `fs:readTextFile` / `fs:readFileBase64` / `fs:listDirectory` / `fs:listDirectoryRecursive` / `folderMeta:read` 都过 `assertWithinAllowedRoot`——目录枚举同样能揭示位置外路径，递归扫描还会写 `<dir>/.whale/` 缓存，所以不能只防"读内容"；`fs:pathExists` 这个无校验的死通道已删除。目录缩略图加载/背景加载会校验目录(缺图时可能自动生成并写 `.whale`)，设置目录缩略图/背景会校验目标目录；原生对话框自选的 source 图片可以位于位置外，但服务只读取源、只在目标目录 `.whale/` 写入。单文件缩略图读取(`thumbnail:load`)同样先校验文件路径；`fs:zipEntries` 的归档目标也校验(名字是渲染层拼的用户输入，`..\..\x.zip` 不得越界)，`fs:zipDirectory` 的目标由主进程从源路径推导、保持豁免。`index:query` / `index:advanced` / `index:tags` / `index:status` / `fulltext:search` / `fulltext:has` 均在访问索引前校验 root。侧车批量读(`sidecar:readMany*`)仍不校验 root——它只返回调用方已给出文件名对应的元数据，无法枚举目录。
+读取入口也遵守同一位置边界：`fs:readFile` / `fs:readTextFile` / `fs:readFileBase64` / `fs:listDirectory` / `fs:listDirectoryRecursive` / `folderMeta:read` 都过 `assertWithinAllowedRoot`——目录枚举同样能揭示位置外路径，递归扫描还会写 `<dir>/.whale/` 缓存，所以不能只防"读内容"；`fs:pathExists` 这个无校验的死通道已删除。目录缩略图加载会校验目录（缺图时可能自动生成并写 `.whale`），设置/清除目录缩略图与背景会校验目标目录并拒绝只读位置（背景读取通道 `thumbnail:loadFolderBackground` 因渲染层零调用已删除）；原生对话框自选的 source 图片可以位于位置外，但服务只读取源、只在目标目录 `.whale/` 写入。单文件缩略图读取(`thumbnail:load`)同样先校验文件路径；`fs:zipEntries` 的归档目标也校验(名字是渲染层拼的用户输入，`..\..\x.zip` 不得越界)，`fs:zipDirectory` 的目标由主进程从源路径推导、保持豁免。`index:query` / `index:advanced` / `index:tags` / `index:status` / `fulltext:search` / `fulltext:has` 均在访问索引前校验 root。侧车批量读（`sidecar:readManyDetailed` / `sidecar:readForPathsDetailed`）同样校验——目录参数过 `assertWithinAllowedRoot`，路径列表逐个校验，任一路径越界整批拒绝。
 
 `fs:importExternal`(从系统拖入文件)的**源路径**不做位置校验：拖拽 API 只给路径字符串，主进程无法验证"这确实是一次用户拖拽"，而要求源在位置内会直接废掉"从资源管理器拖进来"这个功能。**目标目录**仍过 `assertWithinAllowedRoot`。残余风险如实记录：被注入的渲染层可以把任意可读文件复制进某个位置，再经 `fs:readFile` 读回——消除它只能取消位置外拖入，属已知取舍。
 
@@ -105,11 +105,11 @@
 
 ## 10. 读侧边界(2026-07-18 审阅 + 修复)
 
-写操作 33 处过 `assertWithinAllowedRoot`(§2);读路径此前完全不受限、与威胁模型不一致,通道闸已修:
+写操作都过 `assertWithinAllowedRoot`(§2);读路径此前完全不受限、与威胁模型不一致,通道闸已修:
 
 - ✅ `fs:readFile` / `fs:readTextFile` / `fs:readFileBase64` handler 入口加 `assertWithinAllowedRoot`([fs-read.ts](../src/main/ipc/fs-read.ts))。渲染层调用方全部为用户动作驱动(打开文件 / 灯箱 / 搜索命中 / 扩展嵌图,均在位置内),fail-closed 不伤启动路径。
 - ✅ `fs:openNative` 同闸;扩展 `openLinkExternally`(http(s) 分流 `window.open` 后)与 `openNative` 消息汇到它,"任意路径启动 OS 程序"的面被封。扩展发来的 `file://` 链接先 `fileURLToPath` 还原成真实路径再过闸(drawio 的相对链接就是这种形态;此前直接拿 URL 串比对 root，必然失败且错误被静默吞掉)。
-- ✅ `exif:extractGps` / `exif:get-summary` 同闸([search-index.ts](../src/main/ipc/search-index.ts))——Mapique 只对位置内文件取 EXIF,与此节声明对齐。
+- ✅ `exif:extractGps` / `exif:load-processed` / `exif:mark-processed-many` / `exif:clear-processed` 同闸([search-index.ts](../src/main/ipc/search-index.ts))——Mapique 只对位置内文件取 EXIF,与此节声明对齐。
 - ⏳ **遗留**:能力授予"全有或全无"——manifest 无 permissions / capabilities 字段,text-editor 与 image-viewer 拥有完全相同的宿主能力面。目前 8 个扩展全是内置自研,威胁面可控;引入第三方 / 用户扩展机制前须补"按 manifest 声明能力白名单放行 `request*` 消息类型"。
 
 ## 11. 本地 MCP 服务器(0.5.0)

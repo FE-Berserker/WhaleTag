@@ -25,7 +25,7 @@ Whale：本地优先、离线、隐私安全的 Electron 文件管理与打标�
 - 框架：Node 内建 `node:test`（`import { describe, it } from 'node:test'`），断言用 `node:assert/strict`，经 Electron `--test` 执行。
 - **共置**：测试文件 `foo.test.ts` 放在被测文件旁边，不集中建 tests/ 目录。
 - **自动发现**：`scripts/run-tests.cjs` 扫描 `src/` 与 `scripts/` 下所有 `*.test.ts(x)`，新增测试文件**无需登记清单**（旧的手工清单曾漏 8 个文件，勿走回头路）。
-- 现状约 460 个测试文件，覆盖 main/renderer/shared/extensions 四层；具体 suites / tests 数以 `npm test` 输出为准。
+- 现状约 200 个测试文件（2026-11 为 204 个），覆盖 main/renderer/shared/extensions/mobile/scripts 六层；具体 suites / tests 数以 `npm test` 输出为准。
 
 ## 目录职责
 
@@ -33,6 +33,9 @@ Whale：本地优先、离线、隐私安全的 Electron 文件管理与打标�
 - `src/renderer/`：React 渲染层——components、redux、domain（**纯前端域逻辑放这里**）、hooks、services、theme、locales（i18n 5 语言）。
 - `src/shared/`：main + renderer 双方引用的契约层（ipc-types、tags、extension-types 等类型与纯函数）。
 - `src/extensions/`：8 个内置扩展查看器/编辑器（双层 iframe 拓扑），由 `scripts/build-extensions.js` 独立构建。
+- `src/mobile/`：局域网只读访问的移动端页面（独立 webpack 入口与独立 i18n 字典），数据来自 `src/main/lan/` 的 HTTP 服务（docs/22）。
+- `src/main/lan/`、`src/main/mcp/`：局域网只读访问与本地 MCP 服务器两个默认关闭的可选子系统（docs/13、docs/21、docs/22）；改动必须保持只读 / 审批边界。
+- `scripts/`：扩展构建、测试运行器、locale 守卫、打包冒烟与基准脚本；其中的 `*.test.ts` 同样被自动发现。
 
 ## 红线（security-auditor / 所有改代码的智能体）
 

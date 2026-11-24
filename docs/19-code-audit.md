@@ -95,7 +95,7 @@ detailed read 上报 corrupt/unreadable，用户确认后按 SHA-256 + `allowedR
 `index:build`/`fulltext:build` 按 root 串行、遍历用 `lstat`（符号链接目录不下降，避免 Windows junction 回环把 `complete` 永久锁死）；watcher 500 条/批由「截断丢弃」改为「下一 tick 续 drain」+ 5s 最大等待；清空失败写显式空文档、legacy `rm` 失败改改名 `.migrated-<stamp>`；修订改 `Buffer` + `atomicWriteBytes`（utf8 读 GBK 会写回 U+FFFD）；协议加类型白名单、heic wasm 15s 超时、drop-xml 双重转义、drawio 并发串行、html-viewer 剥 `@import`/`url()`；`insertFulltext` 同事务先删后插（FTS5 无 UNIQUE）。
 
 ### P1-25. 门禁硬化 ✅
-`strict` 从 112 错收到 0（先修 helper 的可空 ref，再按错误类型逐条收窄）；`scripts/**/*.ts` 纳入 tsc；lint 加 `--max-warnings 0`、清 29 条 `exhaustive-deps` 与 88 条针对已关闭规则的死抑制指令。`no-explicit-any` 仍关闭（现存 26 处 `as any` 留专项），`no-console` 由 P1-26 以「只允许 warn/error + 单一入口」启用。
+`strict` 从 112 错收到 0（先修 helper 的可空 ref，再按错误类型逐条收窄）；`scripts/**/*.ts` 纳入 tsc；lint 加 `--max-warnings 0`、清 29 条 `exhaustive-deps` 与 88 条针对已关闭规则的死抑制指令。`no-explicit-any` 仍关闭（现存 `as any` 非测试代码 6 处、测试 21 处，留专项），`no-console` 由 P1-26 以「只允许 warn/error + 单一入口」启用。
 
 ### P1-26. 安全收尾：权限全拒 + 敏感文件 0600 + 日志单一入口 ✅
 `configurePermissions()` 的请求/检查 handler 一律 `false`；`AtomicWriteOptions.mode` + MCP 配置与 crash.log 用 `0600`、`sanitizeErrorDetail` 把 home 前缀换成 `~`；新增 `log.ts`（唯一 `eslint-disable no-console`）承接 9 处 `console.log/info/debug`，`scripts/**` 用 override 关闭。复核后不改：目录缩略图/背景源图可在位置外（只读源、只写目标 `.whale/`）、CSP `img-src` 保留 `http(s)`（[docs/13 §12](./13-security.md)）。
@@ -161,7 +161,7 @@ DirectoryTree 的 `ctxMenu` 增 `isDirectory`（文件行不再出现「新建�
 ### P2-2. `DirectoryTree.tsx` 节点类型逃逸 ✅
 定义 `TreeFolderNode`/`TreeFileNode`/`TreeNode` 判别联合，`nodes`/`renderFolder`/`renderFile` 全类型化、去掉 3 个 eslint-disable；仅 react-window v2 的 `rowProps` 保留一处 `as any`（库类型 `ExcludeForbiddenKeys` 反向要求 index/style）。
 
-> **类型现状**：`src/shared`、`src/main/ipc`、`allowed-roots.ts`、`shell-quote.ts` 严密；主进程生产代码零 `: any`；`as unknown as` 只出现在 worker 消息与 canvas 互操作边界，范围窄且不暴露不可信输入。全仓零 `@ts-ignore` / `@ts-nocheck`。
+> **类型现状**：`src/shared`、`src/main/ipc`、`allowed-roots.ts`、`shell-quote.ts` 严密；主进程生产代码零 `: any`；`as unknown as` 集中在 worker 消息与 canvas 互操作边界（主进程另有 `auto-update.ts` / `desktop-linux.ts` / `thumbnail.ts` 各 1 处），范围窄且不暴露不可信输入。全仓零 `@ts-ignore` / `@ts-nocheck`。
 
 ---
 
@@ -184,7 +184,24 @@ FileList 的 visible 标签过滤抽为 `file-list-filter.ts` 纯函数（6 条�
 
 ### P3-6. 代码清理轮（死导出 / 重复实现）✅
 清理已完成：删 20 个「声明即唯一出现」的死导出（`KNOWN_LANG_EXTENSIONS`、`WhaleExtApi`、`WORKFLOW_TAGS`、`TAG_OPEN/TAG_CLOSE`、`GanttDragState`、`CuratedThemeMode`、`ThumbWorkerResult`、`RunCommandResult`、`WhaleGlobal`、5 个 `*_STEP` 常量、3 个测试钩子等，`+27/−198`）；`todayIsoLocal` 7 份组件本地拷贝收敛到 `domain/calendar.ts` 的单一实现（`ymd(new Date())`）、`formatBytes` 4 份扩展拷贝收敛到 `extensions/shared/format-bytes.ts`（`RevisionHistoryDialog` 舍入语义不同，保留）；3 处指向已删 `docs/UI.md` 的注释指针改指 `docs/10-ui.md` §14；U+FFFD 破损注释 16 文件 91 处按上下文重建（`fs-read.ts` 3 处检测字面量改 `\uFFFD` 转义，语义不变）；5 语言各删 49–50 个无引用 locale 键（en 770→720、其余 752→703，共 −246 行；`nFilesSelected_*` 为 `nSelected` 重命名遗留，`smartTag*` 经 `smartTagI18nKey()` 动态生成故保留）。新增反向守卫 `scripts/check-unused-locale-keys.test.ts`：每个 en 键必须在非测试 `src/**` 源码中有字面量引用，`shape_*`／`tagShape*`／`smartTag*` 这类动态建键走显式 allowlist（evidence 缺失即失败，防 allowlist 腐化），复数基名按 `t('base', { count })` 调用点判定；守卫还借此暴露并清掉 4 个此前被同名标识符与测试夹具掩盖的漏网死键（`appearance`、`themePreset`、`home`、`confirmTagLocation_*`，5 语言共 −21 行；en 720→715、其余 703→699）：`PENDING_CLEANUP` 现为空数组，守卫在零债务下运行，新增条目必须「键仍存在且仍未被引用」，防债务清单腐化。
-- 仍待处理（记录不修）：`MapiqueContextMenu` 自带的 `NoTransition/NoBackdrop` 与 `MenuNoTransition` 重复、`pad2/ymd/addDays` 在 `shared/smart-tags.ts` 与 `domain/calendar.ts` 各一份、6 个死 preload API、`CalendarView/MapiqueView/FileList` 三个 2000+ 行组件。
+- 后续进展（2026-11-24，见 P3-7）：`MapiqueContextMenu` 自带的 `NoTransition/NoBackdrop` 已删、改用 `MenuNoTransition`；`pad2/ymd/addDays` 早已收敛到 `shared/date-utils.ts`（`domain/calendar.ts` 只留 `ymd` 薄包装），此条为误记；死 preload API 已删 7 个；`CalendarView` 已拆到 491 行，`MapiqueView`（1191 行）与 `FileList`（1181 行）的拆分仍不在本篇范围。
+
+### P3-7. 审计债清理第二轮（2026-11-24）✅
+
+- 主进程边界：`removeSidecar` 与目录缩略图 / 背景的 set / clear 四个通道补上只读拒绝；`sidecar:readManyDetailed` / `sidecar:readForPathsDetailed` 补上 `assertWithinAllowedRoot`（此前批量读不设防；路径列表逐个校验，一个越界整批拒绝）；删 7 个渲染层零调用的 preload API 及其 handler（`homeDir`、`getExifSummary`、`markExifProcessed`、`readSidecars`、`readSidecarsForPaths`、`loadFolderBackground`、`backupRevision`），preload API 104 → 97。
+- 落盘：`mcp-config` 三个 setter 落盘失败时回滚缓存（此前内存与磁盘分歧）；`known-roots.json` 改走 `atomicWriteJson`（补 datasync 与残留 `.tmp` 清扫）。
+- 渲染层缺陷：只读位置上 Map 视角的 EXIF 懒提取不再逐文件弹「只读」提示；Gantt 筛选的中性态改按「已知值全部选中」判断（残留的已删值曾让无 tag 行永久隐藏、Reset 常驻），workflow / quadrant 共用一个 prefs key 时先合并再写（此前互相抹掉持久化）；Knowledge Graph 拖拽只持久化被拖动的节点（此前一次拖动钉死全图坐标）；带标签新建时标签写失败不再让已建好的条目「消失」；只读位置上的拖放改为提示而非静默；扩展页签淘汰改为真 LRU（按 `lastAccessed`）。
+- 清理：渲染层 `path-util` 委托 `shared/path-fold.ts`（多尾斜杠语义与主进程一致）；删 `perspective-prefs` 的 `DEPTH_*` 死代码与 4 个零引用导出；`EntryContextMenu` 的关闭计时器补卸载清理；图片导出失败文案本地化（`imageExportCaptureFailed`）。
+- 文本卫生：BOM 2 个、行尾空白 7 行、末尾换行 46 个文件；`CHANGELOG.md` 两处 PowerShell 转义泄漏（U+0008）与 3 处 U+FFFD 字面量（改 `\uFFFD` 转义）；`MapiqueView.tsx` 注释里 23 处 GBK 误解码乱码还原。
+- 工程化：`tsconfig-paths` 显式进 devDependencies（`npm test` 此前靠传递依赖）；lint 覆盖 `.cjs`；缩略图测试夹具路径由未入库的 `Test/` 改指已入库的 `samples/`（新克隆 / CI 不再 ENOENT）；`run-tests.cjs` 过期的「no CI」注释更正。
+- 文档：docs/01–08、10、13、19、21 与 AGENTS.md 的失效引用、过期数字与本轮行为同步。
+
+### P3-8. 审计债清理第三轮（2026-11-24）✅
+
+- 渲染层缺陷：属性托盘的描述 / 重命名编辑缓冲只跟随「当前选中的条目」——此前同一条目的任何一次目录刷新（保存、外部改动）都会回填描述、关掉重命名框，正在输入的内容丢失。
+- 测试补齐：`ipc/fs-roots`（位置推送的播种、只读子集、换序 / 换拼写不关库不停 LAN、移除位置关库）、`useFileListTagActions`（只读闸门、GPS / geo 标签、日期标签、列移动、批量失败提示）、`PropertiesTray` 跨刷新保留编辑，3 个文件共 36 例；5 个关键断言做过变异验证（临时改坏源码确认用例会失败）。
+- 注释清理：英文注释与测试标题里夹生的「互斥」38 处改为 exclusion / exclusive family；6 处源码注释的章节号对齐现状（docs/09 §24/§25、docs/13 §10）。
+- 文档：docs/09、10、13–16、18、20 完成语义审计并修复（docs/09 §8 的 PDF iframe 方案归档、docs/10 的过期数字与引用、docs/20 的行号与 excalidraw 加载 / 保存描述、docs/15/16/18 的过期计数与章节号）。
 
 ---
 
@@ -192,9 +209,9 @@ FileList 的 visible 标签过滤抽为 `file-list-filter.ts` 纯函数（6 条�
 
 | 项 | 出处 |
 |---|---|
-| 位置级 AES-256-GCM 加密 / 安全审计日志未做；扩展能力「全有或全无」；postMessage `targetOrigin:'*'` 收窄 | [docs/13](./13-security.md) §1/§9/§10、[docs/07 §10](./07-extensions.md) |
-| mac 代码签名硬阻塞；Linux DE fallback 链 / 图标 / 递归监听 | [docs/16](./16-cross-platform.md) B-1 / C-2~C-5 |
-| `readSidecars` 每目录重读；`extractPdfText` 整 PDF 读内存；`loadFolderThumbnail` 无 LRU | [docs/15](./15-perf-audit.md) P2-1/P3-1 |
+| 位置级 AES-256-GCM 加密 / 安全审计日志未做；扩展能力「全有或全无」；postMessage `targetOrigin:'*'` 收窄 | [docs/13](./13-security.md) §1/§9/§10、[docs/07 §9](./07-extensions.md) |
+| mac 代码签名硬阻塞；图标资源构建(C-3)、mac 架构(C-4，可选)。Linux DE fallback 链(C-2)与递归目录监听(C-5)已于 2026-11-12 解决 | [docs/16](./16-cross-platform.md) B-1 / C-2~C-5 |
+| `readSidecars` 每目录重读；`loadFolderThumbnail` 无 LRU（`extractPdfText` 整 PDF 读内存已于 2026-11 由 `MAX_PDF_BYTES` 关闭） | [docs/15](./15-perf-audit.md) 已接受的取舍 / P2-1 |
 | macOS notarization 阻塞自动更新 | [docs/18](./18-auto-update.md) |
 | Mapique 地名搜索已尝试并回退（勿照原样重试） | [docs/05 §9](./05-perspectives.md) |
 
@@ -204,4 +221,4 @@ FileList 的 visible 标签过滤抽为 `file-list-filter.ts` 纯函数（6 条�
 
 | 项 | 出处 | 理由 |
 |---|---|---|
-| 抽 `execFileBuffer` / `onUtilityProcessError` 消除主进程 `as unknown as` | 本篇 P2-2（2026-07-28 评估） | 会牵连 ffmpeg 的 ~1s 超时 fallback 重试路径，风险 > 收益；helper 只能消 2 处 cast，ROI 低 |
+| 抽 `execFileBuffer` / `onUtilityProcessError` 消除主进程 `as unknown as` | 本篇 P2-2（2026-07-28 评估） | 会牵连 ffmpeg 的 10s 超时 fallback 重试路径，风险 > 收益；helper 只能消 2 处 cast，ROI 低 |

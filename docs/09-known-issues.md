@@ -107,21 +107,15 @@ Edit 工具在 Windows 偶发写入 `\0` null 字节。修法:用 Write 重写�
 
 ## 8. PDF 渲染与 CJK 字体
 
-**最终方案** = 在扩展 iframe(真 Chromium)内用 pdfjs 浏览器版渲染到 `<canvas>`。曾经走主进程 `node-canvas`,但 pdfjs 在 Node 端**没有 CJK 字体替换表** —— 非嵌入字体(如 CAJ 导出 PDF 里非嵌入黑体/宋体标题)只能画成 notdef 方框。Chromium 渲染会自动用系统字体经 `@font-face local()` 补字形。
+✅ 应用内 PDF 浏览扩展(pdf-viewer)已随 0.4.9 瘦身移除,`.pdf` 双击回退系统默认应用;iframe 内用 Chromium 渲染的方案随之归档(见 §15)。现在 PDF 只走**主进程侧的 `pdfjs-dist` Node 构建**,两处调用:[thumb-render.ts](../src/main/thumb-render.ts) 的 `renderPdfThumb(srcPath)`(跑在 whale-thumb utilityProcess,画到 `@napi-rs/canvas`)与 [fulltext.ts](../src/main/fulltext.ts) 的文本抽取。
 
-**`pdfjs-dist` 主进程路径**(`cMapUrl` / `standardFontDataUrl`):
+**`pdfjs-dist` 主进程路径**(`cMapUrl` / `standardFontDataUrl`,[thumb-render.ts:57-59](../src/main/thumb-render.ts#L57-L59) / [fulltext.ts:27](../src/main/fulltext.ts#L27)):
 
 - 必须是**纯文件系统路径 + 结尾 `/`**(不是 `file://` URL)
 - 也不能用 `path.sep` 反斜杠 —— pdfjs 强制结尾 `/`
+- `builder.json` 的 `asarUnpack` 必须带上 `pdfjs-dist` 的 `cmaps/` `standard_fonts/` `wasm/` 三目录([builder.json:24-26](../resources/builder.json#L24-L26)),改打包配置时别删
 
-**iframe 内绕开 CSP**:
-
-- 线程内 fake worker:`globalThis.pdfjsWorker = pdfjsWorker` 让 pdfjs 在 iframe 主线程解析,免独立 worker / `worker-src` CSP
-- 自定义 `BinaryDataFactory`(`getDocument` 支持传)—— cmap / 标准字体 / wasm 经 `postMessage` 向宿主索取(宿主 IPC 走 `ext:getPdfAsset` 从 `node_modules/pdfjs-dist` 读),绕开 iframe `connect-src 'none'` 与 `registerFileProtocol` 不支持 fetch
-- `isEvalSupported: false`(iframe 无 `unsafe-eval`)
-- `builder.json` `asarUnpack` 已含 `pdfjs-dist` 的 `cmaps/` `standard_fonts/` `wasm/` 三目录
-
-**遗留**:扫描型图片 PDF(JBIG2 / JPEG2000)需 WebAssembly,iframe CSP 未开 `wasm-unsafe-eval`,可能解码失败;当前文本型 PDF 不受影响。
+**仍然成立的限制**:Node 端**没有 CJK 字体替换表** —— 非嵌入字体(如 CAJ 导出 PDF 里的黑体/宋体标题)在缩略图里只能画成 notdef 方框(已接受的取舍,见 [docs/15](./15-perf-audit.md)「已接受的取舍」);文本型 PDF 的全文抽取不受影响。扫描型图片 PDF(JBIG2 / JPEG2000)的解码依赖 `pdfjs-dist/wasm/`,而这两处都没有设置 `wasmUrl`,这类文件的缩略图可能不完整——排查时先看这里。
 
 ---
 
@@ -129,7 +123,7 @@ Edit 工具在 Windows 偶发写入 `\0` null 字节。修法:用 Write 重写�
 
 - 三形态归一(Mac/Linux `\`、Windows `\ `、云 `/` 无盘符)
 - 比较前两侧统一去尾分隔符
-- 大小写按平台归一:win32/darwin 折叠、linux 精确(与主进程 [path-fold.ts](../src/main/path-fold.ts) 一致;`isSameOrDescendant` 的 `caseInsensitive` 参数可显式覆盖)
+- 大小写按平台归一:win32/darwin 折叠、linux 精确(与主进程 [path-fold.ts](../src/main/path-fold.ts) 一致;`isSameOrDescendantPath` 的 `caseInsensitive` 参数可显式覆盖)
 - 平台策略只此一份:共享 [src/shared/path-fold.ts](../src/shared/path-fold.ts) 定义 `isCaseInsensitivePlatform` / `foldPath` / `isSameOrDescendantPath`;主进程 [path-fold.ts](../src/main/path-fold.ts) 用 `process.platform` 绑定默认参数,渲染层 [path-util.ts](../src/renderer/services/path-util.ts) 镜像同一策略(platform 优先、UA 兜底),dir-watcher 的全文索引根判断也改用它(不再自带无条件 lowercase 版本)
 - Path 把 basename 解析反函数 `parentDir` 在 [src/renderer/services/path-util.ts](../src/renderer/services/path-util.ts)
 
@@ -176,11 +170,11 @@ Task reminder check failed: Error: Error invoking remote method 'index:build':
 
 **根因**(顺序):
 
-1. React **子 → 父** 触发 `useEffect`。`TaskReminder`(Root 的子树)在 `Root.tsx:87-89` 之前挂载并跑自己的 effect,把 `index:build(<Test>)` IPC 立刻发出去。
+1. React **子 → 父** 触发 `useEffect`。`TaskReminder`(Root 的子树)在 `Root.tsx:108-116` 之前挂载并跑自己的 effect,把 `index:build(<Test>)` IPC 立刻发出去。
 2. 同一帧稍后 `Root` 的 effect 跑,把 `setAllowedRoots([<Test>])` IPC 发出去。
-3. 两个 IPC 在 renderer→main 通道里按发送顺序排队。**`index:build` 先到**,主进程 `allowedRoots.size === 0` → 抛 "Refused"(`src/main/allowed-roots.ts:47-49` 的 fail-closed 防御,见 [docs/02-file-io.md §6](./02-file-io.md))。
+3. 两个 IPC 在 renderer→main 通道里按发送顺序排队。**`index:build` 先到**,主进程 `allowedRoots.size === 0` → 抛 "Refused"(`src/main/allowed-roots.ts:53-56` 的 fail-closed 防御,见 [docs/02-file-io.md §6](./02-file-io.md))。
 4. `setAllowedRoots` 接着到,把 `<Test>` 注册进 allowedRoots,但 `TaskReminder` 的 deps `[enabled, location, pendingTags]` 没变,**不会重跑**。
-5. `TaskReminder.tsx:131` 的 `console.warn` 把错误吞掉,UI 不报。
+5. `TaskReminder.tsx:143` 的 `console.warn` 把错误吞掉,UI 不报。
 
 [LocationIndexContextProvider.tsx](../src/renderer/hooks/LocationIndexContextProvider.tsx) 的 `build` 回调有同样的依赖,但只在用户点击"重建索引"时触发,通常晚于 Root 的 effect,所以表现不明显 —— 不修也不会出问题。
 
@@ -210,6 +204,8 @@ Task reminder check failed: Error: Error invoking remote method 'index:build':
 
 ## 19. webpack `module: 'esnext'` 把主进程 `createRequire` stub 成 undefined (2026-07-09)
 
+> 编号说明:原 §16–§18(office-viewer / pdf-viewer / md-editor 的历史坑清单)已并入 §15 并删除;编号不重排,以免源码注释里的章节引用错位。
+
 **症状**:`npm run dev` / `npm start` 主进程启动即崩,electron 退出码 1,electronmon 崩溃循环:
 
 ```
@@ -235,7 +231,7 @@ const nodeRequire = /* createRequire() */ undefined;
 **教训**:
 
 - webpack 配置改动(尤其 `module` / `target` / `node`)必须**真跑 `npm run dev` 验证主进程启动**,不能只靠 build / test。
-- 主进程用 `nodeRequire`(`createRequire(__filename)`)的地方:[fulltext.ts](../src/main/fulltext.ts) / [thumbnail.ts](../src/main/thumbnail.ts) —— 任何让它们走 ESM 的改动都会复现这个 stub。
+- 主进程用 `nodeRequire`(`createRequire(__filename)`)的地方:[fulltext.ts](../src/main/fulltext.ts) / [thumb-render.ts](../src/main/thumb-render.ts) / [lazy-native.ts](../src/main/lazy-native.ts) —— 任何让它们走 ESM 的改动都会复现这个 stub。
 
 ## 20. 工具链硬化:测试自动发现 + pretest 类型闸门 (2026-07-09)
 

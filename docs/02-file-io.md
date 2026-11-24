@@ -6,9 +6,9 @@
 
 ## 1. 位置管理
 
-- **本地文件夹位置**(本地路径,CRUD:`createLocation` / `updateLocation` / `deleteLocation`)
-- **切换最近**:LRU(`reducers/recent.ts`),前进 / 后退栈
-- **只读位置**:**两道闸**。渲染层 `IOActionsContextProvider.runAndRefresh` 早 throw + FileList/useListCommands 守卫 + 写按钮 disabled;主进程同批接收只读子集(`Root.tsx` 推送 `setAllowedRoots(roots, readOnlyRoots)`),`assertWritable(target)` 对只读位置内的**任何**用户数据 / 可见元数据写入抛 ``Refused: the location containing this path is read-only``——文件创建、改写、删除、移动/复制目的端、建目录、打包、sidecar/标签/目录元数据/标签库描述、修订备份与恢复都在内。MCP 变更工具走同一批函数,因此同样被拒。Whale 自身的索引缓存(`.whale/index.db`)与缩略图缓存不在此闸内(纯缓存,删了可重建)。
+- **本地文件夹位置**(本地路径,CRUD:`createLocation` / `updateLocation` / `removeLocation`)
+- **切换最近**:LRU([reducers/recent.ts](../src/renderer/reducers/recent.ts)),前进 / 后退栈
+- **只读位置**:**两道闸**。渲染层 `IOActionsContextProvider.runAndRefresh` 早 throw + FileList/useListCommands 守卫 + 写按钮 disabled;主进程同批接收只读子集(`Root.tsx` 经 `setAllowedRootsAndWait(roots, readOnlyRoots)` 推送,只读子集走 IPC `fs:setAllowedRoots` 的第二个参数;主进程 handler 先过 known-roots 过滤,再分别调用 `setAllowedRoots` / `setReadOnlyRoots`,见 [fs-roots.ts](../src/main/ipc/fs-roots.ts)),`assertWritable(target)` 对只读位置内的**任何**用户数据 / 可见元数据写入抛 ``Refused: the location containing this path is read-only``——文件创建、改写、删除、移动/复制目的端、建目录、打包、sidecar/标签/目录元数据/标签库描述、修订备份与恢复都在内。MCP 变更工具走同一批函数,因此同样被拒。Whale 自身的索引缓存(`.whale/index.db`)与缩略图缓存不在此闸内(纯缓存,删了可重建)。
 
 云存储(S3 / WebDAV)、导入导出、`.ts → .whale` 迁移工具均**不在范围**。详见 [docs/09-known-issues.md](./09-known-issues.md)。
 
@@ -17,7 +17,7 @@
 - **目录树**`[DirectoryTree](../src/renderer/components/DirectoryTree.tsx)` — 懒加载,展开/折叠
 - **面包屑**`BreadcrumbNav` — 点各级跳转
 - **虚拟滚动**`react-window` v2(列表行级别)
-- **排序**列头点击 `sort.key + sort.order` 升 / 降
+- **排序**列头点击 `sort.key + sort.dir` 升 / 降
 
 每个文件夹的视觉状态(viewMode / entrySize / 列配置等)持久化到 `.whale/wsm.json`,per-folder 恢复;切走切回保持。
 
@@ -26,8 +26,8 @@
 | 操作 | 实现路径 |
 |---|---|
 | 重命名 | `fs:rename` → 写 new `wsm.json`/sidecar + delete 旧 |
-| 移动 | `fs:move` 优先 rename;**跨卷 EXDEV** 回退 `fs.copyFile + fs.rm`(确保不静默失败) |
-| 复制 | `fs:copyFile` 二进制复制;sidecar 单独 follow-up 写 |
+| 移动 | `fs:move` 优先 rename;**跨卷 EXDEV** 回退 `fsp.cp(recursive) + fsp.rm`(确保不静默失败) |
+| 复制 | `fs:copy` 二进制复制;sidecar 单独 follow-up 写 |
 | 删除 | 默认走 **`shell.trashItem`**(系统回收站);设置 `deleteToTrash: false` 走 `fs.rm` 永久删除;toast 附"打开回收站"按钮 |
 | 打包 | `zipEntries` → Windows 用 PowerShell `Compress-Archive`,其余平台用 `zip -r`。三种外部进程统一 `timeout=120s`、`killSignal=SIGKILL`、`maxBuffer=1MiB`,超时/失败直接上抛,不再让主进程永久等待或无限收集输出。OS 工具先写目标旁唯一 `.tmp-….zip` staging,完整成功后 `rename` 到最终路径;失败清理 staging,不留下阻断同名重试的半个 ZIP,超时/输出上限错误不回显整段 argv 与源路径。POSIX 从**所有源的最近公共父目录**执行(`commonParentDir`),多选跨目录时条目仍保留相对路径;`zip` 未安装时退回 `python3` + 内置 `zipfile` 脚本,布局相同(空目录不入包),fallback 失败保留简洁底层 detail;目标已存在则拒绝,不覆盖 |
 | 新建 | `createTextFile` / `createDirectory` —— **不覆盖已有**(不可变偏好);文本创建用 `writeFile(..., { flag: 'wx' })` 原子拒绝已存在目标,不靠 `existsSync` 预检查 |
@@ -61,11 +61,11 @@
 [src/main/allowed-roots.ts](../src/main/allowed-roots.ts):
 
 - `setAllowedRoots(roots: string[])` 注册可写根目录
-- `assertWithinAllowedRoot(filePath)` 校验给定路径在某个 root 下;**空集合 = 拒绝所有写**(fail-closed,`allowed-roots.ts:47-49` 抛 "Refused: no configured locations")
-- 对称路径用 `fs.realpathSync` 解析目标(不存在则递归解析存在的父目录再拼尾部,`allowed-roots.ts:27-39` `resolveGuardPath`),防止 symlink 逃逸;`setAllowedRoots` 也对 root 做 `realpathSync`(不可达 fallback 到 `path.resolve`)
-- 大小写按平台归一:win32/darwin 折叠、linux 精确(主进程 [path-fold.ts](../src/main/path-fold.ts);渲染层 `isSameOrDescendant` 采用同一策略,见 [path-util.ts](../src/renderer/services/path-util.ts))
+- `assertWithinAllowedRoot(filePath)` 校验给定路径在某个 root 下;**空集合 = 拒绝所有写**(fail-closed,`allowed-roots.ts:53-56` 抛 "Refused: no configured locations")
+- 对称路径用 `fs.realpathSync` 解析目标(不存在则递归解析存在的父目录再拼尾部,`allowed-roots.ts:34-46` `resolveGuardPath`),防止 symlink 逃逸;`setAllowedRoots` 也对 root 做 `realpathSync`(不可达 fallback 到 `path.resolve`)
+- 大小写按平台归一:win32/darwin 折叠、linux 精确。平台判定与包含检查只有一份实现:[../src/shared/path-fold.ts](../src/shared/path-fold.ts);主进程包装是 [path-fold.ts](../src/main/path-fold.ts),渲染层 [path-util.ts](../src/renderer/services/path-util.ts) 的 `isSameOrDescendant` 只负责解析平台(`process.platform`,浏览器环境下退回 `navigator.userAgent`)再调用同一个 `isSameOrDescendantPath`,所以两侧的多重尾斜杠 / 根路径语义不会漂移
 - **只读位置**(`isReadOnly=true`)由主进程强制:`fs:setAllowedRoots` 的第二个参数携带只读子集,`allowed-roots.ts` 的 `isReadOnlyPath` / `assertWritable` 在写入口(含 sidecar、folderMeta、tagLibrary、修订 API)统一拒绝,渲染层守卫只是第一道闸
-- **读取也受限**:`fs:listDirectory` / `fs:listDirectoryRecursive` / `folderMeta:read` 与文件读取一样过 `assertWithinAllowedRoot` —— 目录枚举能揭示位置外有哪些文件,递归扫描还会把缓存写进 `<dir>/.whale/`,所以不能只防"读内容"。`fs:pathExists` 这个无校验、渲染层从未调用的死通道已删除(暴露面只减不增)。渲染层首次挂载时子 effect 早于 Root 的 `setAllowedRoots`,因此列目录前先 `await waitForAllowedRoots()`。侧车批量读(`sidecar:readMany*`)仍不校验 root:它只返回调用方已给出文件名对应的元数据,无法枚举目录。
+- **读取也受限**:`fs:listDirectory` / `fs:listDirectoryRecursive` / `folderMeta:read` 与文件读取一样过 `assertWithinAllowedRoot` —— 目录枚举能揭示位置外有哪些文件,递归扫描还会把缓存写进 `<dir>/.whale/`,所以不能只防"读内容"。`fs:pathExists` 这个无校验、渲染层从未调用的死通道已删除(暴露面只减不增)。渲染层首次挂载时子 effect 早于 Root 的 `setAllowedRoots`,因此列目录前先 `await waitForAllowedRoots()`。侧车批量读(`sidecar:readManyDetailed` / `sidecar:readForPathsDetailed`)同样受限:目录参数过 `assertWithinAllowedRoot`,路径列表逐个校验,任一路径在位置之外整批拒绝。
 - **位置必须来自用户的选择**:`fs:setAllowedRoots` 不再直接信任渲染层传来的数组。[known-roots.ts](../src/main/known-roots.ts) 在 `<userData>/known-roots.json` 记录"用户真的在原生对话框里选过的目录"(`dialog:openDirectory` 处理器用 `rememberPickedRoot` 记),推送时只放行已知目录,其余丢弃并记 `console.warn`;升级/首装第一次推送做一次性 seed(TOFU)并落盘,首次推送即使是空的也会关闭 seed 窗口(否则首装无位置时被注入者还能后手以 `/` 完成 seed);记录损坏/不可读时按未 seed 重来,路径被目录占用时先改名为 `.corrupt-<时间戳>` 再记录。这样渲染层即使被注入也注册不了 `/`。
 - **move / copy 两端都校验**:`fs:move` / `fs:copy` 此前只校验源路径(注释称"目的地可以是用户选的任意目录"),被注入的渲染层可以把任意内容搬进 Startup / `~/.ssh`;现在 `oldPath` ↔ `newPath`、`sourcePath` ↔ `destPath` 两端都过 `assertWithinAllowedRoot`,与 `fs:rename` 对齐。`fs:importExternal` 的 `cp` 同时用 `force:false`——Node 默认 `force:true` 会静默覆盖 readdir 快照之后才出现的同名文件。
 
@@ -85,7 +85,8 @@
 [src/main/atomic-write.ts](../src/main/atomic-write.ts):
 
 ```
-writeFileAtomic(path, write):
+atomicWriteText(path, data, { mode? }) / atomicWriteJson(path, value, { mode? }) / atomicWriteBytes(path, buffer, { mode? })
+  → 都落到内部的 atomicWrite(path, write, options):
   fd = open(path.tmp, 'w', mode?)
   await write(fd)        # 调用方通过 fd.writeFile / fd.write 写入
   if mode: fd.chmod(mode) # 敏感文件先强化权限;失败则中止,不发布 tmp
@@ -99,7 +100,7 @@ writeFileAtomic(path, write):
 - **同一 target 的写串行排队,不同 target 并行**(模块级 `Map<string, Promise>`):既避免 sweep 删掉在途临时文件,也避免 Windows 上两个 rename 抢同一目标时的 `EPERM`;前一个写失败不会污染队列里的下一个
 - **队列键按 realpath 归一**:`targetKey` 先 `realpathSync` 再 `foldPath`(目标不存在时只 realpath 父目录 + 拼 basename,都失败才退回 `resolve`)。否则同一文件经符号链接 / 8.3 短名有两个键,两条队列各自 rename 同一 inode——Windows 报 `EPERM`,POSIX 上后写覆盖先写且不报错(静默丢一次写)
 - 递归缓存 `loadRecursiveScan` 在入口重新校验 IPC depth:非有限值回退 3,其余取整并限制在 1–5,避免异常 depth 影响缓存路径或扫描工作量
-- 用于 sidecar、索引迁移标志、redux-persist 写盘
+- 用于 sidecar、索引迁移标志、known-roots.json、redux-persist 写盘
 - **扩展编辑器保存前校验目标仍存在**:`writeFileWithRevision`([src/main/ipc/extensions.ts](../src/main/ipc/extensions.ts))在做修订备份 + 原子写之前用 `existsSync` 校验父目录与目标文件;文件已被重命名 / 移动 / 删除时抛带路径的 `ENOENT`(渲染层 `ExtensionHost.handleSave` 捕获并以 `extensionSaveError` 提示),避免旧标签页的保存把用户刚改名掉的文件重新创建出来。存在性检查与写入之间仍有极小竞态窗口(检查后被删除),属已知取舍。
 
 **读语义:`ENOENT` 与空白文件视为"没有已保存数据"**。`wsd.json` 的读取入口 `loadWsd(dirPath)` 在文件缺失或内容为空白时返回 `null`(空白文件可由后续写入重建);非空的 JSON 解析失败、结构不合法(`Invalid aggregated sidecar format: <path>`)、以及非 ENOENT 的 IO 错误(权限 / EIO / 共享冲突)一律上抛,绝不会被当成"空数据"覆盖。这条约束防止把读失败误判为不存在 → 迁移或覆盖写回时抹掉真实元数据。
@@ -112,7 +113,7 @@ writeFileAtomic(path, write):
 
 ## 8. redux-persist(主进程 IO)
 
-**位置**:`%APPDATA%/WhaleTag/persist/whale-root.json`。redux-persist 的 root key = `whale-root`(在 `src/renderer/store/configureStore.ts:32`),文件名由 `persistDir() + sanitize(key) + '.json'` 拼出(`persist-storage.ts`),特殊字符替换为 `_`,本 key 无需替换。
+**位置**:`%APPDATA%/WhaleTag/persist/whale-root.json`。redux-persist 的 root key = `whale-root`(在 `src/renderer/store/configureStore.ts:36`),文件名由 `persistDir() + sanitize(key) + '.json'` 拼出(`persist-storage.ts`),特殊字符替换为 `_`,本 key 无需替换。
 
 **为什么不走 localStorage**:Chromium 异步 flush;OS 强杀 / 3s close-fallback 会丢最后几毫秒的写。主进程 IO(`fsp.writeFile(.tmp)` + `fsp.rename`)保证 `setItem` resolve 时字节已落盘。
 
@@ -129,7 +130,7 @@ renderer
 main
   └─ persistRead / persistWrite (async fs)
        ├─ persistDir() lazy   ← app.getPath('userData') 首次解析
-       ├─ fsp.readFile / fsp.writeFile(.tmp) + fsp.rename(原子)
+       ├─ fsp.readFile / atomicWriteText(tmp + datasync + rename,原子)
        ├─ 首次写前 copyFile → <key>.json.bak(每会话一次)
        └─ 错误上抛(仅 ENOENT 视为"无数据")
 ```

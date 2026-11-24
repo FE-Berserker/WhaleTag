@@ -8,29 +8,31 @@
 
 每个 root 下生成 `<root>/.whale/index.db`(SQLite)。[src/main/index-db.ts](../src/main/index-db.ts):
 
-- `files` 表:path / name / size / mtime / ext / isDir / sidecar 字段
+- `files` 表:path / name / is_dir / size / mtime / ext / tags(标签文本存在 `tags` 列,没有单独的 sidecar 列;`files_fts` 是 `content='files'` 的外部内容 FTS5 表)
 - `files_fts`:FTS5 virtual table + trigram tokenizer(filename + tags 模糊匹配)
 - `fulltext_fts`:FTS5 virtual table(全文 snippet)
 - `exif_processed`:已抽 GPS 的文件缓存(防止 N 次扫描重抽)
 - 触发器同步 `files` ↔ `files_fts`
 - **只读连接**:局域网只读访问的查询走 `getReadOnlyDb()`——`readonly: true, fileMustExist: true` 打开并 `PRAGMA query_only = ON`,用完立即关闭。桌面路径的 `getDb()` 会设 WAL 模式并执行 SCHEMA(两者都是写),所以 Web 端**刻意**不走它;索引库不存在时返回 `null`,调用方据此报 `indexUnavailable`,浏览不会创建 `.whale/` 或 `index.db`(见 [docs/22](./22-lan-access.md))。
 
-**增量重建**:`buildFulltextIndex` 只 select `path + mtime`(**不把全文 content load 进内存**);mtime 未变的行原样留在表里(不重抽、不重插),改动 / 新增才抽 → `insertFulltext`,消失的 path → `deleteFulltextPaths`,见 [src/main/fulltext.ts](../src/main/fulltext.ts)。(取代旧的全量重写策略 —— 大语料下须把每个文件正文搬进内存,冻结数秒。) **读取失败 ≠ 文件被删**:遍历中打不开的目录 / 条目、以及超过 128 MiB 的 PDF 记入 `skipped`,它们既有的行**保留**(仍然可搜索,等下一次构建成功再刷新),绝不算进 removed —— 瞬时权限错误不会把已索引内容清空。读取失败与"空文件"在 `extractText` 内部用 `unreadable` 标志区分。
+**增量重建**:`buildFulltextIndex` 只 select `path + mtime`(**不把全文 content load 进内存**);mtime 未变的行原样留在表里(不重抽、不重插),改动 / 新增才抽 → `insertFulltext`,消失的 path → `deleteFulltextPaths`;调度在 [src/main/fulltext.ts](../src/main/fulltext.ts) 的 `buildFulltextIndex`,这两个批量写函数本身定义在 [src/main/index-db.ts](../src/main/index-db.ts)。(取代旧的全量重写策略 —— 大语料下须把每个文件正文搬进内存,冻结数秒。) **读取失败 ≠ 文件被删**:遍历中打不开的目录 / 条目、以及超过 128 MiB 的 PDF 记入 `skipped`,它们既有的行**保留**(仍然可搜索,等下一次构建成功再刷新),绝不算进 removed —— 瞬时权限错误不会把已索引内容清空。读取失败与"空文件"在 `extractText` 内部用 `unreadable` 标志区分。
 
 **分批提交**:文件名索引 `INGEST_BATCH = 1000`,批间 `setImmediate` yield;全文新增 / 改动另按 `FULLTEXT_UPSERT_BATCH = 100` 批写,避免首建把所有抽取正文同时驻留内存。每批在一个事务里先 delete 本批路径再 insert;只有完整 walk 且末批成功后才删除消失路径。中途失败时当前批回滚,已成功的前批保留,`upsertFailure` 阻止残余抽取 worker 继续提交;下一次增量重建按 prior mtime 重试未落盘项,不伪造完整构建。`QUERY_LIMIT = 50` / `ADV_LIMIT = 300`。
 
 ## 2. 索引构建 / 重建
 
 ```ts
-// 主进程入口 ipc
-buildLocationIndex(rootPath)                // 全量重建(目录遍历 mapWithConcurrency 8 并发)
-buildFulltextIndex(rootPath)                // 全文增量重建(遍历 + 抽取,100 条批写)
+// IPC 入口(src/main/ipc/search-index.ts → index utilityProcess)与对应的 preload API
+index:build    → buildLocationIndex(rootPath)    // 全量重建:目录遍历(目录并发 8 / 条目并发 16)
+fulltext:build → buildFulltextIndex(rootPath)    // 全文增量重建(遍历 + 抽取,每批 100 条)
+
+// 以下是 index-db.ts 的内部函数,不是 IPC(渲染层不可见)
 ingestFiles(rootPath)                       // 增量
-ingestFulltext(rootPath, records)           // 全文全量替换(测试 / 独立全量用)
+ingestFulltext(rootPath, records)           // 全文全量替换(仅测试 / 独立全量用;线上重建走下面两半)
 insertFulltext / deleteFulltextPaths        // 增量 delta 的两半
-markExifProcessed(rootPath, record)         // 单条标记已抽 GPS
-markExifProcessedMany(rootPath, records[])  // 批量(一个事务 + fsync)—— Mapique 抽 GPS 用
-loadExifProcessed(rootPath)                 // 查询
+markExifProcessed(rootPath, record)         // 单条标记已抽 GPS(只有 index worker 内部调用,没有对应 IPC)
+markExifProcessedMany(rootPath, records[])  // 批量(一个事务 + fsync)—— Mapique 抽 GPS 用(IPC `exif:mark-processed-many`)
+loadExifProcessed(rootPath)                 // 查询(IPC `exif:load-processed`)
 ```
 
 `TaskReminder` 启动时总是重 build 索引,确保子目录新打的 pending workflow tag 能被检索到。
@@ -45,11 +47,11 @@ loadExifProcessed(rootPath)                 // 查询
 
 - 顶部 SearchBar:输入关键字(文件名 + 标签)模糊匹配,**Enter 触发**(`SQLite FTS5 trigram`),非逐键
 - 命中关键字高亮
-- 结果行含文件类型图标 + 路径 + snippet
+- 文件名 / 标签命中的结果行 = 文件类型图标 + 高亮名称 + 路径;snippet 只出现在全文结果行
 
 ## 4. 全文搜索
 
-- `fulltextSearch(rootPath, query)`:snippet 形式展示匹配上下文
+- `searchFulltext(rootPath, query)`(IPC `fulltext:search`):snippet 形式展示匹配上下文
 - 大目录下流式返回,不爆内存
 
 ## 5. 高级查询
@@ -72,7 +74,7 @@ loadExifProcessed(rootPath)                 // 查询
 
 [src/renderer/reducers/savedsearches.ts](../src/renderer/reducers/savedsearches.ts):
 
-- `savedSearches: SavedSearch[]` 走 redux-persist
+- state 形状是 `savedsearches: { items: SavedSearch[] }`,整个 slice 走 redux-persist
 - Save / 调用 / 列表管理 UI
 
 ## 7. 文本抽取
@@ -89,7 +91,8 @@ loadExifProcessed(rootPath)                 // 查询
 
 [src/main/exif.ts](../src/main/exif.ts):
 
-- `extractGps(buffer)` / `getExifSummary(buffer)`
+- `extractGps(filePath)`(IPC `exif:extractGps`;入参是路径不是 buffer,主进程读完整个文件字节再解析)—— 渲染层唯一的 EXIF 入口
+- `getExifSummary(filePath)` / `buildExifSummary(raw)`:EXIF 概要,目前没有生产调用方(对应的 preload API 与 IPC 已删除,只剩 `exif.test.ts` 在用)
 - 已抽过 GPS 的文件写入 `exif_processed` 缓存,下次跳过;**Mapique 批量抽 GPS 时攒满 25 条或 batch 结束才 `markExifProcessedMany` 落盘**(一个事务 + 一次 fsync,以前每张图一个 fsync)
 - Mapique 用 `geoByName` map(O(1) 查)渲染 marker
 
