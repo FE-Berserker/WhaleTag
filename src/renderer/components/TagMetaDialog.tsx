@@ -87,7 +87,11 @@ export default function TagMetaDialog({ open, tag, onClose }: TagMetaDialogProps
         </Typography>
       </DialogTitle>
       <DialogContent>
-        <Typography variant="caption" color="text.secondary">
+        <Typography
+          variant="overline"
+          color="text.secondary"
+          sx={{ display: 'block', mb: 0.5 }}
+        >
           {t('changeColor')}
         </Typography>
         <Box
@@ -164,7 +168,11 @@ export default function TagMetaDialog({ open, tag, onClose }: TagMetaDialogProps
           </Box>
         </Box>
 
-        <Typography variant="caption" color="text.secondary">
+        <Typography
+          variant="overline"
+          color="text.secondary"
+          sx={{ display: 'block', mb: 0.5 }}
+        >
           {t('tagDescription')}
         </Typography>
         <TextField

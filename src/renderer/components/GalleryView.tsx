@@ -7,6 +7,7 @@ import {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Box, Typography } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import {
   Grid as VirtualGrid,
   type GridImperativeAPI,
@@ -285,7 +286,7 @@ export default function GalleryView({
         outline: 'none',
         p: 2,
         '&:focus-visible': {
-          boxShadow: 'inset 0 0 0 2px rgba(25,118,210,0.4)',
+          boxShadow: (t) => `inset 0 0 0 2px ${alpha(t.palette.primary.main, 0.4)}`,
         },
       }}
     >

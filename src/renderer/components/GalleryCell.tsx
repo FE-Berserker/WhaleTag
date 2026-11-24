@@ -7,6 +7,7 @@ import {
   ImageListItemBar,
   Tooltip,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 
 import type { DirEntry } from '../../shared/ipc-types';
 import type { TagGroup } from '../domain/tag-library';
@@ -198,11 +199,10 @@ export default function GalleryCell({
               ? 'action.selected'
               : 'action.hover',
           outline: dropActive || isSelected || isFocused ? 3 : 0,
-          outlineColor: dropActive
-            ? 'primary.main'
-            : isSelected
-              ? 'primary.main'
-              : 'rgba(25,118,210,0.6)',
+          outlineColor: (t) =>
+            dropActive || isSelected
+              ? t.palette.primary.main
+              : alpha(t.palette.primary.main, 0.6),
           outlineStyle: dropActive ? 'dashed' : isSelected ? 'solid' : 'dashed',
           outlineOffset: isSelected ? 0 : -2,
           '&:hover': { opacity: isSelected ? 1 : 0.9 },

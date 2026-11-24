@@ -21,6 +21,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import type { DirEntry } from '../../shared/ipc-types';
 import type { SidecarMeta } from '../../shared/whale-meta';
 import { RootState } from '-/reducers';
+import { COLUMN_HEADER_HEIGHT } from '-/theme';
 import { setTagColor } from '-/reducers/settings';
 import { pickTagColor } from '../domain/tag-colors';
 import { useTagMetaContext } from '-/hooks/TagMetaContextProvider';
@@ -562,7 +563,7 @@ export default function PropertiesTray({
       <Toolbar
         variant="dense"
         sx={{
-          minHeight: 40,
+          minHeight: COLUMN_HEADER_HEIGHT,
           borderBottom: 1,
           borderColor: 'divider',
           gap: 1,
@@ -573,7 +574,7 @@ export default function PropertiesTray({
           {t('fileProperties')}
         </Typography>
         <Tooltip title={t('close')}>
-          <IconButton size="small" onClick={onClose}>
+          <IconButton size="small" onClick={onClose} aria-label={t('close')}>
             <CloseIcon fontSize="small" />
           </IconButton>
         </Tooltip>

@@ -65,9 +65,23 @@ export function createWhaleTheme(
       // `variant="overline"`. UI.md §4 specifies weight 600; MUI's overline
       // default is 400, so bump it here to match the design language.
       overline: { fontWeight: 600 },
+      // UI.md §14.4/§14.5：按钮统一 12px/500、不使用全大写，避免全局字号被 13px
+      // 正文放大后按钮比正文还显眼。
+      button: { fontSize: 12, fontWeight: 500, textTransform: 'none' },
     },
     components: {
-      MuiButton: { defaultProps: { disableElevation: true } },
+      MuiButton: {
+        defaultProps: { disableElevation: true },
+        // UI.md §14.5：主/次按钮高 30px、圆角 6px、左右内边距 12px。
+        styleOverrides: {
+          root: {
+            minHeight: 30,
+            borderRadius: 6,
+            paddingInline: 12,
+            paddingBlock: 4,
+          },
+        },
+      },
       // Respect the OS "reduce motion" preference app-wide (WCAG 2.3.3):
       // MUI animates Dialog/Snackbar transitions, the tag-cloud layout and the
       // small hover transforms. Durations collapse to a single frame instead of

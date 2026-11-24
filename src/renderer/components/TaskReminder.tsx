@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useTranslation } from 'react-i18next';
+import { readableTextOn } from '../domain/tag-colors';
 import {
   Box,
   Button,
@@ -181,12 +182,11 @@ export default function TaskReminder() {
                     mb: 0.75,
                     px: 1,
                     py: 0.25,
-                    borderRadius: 1,
+                    borderRadius: 999,
                     bgcolor: stageColor,
-                    color: 'common.white',
+                    color: readableTextOn(stageColor),
                     fontSize: 12,
                     fontWeight: 600,
-                    textShadow: '0 0 2px rgba(0,0,0,0.6)',
                   }}
                 >
                   {tagDisplayLabel(g.tag, t)}

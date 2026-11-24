@@ -117,13 +117,15 @@ export default function McpApprovalDialog() {
       fullWidth
       aria-labelledby="mcp-approval-dialog-title"
     >
-      <DialogContent sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
+      <DialogTitle id="mcp-approval-dialog-title">
+        {t('mcpApproveTitle')}
+      </DialogTitle>
+      <DialogContent
+        sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start', pt: 0 }}
+      >
         <GppMaybeIcon color="warning" sx={{ mt: 0.5 }} />
         <div>
-          <DialogTitle id="mcp-approval-dialog-title" sx={{ p: 0 }}>
-            {t('mcpApproveTitle')}
-          </DialogTitle>
-          <DialogContentText sx={{ mt: 1 }}>
+          <DialogContentText>
             {t('mcpApproveIntro', { tool: req.tool })}
           </DialogContentText>
           <Typography variant="body2" sx={{ mt: 1.5, fontWeight: 600 }}>

@@ -11,7 +11,6 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  Divider,
   LinearProgress,
   List,
   ListItemButton,
@@ -263,7 +262,11 @@ export default function AdvancedSearchDialog({
         <Stack sx={{ gap: 2, pt: 0.5 }}>
           {savedSearches.length > 0 ? (
             <Box>
-              <Typography variant="caption" color="text.secondary">
+              <Typography
+                variant="overline"
+                color="text.secondary"
+                sx={{ display: 'block' }}
+              >
                 {t('savedSearches')}
               </Typography>
               <Stack
@@ -294,7 +297,11 @@ export default function AdvancedSearchDialog({
           />
 
           <Box>
-            <Typography variant="caption" color="text.secondary">
+            <Typography
+              variant="overline"
+              color="text.secondary"
+              sx={{ display: 'block' }}
+            >
               {t('fileType')}
             </Typography>
             <ToggleButtonGroup
@@ -425,8 +432,11 @@ export default function AdvancedSearchDialog({
 
           {results !== null ? (
             <Box aria-busy={busy}>
-              <Divider sx={{ mb: 1 }} />
-              <Typography variant="caption" color="text.secondary">
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ display: 'block', mt: 1 }}
+              >
                 {t('resultsCount', { count: results.length })}
               </Typography>
               {results.length > 0 ? (
@@ -483,7 +493,7 @@ export default function AdvancedSearchDialog({
           {t('saveSearch')}
         </Button>
         <Box sx={{ flex: 1 }} />
-        <Button onClick={onClose} color="inherit">
+        <Button onClick={onClose} variant="outlined">
           {t('close')}
         </Button>
         <Button onClick={handleSearch} variant="contained" disabled={busy}>

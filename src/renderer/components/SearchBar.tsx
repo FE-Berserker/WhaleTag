@@ -324,8 +324,9 @@ export default function SearchBar() {
         position: 'relative',
         alignItems: 'center',
         gap: 0.5,
-        flex: '0 1 280px',
+        flex: '0 0 220px',
         minWidth: 0,
+        maxWidth: 220,
       }}
     >
       <Box ref={anchorRef} sx={{ flex: 1, minWidth: 0 }}>
@@ -347,7 +348,10 @@ export default function SearchBar() {
               clear();
             }
           }}
-          sx={{ width: '100%' }}
+          sx={{
+            width: '100%',
+            '& .MuiInputBase-root': { height: 30, borderRadius: '6px' },
+          }}
           slotProps={{
             input: {
               startAdornment: (
@@ -383,7 +387,7 @@ export default function SearchBar() {
           anchorEl={anchorRef.current}
           onClose={() => setOpen(false)}
           anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-          slotProps={{ paper: { sx: { width: 380 } } }}
+          slotProps={{ paper: { sx: { width: 380, maxWidth: 'calc(100vw - 32px)' } } }}
         >
           {searchError ? (
             <Alert

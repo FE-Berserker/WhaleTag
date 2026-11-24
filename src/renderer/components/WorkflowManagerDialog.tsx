@@ -105,7 +105,11 @@ export default function WorkflowManagerDialog({
       <DialogTitle>{t('tagManagement')}</DialogTitle>
       <DialogContent>
         {/* Global tag-chip shape — applies to every tag chip in the app. */}
-        <Typography variant="caption" color="text.secondary">
+        <Typography
+          variant="overline"
+          color="text.secondary"
+          sx={{ display: 'block', mb: 0.5 }}
+        >
           {t('tagShape')}
         </Typography>
         <Box sx={{ display: 'flex', gap: 1, mt: 0.5, mb: 2, flexWrap: 'wrap' }}>
@@ -145,7 +149,11 @@ export default function WorkflowManagerDialog({
           })}
         </Box>
 
-        <Typography variant="caption" color="text.secondary">
+        <Typography
+          variant="overline"
+          color="text.secondary"
+          sx={{ display: 'block', mb: 0.5 }}
+        >
           {t('workflowStages')}
         </Typography>
 

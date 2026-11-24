@@ -22,6 +22,7 @@
  */
 import type { CSSProperties } from 'react';
 import { Box, Tooltip } from '@mui/material';
+import { alpha, useTheme } from '@mui/material/styles';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 
 import {
@@ -103,6 +104,7 @@ export default function GanttBar({
   tabIndex = -1,
   onFocus,
 }: GanttBarProps) {
+  const theme = useTheme();
   const {
     onPointerDown: onBarPointerDown,
     onPointerUp: onBarPointerUp,
@@ -157,9 +159,9 @@ export default function GanttBar({
     // so the ring sits clearly outside the bar's edge.
     ...(focused
       ? {
-          outline: '2px solid #1976d2',
+          outline: `2px solid ${theme.palette.primary.main}`,
           outlineOffset: 2,
-          boxShadow: '0 0 0 4px rgba(25, 118, 210, 0.25)',
+          boxShadow: `0 0 0 4px ${alpha(theme.palette.primary.main, 0.25)}`,
         }
       : null),
   };

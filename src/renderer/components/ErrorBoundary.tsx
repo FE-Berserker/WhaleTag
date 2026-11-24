@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { Box, Button, Stack, Typography } from '@mui/material';
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -72,37 +73,38 @@ export default class ErrorBoundary extends Component<
     if (this.props.fallback !== undefined) return this.props.fallback;
 
     return (
-      <div
-        style={{
+      <Box
+        sx={{
           position: 'fixed',
           inset: 0,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          padding: 24,
-          background: '#1e1e1e',
-          color: '#e5e7eb',
-          fontFamily:
-            'system-ui, -apple-system, Segoe UI, Roboto, sans-serif',
+          p: 3,
+          bgcolor: 'background.default',
+          color: 'text.primary',
           zIndex: 9999,
         }}
       >
-        <div style={{ maxWidth: 640, width: '100%' }}>
-          <h2 style={{ margin: '0 0 4px', fontSize: 20 }}>
+        <Box sx={{ maxWidth: 640, width: '100%' }}>
+          <Typography variant="h6" component="h2" sx={{ mb: 0.5 }}>
             Something went wrong
-          </h2>
-          <p style={{ margin: '0 0 16px', color: '#9ca3af', fontSize: 14 }}>
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             出错了 — 应用渲染时遇到一个错误。
-          </p>
-          <pre
-            style={{
-              background: '#111827',
-              border: '1px solid #374151',
-              borderRadius: 8,
-              padding: 12,
+          </Typography>
+          <Box
+            component="pre"
+            sx={{
+              bgcolor: 'background.paper',
+              border: 1,
+              borderColor: 'divider',
+              borderRadius: 2,
+              p: 1.5,
+              m: 0,
               fontSize: 12,
               lineHeight: 1.5,
-              color: '#f87171',
+              color: 'error.main',
               overflow: 'auto',
               maxHeight: 240,
               whiteSpace: 'pre-wrap',
@@ -111,26 +113,14 @@ export default class ErrorBoundary extends Component<
           >
             {error.message}
             {error.stack ? `\n\n${error.stack}` : ''}
-          </pre>
-          <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
-            <button
-              type="button"
-              onClick={this.handleReload}
-              style={{
-                padding: '8px 16px',
-                fontSize: 14,
-                borderRadius: 6,
-                border: 'none',
-                background: '#2563eb',
-                color: '#fff',
-                cursor: 'pointer',
-              }}
-            >
+          </Box>
+          <Stack direction="row" sx={{ mt: 2 }}>
+            <Button variant="contained" onClick={this.handleReload}>
               Reload / 重载
-            </button>
-          </div>
-        </div>
-      </div>
+            </Button>
+          </Stack>
+        </Box>
+      </Box>
     );
   }
 }

@@ -81,6 +81,7 @@ export default function AddLocationDialog({
           <TextField
             label={t('locationName')}
             value={name}
+            size="small"
             autoFocus
             onChange={(e) => {
               setName(e.target.value);
@@ -107,6 +108,7 @@ export default function AddLocationDialog({
             />
             <Button
               onClick={handleBrowse}
+              size="small"
               startIcon={<FolderIcon />}
               sx={{ whiteSpace: 'nowrap' }}
             >

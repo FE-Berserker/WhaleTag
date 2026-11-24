@@ -117,7 +117,7 @@ export default function MapiqueDetailPanel({
           >
             <LocationOnIcon
               fontSize="small"
-              sx={{ color: activeGeo ? '#1976d2' : 'text.disabled' }}
+              sx={{ color: activeGeo ? 'primary.main' : 'text.disabled' }}
             />
             <Typography
               variant="body2"
