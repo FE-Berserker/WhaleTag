@@ -53,8 +53,9 @@ const QUERY_LIMIT = 50;
 const ADV_LIMIT = 300;
 /**
  * Rows committed per ingest transaction. Each batch is one short synchronous
- * transaction; `ingestFiles`/`ingestFulltext` yield to the event loop between
- * batches so a 100k-file rebuild doesn't freeze the Electron main process
+ * transaction; `ingestFiles`/`insertFulltext`/`deleteFulltextPaths` yield to
+ * the event loop between batches so a 100k-file rebuild doesn't freeze the
+ * Electron main process
  * (every window, every IPC) inside one giant transaction.
  */
 const INGEST_BATCH = 1000;
@@ -567,10 +568,10 @@ export function fulltextPrior(rootPath: string): Map<string, number> {
 }
 
 /**
- * Batched INSERT of fulltext records (no delete). Split out of ingestFulltext
- * so the incremental rebuild can insert only changed/new records without
- * touching unchanged rows. Yields to the event loop between batches so a large
- * corpus doesn't freeze the main process.
+ * Batched INSERT of fulltext records (no delete). The incremental rebuild
+ * inserts only changed/new records without touching unchanged rows. Yields to
+ * the event loop between batches so a large corpus doesn't freeze the main
+ * process.
  */
 export async function insertFulltext(
   rootPath: string,
@@ -618,23 +619,6 @@ export async function deleteFulltextPaths(
     delBatch(paths.slice(i, i + INGEST_BATCH));
     await yieldToEventLoop();
   }
-}
-
-/**
- * Replaces the full-text index with `records` (full rebuild): DELETE all, then
- * batched INSERT. Retained for tests / standalone full-replace; the live
- * rebuild path (buildFulltextIndex) now uses insertFulltext +
- * deleteFulltextPaths so unchanged rows are never re-loaded into memory.
- */
-export async function ingestFulltext(
-  rootPath: string,
-  records: FulltextRecord[]
-): Promise<void> {
-  const db = getDb(rootPath);
-  db.exec('DELETE FROM fulltext_fts');
-  await insertFulltext(rootPath, records);
-  // Even an empty full-replace counts as "built" (see hasFulltext).
-  markFulltextInitialized(rootPath);
 }
 
 /**

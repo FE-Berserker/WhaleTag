@@ -321,6 +321,7 @@ export interface WhaleApi {
 
   // Folder thumbnails / backgrounds (`wst.jpg` / `wsb.jpg`).
   loadFolderThumbnail: (dirPath: string) => Promise<string | null>;
+  loadFolderBackground: (dirPath: string) => Promise<string | null>;
   setFolderThumbnail: (dirPath: string, sourcePath: string) => Promise<void>;
   setFolderBackground: (dirPath: string, sourcePath: string) => Promise<void>;
   clearFolderThumbnail: (dirPath: string) => Promise<void>;

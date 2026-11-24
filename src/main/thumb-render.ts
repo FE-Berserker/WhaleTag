@@ -5,6 +5,7 @@ import { createRequire } from 'module';
 import { renderFontToPng } from './font-thumb';
 import { getCanvas } from './lazy-native';
 import { encodeImageThumb, THUMB_SIZE } from './thumb-encode';
+import { withPdfjsNodeRuntime } from './pdfjs-runtime';
 
 /**
  * The pure-JS CPU-heavy thumbnail renders (pdf / font), moved out of
@@ -43,7 +44,9 @@ let _pdfjs: PdfjsLib | undefined;
  *  hard-code its import.meta.url and crash the process at load. */
 function getPdfjs(): PdfjsLib {
   if (_pdfjs) return _pdfjs;
-  const lib = nodeRequire('pdfjs-dist/legacy/build/pdf.mjs') as PdfjsLib;
+  const lib = withPdfjsNodeRuntime(
+    () => nodeRequire('pdfjs-dist/legacy/build/pdf.mjs') as PdfjsLib
+  );
   lib.GlobalWorkerOptions.workerSrc = pathToFileURL(pdfWorkerPath).href;
   _pdfjs = lib;
   return lib;

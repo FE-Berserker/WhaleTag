@@ -292,6 +292,17 @@ describe('fulltext PDF resource bounds', () => {
 });
 
 describe('fulltext buildFulltextIndex (SQLite + FTS5)', () => {
+  it('marks an empty directory as initialized after a complete build', async () => {
+    const root = await tmpRoot();
+    try {
+      assert.equal(indexDb.hasFulltext(root), false);
+      assert.equal((await buildFulltextIndex(root)).count, 0);
+      assert.equal(indexDb.hasFulltext(root), true);
+    } finally {
+      await cleanup(root);
+    }
+  });
+
   it('indexes supported text files, strips html, and skips unsupported extensions', async () => {
     const root = await tmpRoot();
     try {

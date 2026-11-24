@@ -176,6 +176,8 @@ const whaleApi: WhaleApi = {
   // Folder thumbnails / backgrounds
   loadFolderThumbnail: (dirPath: string) =>
     ipcRenderer.invoke('thumbnail:loadFolder', dirPath),
+  loadFolderBackground: (dirPath: string) =>
+    ipcRenderer.invoke('thumbnail:loadFolderBackground', dirPath),
   setFolderThumbnail: (dirPath: string, sourcePath: string) =>
     ipcRenderer.invoke('thumbnail:setFolderThumbnail', dirPath, sourcePath),
   setFolderBackground: (dirPath: string, sourcePath: string) =>

@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { _electron: electron } = require('@playwright/test');
+const sharp = require('sharp');
 
 const ROOT = path.resolve(__dirname, '..');
 const executablePath = path.resolve(
@@ -168,6 +169,90 @@ async function main() {
     assert.equal(workerResult.search[0].name, 'note.txt');
     assert.ok(workerResult.search[0].snippet.includes(NEEDLE));
 
+    // A scanned JPEG 2000 page proves that pdfjs can load its wasm decoder
+    // from app.asar.unpacked. Without wasmUrl (or without the unpacked wasm
+    // directory) pdfjs drops the image but still resolves, yielding white.
+    const thumbJpegBase64 = await withTimeout(
+      electronApp.evaluate(
+        async ({ utilityProcess }, { srcPath, workerPath }) => {
+          const child = utilityProcess.fork(workerPath, [], {
+            serviceName: 'whale-thumb-packaged-smoke',
+            stdio: 'pipe',
+          });
+          const reqId = 'packaged-thumb-smoke';
+
+          return await new Promise((resolve, reject) => {
+            let done = false;
+            const finish = (error, value) => {
+              if (done) return;
+              done = true;
+              clearTimeout(timer);
+              child.removeListener('message', onMessage);
+              child.removeListener('exit', onExit);
+              child.kill();
+              if (error) reject(error);
+              else resolve(value);
+            };
+            const timer = setTimeout(
+              () => finish(new Error('Thumbnail utilityProcess timed out after 20000ms')),
+              20_000
+            );
+            const onMessage = (message) => {
+              if (message && message.kind === 'ready') {
+                child.postMessage({ reqId, op: 'thumb:pdf', arg: { srcPath } });
+                return;
+              }
+              if (!message || message.reqId !== reqId) return;
+              if (!message.ok) {
+                finish(
+                  new Error(
+                    message.error && message.error.message
+                      ? message.error.message
+                      : 'Unknown thumbnail utilityProcess error'
+                  )
+                );
+                return;
+              }
+              try {
+                const buf = message.result && message.result.buf;
+                const bytes = Buffer.from(buf && buf.type === 'Buffer' ? buf.data : buf);
+                finish(null, bytes.toString('base64'));
+              } catch (error) {
+                finish(error);
+              }
+            };
+            const onExit = (code) => {
+              if (!done) finish(new Error(`Thumbnail utilityProcess exited early (${code})`));
+            };
+            child.on('message', onMessage);
+            child.on('exit', onExit);
+          });
+        },
+        {
+          srcPath: path.join(ROOT, 'samples', 'pdf', 'jpx-scan.pdf'),
+          workerPath: path.join(mainStatus.appPath, 'dist', 'main', 'thumb-worker.js'),
+        }
+      ),
+      30_000,
+      'packaged scanned-PDF thumbnail smoke'
+    );
+
+    const { data: pixels, info } = await sharp(
+      Buffer.from(thumbJpegBase64, 'base64')
+    )
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    let red = 0;
+    let blue = 0;
+    for (let i = 0; i < pixels.length; i += info.channels) {
+      if (pixels[i] > 150 && pixels[i + 1] < 100 && pixels[i + 2] < 100) red += 1;
+      if (pixels[i + 2] > 150 && pixels[i] < 100 && pixels[i + 1] < 100) blue += 1;
+    }
+    const pixelCount = info.width * info.height;
+    assert.ok(red / pixelCount > 0.3, 'Expected the red half of the JPEG 2000 scan');
+    assert.ok(blue / pixelCount > 0.3, 'Expected the blue half of the JPEG 2000 scan');
+
     const runningApp = electronApp;
     electronApp = undefined;
     try {
@@ -187,7 +272,7 @@ async function main() {
     }
 
     console.log(
-      'Packaged smoke passed: main process + persisted state + utilityProcess fulltext'
+      'Packaged smoke passed: main process + persisted state + utilityProcess fulltext + scanned-PDF wasm thumbnail'
     );
   } finally {
     if (electronApp) {

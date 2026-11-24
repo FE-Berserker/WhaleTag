@@ -3,6 +3,7 @@ import {
   generateThumbnail,
   loadThumbnail,
   loadFolderThumbnail,
+  loadFolderBackground,
   setFolderThumbnail,
   setFolderBackground,
   clearFolderThumbnail,
@@ -32,6 +33,10 @@ export function registerThumbnailHandlers(): void {
   ipcMain.handle('thumbnail:loadFolder', (_event, dirPath: string) => {
     assertWithinAllowedRoot(dirPath);
     return loadFolderThumbnail(dirPath);
+  });
+  ipcMain.handle('thumbnail:loadFolderBackground', (_event, dirPath: string) => {
+    assertWithinAllowedRoot(dirPath);
+    return loadFolderBackground(dirPath);
   });
   // A set/clear rewrites `.whale/` inside the folder, so a read-only location
   // refuses it like every other metadata write. The `sourcePath` of a set is a

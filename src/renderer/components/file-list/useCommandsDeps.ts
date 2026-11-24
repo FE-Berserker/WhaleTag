@@ -16,9 +16,7 @@ export interface UseCommandsDepsOptions {
   /** IO action bundle from `useIOActionsContext`. */
   io: Pick<
     ListCommandsDeps,
-    | 'renameEntry'
     | 'moveEntry'
-    | 'copyEntry'
     | 'deleteEntry'
     | 'createFolder'
     | 'createFile'

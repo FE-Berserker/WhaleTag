@@ -36,13 +36,11 @@ type NewEntryHook = {
  */
 export interface ListCommandsDeps {
   // —— IO ——
-  renameEntry: (path: string, name: string) => Promise<void>;
   moveEntry: (
     path: string,
     dest: string,
     options?: IOActionOptions
   ) => Promise<void>;
-  copyEntry: (path: string, name: string) => Promise<void>;
   deleteEntry: (path: string, options?: IOActionOptions) => Promise<void>;
   createFolder: (name: string) => Promise<void>;
   createFile: (name: string) => Promise<void>;
@@ -822,9 +820,6 @@ export function useListCommands(deps: ListCommandsDeps): ListCommands {
       }
     };
 
-    // Suppress unused warnings on deps we're referencing only as types.
-    void d.renameEntry;
-    void d.copyEntry;
 
     return {
       handleDelete,

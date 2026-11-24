@@ -14,6 +14,7 @@ import {
   deleteFulltextPaths,
 } from './index-db';
 import { mapWithConcurrency, Semaphore } from './concurrency';
+import { withPdfjsNodeRuntime } from './pdfjs-runtime';
 
 // pdfjs-dist (Mozilla's official PDF library). We use the legacy build because
 // it runs in Node/Electron-main without DOM APIs. The library is kept as a
@@ -36,7 +37,9 @@ let _pdfjs: PdfjsLib | undefined;
  *  .mjs would hard-code its import.meta.url and crash the main process. */
 function getPdfjs(): PdfjsLib {
   if (_pdfjs) return _pdfjs;
-  const lib = nodeRequire('pdfjs-dist/legacy/build/pdf.mjs') as PdfjsLib;
+  const lib = withPdfjsNodeRuntime(
+    () => nodeRequire('pdfjs-dist/legacy/build/pdf.mjs') as PdfjsLib
+  );
   lib.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
   _pdfjs = lib;
   return lib;

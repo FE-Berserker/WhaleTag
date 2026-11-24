@@ -50,6 +50,7 @@ import { useExternalFileDrop } from './file-list/useExternalFileDrop';
 import { useCommandsDeps } from './file-list/useCommandsDeps';
 import { useFileListCellData } from './file-list/useFileListCellData';
 import FileListView from './file-list/FileListView';
+import FolderBackground from './file-list/FolderBackground';
 import FileListDialogs from './file-list/FileListDialogs';
 import FileListEntryContextMenu from './file-list/FileListEntryContextMenu';
 import FileListLightbox from './file-list/FileListLightbox';
@@ -81,6 +82,7 @@ import {
 import { useListCommands } from '-/hooks/useListCommands';
 import { useNow } from '-/hooks/useNow';
 import { useListColumnLabels } from '-/hooks/useListColumnLabels';
+import { useFolderBackground } from '-/hooks/useFolderBackground';
 
 const SORT_KEYS: SortKey[] = ['name', 'size', 'modified', 'extension'];
 
@@ -121,6 +123,9 @@ export default function FileList() {
   const dispatch = useDispatch();
   const { navigateTo, goBack, canGoBack, currentLocation, currentDirectoryPath } =
     useCurrentLocationContext();
+  const { backgroundUrl, reloadFolderBackground } = useFolderBackground(
+    currentDirectoryPath
+  );
   const {
     entries,
     loading,
@@ -550,9 +555,7 @@ export default function FileList() {
   // is a type error, and unchanged fields keep `commands` reference-stable.
   const commandsDeps = useCommandsDeps({
     io: {
-      renameEntry,
       moveEntry,
-      copyEntry,
       deleteEntry,
       createFolder,
       createFile,
@@ -909,8 +912,18 @@ export default function FileList() {
         e.preventDefault();
         setCtxMenu({ x: e.clientX, y: e.clientY, entry: null });
       }}
-      sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', position: 'relative', outline: 'none' }}
+      sx={{
+        flex: 1,
+        minWidth: 0,
+        minHeight: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        position: 'relative',
+        isolation: 'isolate',
+        outline: 'none',
+      }}
     >
+      <FolderBackground url={backgroundUrl} />
       {/* Overlay shown while dragging external files over the area. */}
       {isFileOver ? (
         <Box
@@ -1147,6 +1160,7 @@ export default function FileList() {
         setViewMode={setViewMode}
         onAddTag={handleAddTag}
         onRemoveTag={handleRemoveTag}
+        onFolderBackgroundChange={reloadFolderBackground}
         userCommands={userCommands}
       />
 

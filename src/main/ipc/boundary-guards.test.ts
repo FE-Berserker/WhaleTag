@@ -14,6 +14,7 @@ type CallLog = unknown[][];
 
 type ThumbnailCallName =
   | 'loadFolderThumbnail'
+  | 'loadFolderBackground'
   | 'setFolderThumbnail'
   | 'setFolderBackground'
   | 'clearFolderThumbnail'
@@ -75,6 +76,7 @@ function buildRig(): TestRig {
 
   const thumbnailCalls: TestRig['thumbnailCalls'] = {
     loadFolderThumbnail: [],
+    loadFolderBackground: [],
     setFolderThumbnail: [],
     setFolderBackground: [],
     clearFolderThumbnail: [],
@@ -87,6 +89,7 @@ function buildRig(): TestRig {
     generateThumbnail: () => undefined,
     loadThumbnail: () => undefined,
     loadFolderThumbnail: record(thumbnailCalls.loadFolderThumbnail),
+    loadFolderBackground: record(thumbnailCalls.loadFolderBackground),
     setFolderThumbnail: record(thumbnailCalls.setFolderThumbnail),
     setFolderBackground: record(thumbnailCalls.setFolderBackground),
     clearFolderThumbnail: record(thumbnailCalls.clearFolderThumbnail),
@@ -147,6 +150,7 @@ describe('IPC boundary guards', () => {
 
   const folderLoads = [
     ['thumbnail:loadFolder', 'loadFolderThumbnail'],
+    ['thumbnail:loadFolderBackground', 'loadFolderBackground'],
   ] as const;
   for (const [channel, functionName] of folderLoads) {
     it(`${channel} rejects an outside dirPath without reading through the service`, async () => {
@@ -194,7 +198,7 @@ describe('IPC boundary guards', () => {
     });
   }
 
-  it('folder thumbnail handlers still call through when every path is allowed', async () => {
+  it('folder thumbnail/background handlers still call through when every path is allowed', async () => {
     const source = path.join(root, 'source.jpg');
     for (const [channel, functionName] of folderLoads) {
       await rig.handlers.get(channel)!({}, root);

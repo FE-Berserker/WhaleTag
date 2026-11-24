@@ -11,12 +11,12 @@ import {
   advancedQueryReadOnly,
   distinctTags,
   distinctTagsReadOnly,
-  ingestFulltext,
   insertFulltext,
   deleteFulltextPaths,
   fulltextPrior,
   queryFulltext,
   hasFulltext,
+  markFulltextInitialized,
   indexStatus,
   closeDb,
   loadExifProcessed,
@@ -340,9 +340,10 @@ describe('index-db (SQLite + FTS5 trigram)', () => {
     const root = await tmpRoot();
     try {
       await setup(root);
-      await ingestFulltext(root, [
+      await insertFulltext(root, [
         { path: 'notes.md', name: 'notes.md', mtime: 1, content: 'the quick brown fox jumps' },
       ]);
+      markFulltextInitialized(root);
       assert.ok(hasFulltext(root));
       const hits = queryFulltext(root, 'quick brown');
       assert.equal(hits.length, 1);
@@ -354,13 +355,13 @@ describe('index-db (SQLite + FTS5 trigram)', () => {
     }
   });
 
-  it('hasFulltext reports true after an empty build (init marker)', async () => {
+  it('markFulltextInitialized marks an empty index as built', async () => {
     const root = await tmpRoot();
     try {
       await setup(root);
       // Built, but there is nothing textual in it — this used to look exactly
       // like "never built", so the watcher stopped rebuilding it for good.
-      await ingestFulltext(root, []);
+      markFulltextInitialized(root);
       assert.equal(hasFulltext(root), true);
     } finally {
       closeDb(root);
@@ -382,8 +383,8 @@ describe('index-db (SQLite + FTS5 trigram)', () => {
     const root = await tmpRoot();
     try {
       await setup(root);
-      // Seed via the full-replace path.
-      await ingestFulltext(root, [
+      // Seed three rows through the production incremental path.
+      await insertFulltext(root, [
         { path: 'a.md', name: 'a.md', mtime: 10, content: 'alpha bravo' },
         { path: 'b.md', name: 'b.md', mtime: 20, content: 'bravo charlie' },
         { path: 'c.md', name: 'c.md', mtime: 30, content: 'charlie delta' },

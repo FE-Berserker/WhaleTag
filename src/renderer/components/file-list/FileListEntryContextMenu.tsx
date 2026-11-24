@@ -46,6 +46,7 @@ export interface FileListEntryContextMenuProps {
   setViewMode: (mode: 'gallery') => void;
   onAddTag: (entry: DirEntry, tag: string) => void;
   onRemoveTag: (entry: DirEntry, tag: string) => void;
+  onFolderBackgroundChange: () => void;
   userCommands: UserCommand[];
 }
 
@@ -68,6 +69,7 @@ export default function FileListEntryContextMenu({
   setViewMode,
   onAddTag,
   onRemoveTag,
+  onFolderBackgroundChange,
   userCommands,
 }: FileListEntryContextMenuProps) {
   const { t } = useTranslation();
@@ -146,6 +148,7 @@ export default function FileListEntryContextMenu({
         const src = await ipcApi.openImageFileDialog();
         if (!src) return;
         await ipcApi.setFolderBackground(e.path, src);
+        if (e.path === currentDirectoryPath) onFolderBackgroundChange();
         showNotice(t('folderBackgroundSet'), 'success');
       }}
       clearFolderThumbnail={async (e) => {
@@ -155,6 +158,7 @@ export default function FileListEntryContextMenu({
       }}
       clearFolderBackground={async (e) => {
         await ipcApi.clearFolderBackground(e.path);
+        if (e.path === currentDirectoryPath) onFolderBackgroundChange();
         showNotice(t('folderBackgroundCleared'), 'success');
       }}
       removeAllTags={commands.removeAllTags}

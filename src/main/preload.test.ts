@@ -153,6 +153,7 @@ describe('preload bridge — exposed shape', () => {
       'writeSidecar',
       'readSidecarsDetailed',
       'generateThumbnail',
+      'loadFolderBackground',
       'buildLocationIndex',
       'getLanStatus',
       'startLanServer',

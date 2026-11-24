@@ -28,8 +28,8 @@ fulltext:build → buildFulltextIndex(rootPath)    // 全文增量重建(遍历 
 
 // 以下是 index-db.ts 的内部函数,不是 IPC(渲染层不可见)
 ingestFiles(rootPath)                       // 增量
-ingestFulltext(rootPath, records)           // 全文全量替换(仅测试 / 独立全量用;线上重建走下面两半)
 insertFulltext / deleteFulltextPaths        // 增量 delta 的两半
+markFulltextInitialized(rootPath)           // 标记空索引也已完成构建
 markExifProcessed(rootPath, record)         // 单条标记已抽 GPS(只有 index worker 内部调用,没有对应 IPC)
 markExifProcessedMany(rootPath, records[])  // 批量(一个事务 + fsync)—— Mapique 抽 GPS 用(IPC `exif:mark-processed-many`)
 loadExifProcessed(rootPath)                 // 查询(IPC `exif:load-processed`)
@@ -82,7 +82,7 @@ loadExifProcessed(rootPath)                 // 查询(IPC `exif:load-processed`)
 [src/main/fulltext.ts](../src/main/fulltext.ts) 覆盖:
 
 - 纯文本 / Markdown / HTML / 代码类(直接读)
-- PDF(`pdfjs-dist`,在索引 worker 内抽取,经 `getPdfjs()` 惰性 load,见 [docs/01 §4](./01-architecture.md));单文件超过 `MAX_PDF_BYTES = 128 MiB` **直接跳过并保留旧索引行**——pdfjs 必须把整个文件读进内存,不设上限时一个多 GB 的 PDF 会打爆索引 worker;MCP 的 `whale_extract_text` 对超限 PDF 返回明确错误。`readFile` 的 Buffer 以精确 `byteOffset / byteLength` 视图交给 pdfjs:大文件复用原 ArrayBuffer、不再复制第二份 128 MiB,也不直接传 pdfjs 会拒绝的 Node Buffer 或暴露共享 pool 的底层整块内存。
+- PDF(`pdfjs-dist`,在索引 worker 内抽取,经 `getPdfjs()` 惰性 load,见 [docs/01 §4](./01-architecture.md));专用 utilityProcess 在 load 前调用 `ensurePdfjsNodeRuntime()`,避免 Electron 的 `process.type === 'utility'` 让 pdfjs 误选 DOM factories。单文件超过 `MAX_PDF_BYTES = 128 MiB` **直接跳过并保留旧索引行**——pdfjs 必须把整个文件读进内存,不设上限时一个多 GB 的 PDF 会打爆索引 worker;MCP 的 `whale_extract_text` 对超限 PDF 返回明确错误。`readFile` 的 Buffer 以精确 `byteOffset / byteLength` 视图交给 pdfjs:大文件复用原 ArrayBuffer、不再复制第二份 128 MiB,也不直接传 pdfjs 会拒绝的 Node Buffer 或暴露共享 pool 的底层整块内存。
 - **并发抽取**:`buildFulltextIndex` 的目录 walk 仍用各目录的 `mapWithConcurrency(8)` 让子目录递归与文件抽取重叠,但非 PDF `extractTextDetailed` 统一经过模块级 `Semaphore(8)`,嵌套目录及同 worker 的并发构建不再叠乘提取压力;PDF 不占非 PDF 许可,只走原有 PDF 2 路专用闸门,避免 PDF 排队饿死文本,直接 MCP 抽取路径不变。PDF 从 readFile 到 `loadingTask.destroy()` 另受模块级 `Semaphore(2)` 约束,覆盖首建 / 增量 / 直接 `extractText`,防止多层目录并发与大 Buffer 叠加。10s PDF 超时结算后页循环在 `getPage` / `getTextContent` 前后检查并停止后续抽取；异常路径的 `loadingTask.destroy()` 最多等待 1 秒，即使 pdfjs 销毁 Promise 永不 settle 也会结算调用并释放许可，正常完成仍等待销毁以回收 worker 与解析缓冲。共享的 `seen` / `count` / 100 条 batch queue 只在 `await` 之间同步变异,JS 单线程下无竞态。FTS5 的 `DELETE WHERE path = ?` 已实测可用,支持增量 upsert / delete。删除集合由纯函数 `selectRemoved(prior, seen, skipped)` 计算:跳过路径按**路径边界**豁免(`a/b` 覆盖 `a/b/c`,不覆盖 `a/bc`;`''` 表示根目录本身不可读 → 一条都不删)
 
 媒体(binary)不参与全文索引。
@@ -92,7 +92,6 @@ loadExifProcessed(rootPath)                 // 查询(IPC `exif:load-processed`)
 [src/main/exif.ts](../src/main/exif.ts):
 
 - `extractGps(filePath)`(IPC `exif:extractGps`;入参是路径不是 buffer,主进程读完整个文件字节再解析)—— 渲染层唯一的 EXIF 入口
-- `getExifSummary(filePath)` / `buildExifSummary(raw)`:EXIF 概要,目前没有生产调用方(对应的 preload API 与 IPC 已删除,只剩 `exif.test.ts` 在用)
 - 已抽过 GPS 的文件写入 `exif_processed` 缓存,下次跳过;**Mapique 批量抽 GPS 时攒满 25 条或 batch 结束才 `markExifProcessedMany` 落盘**(一个事务 + 一次 fsync,以前每张图一个 fsync)
 - Mapique 用 `geoByName` map(O(1) 查)渲染 marker
 

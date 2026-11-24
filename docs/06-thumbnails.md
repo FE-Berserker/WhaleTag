@@ -51,11 +51,11 @@ type ThumbKind = 'image' | 'svg' | 'video' | 'pdf' | 'font';
 - **复用判据是 mtime + size**(`generatedFrom` 上限 5000 条):同一进程内生成过的 thumb 只有源文件 `mtimeMs` 与字节数都没变才复用;进程重启后内存无记录,退回 `target.mtimeMs >= source.mtimeMs` 的旧启发式(代价是保存后同秒内改内容仍可能显示旧图,换来冷启动不额外 stat 源文件)
 - **ffmpeg 有超时**:`execFile` 带 `timeout: 10_000, killSignal: 'SIGKILL'`,损坏视频不再无限占住 worker 队列
 - **渲染层缓存有上界**:[ThumbIcon.tsx](../src/renderer/components/ThumbIcon.tsx) 的 data-URL `Map` 在写入端淘汰(`THUMB_CACHE_LIMIT = 800`,FIFO),单条 256px/q80 约 10–20KB → 上限约 8–16MB;此前只在目录切换时清空
-- `loadFolderThumbnail` / `loadFolderBackground`(主进程函数,各自 target path 为 key;后者目前只有测试调用——设置背景的 IPC 仍在,但应用内没有读取 `wsb.jpg` 的路径,原 `thumbnail:loadFolderBackground` preload API 因渲染层零调用已删除):只合并同目录**尚未 settle** 的加载:同目录并发共享一次 copy/read,thumbnail 与 background 不混用,不同目录互不影响;成功或失败都在 `finally` 清除 Map,失败会传给所有等待方且下一次可立即重试。后续调用会重新读盘,不把结果持久缓存在 JS;空目录的 `null` 也不做跨批次缓存,因此新增首张可缩略文件后不会被旧空结果遮住,代价是分离的多次空目录加载仍可能各自扫描。
+- `loadFolderThumbnail` / `loadFolderBackground`(主进程函数,各自 target path 为 key)只合并同目录**尚未 settle** 的加载:同目录并发共享一次 copy/read,thumbnail 与 background 不混用,不同目录互不影响;成功或失败都在 `finally` 清除 Map,失败会传给所有等待方且下一次可立即重试。后续调用会重新读盘,不把结果持久缓存在 JS;空目录的 `null` 也不做跨批次缓存,因此新增首张可缩略文件后不会被旧空结果遮住,代价是分离的多次空目录加载仍可能各自扫描。背景读取经 `thumbnail:loadFolderBackground` 暴露给文件列表,渲染层在目录切换及设置/清除后重新加载,慢响应按 effect 清理丢弃。
 - 失败一律静默回退类型图标(FileTypeIcon),不阻塞其它缩略图
 - **主进程并发闸门**([src/main/concurrency.ts](../src/main/concurrency.ts) 的 `Semaphore`):`thumbnailSemaphore` 限制同时进行的缩略图编码数(sharp / ffmpeg / pdfjs),只包住编码那一段,后续写盘不持锁。`setFolderBackground` 的 sharp 读取/旋转/缩放/JPEG 编码也进入同一个 4 路信号量,异常经 `finally` 释放许可;目标 `wsb.jpg` 的小型原子写不持锁。
 - **ffmpeg 路径**:`ffmpegPath()` 取 `ffmpeg-static` 自带二进制,打包态把路径里的 `app.asar` 换成 `app.asar.unpacked`;缺失时返回 `null`,视频缩略图直接回退类型图标(不做 PATH 探测)。
-- **pdfjs 惰性**:PDF 缩略图用的 pdfjs-dist 经 `getPdfjs()`(`nodeRequire`)在首次 PDF 缩略图时才 load,不在启动顶层(见 [docs/01 §4](./01-architecture.md))
+- **pdfjs 惰性**:PDF 缩略图用的 pdfjs-dist 经 `getPdfjs()`(`nodeRequire`)在首次 PDF 缩略图时才 load,不在启动顶层(见 [docs/01 §4](./01-architecture.md))。专用 utilityProcess 通过 `withPdfjsNodeRuntime()` 包裹首次 load:加载期间临时把 Electron 的 `process.type === 'utility'` 规范化为 `browser`,使 pdfjs 选择 Node canvas / image factories 而非 DOM factories;加载结束或抛错后立即恢复原 property descriptor。
 - **扫描版 PDF 需要 wasm 解码器**:`renderPdfThumb` 通过 `wasmUrl` 指向 `pdfjs-dist/wasm/`(普通路径 + 结尾 `/`),JPEG 2000 / JBIG2 / CCITT 传真图像由其中的模块解码。未设置时 pdfjs 丢弃图片但仍完成渲染,曾导致整页空白;2026-11-24 已修复,并由 [thumb-render.test.ts](../src/main/thumb-render.test.ts) 配合 [samples/pdf](../samples/pdf/) 的 JPEG 2000 / CCITT G4 样本覆盖。
 
 ## 4. ThumbIcon 加载机制(前端)
