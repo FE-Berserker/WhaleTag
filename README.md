@@ -68,6 +68,7 @@ whole library stays movable.
 | Thumbnails | image / svg / video / pdf / font (5 kinds) + folder thumbnails; 39 fallback icons |
 | Themes | **11 themes** (3 classic + 8 curated); `'system'` is always resolved before reaching MUI |
 | Extensions | **8 built-in** viewers/editors (drawio, excalidraw, font, heic, html, image, json, text); revision history; Open With |
+| AI / MCP | Optional loopback MCP server (**20 tools**) for search, tagging, smart-tag discovery, location setup, organization and packaging |
 
 ### Tech stack
 
@@ -105,6 +106,44 @@ WhaleTag/
 `sandbox: true`. The renderer only ever reaches the system through a curated
 `window.whale` bridge exposed by preload; all file IO lives in the main process and
 goes through `assertWithinAllowedRoot`. See [docs/13-security.md](docs/13-security.md).
+
+### MCP for AI clients
+
+WhaleTag can expose your opened locations to external AI clients through a local
+**Streamable HTTP MCP server**. Its 20 tools cover search and text extraction, tags and
+descriptions, smart-tag discovery, location setup, file organization and ZIP packaging.
+The server is **disabled and read-only by default**, listens only on `127.0.0.1`, and
+requires a Bearer token. File-level changes and adding a location require explicit
+approval in WhaleTag; keep read-only enabled unless you need write operations.
+
+1. Start WhaleTag and open **Settings → MCP Server**.
+2. Enable the server, then copy the **actual endpoint** and token shown there. Keep
+   read-only on for search/read-only agents, or turn it off only when writes are needed.
+3. Add WhaleTag to a Streamable HTTP client such as ZCode or Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "whaletag": {
+      "type": "http",
+      "url": "http://127.0.0.1:7433/mcp",
+      "headers": {
+        "Authorization": "Bearer <token copied from WhaleTag settings>"
+      }
+    }
+  }
+}
+```
+
+Port `7433` is the default; if it is occupied, WhaleTag selects a random free port, so
+the endpoint in Settings is authoritative. WhaleTag must be running while the client
+uses MCP. Reconnect the client after an app restart, and update the configuration if
+the endpoint or token changes.
+
+Agents should call `whale_roots` first to discover locations and index readiness, and
+`whale_smart_tag_catalog` before semantic tagging. `whale_add_location` can add an
+approved directory without restarting WhaleTag. See [docs/21-mcp.md](docs/21-mcp.md)
+for the complete tool reference, approval rules and lifecycle details.
 
 ### Prerequisites
 
@@ -199,6 +238,7 @@ MIT. Third-party notices (e.g. bundled FFmpeg under GPL-3.0) live in [LICENSES/]
 | 缩略图 | image / svg / video / pdf / font(5 种)+ 文件夹缩略图;39 类回退图标 |
 | 主题 | **11 种**(3 经典 + 8 策划);`'system'` 必须先解析再流入 MUI |
 | 扩展 | **8 个内置**(drawio / excalidraw / font / heic / html / image / json / text 查看器与编辑器);修订历史;右键 Open With |
+| AI / MCP | 可选的本机 MCP 服务器(**20 个工具**),支持搜索、打标、智能标签目录、添加位置、整理与打包 |
 
 ### 技术栈
 
@@ -220,6 +260,41 @@ MIT. Third-party notices (e.g. bundled FFmpeg under GPL-3.0) live in [LICENSES/]
 `contextIsolation: true`、`nodeIntegration: false`、`sandbox: true`。渲染层只通过 preload
 暴露的 `window.whale` 桥接触系统能力;所有文件 IO 在主进程,统一走 `assertWithinAllowedRoot`。
 详见 [docs/13-security.md](docs/13-security.md)。
+
+### 通过 MCP 接入 AI 客户端
+
+WhaleTag 可以通过本机 **Streamable HTTP MCP 服务器**,把已打开的位置提供给外部 AI
+客户端。20 个工具覆盖搜索与正文抽取、标签与描述、智能标签目录、添加位置、文件整理和
+ZIP 打包;所有路径仍受 allowed roots 约束。服务器**默认关闭且只读**,只监听
+`127.0.0.1`,并要求 Bearer token。文件级变更和添加位置需要在 WhaleTag 中明确批准;
+只需要搜索和读取时请保持只读,确需修改元数据或文件时再关闭。
+
+1. 启动 WhaleTag,打开 **设置 → MCP 服务器**。
+2. 开启服务器,复制设置页显示的**实际 endpoint** 和 token。搜索/只读 agent 保持只读;
+   确需写入时再关闭只读开关。
+3. 在 ZCode、Claude Desktop 等 Streamable HTTP 客户端中添加:
+
+```json
+{
+  "mcpServers": {
+    "whaletag": {
+      "type": "http",
+      "url": "http://127.0.0.1:7433/mcp",
+      "headers": {
+        "Authorization": "Bearer <从 WhaleTag 设置页复制的 token>"
+      }
+    }
+  }
+}
+```
+
+`7433` 是默认端口;被占用时 WhaleTag 会选择随机空闲端口,因此以设置页显示的实际
+endpoint 为准。客户端使用 MCP 期间 WhaleTag 必须保持运行;应用重启后需要重连,endpoint
+或 token 变化后也要同步更新客户端配置。
+
+Agent 应先调用 `whale_roots` 获取位置与索引状态,语义打标前调用
+`whale_smart_tag_catalog`;经用户批准后,`whale_add_location` 无需重启 WhaleTag 即可
+添加目录。完整工具说明、审批规则和生命周期见 [docs/21-mcp.md](docs/21-mcp.md)。
 
 ### 前置要求
 

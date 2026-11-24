@@ -32,6 +32,7 @@ import { normalizeSmartTags } from '../../shared/smart-tags';
 import { loadMcpConfig } from './mcp-config';
 import { requestApproval } from './mcp-approval';
 import { requestLocationAddition } from './mcp-location-requests';
+import { createSmartTagCatalog } from './mcp-smart-tag-catalog';
 import { flushKnownRootsWrites, rememberPickedRoot } from '../known-roots';
 import { foldPath } from '../path-fold';
 
@@ -458,7 +459,8 @@ export function registerMcpTools(server: McpServer): void {
       title: 'List tags',
       description:
         'All tags present in the location index plus the tag library descriptions ' +
-        '(the location vocabulary). Use these exact names with whale_apply_tags.',
+        '(the existing location vocabulary, not a complete built-in catalog). Use ' +
+        'whale_smart_tag_catalog for canonical smart-tag semantics before tagging.',
       inputSchema: { rootPath: z.string() },
     },
     async ({ rootPath }) => {
@@ -620,6 +622,25 @@ export function registerMcpTools(server: McpServer): void {
   );
 
   server.registerTool(
+    'whale_smart_tag_catalog',
+    {
+      title: 'Smart tag catalog',
+      description:
+        'Return the canonical smart-tag vocabulary for Kanban workflow, urgency ' +
+        'quadrants, ratings, dynamic dates, periods and WGS-84 map coordinates. ' +
+        'Read this before semantic tagging; no location or existing index is required.',
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        return ok(createSmartTagCatalog());
+      } catch (e) {
+        return fail('whale_smart_tag_catalog', e);
+      }
+    }
+  );
+
+  server.registerTool(
     'whale_get_meta',
     {
       title: 'Read file metadata',
@@ -651,7 +672,13 @@ export function registerMcpTools(server: McpServer): void {
       description:
         'Add and/or remove tags on files. Merge-safe against concurrent UI edits; ' +
         'existing tags/description are preserved. Stored in .whale/ sidecar metadata ' +
-        '— user file names and contents are never modified.',
+        '— user file names and contents are never modified. Within built-in ' +
+        'workflow values, quadrant, rating, date or period families the newest ' +
+        'value wins. Custom workflow stages are not automatically recognized: ' +
+        'remove every previous stage explicitly in the same call. Use exact canonical ' +
+        'stored values from whale_smart_tag_catalog (for example 5star, not star5); ' +
+        'UI aliases are not resolved by this tool. Use whale_list_tags to discover ' +
+        'custom values already present in the location.',
       inputSchema: {
         paths: z.array(z.string()).min(1).max(500),
         add: z.array(z.string()).max(50).default([]),

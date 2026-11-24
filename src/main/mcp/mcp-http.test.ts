@@ -200,6 +200,10 @@ describe('mcp http core (official client SDK)', () => {
     assert.ok(names.includes('whale_add_location'), 'whale_add_location missing');
     assert.ok(names.includes('whale_search'), 'whale_search missing');
     assert.ok(names.includes('whale_apply_tags'), 'whale_apply_tags missing');
+    assert.ok(
+      names.includes('whale_smart_tag_catalog'),
+      'whale_smart_tag_catalog missing'
+    );
     assert.ok(names.includes('whale_zip_files'), 'whale_zip_files missing');
     assert.equal(core.sessionCount(), 1);
     // terminateSession() is the client-side DELETE; plain close() only drops
@@ -227,6 +231,60 @@ describe('mcp http core (official client SDK)', () => {
     assert.deepEqual(parsed.roots.map((root) => root.rootPath), [STARTUP_ROOT]);
     assert.equal(typeof parsed.readOnly, 'boolean');
     await client.close();
+  });
+
+  it('serves the complete smart-tag catalog in read-only mode', async () => {
+    const config = await import('./mcp-config');
+    const previousReadOnly = config.loadMcpConfig().readOnly;
+    await config.setMcpReadOnly(true);
+    const { client } = await connectClient();
+    try {
+      const res = await client.callTool({
+        name: 'whale_smart_tag_catalog',
+        arguments: {},
+      });
+      assert.notEqual(res.isError, true);
+      const text = ((res.content as { type: string; text?: string }[]) ?? [])
+        .filter((item) => item.type === 'text')
+        .map((item) => item.text)
+        .join('');
+      const catalog = JSON.parse(text) as {
+        applyTool: string;
+        families: {
+          workflow: { taskMode: string; views: string[]; values: { value: string }[] };
+          quadrant: { taskMode: string; views: string[]; values: { value: string }[] };
+          rating: { values: { value: string }[] };
+          smartDate: { values: { uiAlias: string; storedForm: string }[] };
+          geo: { coordinateSystem: string; valuePattern: string; note: string };
+        };
+      };
+      assert.equal(catalog.applyTool, 'whale_apply_tags');
+      assert.deepEqual(catalog.families.workflow.views, ['task']);
+      assert.equal(catalog.families.workflow.taskMode, 'kanban');
+      assert.deepEqual(catalog.families.quadrant.views, ['task']);
+      assert.equal(catalog.families.quadrant.taskMode, 'matrix');
+      assert.ok(
+        catalog.families.workflow.values.some(({ value }) => value === 'in-progress')
+      );
+      assert.ok(
+        catalog.families.quadrant.values.some(
+          ({ value }) => value === 'urgent-important'
+        )
+      );
+      assert.deepEqual(
+        catalog.families.rating.values.map(({ value }) => value),
+        ['1star', '2star', '3star', '4star', '5star']
+      );
+      assert.ok(
+        catalog.families.smartDate.values.some(({ uiAlias }) => uiAlias === 'today')
+      );
+      assert.equal(catalog.families.geo.coordinateSystem, 'WGS-84');
+      assert.equal(catalog.families.geo.valuePattern, 'geo:<latitude>,<longitude>');
+      assert.match(catalog.families.geo.note, /first valid coordinate/);
+    } finally {
+      await client.close();
+      await config.setMcpReadOnly(previousReadOnly);
+    }
   });
 
   it('refuses mutating tools while a session is unapproved (deny path)', async () => {
@@ -801,6 +859,86 @@ describe('mcp tool surface (approval allow path)', () => {
     const meta = parsed.metas[file];
     assert.ok(meta, 'the tagged file has metadata');
     assert.deepEqual(meta.tags, ['surface-test']);
+    await client.close();
+  });
+
+  it('applies canonical smart tags and documents custom workflow limits', async () => {
+    const dir = await fs.promises.mkdtemp(path.join(ROOT, 'smart-tags-'));
+    const file = path.join(dir, 'task.txt');
+    await fs.promises.writeFile(file, 'smart tags', 'utf8');
+    const { client } = await connectClient();
+    const first = await client.callTool({
+      name: 'whale_apply_tags',
+      arguments: {
+        paths: [file],
+        add: [
+          'not-started',
+          '1star',
+          'urgent-important',
+          'geo:31.230400,121.473700',
+        ],
+      },
+    });
+    assert.notEqual(first.isError, true);
+    const second = await client.callTool({
+      name: 'whale_apply_tags',
+      arguments: {
+        paths: [file],
+        add: [
+          'in-progress',
+          '5star',
+          'noturgent-important',
+          '20261124',
+          '20261124-20261130',
+          'geo:48.856600,2.352200',
+        ],
+      },
+    });
+    assert.notEqual(second.isError, true);
+    const parsed = jsonOf<{ results: { after: string[] }[] }>(second);
+    assert.deepEqual(
+      [...parsed.results[0].after].sort(),
+      [
+        'in-progress',
+        '5star',
+        'noturgent-important',
+        '20261124',
+        '20261124-20261130',
+        'geo:31.230400,121.473700',
+        'geo:48.856600,2.352200',
+      ].sort()
+    );
+    const third = await client.callTool({
+      name: 'whale_apply_tags',
+      arguments: {
+        paths: [file],
+        add: [
+          '20261125',
+          '20261201-20261207',
+          'star5',
+          'review',
+        ],
+      },
+    });
+    assert.notEqual(third.isError, true);
+    const thirdParsed = jsonOf<{ results: { after: string[] }[] }>(third);
+    assert.deepEqual(
+      [...thirdParsed.results[0].after].sort(),
+      [
+        'in-progress',
+        '5star',
+        'noturgent-important',
+        '20261125',
+        '20261201-20261207',
+        'geo:31.230400,121.473700',
+        'geo:48.856600,2.352200',
+        // UI aliases stay literal; MCP does not turn star5 into 5star.
+        'star5',
+        // Custom workflow stages are not in the main-process built-in set.
+        // Clients must remove old stages explicitly, as the catalog explains.
+        'review',
+      ].sort()
+    );
     await client.close();
   });
 

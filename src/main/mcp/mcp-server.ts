@@ -52,7 +52,9 @@ async function doStartListening(): Promise<void> {
     serverInfo: { name: 'whaletag', version: getWhaleAppVersion() },
     instructions:
       'WhaleTag is a local-first file manager with tag-based organization. ' +
-      'Start with whale_roots to discover configured locations. Metadata edits ' +
+      'Start with whale_roots to discover configured locations. Call ' +
+      'whale_smart_tag_catalog before semantic tagging to learn canonical ' +
+      'workflow, quadrant, rating, date, period and geo values. Metadata edits ' +
       '(tags, descriptions) are the preferred way to organize — they never touch ' +
       'user files. File operations and adding locations require explicit user ' +
       'approval in the app window.',
