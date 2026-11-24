@@ -1,14 +1,6 @@
 export const languages = ['en', 'zh', 'zh-TW', 'ja', 'ko'] as const;
 export type Language = (typeof languages)[number];
 
-export const languageNames: Record<Language, string> = {
-  en: 'English',
-  zh: '简体中文',
-  'zh-TW': '繁體中文',
-  ja: '日本語',
-  ko: '한국어',
-};
-
 const en = {
   language: 'Language',
   readOnly: 'Read-only access',

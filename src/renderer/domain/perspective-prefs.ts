@@ -1,13 +1,12 @@
 /**
  * Shared constants and localStorage helpers for the tag-based perspective views
- * (TagCloud, KnowledgeGraph) and the depth-driven FolderViz view.
+ * (TagCloud, KnowledgeGraph, Gantt) and the depth-driven FolderViz view.
  *
  * Before H.22 §P2-1 these constants were copy-pasted into each view; keeping one
- * source means a new smart-tag category or a depth-range change lands everywhere
- * at once. The `readPrefs`/`writePrefs` pair is the same best-effort,
- * never-throw pattern FolderViz pioneered (plan §H.20 D): preferences are
- * convenience, not core data, so a quota/parse/private-mode failure must never
- * break the view.
+ * source means a new smart-tag category lands everywhere at once. The
+ * `readPrefs`/`writePrefs` pair is the same best-effort, never-throw pattern
+ * FolderViz pioneered (plan §H.20 D): preferences are convenience, not core
+ * data, so a quota/parse/private-mode failure must never break the view.
  */
 
 import type { TagCategory } from './tagcloud';
@@ -36,11 +35,6 @@ export const CATEGORY_LABEL_KEY: Record<TagCategory, string> = {
   plain: 'tagCloudCatPlain',
 };
 
-/** Recursive-depth slider bounds, shared by TagCloud / KnowledgeGraph / FolderViz. */
-export const DEPTH_MIN = 1;
-export const DEPTH_MAX = 5;
-export const DEPTH_DEFAULT = 3;
-
 /**
  * Coerce a persisted value into a valid category list, dropping anything not in
  * {@link FILTERABLE_CATEGORIES} (e.g. an old key that stored a since-removed
@@ -53,14 +47,6 @@ export function sanitizeShownCategories(value: unknown): TagCategory[] | null {
   return value.filter(
     (c): c is TagCategory => typeof c === 'string' && allowed.has(c)
   );
-}
-
-/** Clamp a persisted depth to [DEPTH_MIN, DEPTH_MAX]; null if out of range / NaN. */
-export function sanitizeDepth(value: unknown): number | null {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-  const rounded = Math.round(value);
-  if (rounded < DEPTH_MIN || rounded > DEPTH_MAX) return null;
-  return rounded;
 }
 
 /**

@@ -1,11 +1,9 @@
-import { forwardRef, useImperativeHandle, useLayoutEffect, useRef } from 'react';
 import {
   ListItemIcon,
   ListItemText,
   Menu,
   MenuItem,
 } from '@mui/material';
-import type { TransitionProps } from '@mui/material/transitions';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import EditIcon from '@mui/icons-material/Edit';
@@ -19,84 +17,7 @@ import AddLocationIcon from '@mui/icons-material/AddLocation';
 
 import type { TFunction } from 'i18next';
 import type { DirEntry } from '../../shared/ipc-types';
-
-/**
- * H.26 P0-1: no-op MUI transition that still triggers the Popover
- * positioning lifecycle. MUI's default Fade / Grow transitions call
- * `reflow(node)` synchronously on enter, which throws in jsdom because
- * the portal target has no layout. We bypass that by not animating, but
- * we still forward `onEntering` so the Popover can compute its position
- * from `anchorPosition` synchronously on enter — otherwise the menu
- * flashes at (0,0) on the first right-click.
- *
- * Same pattern as KanbanEntryMenu's NoTransition.
- */
-export const NoTransition = forwardRef<HTMLDivElement, TransitionProps>(
-  function NoTransition(props, ref) {
-    const { children, in: inProp, onEntering } = props;
-    const localRef = useRef<HTMLDivElement>(null);
-    // forwardRef<HTMLDivElement> contract: MUI reads the handle only after the
-    // node mounts, when localRef is populated. The cast documents that timing
-    // instead of widening the public ref type.
-    useImperativeHandle(ref, () => localRef.current as HTMLDivElement);
-    // See KanbanEntryMenu.NoTransition for the full rationale — same
-    // jsdom-skip pattern because MUI's MenuList.adjustStyleForScrollbar
-    // dereferences listRef.current synchronously inside onEntering.
-    useLayoutEffect(() => {
-      if (!inProp || !localRef.current || !onEntering) return;
-      // See KanbanEntryMenu.NoTransition for the full rationale.
-      const w = typeof window !== 'undefined' ? window : undefined;
-      const ua = w?.navigator?.userAgent ?? '';
-      if (/jsdom/i.test(ua)) return;
-      onEntering(localRef.current, false);
-    }, [inProp, onEntering]);
-    if (!inProp) return null;
-    return (
-      <div ref={localRef} data-testid="no-transition-mount">
-        {children}
-      </div>
-    );
-  }
-);
-
-/** H.26 P0-1: invisible Backdrop slot for jsdom safety. Renders a transparent
- * full-screen layer so MUI's Modal can still capture click-away events and
- * close the menu; returning null breaks that behavior.
- *
- * Same fix as KanbanEntryMenu.NoBackdrop: MUI's `Modal → useSlot('backdrop')`
- * passes `invisible` (a styling boolean — `true` when no dim is needed) and
- * `ownerState` (the Backdrop's style-state object) on top of the standard
- * `onClick` and `className`. Forwarding the first two to a plain `<div>`
- * produces the React warnings about `invisible` non-boolean + `ownerState`
- * unknown DOM attribute. Destructure them out before spreading `...rest`. */
-export const NoBackdrop = forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & {
-    open?: boolean;
-    invisible?: boolean;
-    ownerState?: unknown;
-  }
->(function NoBackdrop(props, ref) {
-  const {
-    open,
-    invisible: _invisible,
-    ownerState: _ownerState,
-    ...rest
-  } = props;
-  if (!open) return null;
-  return (
-    <div
-      ref={ref}
-      {...rest}
-      data-testid="no-backdrop"
-      style={{
-        position: 'fixed',
-        inset: 0,
-        backgroundColor: 'transparent',
-      }}
-    />
-  );
-});
+import { NoBackdrop, NoTransition } from './MenuNoTransition';
 
 export interface MapiqueContext {
   x: number;

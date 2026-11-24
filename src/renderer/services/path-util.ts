@@ -2,7 +2,16 @@
  * Renderer-side path helpers. The renderer runs in a `web` webpack target with
  * no Node `path` module, so we implement the few operations we need here,
  * tolerant of both separators (Windows `\` and POSIX `/`).
+ *
+ * Case policy and the containment check come from `src/shared/path-fold.ts`
+ * — the same module the main process wraps — so both sides cannot drift.
  */
+import {
+  isCaseInsensitivePlatform,
+  isSameOrDescendantPath,
+} from '../../shared/path-fold';
+
+export { isCaseInsensitivePlatform };
 
 /** Returns the final segment of a path. */
 export function basename(p: string): string {
@@ -84,17 +93,6 @@ function resolveRendererPlatform(): string | undefined {
 }
 
 /**
- * True when `platform` (Node-style, e.g. `'win32'`) usually has a
- * case-insensitive filesystem — same policy as the main process
- * `CASE_INSENSITIVE_FS` in src/main/path-fold.ts.
- */
-export function isCaseInsensitivePlatform(
-  platform: string | undefined
-): boolean {
-  return platform === 'win32' || platform === 'darwin';
-}
-
-/**
  * Renderer mirror of the main process `CASE_INSENSITIVE_FS` (src/main/path-fold.ts):
  * Windows/macOS fold case, Linux does not. Keeping the two in sync matters —
  * an always-lowercase comparison here would accept `/home/u/Photos` for a root
@@ -107,23 +105,17 @@ export const CASE_INSENSITIVE_FS = isCaseInsensitivePlatform(
 /**
  * Returns true if `candidate` is the same as or inside `ancestor`.
  *
- * This is a UI helper (the real security boundary lives in the main process).
- * Case is folded only on case-insensitive filesystems so the verdict matches
- * the main process; `caseInsensitive` is an explicit seam for tests.
+ * This is a UI helper (the real security boundary lives in the main
+ * process). It delegates to the shared implementation, so the renderer and
+ * the main process agree on every edge — separator styles, repeated trailing
+ * separators, a bare root — and not only on the common case. Case is folded
+ * only on case-insensitive filesystems so the verdict matches the main
+ * process; `caseInsensitive` is an explicit seam for tests.
  */
 export function isSameOrDescendant(
   ancestor: string,
   candidate: string,
   caseInsensitive: boolean = CASE_INSENSITIVE_FS
 ): boolean {
-  const fold = (p: string): string => {
-    const normalized = p.replace(/\\/g, '/').replace(/\/$/, '');
-    return caseInsensitive ? normalized.toLowerCase() : normalized;
-  };
-  const normAncestor = fold(ancestor);
-  const normCandidate = fold(candidate);
-  return (
-    normCandidate === normAncestor ||
-    normCandidate.startsWith(normAncestor + '/')
-  );
+  return isSameOrDescendantPath(ancestor, candidate, caseInsensitive);
 }

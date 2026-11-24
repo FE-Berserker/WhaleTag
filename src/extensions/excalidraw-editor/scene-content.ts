@@ -1,9 +1,3 @@
-export type ExcalidrawSceneContent = {
-  type: 'excalidraw';
-  elements?: unknown[];
-  [key: string]: unknown;
-};
-
 /** Excalidraw 0.18.1 restore() is deliberately total: `{}`, `null`, library
  * exports and unrelated JSON all become an empty scene instead of throwing.
  * Reject those inputs before they can turn into a valid-looking empty document

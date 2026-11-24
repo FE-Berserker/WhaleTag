@@ -15,14 +15,6 @@
  */
 export type ThumbWorkerOp = 'thumb:pdf' | 'thumb:font';
 
-/**
- * Per-op argument shape. A discriminated union keyed by `op` — the host
- * uses this union to type-check `thumbRequest(op, arg)` calls.
- */
-export type ThumbWorkerArg =
-  | { op: 'thumb:pdf'; arg: { srcPath: string } }
-  | { op: 'thumb:font'; arg: { srcPath: string } };
-
 /** A request envelope sent from host → worker. */
 export interface ThumbWorkerRequest {
   reqId: string;

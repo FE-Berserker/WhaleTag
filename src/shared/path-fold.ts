@@ -1,9 +1,8 @@
 /**
  * Platform-parameterised path case-folding, shared by the main process
- * (`src/main/path-fold.ts` wraps it with the process platform) and mirrored by
- * the renderer (`src/renderer/services/path-util.ts`, which detects the
- * platform from `process.platform` when present and `navigator.userAgent`
- * otherwise).
+ * (`src/main/path-fold.ts` wraps it with the process platform) and by the
+ * renderer (`src/renderer/services/path-util.ts` resolves the platform from
+ * `process.platform` when present and `navigator.userAgent` otherwise).
  *
  * Whether case matters is a FILESYSTEM property, not a string property:
  *  - **Windows & macOS** (default NTFS/APFS/HFS+, case-INSENSITIVE): `/Photos`

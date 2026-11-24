@@ -409,8 +409,6 @@ export function rectFromPeriod(
 
 // ─── Drag arithmetic ────────────────────────────────────────────────────
 
-export type GanttDragKind = 'body' | 'left' | 'right';
-
 /** Threshold below which pointer motion is treated as a click (preserves
  *  double-click-to-open semantics). 4 px matches the canonical MUI pattern. */
 export const DRAG_PENDING_THRESHOLD_PX = 4;

@@ -86,6 +86,15 @@ describe('renderer path-util', () => {
       assert.ok(isSameOrDescendant('/foo/bar', '\\foo\\bar\\baz'));
     });
 
+    it('ignores repeated trailing separators on both sides', () => {
+      // A watcher or breadcrumb path can arrive with stray separators. The
+      // shared implementation strips all of them, exactly like the main
+      // process guard.
+      assert.ok(isSameOrDescendant('/Data//', '/Data/x'));
+      assert.ok(isSameOrDescendant('/Data', '/Data/x//'));
+      assert.ok(!isSameOrDescendant('/Data//', '/Database'));
+    });
+
     it('folds case only on case-insensitive filesystems', () => {
       // Explicit seam: Windows/macOS-style disks compare case-insensitively...
       assert.ok(isSameOrDescendant('/Foo/Bar', '/foo/bar/baz', true));
