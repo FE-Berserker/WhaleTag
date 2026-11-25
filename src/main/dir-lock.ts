@@ -1,5 +1,4 @@
-import path from 'path';
-import { foldPath } from './path-fold';
+import { canonicalPathKey } from './path-fold';
 
 /**
  * Per-key async mutex. Used by the aggregated sidecar store (`sidecar.ts`) to
@@ -33,8 +32,10 @@ export function withLock<T>(
   task: () => Promise<T>
 ): Promise<T> {
   // All production keys are filesystem directories. Canonicalizing prevents
-  // path aliases from opening parallel queues for the same wsd.json.
-  const lockKey = foldPath(path.resolve(key));
+  // path aliases from opening parallel queues for the same wsd.json — not
+  // only `.`/`..`/separator spellings, but also a location reached through a
+  // symlink or junction versus its real path (see `canonicalPathKey`).
+  const lockKey = canonicalPathKey(key);
   const prev = chains.get(lockKey) ?? Promise.resolve();
   // Chain off a never-rejecting view of `prev`. `run` carries `task`'s own
   // outcome (handed back to the caller); the swallowed version is what we store

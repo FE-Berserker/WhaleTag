@@ -62,7 +62,11 @@ export function registerFsRootsHandlers(): void {
       for (const prev of lastSyncedRoots) {
         if (next.includes(prev)) continue;
         if (nextFolded.has(foldPath(path.resolve(prev)))) continue;
-        void closeIndexDb(prev).catch(() => undefined);
+        void closeIndexDb(prev).catch((e: unknown) => {
+          // The location is gone from the UI either way, but a handle that
+          // failed to close keeps index.db locked on disk — worth a log line.
+          console.warn('[fs-roots] closing the index of a removed location failed:', prev, e);
+        });
       }
       lastSyncedRoots = [...next];
       setAllowedRoots(next);

@@ -330,6 +330,53 @@ describe('Folder thumbnails (.whale/wst.jpg)', () => {
     }
   });
 
+  it('falls past a corrupt first file instead of failing the whole folder', async () => {
+    const dir = await tmpDir();
+    try {
+      // Garbage with an image extension sorts before the good image.
+      await fsp.writeFile(path.join(dir, 'a-corrupt.jpg'), Buffer.alloc(300, 0x5a));
+      await makePng(path.join(dir, 'b.png'));
+      const { loadFolderThumbnail, folderThumbPathFor } = await import('./thumbnail');
+      const url = await loadFolderThumbnail(dir);
+      assert.ok(
+        url?.startsWith('data:image/jpeg;base64,'),
+        'the folder thumbnail comes from the next file that encodes'
+      );
+      assert.ok(existsSync(folderThumbPathFor(dir)));
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('remembers a folder whose every candidate failed until it is cleared', async (t) => {
+    const dir = await tmpDir();
+    try {
+      await fsp.writeFile(path.join(dir, 'a-corrupt.jpg'), Buffer.alloc(300, 0x5a));
+      const { loadFolderThumbnail, generateFolderThumbnail, clearFolderThumbnail } =
+        await import('./thumbnail');
+      const originalReaddir = fsp.readdir.bind(fsp);
+      let scans = 0;
+      t.mock.method(fsp, 'readdir', async (...args: Parameters<typeof fsp.readdir>) => {
+        if (path.resolve(String(args[0])) === path.resolve(dir)) scans += 1;
+        return (originalReaddir as (...a: Parameters<typeof fsp.readdir>) => unknown)(...args);
+      });
+
+      assert.equal(
+        await loadFolderThumbnail(dir),
+        null,
+        'a folder with nothing encodable yields no thumbnail instead of throwing'
+      );
+      assert.equal(scans, 1);
+      await generateFolderThumbnail(dir);
+      assert.equal(scans, 1, 'inside the TTL the failing candidates are not re-run');
+      await clearFolderThumbnail(dir);
+      await generateFolderThumbnail(dir);
+      assert.equal(scans, 2, 'an explicit clear retries immediately');
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('coalesces same-folder loads into one copy and one read', async (t) => {
     const dir = await tmpDir();
     try {

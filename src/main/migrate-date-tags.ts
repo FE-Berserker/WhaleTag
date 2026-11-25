@@ -41,6 +41,7 @@ import { META_DIR, FOLDER_SIDECAR_FILE, FOLDER_META_FILE, MIGRATION_STATE_FILE }
 import { atomicWriteJson } from './atomic-write';
 import { logInfo } from './log';
 import { withLock } from './dir-lock';
+import { isReadOnlyPath } from './allowed-roots';
 import {
   isAnyDateShapeTag,
   isPeriodTag,
@@ -123,13 +124,16 @@ async function writeMigrationState(
 
 /** Recursively yield every directory under `root` (including root itself). */
 async function* walkDirs(root: string): AsyncIterable<string> {
-  yield root;
   let entries: import('fs').Dirent[];
   try {
     entries = await fsp.readdir(root, { withFileTypes: true });
   } catch {
+    // Unreadable (offline drive, removed folder, no permission): yield
+    // nothing. The caller then sees an unreachable root instead of an empty
+    // one it could "finish" by writing the migration flag under it.
     return;
   }
+  yield root;
   for (const ent of entries) {
     if (!ent.isDirectory()) continue;
     if (ent.name === META_DIR) continue; // skip `.whale/`
@@ -319,8 +323,14 @@ export async function runMigration(
   // Process each location root independently. The flag is per-root, so a
   // user with multiple locations gets backup-once per location.
   for (const root of allowedRoots) {
+    // A read-only location is never written to, not even for the migration
+    // flag: its sidecars keep the old tag spelling until the user makes the
+    // location writable again.
+    if (isReadOnlyPath(root)) continue;
     const flag = await readMigrationState(root);
+    let rootWalked = false;
     for await (const dir of walkDirs(root)) {
+      if (dir === root) rootWalked = true;
       const wsdPath = path.join(dir, META_DIR, FOLDER_SIDECAR_FILE);
       const wsmPath = path.join(dir, META_DIR, FOLDER_META_FILE);
       const [wsd, wsm] = await Promise.all([
@@ -335,6 +345,9 @@ export async function runMigration(
         result.errors.push(...rep.errors);
       }
     }
+    // An unreachable root (offline drive, removed folder) has nothing to
+    // migrate. Do not write its flag: that would re-create the folder.
+    if (!rootWalked) continue;
     // After the first pass over this root, persist the flag so subsequent
     // runs skip the backup. Even an all-skipped pass is fine to mark — the
     // next run will also skip the backup (idempotent).

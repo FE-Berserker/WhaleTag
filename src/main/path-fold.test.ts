@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { promises as fsp } from 'fs';
+import os from 'os';
+import path from 'path';
 import {
+  canonicalPathKey,
   foldPath,
   isCaseInsensitivePlatform,
   isSameOrDescendantPath,
@@ -83,5 +87,59 @@ describe('isSameOrDescendantPath', () => {
       assert.equal(isSameOrDescendantPath('/Data', '/data/sub'), false);
       assert.equal(isSameOrDescendantPath('/Data', '/Data/sub'), true);
     }
+  });
+});
+
+describe('canonicalPathKey', () => {
+  it('gives every spelling of one directory the same key', async (t) => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-canonical-'));
+    try {
+      const dir = path.join(root, 'Mixed', 'Dir');
+      await fsp.mkdir(dir, { recursive: true });
+      const alias = path.join(root, 'alias');
+      try {
+        await fsp.symlink(dir, alias, process.platform === 'win32' ? 'junction' : 'dir');
+      } catch (error) {
+        t.skip(`directory links cannot be created here: ${(error as Error).message}`);
+        return;
+      }
+      const key = canonicalPathKey(dir);
+      assert.equal(key, canonicalPathKey(path.join(dir, 'child', '..')), '`..` alias');
+      assert.equal(
+        key,
+        canonicalPathKey(dir.split(path.sep).join('/')),
+        'separator alias'
+      );
+      assert.equal(key, canonicalPathKey(alias), 'symlink / junction alias');
+      assert.notEqual(key, canonicalPathKey(root), 'different directories keep their own keys');
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keys a not-yet-existing target by its real parent', async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-canonical-'));
+    try {
+      const dir = path.join(root, 'real');
+      await fsp.mkdir(dir);
+      const alias = path.join(root, 'alias');
+      await fsp.symlink(dir, alias, process.platform === 'win32' ? 'junction' : 'dir');
+      const direct = canonicalPathKey(path.join(dir, 'wsd.json'));
+      assert.equal(
+        direct,
+        canonicalPathKey(path.join(alias, 'wsd.json')),
+        'the target does not exist yet, so the parent decides'
+      );
+      await fsp.writeFile(path.join(dir, 'wsd.json'), '{}');
+      assert.equal(direct, canonicalPathKey(path.join(alias, 'wsd.json')), 'unchanged once it exists');
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('never throws and stays absolute for anything it cannot resolve', () => {
+    const nowhere = path.join(os.tmpdir(), 'whale-nowhere', 'x', 'y.json');
+    assert.equal(canonicalPathKey(nowhere), foldPath(path.resolve(nowhere)));
+    assert.ok(path.isAbsolute(canonicalPathKey('relative/entry.txt')));
   });
 });

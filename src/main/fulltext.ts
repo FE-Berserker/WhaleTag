@@ -1,8 +1,9 @@
 import path from 'path';
-import { promises as fsp, createReadStream } from 'fs';
+import { promises as fsp } from 'fs';
 import { pathToFileURL } from 'url';
 import { createRequire } from 'module';
 import { META_DIR } from '../shared/whale-meta';
+import { decodeTextBuffer } from './text-decode';
 import { MAX_PDF_BYTES } from './fulltext-limits';
 import type { FulltextHit } from '../shared/ipc-types';
 import {
@@ -122,34 +123,35 @@ function stripHtml(html: string): string {
 }
 
 /**
- * Reads at most `cap` bytes from the start of a file as UTF-8.
+ * Reads at most `cap` bytes from the start of a file and decodes them with
+ * the app-wide text policy (`decodeTextBuffer`) — the SAME decoder the viewer
+ * uses, so a GBK / Shift-JIS / CP1252 document is indexed exactly as it is
+ * displayed instead of turning into U+FFFD and never matching a search.
  * `ok: false` means the read itself failed (missing / permission / IO) — the
  * caller must not confuse that with an empty file, because an empty text means
  * "nothing to index" while a failed read means "we learned nothing".
  */
-function readCappedText(
+async function readCappedText(
   fullPath: string,
   cap: number
 ): Promise<{ ok: boolean; text: string }> {
-  return new Promise((resolve) => {
-    let data = '';
-    let settled = false;
-    const finish = (ok: boolean) => {
-      if (settled) return;
-      settled = true;
-      resolve({ ok, text: ok ? data : '' });
-    };
-    const stream = createReadStream(fullPath, {
-      start: 0,
-      end: cap - 1,
-      encoding: 'utf8',
-    });
-    stream.on('data', (chunk) => {
-      data += chunk;
-    });
-    stream.on('end', () => finish(true));
-    stream.on('error', () => finish(false));
-  });
+  let handle: fsp.FileHandle | undefined;
+  try {
+    handle = await fsp.open(fullPath, 'r');
+    // cap ≤ MAX_FULLTEXT_BYTES (2 MiB), so a single allocation is fine.
+    const buf = Buffer.allocUnsafe(cap);
+    const { bytesRead } = await handle.read(buf, 0, cap, 0);
+    let text = decodeTextBuffer(bytesRead === cap ? buf : buf.subarray(0, bytesRead));
+    // A truncated read can split a multi-byte character; drop the replacement
+    // character it leaves at the tail so it never ends up in the index.
+    if (bytesRead === cap && text.endsWith('\uFFFD')) text = text.slice(0, -1);
+    return { ok: true, text };
+  } catch {
+    return { ok: false, text: '' };
+  } finally {
+    // close() errors are irrelevant once the read has succeeded or failed.
+    await handle?.close().catch(() => undefined);
+  }
 }
 
 /**

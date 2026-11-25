@@ -134,6 +134,91 @@ describe('fs-write concurrent copies/moves to one destination', () => {
   });
 });
 
+/**
+ * `fs.cp` walks its own output when a folder is copied into its subtree, and
+ * the cross-device move fallback removes the source it is copying from. The
+ * renderer refuses such targets, but the MCP tools build the destination from
+ * agent-supplied paths — the main process must refuse on its own.
+ */
+describe('fs-write — a folder is never moved or copied into itself', () => {
+  it('refuses to copy a folder into its own subtree and leaves the tree as it was', async () => {
+    const scratch = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-fs-write-'));
+    const root = await fsp.realpath(scratch);
+    setAllowedRoots([root]);
+    try {
+      const folder = path.join(root, 'photos');
+      await fsp.mkdir(path.join(folder, 'sub'), { recursive: true });
+      await fsp.writeFile(path.join(folder, 'sub', 'a.txt'), 'A', 'utf8');
+
+      await assert.rejects(
+        copyEntry(folder, path.join(folder, 'sub', 'photos')),
+        /cannot be moved or copied into itself/
+      );
+      // One level, or deeper: both are refused before anything is created.
+      await assert.rejects(
+        copyEntry(folder, path.join(folder, 'sub', 'x', 'y', 'photos')),
+        /cannot be moved or copied into itself/
+      );
+      assert.deepEqual((await fsp.readdir(path.join(folder, 'sub'))).sort(), ['a.txt']);
+    } finally {
+      setAllowedRoots([]);
+      await fsp.rm(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to move a folder into its own subtree and keeps it where it was', async () => {
+    const scratch = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-fs-write-'));
+    const root = await fsp.realpath(scratch);
+    setAllowedRoots([root]);
+    try {
+      const folder = path.join(root, 'docs');
+      await fsp.mkdir(path.join(folder, 'nested'), { recursive: true });
+      await fsp.writeFile(path.join(folder, 'nested', 'n.md'), '# n', 'utf8');
+
+      await assert.rejects(
+        moveEntry(folder, path.join(folder, 'nested', 'docs')),
+        /cannot be moved or copied into itself/
+      );
+      assert.equal(
+        await fsp.readFile(path.join(folder, 'nested', 'n.md'), 'utf8'),
+        '# n'
+      );
+      assert.deepEqual(await fsp.readdir(path.join(folder, 'nested')), ['n.md']);
+    } finally {
+      setAllowedRoots([]);
+      await fsp.rm(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it('does not get in the way of an ordinary move or copy next to the source', async () => {
+    const scratch = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-fs-write-'));
+    const root = await fsp.realpath(scratch);
+    setAllowedRoots([root]);
+    try {
+      const folder = path.join(root, 'photos');
+      const target = path.join(root, 'target');
+      await fsp.mkdir(folder);
+      await fsp.mkdir(target);
+      await fsp.writeFile(path.join(folder, 'a.txt'), 'A', 'utf8');
+
+      // Into a sibling folder, and with a similar name beside the source:
+      // neither is inside the source, both must go through.
+      await copyEntry(folder, path.join(target, 'photos'));
+      await moveEntry(path.join(target, 'photos'), path.join(root, 'photos-backup'));
+      assert.equal(await fsp.readFile(path.join(root, 'photos-backup', 'a.txt'), 'utf8'), 'A');
+      // A file has no subtree: the guard never applies to it.
+      await moveEntry(
+        path.join(root, 'photos-backup', 'a.txt'),
+        path.join(folder, 'renamed.txt')
+      );
+      assert.equal(await fsp.readFile(path.join(folder, 'renamed.txt'), 'utf8'), 'A');
+    } finally {
+      setAllowedRoots([]);
+      await fsp.rm(scratch, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('fs-write commonParentDir', () => {
   const base = path.resolve(os.tmpdir(), 'whale-zip-plan');
 
@@ -269,6 +354,33 @@ describe('fs-write bounded OS zip processes', () => {
       assert.notEqual(staging, archive);
       assert.equal(existsSync(staging), false);
       assert.equal(existsSync(archive), true);
+    } finally {
+      await fsp.rm(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it('never hands the zip CLI a source that reads as an option', async () => {
+    const scratch = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-os-zip-'));
+    try {
+      // A folder literally called `-r` would otherwise reach `zip` as a switch.
+      const sources = [
+        path.join(scratch, '-r', 'a.txt'),
+        path.join(scratch, 'b', 'c.txt'),
+      ];
+      const calls: Array<{ file: string; args: string[] }> = [];
+      const runner: OsZipRunner = async (file, args) => {
+        calls.push({ file, args });
+        await fsp.writeFile(invocationArchive(file, args), 'PK\u0003\u0004');
+      };
+
+      assert.equal(
+        await runOsZip(sources, path.join(scratch, 'out.zip'), runner, 'linux'),
+        path.join(scratch, 'out.zip')
+      );
+      assert.deepEqual(calls[0].args.slice(3), [
+        `./${path.join('-r', 'a.txt')}`,
+        path.join('b', 'c.txt'),
+      ]);
     } finally {
       await fsp.rm(scratch, { recursive: true, force: true });
     }

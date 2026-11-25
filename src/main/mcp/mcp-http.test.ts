@@ -603,6 +603,8 @@ describe('mcp tool surface (approval allow path)', () => {
   const deliveredLocations: McpAddLocationRequest[] = [];
   const heldLocationRequests: McpAddLocationRequest[] = [];
   let holdLocationDeliveries = false;
+  /** Every request as the approval dialog receives it (summary/details). */
+  const shownApprovals: Array<{ tool: string; summary: string; details: string[] }> = [];
 
   function textOf(res: unknown): string {
     const content = (res as { content?: unknown }).content;
@@ -635,6 +637,7 @@ describe('mcp tool surface (approval allow path)', () => {
     approval.bindApprovalTransport({
       broadcast: (req) => {
         if (req.tool === 'whale_add_location') locationApprovalCount += 1;
+        shownApprovals.push({ tool: req.tool, summary: req.summary, details: [...req.details] });
         queueMicrotask(() => approval.resolveApproval(req.reqId, true));
       },
       hasWindows: () => true,
@@ -995,6 +998,38 @@ describe('mcp tool surface (approval allow path)', () => {
     });
     assert.notEqual(res.isError, true);
     assert.equal(fs.statSync(target).isDirectory(), true);
+    await client.close();
+  });
+
+  it('shows the approval dialog text without control or bidi-override characters', async () => {
+    const { client } = await connectClient();
+    shownApprovals.length = 0;
+    // What the dialog shows is what the user approves. A client-supplied name
+    // must not be able to reorder or truncate that text.
+    const target = path.join(ROOT, 'in\u0001voice\u202Egpj.exe');
+    await client.callTool({
+      name: 'whale_create_folder',
+      arguments: { path: target },
+    });
+    assert.equal(shownApprovals.length, 1);
+    assert.equal(shownApprovals[0].tool, 'whale_create_folder');
+    const shown = [shownApprovals[0].summary, ...shownApprovals[0].details].join(' | ');
+    // eslint-disable-next-line no-control-regex -- the pattern is the point: no control character may survive
+    assert.ok(!/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(shown), shown);
+    assert.ok(shown.includes('in\uFFFDvoice\uFFFDgpj.exe'), 'unsafe characters become visible placeholders');
+    shownApprovals.length = 0;
+    await client.callTool({
+      name: 'whale_create_text_file',
+      arguments: { path: path.join(ROOT, 'approve-report.md'), content: '# Report\n\nFirst lines.\n'.repeat(20) },
+    });
+    assert.equal(shownApprovals.length, 1);
+    assert.match(shownApprovals[0].details[1], /^Starts with: # Report First lines\. .*…$/);
+    shownApprovals.length = 0;
+    await client.callTool({
+      name: 'whale_create_text_file',
+      arguments: { path: path.join(ROOT, 'approve-empty.md'), content: '' },
+    });
+    assert.deepEqual(shownApprovals[0].details, [path.join(ROOT, 'approve-empty.md'), 'The file is empty']);
     await client.close();
   });
 

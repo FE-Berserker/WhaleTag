@@ -3,7 +3,7 @@ import { promises as fsp } from 'fs';
 import { ipcMain } from 'electron';
 import { DirEntry } from '../../shared/ipc-types';
 import { mapWithConcurrency } from '../concurrency';
-import { getChardet, getIconv } from '../lazy-native';
+import { decodeTextBuffer } from '../text-decode';
 import { loadRecursiveScan } from '../recursive-cache';
 import { assertWithinAllowedRoot } from '../allowed-roots';
 
@@ -122,64 +122,13 @@ async function listDirectoryRecursive(
   return all;
 }
 
-/** Reads a text file and returns it as UTF-8, auto-detecting non-UTF-8 encodings. */
+/**
+ * Reads a text file and returns it as UTF-8, auto-detecting non-UTF-8 encodings.
+ * Shares `decodeTextBuffer` with the full-text indexer so a document is decoded
+ * the same way for display and for search (`src/main/text-decode.ts`).
+ */
 export async function readTextFile(filePath: string): Promise<string> {
-  const buf = await fsp.readFile(filePath);
-
-  // UTF-8 BOM: strip the marker and decode the remainder as UTF-8.
-  if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
-    return buf.toString('utf8', 3);
-  }
-
-  const utf8 = buf.toString('utf8');
-  // chardet only needs a small byte sample to identify an encoding; running
-  // it over a multi-MB buffer is wasted main-thread CPU. subarray is a
-  // zero-copy view, so this is cheap.
-  const CHARDET_SAMPLE = 256 * 1024;
-  const detected = getChardet().detect(
-    buf.length > CHARDET_SAMPLE ? buf.subarray(0, CHARDET_SAMPLE) : buf
-  );
-  const encoding = detected?.encoding?.toLowerCase() ?? 'utf8';
-  const confidence = detected?.confidence ?? 0;
-
-  // High-confidence UTF-8 / ASCII -> decode as UTF-8.
-  if ((encoding === 'utf-8' || encoding === 'ascii') && confidence >= 0.8) {
-    return utf8;
-  }
-
-  // Very low confidence usually means the sample is too short or ambiguous;
-  // modern files are overwhelmingly UTF-8, so prefer that default.
-  if (confidence < 0.3) {
-    return utf8;
-  }
-
-  // Decode with the detected encoding. jschardet may report ASCII for files
-  // that are mostly ASCII with a few non-UTF-8 bytes (common for older Chinese
-  // Windows text), so keep the detected name as the iconv target unless it is
-  // clearly a UTF-8 alias.
-  const target = encoding === 'utf-8' || encoding === 'ascii' ? 'utf8' : encoding;
-  const decoded = getIconv().decode(buf, target);
-
-  // A legacy-encoded file may contain a handful of invalid bytes (e.g. a
-  // corrupted download or mixed-encoding ebook). Forcing UTF-8 in that case
-  // produces *millions* of replacement characters, so we pick whichever
-  // decoding yields fewer replacements.
-  // Count U+FFFD WITHOUT `s.match(/\uFFFD/g)` — that builds a giant array
-  // (millions of entries) when a legacy/mixed-encoding file has many invalid
-  // bytes. indexOf walks the string with no allocation.
-  const countReplacements = (s: string): number => {
-    let count = 0;
-    let idx = s.indexOf('\uFFFD');
-    while (idx !== -1) {
-      count++;
-      idx = s.indexOf('\uFFFD', idx + 1);
-    }
-    return count;
-  };
-  const utf8Bad = countReplacements(utf8);
-  const decodedBad = countReplacements(decoded);
-
-  return decodedBad <= utf8Bad ? decoded : utf8;
+  return decodeTextBuffer(await fsp.readFile(filePath));
 }
 
 export function registerFsReadHandlers(): void {

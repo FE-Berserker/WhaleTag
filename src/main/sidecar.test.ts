@@ -419,6 +419,31 @@ describe('readSidecar lat/lng migration concurrency', () => {
       await fsp.rm(dir, { recursive: true, force: true });
     }
   });
+
+  it('migrates legacy lat/lng in memory only inside a read-only location', async () => {
+    const dir = await tmpDir();
+    try {
+      const target = wsd(dir);
+      await fsp.mkdir(path.dirname(target), { recursive: true });
+      const bytes = JSON.stringify({
+        version: SIDECAR_VERSION,
+        files: { 'a.txt': { lat: 1, lng: 2 } },
+      });
+      await fsp.writeFile(target, bytes, 'utf8');
+      setReadOnlyRoots([dir]);
+
+      const map = await readSidecars(dir, ['a.txt']);
+      assert.deepEqual(map['a.txt']?.tags, ['geo:1.000000,2.000000']);
+      assert.equal(
+        await fsp.readFile(target, 'utf8'),
+        bytes,
+        'a read must not rewrite the sidecar of a read-only location'
+      );
+    } finally {
+      setReadOnlyRoots([]);
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('readSidecardsForPaths (H.24 R7: cross-dir batch read)', () => {

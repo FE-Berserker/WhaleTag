@@ -15,6 +15,7 @@ import {
   assertWritable,
   assertWithinAllowedRoot,
 } from '../allowed-roots';
+import { foldPath, isSameOrDescendantPath } from '../path-fold';
 import { PYTHON_ZIP_SCRIPT, pythonZipPairs } from '../desktop-linux';
 
 /**
@@ -274,10 +275,17 @@ export async function runOsZip(
       // `zip -r` from the shared parent so entries are stored by relative name
       // (extract back to the same folder layout, not loose/absolute paths).
       const cwd = commonParentDir(sources);
+      // A relative name that starts with "-" would be parsed by `zip` as a
+      // switch (a folder literally called `-r` or `--exclude`); `./` names
+      // the same target and can never read as an option.
+      const entries = sources.map((s) => {
+        const rel = path.relative(cwd, s);
+        return rel.startsWith('-') ? `./${rel}` : rel;
+      });
       try {
         await runner(
           'zip',
-          ['-r', '-q', staging, ...sources.map((s) => path.relative(cwd, s))],
+          ['-r', '-q', staging, ...entries],
           { ...options, cwd }
         );
       } catch (error) {
@@ -364,6 +372,24 @@ export function zipEntries(paths: string[], zipPath: string): Promise<string> {
 }
 
 /**
+ * A tree is never moved or copied into its own subtree. `fs.cp` would walk its
+ * own output until paths overflow, and the cross-device move fallback would
+ * delete the very source it is still copying from. The renderer refuses such
+ * targets before asking (`moveValidationError`); the check lives here too
+ * because the MCP tools build the destination from agent-supplied paths.
+ *
+ * A destination that names the source itself (`a` -> `A` on Windows) is left
+ * to the existing-destination check, whose message says what is wrong.
+ */
+function assertNotOwnSubtree(sourcePath: string, destPath: string): void {
+  const sameEntry =
+    foldPath(path.resolve(sourcePath)) === foldPath(path.resolve(destPath));
+  if (!sameEntry && isSameOrDescendantPath(sourcePath, destPath)) {
+    throw new Error(`A folder cannot be moved or copied into itself: ${destPath}`);
+  }
+}
+
+/**
  * Rename (same-directory rename OR move) - shared by the `fs:rename` IPC and
  * the MCP tools. Never overwrites an existing destination; moves the sidecar
  * + thumbnail along best-effort.
@@ -371,6 +397,7 @@ export function zipEntries(paths: string[], zipPath: string): Promise<string> {
 export async function renameEntry(oldPath: string, newPath: string): Promise<void> {
   assertWithinAllowedRoot(oldPath);
   assertWithinAllowedRoot(newPath);
+  assertNotOwnSubtree(oldPath, newPath);
   assertNotLocationRoot(oldPath);
   // Renaming a file inside a read-only location rewrites that location's
   // contents just as much as deleting would — refuse both ends.
@@ -418,6 +445,7 @@ export async function moveEntry(oldPath: string, newPath: string): Promise<void>
   // A move INTO a root would replace the root path itself (the existence check
   // catches it today, but the intent is the same whole-workspace action).
   assertNotLocationRoot(newPath);
+  assertNotOwnSubtree(oldPath, newPath);
   // Moving is a write on both sides — see renameEntry.
   assertWritable(oldPath);
   assertWritable(newPath);
@@ -472,6 +500,7 @@ export async function copyEntry(sourcePath: string, destPath: string): Promise<v
   // `.whale/` metadata) as a sibling; copying ONTO one would replace it.
   assertNotLocationRoot(sourcePath);
   assertNotLocationRoot(destPath);
+  assertNotOwnSubtree(sourcePath, destPath);
   // Copying FROM a read-only location is fine (it is a read); writing the
   // copy INTO one is not.
   assertWritable(destPath);

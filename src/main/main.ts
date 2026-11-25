@@ -43,7 +43,10 @@ import {
   subscribe as subscribeAutoUpdate,
 } from './auto-update';
 import { buildMenu } from './menu';
-import { assertWithinAllowedRoot } from './allowed-roots';
+import {
+  assertLexicallyWithinAllowedRoot,
+  assertWithinAllowedRoot,
+} from './allowed-roots';
 import { initKnownRoots } from './known-roots';
 import { getWhaleAppVersion } from './app-version';
 import { logInfo } from './log';
@@ -781,8 +784,11 @@ function finishMainWindowClose(): void {
  * bytes from their bundled assets fetch them through the host instead — see
  * the `ext:getHeicWasm` IPC bridge (the extension requests
  * the bytes over postMessage, the main process reads them via `fsp` and
- * returns an ArrayBuffer). Excalidraw's handwritten-font / locale fetches
- * therefore still degrade to system fonts (known limitation, §七).
+ * returns an ArrayBuffer). Canvas text does NOT depend on `fetch()`: Excalidraw
+ * loads its bundled handwritten fonts through `FontFace` + `url()`, which works
+ * on this scheme (verified in the packaged build, 2026-11-25). The one code path
+ * there that fetches fonts with `fetch()` is the font inlining of SVG export,
+ * so that path gets no font bytes on this scheme (known limitation, §七).
  */
 protocol.registerSchemesAsPrivileged([
   {
@@ -1033,11 +1039,17 @@ function registerWhaleFileProtocol(): void {
       if (!filePath) {
         return new Response('Malformed whale-file URL', { status: 400 });
       }
-      // Stat asynchronously BEFORE the allowed-roots guard: for an unreachable
-      // SMB share or a stuck device node, a synchronous stat/realpath here
-      // would freeze the main thread (and with it every window) for seconds per
-      // <img> request. The guard's own realpath then runs on a path we just
-      // proved reachable.
+      // Lexical allowed-roots gate FIRST, before any filesystem access: the
+      // renderer CSP lets <img src="whale-file://…"> reach this handler with
+      // any path, and `stat` on a UNC path makes the main process open an SMB
+      // session (Windows auto-authenticates → credential-hash disclosure).
+      // This stage only normalises the string — no syscall (docs/13).
+      assertLexicallyWithinAllowedRoot(filePath);
+      // Stat asynchronously BEFORE the realpath stage of the guard: for an
+      // unreachable SMB share or a stuck device node, a synchronous
+      // stat/realpath here would freeze the main thread (and with it every
+      // window) for seconds per <img> request. The guard's own realpath then
+      // runs on a path we just proved reachable.
       const stat = await fsp.stat(filePath);
       if (!stat.isFile()) {
         return new Response('Not a regular file', { status: 404 });

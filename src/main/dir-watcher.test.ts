@@ -220,6 +220,49 @@ describe('dir-watcher (real fs.watch on temp dir)', () => {
   });
 
 
+  it('a change arriving during the rebuild backoff does not cut it short', async () => {
+    let builds = 0;
+    requestOverride = async (op: string) => {
+      if (op === 'index:status') return { count: 5, ready: true, exists: true };
+      if (op === 'index:build') {
+        builds += 1;
+        throw new Error('index worker unavailable');
+      }
+      return undefined;
+    };
+    // First backoff = 12 s, far longer than the 1.5 s plain debounce.
+    _setRetryBaseDelayForTest(6_000);
+    try {
+      syncWatchedRoots([root]); // no-op unless this test runs alone
+      await fsp.writeFile(path.join(root, 'backoff.txt'), 'x');
+      const deadline = Date.now() + 12_000;
+      while (builds < 1 && Date.now() < deadline) await sleep(100);
+      assert.equal(builds, 1, 'the first attempt ran and failed');
+      const failedAt = Date.now();
+
+      // New churn 2.5 s into the 12 s backoff window.
+      await sleep(2_500);
+      await fsp.writeFile(path.join(root, 'backoff-2.txt'), 'x');
+      // The flush used to re-arm the rebuild at the plain debounce, so the
+      // second attempt landed ~2 s after this event.
+      await sleep(6_000);
+      assert.ok(Date.now() - failedAt < 12_000, 'still inside the backoff window');
+      assert.equal(
+        builds,
+        1,
+        `the backoff was cut short (builds=${builds}); attempts must stay 12 s apart`
+      );
+    } finally {
+      requestOverride = null;
+      _setRetryBaseDelayForTest(1_500);
+      // Drop the still-armed 12 s retry before the next test counts builds.
+      closeAllWatchers();
+      syncWatchedRoots([root]);
+      await fsp.rm(path.join(root, 'backoff.txt'), { force: true });
+      await fsp.rm(path.join(root, 'backoff-2.txt'), { force: true });
+    }
+  });
+
   it('fulltext root: change inside triggers fulltext:build, outside does not, has=false skips', async () => {
     const fp = path.join(root, 'ftsub');
     await fsp.mkdir(fp, { recursive: true });

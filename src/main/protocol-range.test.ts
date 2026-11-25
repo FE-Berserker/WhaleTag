@@ -14,11 +14,10 @@ const enc = new TextEncoder();
 const bytes = enc.encode('0123456789ABCDEFGHIJ'); // 20 bytes
 
 /**
- * `parseRange` was a private, untested function in main.ts before the
- * whale-audio work factored it into protocol-range.ts. It's the core of the
- * Range/206 serving shared by `whale-file://` and `whale-audio://`'s cache-hit
- * branch — a bug here breaks seeking for every media file. These tests pin the
- * accepted forms and the explicit rejections.
+ * `parseRange` was a private, untested function in main.ts until it was
+ * factored into protocol-range.ts. It's the core of the Range/206 serving of
+ * the `whale-file://` handler — a bug here breaks seeking for every media
+ * file. These tests pin the accepted forms and the explicit rejections.
  */
 describe('parseRange', () => {
   it('parses bytes=START-END', () => {
@@ -52,10 +51,9 @@ describe('parseRange', () => {
 });
 
 /**
- * `createFileRangeResponse` is the shared file-serving path for whale-file and
- * whale-audio (cache-hit). Smoke-test that the refactor didn't change the
- * 200 / 206 + Content-Range + byte-slice behavior that `<video>` / `<audio>`
- * rely on.
+ * `createFileRangeResponse` is the file-serving path of the `whale-file://`
+ * handler. Smoke-test the 200 / 206 + Content-Range + byte-slice behavior that
+ * `<video>` / `<audio>` / `<img>` rely on.
  */
 describe('createFileRangeResponse', () => {
   let dir: string;

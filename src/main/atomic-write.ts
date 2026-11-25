@@ -1,6 +1,6 @@
 import path from 'path';
-import { promises as fsp, realpathSync } from 'fs';
-import { foldPath } from './path-fold';
+import { promises as fsp } from 'fs';
+import { canonicalPathKey } from './path-fold';
 
 /**
  * Monotonic counter making each temp filename unique within this process. Two
@@ -30,25 +30,10 @@ const sweptTargets = new Set<string>();
 /** Serialize writes per canonical target; unrelated targets still run in parallel. */
 const pendingWrites = new Map<string, Promise<void>>();
 
-/** Normalize aliases (`.`, mixed separators, Windows/macOS case) to one key. */
-function targetKey(filePath: string): string {
-  const resolved = path.resolve(filePath);
-  try {
-    // Symlinked aliases of one file must share a queue, or two concurrent
-    // renames land on the same inode outside the serialization and Windows
-    // reports EPERM (POSIX silently loses one write).
-    return foldPath(realpathSync(resolved));
-  } catch {
-    // The target usually does not exist yet on its first write. Canonicalize
-    // the parent directory instead: `D:\link\wsd.json` and `D:\real\wsd.json`
-    // then still map to one key when `link` is a symlink to `real`.
-    try {
-      return foldPath(path.join(realpathSync(path.dirname(resolved)), path.basename(resolved)));
-    } catch {
-      return foldPath(resolved);
-    }
-  }
-}
+/**
+ * `pendingWrites` / `sweptTargets` are keyed by {@link canonicalPathKey}: one
+ * key per target regardless of `.`/separator/case spelling or symlink alias.
+ */
 
 /**
  * Removes stale temp files left by previous crashed writes of the same target.
@@ -56,7 +41,7 @@ function targetKey(filePath: string): string {
  * an earlier crash rather than another in-flight write in this process.
  */
 async function removeStaleTempsFor(filePath: string): Promise<void> {
-  const key = targetKey(filePath);
+  const key = canonicalPathKey(filePath);
   if (sweptTargets.has(key)) return;
   const dir = path.dirname(filePath);
   const base = path.basename(filePath);
@@ -142,7 +127,7 @@ async function atomicWrite(
   write: (fd: fsp.FileHandle) => Promise<void>,
   options: AtomicWriteOptions = {}
 ): Promise<void> {
-  const key = targetKey(filePath);
+  const key = canonicalPathKey(filePath);
   const previous = pendingWrites.get(key) ?? Promise.resolve();
   const run = previous
     .catch(() => undefined)

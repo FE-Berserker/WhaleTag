@@ -232,14 +232,52 @@ describe('shell:revealAndSelect handler', () => {
     // record is invalidated by clearing the require.cache below.
     clearInjectedMocks();
     rig = await buildRig();
+    // Reveal is a UX gesture (no realpath stage) but still takes the lexical
+    // allowed-roots gate: the fixture paths below must be inside a location.
+    setAllowedRoots(['C:\\Users\\foo', '/Users/foo', '/home/foo']);
   });
 
   afterEach(() => {
     setPlatform(originalPlatform);
+    setAllowedRoots([]);
     clearInjectedMocks();
     // Also wipe the ipc modules themselves from the cache so the next test
     // re-runs their top-level imports against fresh stubs.
     clearIpcModuleCache();
+  });
+
+  it('refuses a path outside every location before touching the OS or the filesystem', async () => {
+    // `stat` / `openPath` / `showItemInFolder` on an attacker-supplied UNC
+    // path would make the main process open an SMB session (Windows
+    // auto-authenticates → credential-hash disclosure). The lexical gate
+    // refuses before any of that — no execFile, no shell call.
+    setPlatform('win32');
+    rig.registerIpcHandlers();
+
+    for (const [channel, target] of [
+      ['shell:revealPath', '\\\\attacker.example\\s\\x'],
+      ['shell:revealPath', 'C:\\Users\\stranger\\file.txt'],
+      ['shell:revealAndSelect', '\\\\attacker.example\\s\\x'],
+    ] as const) {
+      await assert.rejects(
+        async () => {
+          await rig.ipcHandlers.get(channel)!({}, target);
+        },
+        /Refused: path is outside any configured location/,
+        `${channel} must refuse ${target}`
+      );
+    }
+    assert.equal(rig.showItemInFolderCalls.length, 0);
+    assert.equal(rig.execFileCalls.length, 0);
+
+    // Fail closed with no locations, like every other guarded channel.
+    setAllowedRoots([]);
+    await assert.rejects(
+      async () => {
+        await rig.ipcHandlers.get('shell:revealPath')!({}, 'C:\\Users\\foo\\bar.md');
+      },
+      /Refused: no configured locations/
+    );
   });
 
   it('Windows: routes through shell.showItemInFolder (no execFile)', async () => {

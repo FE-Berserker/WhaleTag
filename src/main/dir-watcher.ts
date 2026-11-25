@@ -222,11 +222,23 @@ function scheduleReindex(
   delayMs: number = REINDEX_DEBOUNCE_MS
 ): void {
   if (w.stopped) return;
+  if (w.reindexFailures > 0 && w.reindexTimer) {
+    // A rebuild is failing and its retry is already armed: new churn must
+    // neither cut the backoff short (the flush used to re-arm it at the plain
+    // debounce, so under continuous churn a failing worker was retried every
+    // 1.5 s instead of backing off) nor be dropped — the armed retry covers
+    // it, because every attempt rebuilds the whole incremental change set.
+    return;
+  }
+  const delay =
+    w.reindexFailures > 0
+      ? Math.max(delayMs, retryDelay(w.reindexFailures))
+      : delayMs;
   if (w.reindexTimer) clearTimeout(w.reindexTimer);
   w.reindexTimer = setTimeout(() => {
     w.reindexTimer = null;
     void reindexIfBuilt(rootPath, w);
-  }, delayMs);
+  }, delay);
   w.reindexTimer.unref?.();
 }
 

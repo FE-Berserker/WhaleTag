@@ -233,6 +233,12 @@ async function migrateLatLngInPlace(
     if (c) changed = true;
   }
   if (!changed) return files;
+  // A read-only location must not be modified by a READ (same rule as
+  // migrateLegacySidecars below): hand back the migrated map in memory only.
+  // Persisting here used to throw on truly read-only media, and because that
+  // error carried no sidecar issue the whole directory's tags looked lost.
+  // The legacy fields are re-migrated on every load, cheaply.
+  if (isReadOnlyPath(dirPath)) return next;
   // Pre-lock migrated snapshot: the answer of last resort if wsd.json
   // disappears before the locked re-read (see below).
   const snapshot = next;

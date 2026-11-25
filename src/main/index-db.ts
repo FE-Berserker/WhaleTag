@@ -455,7 +455,10 @@ function advancedQueryWithDb(db: DB, q: SearchQuery): IndexEntry[] {
       where.push('rowid IN (SELECT rowid FROM files_fts WHERE files_fts MATCH ?)');
       params.push(ftsPhrase(text));
     } else {
-      where.push('name LIKE ? ESCAPE "\\"');
+      // ESCAPE must be a single-quoted SQL string literal: better-sqlite3 is
+      // built with SQLITE_DQS=0, so the former `ESCAPE "\"` was parsed as an
+      // identifier ("no such column") and every 1–2 char advanced search threw.
+      where.push(`name LIKE ? ESCAPE '\\'`);
       params.push(`%${escapeLike(text)}%`);
     }
   }
@@ -622,26 +625,131 @@ export async function deleteFulltextPaths(
 }
 
 /**
+ * Scripts that FTS5's default `unicode61` tokenizer cannot split into words:
+ * Han (CJK), kana, Hangul. `unicode61` treats a contiguous run of such
+ * characters as ONE token, so the run `用于验证全文检索` is a single token and a
+ * phrase query for `全文检索` can never match it.
+ */
+const CJK_RE =
+  /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f\uac00-\ud7af]/;
+
+/** Characters either side of the match in a content snippet. */
+const SNIPPET_RADIUS = 60;
+const FULLTEXT_LIMIT = 100;
+
+/**
+ * Index of the first occurrence of `term` in `content`, case-insensitively for
+ * the letters SQLite's `LIKE` folds (ASCII). Returns -1 when a case-folded
+ * hit cannot be located on the ORIGINAL string (a few letters change length
+ * when lower-cased) — the caller then just omits the highlight.
+ */
+function findLikeMatch(content: string, term: string): number {
+  const exact = content.indexOf(term);
+  if (exact !== -1) return exact;
+  const folded = content.toLowerCase();
+  const needle = term.toLowerCase();
+  const idx = folded.indexOf(needle);
+  // Guard against offset drift when lower-casing changed the string length.
+  if (idx !== -1 && content.slice(idx, idx + term.length).toLowerCase() === needle) {
+    return idx;
+  }
+  return -1;
+}
+
+/**
+ * Builds the `<mark>`-wrapped excerpt for a `LIKE` hit. FTS5's `snippet()`
+ * only works for `MATCH` queries, so substring hits from the CJK fallback get
+ * the same markup built here (the renderer highlights both the same way).
+ */
+function makeLikeSnippet(content: string, term: string): string {
+  const idx = findLikeMatch(content, term);
+  const start = idx === -1 ? 0 : Math.max(0, idx - SNIPPET_RADIUS);
+  const end =
+    idx === -1
+      ? Math.min(content.length, SNIPPET_RADIUS)
+      : Math.min(content.length, idx + term.length + SNIPPET_RADIUS);
+  const body =
+    idx === -1
+      ? content.slice(start, end)
+      : `${content.slice(start, idx)}<mark>${content.slice(
+          idx,
+          idx + term.length
+        )}</mark>${content.slice(idx + term.length, end)}`;
+  return `${start > 0 ? '…' : ''}${body.replace(/\s+/g, ' ')}${
+    end < content.length ? '…' : ''
+  }`;
+}
+
+/**
  * Full-text search: returns hits with a snippet excerpt. Hit paths are absolute
  * (root + the stored relative path).
+ *
+ * Two matchers, picked by the query:
+ *  - default: FTS5 `MATCH` phrase over `unicode61` tokens (word / whole-run
+ *    match, ranked). Queries shorter than 3 characters are refused — they
+ *    would hit nearly every document.
+ *  - CJK fallback: a query that contains Han / kana / Hangul characters
+ *    cannot be answered by `unicode61` tokens (see `CJK_RE`), so it is run as
+ *    a case-insensitive `LIKE` substring scan over the stored content,
+ *    ordered by where the match first appears. A 2-character CJK query is
+ *    accepted here because two characters are a whole word in Chinese
+ *    (文件 / 设计), and the filename search already allows them via `LIKE`.
+ *    The scan costs ≈1 ms per MB of indexed text in the index worker, so it
+ *    stays off the UI thread; a trigram `fulltext_fts` would make it
+ *    index-backed but needs a one-time rebuild of every existing index and
+ *    still cannot answer 2-character queries (docs/04 已知取舍).
  */
 export function queryFulltext(rootPath: string, q: string): FulltextHit[] {
   const term = q.trim();
-  if (term.length < 3) return []; // trigram needs >= 3 chars
+  const cjk = CJK_RE.test(term);
+  if (term.length < 3 && !(cjk && term.length >= 2)) return [];
   const db = getDb(rootPath);
-  const rows = prepareCached(
-    db,
-    `SELECT path, name,
-         snippet(fulltext_fts, 3, '<mark>', '</mark>', '…', 12) AS snippet
+
+  const hits = new Map<string, FulltextHit>();
+  const add = (r: { path: string; name: string; snippet: string }): void => {
+    if (!hits.has(r.path)) {
+      hits.set(r.path, {
+        path: path.join(rootPath, ...r.path.split('/')),
+        name: r.name,
+        snippet: r.snippet,
+      });
+    }
+  };
+
+  // Word match (ranked). Its hits are a subset of the substring scan for CJK
+  // queries except for Latin diacritic folding, so both are merged.
+  if (term.length >= 3) {
+    const ranked = prepareCached(
+      db,
+      `SELECT path, name,
+          snippet(fulltext_fts, 3, '<mark>', '</mark>', '…', 12) AS snippet
        FROM fulltext_fts WHERE fulltext_fts MATCH ?
-       ORDER BY rank LIMIT 100`
-  ).all(ftsPhrase(term)) as { path: string; name: string; snippet: string }[];
-  return rows.map((r) => ({
-    path: path.join(rootPath, ...r.path.split('/')),
-    name: r.name,
-    snippet: r.snippet,
-  }));
+       ORDER BY rank LIMIT ?`
+    ).all(ftsPhrase(term), FULLTEXT_LIMIT) as {
+      path: string;
+      name: string;
+      snippet: string;
+    }[];
+    ranked.forEach(add);
+  }
+
+  if (cjk) {
+    const like = `%${escapeLike(term)}%`;
+    const substr = prepareCached(
+      db,
+      `SELECT path, name, content FROM fulltext_fts
+       WHERE content LIKE ? ESCAPE '\\'
+       ORDER BY instr(content, ?), rowid LIMIT ?`
+    ).all(like, term, FULLTEXT_LIMIT) as {
+      path: string;
+      name: string;
+      content: string;
+    }[];
+    for (const r of substr) add({ ...r, snippet: makeLikeSnippet(r.content, term) });
+  }
+  return [...hits.values()].slice(0, FULLTEXT_LIMIT);
 }
+
 
 /** True if the root has full-text content indexed, or had it built at least
  *  once. `meta.fulltext_initialized` is the load-bearing half: a built index

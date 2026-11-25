@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import path from 'path';
 import os from 'os';
 import { promises as fsp } from 'fs';
+import iconv from 'iconv-lite';
 
 import {
   buildFulltextIndex,
@@ -120,6 +121,40 @@ describe('fulltext extractText', () => {
         text: null,
         unreadable: true,
       });
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it('indexes legacy-encoded text with the viewer decoder (GBK file becomes searchable)', async () => {
+    const root = await tmpRoot();
+    try {
+      const text = '你好，世界。这是一个 GBK 编码的测试文件，用于验证全文检索。';
+      const p = path.join(root, 'gbk-note.txt');
+      await fsp.writeFile(p, iconv.encode(text, 'gbk'));
+      const size = (await fsp.stat(p)).size;
+      // Before the shared decoder the indexer read raw UTF-8 and produced a
+      // U+FFFD-only string, so this document could never match a search.
+      assert.equal(await extractText(p, 'txt', size), text);
+      await indexDb.closeDb(root);
+      const { count } = await buildFulltextIndex(root);
+      assert.equal(count, 1);
+      assert.deepEqual(names(await searchFulltext(root, '全文检索')), ['gbk-note.txt']);
+    } finally {
+      await cleanup(root);
+    }
+  });
+
+  it('a capped read that splits a multi-byte character leaves no trailing U+FFFD', async () => {
+    const root = await tmpRoot();
+    try {
+      const text = '中文'.repeat(40);
+      const p = await write(root, 'cjk.txt', text);
+      const full = Buffer.byteLength(text, 'utf8');
+      // Report a size that lands one byte INSIDE the last character.
+      const sliced = await extractText(p, 'txt', full - 1);
+      assert.equal(sliced, text.slice(0, -1));
+      assert.equal(await extractText(p, 'txt', full), text);
     } finally {
       await cleanup(root);
     }

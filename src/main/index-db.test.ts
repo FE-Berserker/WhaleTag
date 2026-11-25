@@ -321,6 +321,49 @@ describe('index-db (SQLite + FTS5 trigram)', () => {
     }
   });
 
+  it('advancedQuery accepts 1–2 char text (LIKE fallback with ESCAPE)', async () => {
+    // Regression: the <3-char branch used the SQL text `ESCAPE "\"`; better-sqlite3
+    // is built with SQLITE_DQS=0, so the double-quoted token is an identifier and
+    // EVERY short advanced search threw "no such column".
+    const root = await tmpRoot();
+    try {
+      await setup(root);
+      await ingestFiles(root, [
+        entry({ path: 'a.pdf', name: 'a.pdf', ext: 'pdf', size: 500 }),
+        entry({ path: 'ab.jpg', name: 'ab.jpg', ext: 'jpg', size: 5000 }),
+        entry({ path: 'ba.txt', name: 'ba.txt', ext: 'txt', size: 5 }),
+        entry({ path: '10_percent.md', name: '10_percent.md', ext: 'md', size: 5 }),
+      ]);
+
+      const one = advancedQuery(root, { ...emptyQ(), text: 'b' }).map((e) => e.name).sort();
+      assert.deepEqual(one, ['ab.jpg', 'ba.txt']);
+      assert.deepEqual(
+        advancedQuery(root, { ...emptyQ(), text: ' 1 ' }).map((e) => e.name),
+        ['10_percent.md'],
+        'text is trimmed before the length check'
+      );
+
+      const two = advancedQuery(root, { ...emptyQ(), text: 'ab' }).map((e) => e.name);
+      assert.deepEqual(two, ['ab.jpg']);
+
+      // LIKE wildcards inside the text are literal (escapeLike), and so is the
+      // ESCAPE character itself.
+      assert.deepEqual(
+        advancedQuery(root, { ...emptyQ(), text: '_' }).map((e) => e.name),
+        ['10_percent.md']
+      );
+
+      // The short branch composes with the structured filters.
+      assert.deepEqual(
+        advancedQuery(root, { ...emptyQ(), text: 'b', extensions: ['jpg'] }).map((e) => e.name),
+        ['ab.jpg']
+      );
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('distinctTags returns the unique tag set, sorted', async () => {
     const root = await tmpRoot();
     try {
@@ -349,6 +392,105 @@ describe('index-db (SQLite + FTS5 trigram)', () => {
       assert.equal(hits.length, 1);
       assert.equal(hits[0].name, 'notes.md');
       assert.ok(hits[0].snippet.includes('quick'));
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('fulltext: CJK queries match inside a run (unicode61 cannot split CJK)', async () => {
+    const root = await tmpRoot();
+    try {
+      await setup(root);
+      // unicode61 treats each contiguous CJK run as ONE token, so a phrase
+      // query for a part of a run could never match. The substring fallback
+      // answers it and builds the same <mark> snippet markup as snippet().
+      await insertFulltext(root, [
+        {
+          path: 'cn.md',
+          name: 'cn.md',
+          mtime: 1,
+          content: '你好，世界。这是一个 GBK 编码的测试文件，用于验证全文检索。',
+        },
+        { path: 'en.md', name: 'en.md', mtime: 2, content: 'nothing to see here' },
+      ]);
+      const q = (text: string) => queryFulltext(root, text);
+      const hit = q('全文检索');
+      assert.equal(hit.length, 1);
+      assert.equal(hit[0].name, 'cn.md');
+      assert.ok(hit[0].snippet.includes('<mark>全文检索</mark>'), hit[0].snippet);
+      assert.equal(q('测试文件').length, 1);
+      // A whole run: found by the MATCH branch, still reported exactly once
+      // even though the substring scan finds it too.
+      assert.equal(q('用于验证全文检索').length, 1);
+      assert.equal(q('GBK').length, 1);
+      // Mixed script (spaces break unicode61 tokens, CJK runs do not).
+      assert.equal(q('GBK 编码的测试').length, 1);
+      assert.equal(q('看不见').length, 0);
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('fulltext: a 2-character CJK query is a whole word, 1 character is refused', async () => {
+    const root = await tmpRoot();
+    try {
+      await setup(root);
+      await insertFulltext(root, [
+        { path: 'a.md', name: 'a.md', mtime: 1, content: '设计模式与代码重构' },
+      ]);
+      assert.equal(queryFulltext(root, '设计').length, 1);
+      assert.equal(queryFulltext(root, '代码重构').length, 1);
+      assert.equal(queryFulltext(root, '模').length, 0);
+      // Latin queries keep the 3-character minimum.
+      assert.equal(queryFulltext(root, 'de').length, 0);
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('fulltext: the CJK fallback is case-insensitive for ASCII and escapes LIKE wildcards', async () => {
+    const root = await tmpRoot();
+    try {
+      await setup(root);
+      await insertFulltext(root, [
+        { path: 'a.md', name: 'a.md', mtime: 1, content: '设计 Design 模式 Patterns 中文版' },
+        { path: 'b.md', name: 'b.md', mtime: 2, content: 'axb 中文' },
+      ]);
+      const hit = queryFulltext(root, 'design 模式');
+      assert.equal(hit.length, 1);
+      assert.ok(hit[0].snippet.includes('<mark>Design 模式</mark>'), hit[0].snippet);
+      // `_` and `%` are literal characters of the query, never wildcards.
+      assert.equal(queryFulltext(root, 'a_b 中文').length, 0);
+      assert.equal(queryFulltext(root, 'axb 中文').length, 1);
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('fulltext: the fallback snippet is a window around the match, not the whole document', async () => {
+    const root = await tmpRoot();
+    try {
+      await setup(root);
+      const filler = '填充'.repeat(100); // 200 chars before the match
+      await insertFulltext(root, [
+        {
+          path: 'long.md',
+          name: 'long.md',
+          mtime: 1,
+          content: `${filler}目标关键词\n\n${'尾巴'.repeat(100)}`,
+        },
+      ]);
+      const [hit] = queryFulltext(root, '目标关键词');
+      assert.ok(hit, 'expected a hit');
+      assert.ok(hit.snippet.startsWith('…'), hit.snippet);
+      assert.ok(hit.snippet.endsWith('…'), hit.snippet);
+      assert.ok(hit.snippet.includes('<mark>目标关键词</mark>'), hit.snippet);
+      assert.ok(!hit.snippet.includes('\n'), 'whitespace is collapsed');
+      assert.ok(hit.snippet.length < 200, hit.snippet);
     } finally {
       closeDb(root);
       await fsp.rm(root, { recursive: true, force: true });

@@ -3,6 +3,7 @@ import path from 'path';
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { exec, execFile } from 'child_process';
 import { atomicWriteJson } from '../atomic-write';
+import { assertLexicallyWithinAllowedRoot } from '../allowed-roots';
 import { runUserCommand, setUserCommandTemplates } from '../shell-command';
 import { linuxRevealSteps } from '../desktop-linux';
 import { COMMAND_NOT_APPROVED } from '../../shared/shell-types';
@@ -115,8 +116,14 @@ export function registerShellHandlers(): void {
   });
 
   // Reveal a file/folder in the OS file manager: open the folder itself, or
-  // select the file inside its parent. Read-only — no allowedRoots check.
+  // select the file inside its parent. A UX gesture, not an IO op — but the
+  // path is renderer-supplied, so it still gets the filesystem-free lexical
+  // gate: `stat`/`openPath` on a UNC path would make the main process open an
+  // SMB session with the user's credentials (docs/13). Symlinks are NOT
+  // resolved here — revealing a link that points outside its location is
+  // harmless.
   ipcMain.handle('shell:revealPath', async (_event, targetPath: string) => {
+    assertLexicallyWithinAllowedRoot(targetPath);
     const stat = await fsp.stat(targetPath);
     if (stat.isDirectory()) {
       const errMsg = await shell.openPath(targetPath);
@@ -146,11 +153,11 @@ export function registerShellHandlers(): void {
   //         failures now reject so the renderer can surface the error
   //         instead of silently no-op'ing (the pre-fix `run` helper always
   //         resolved, which is what made this regression invisible).
-  //         Read-only — no allowedRoots check (the parent reveal is a UX
-  //         gesture, not an IO op).
+  //         Same filesystem-free lexical gate as `shell:revealPath`.
   ipcMain.handle(
     'shell:revealAndSelect',
     async (_event, targetPath: string) => {
+      assertLexicallyWithinAllowedRoot(targetPath);
       const platform = process.platform;
       // Run a CLI helper and surface spawn errors back to the renderer.
       // The helper rejects on `error` (ENOENT / EACCES / spawn failures)

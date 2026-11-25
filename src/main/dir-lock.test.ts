@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { promises as fsp } from 'fs';
 import path from 'path';
 import os from 'os';
 
@@ -46,6 +47,36 @@ describe('withLock — per-key async mutex', () => {
     };
     await Promise.all([withLock(key, task), withLock(alias, task)]);
     assert.equal(maxActive, 1, 'path aliases bypassed the same-directory lock');
+  });
+
+  it('shares one queue between a directory and its symlink / junction alias', async (t) => {
+    // A location opened through a junction and the same location by its real
+    // path are one directory: two queues would mean two read-modify-write
+    // cycles on the same wsd.json at once (lost update).
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'whale-lock-link-'));
+    try {
+      const real = path.join(root, 'real');
+      await fsp.mkdir(real);
+      const alias = path.join(root, 'alias');
+      try {
+        await fsp.symlink(real, alias, process.platform === 'win32' ? 'junction' : 'dir');
+      } catch (error) {
+        t.skip(`directory links cannot be created here: ${(error as Error).message}`);
+        return;
+      }
+      let active = 0;
+      let maxActive = 0;
+      const task = async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise<void>((resolve) => setTimeout(resolve, 5));
+        active -= 1;
+      };
+      await Promise.all([withLock(real, task), withLock(alias, task)]);
+      assert.equal(maxActive, 1, 'a link alias bypassed the same-directory lock');
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
   });
 
   it('runs different keys in parallel', async () => {

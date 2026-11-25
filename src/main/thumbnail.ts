@@ -391,53 +391,101 @@ async function writeFolderThumbImage(
 }
 
 /**
- * Finds the first thumbnailable file in `dirPath` (by sorted name, skipping the
- * `.whale` meta directory). Returns null when the directory contains none.
+ * How many files (by sorted name) one folder-thumbnail generation tries
+ * before it gives up: one damaged file must not condemn the whole folder.
  */
-async function firstThumbnailableFile(dirPath: string): Promise<string | null> {
+const FOLDER_SOURCE_CANDIDATES = 8;
+/**
+ * How long a folder whose every candidate failed is left alone, so repeated
+ * renders do not re-run the failing encodes (a video can spend 10 s in ffmpeg
+ * before it fails). Time-based on purpose: a finishing download does not
+ * change the directory's mtime, a later retry must still pick it up.
+ */
+const FOLDER_FAIL_TTL_MS = 30_000;
+const FOLDER_FAIL_MEMO_MAX = 1000;
+/** dirPath → time of the last generation whose every candidate failed. */
+const folderGenerateFailures = new Map<string, number>();
+
+/**
+ * Finds up to `limit` thumbnailable files in `dirPath` (by sorted name,
+ * skipping the `.whale` meta directory). Returns [] when there are none.
+ */
+async function firstThumbnailableFiles(
+  dirPath: string,
+  limit: number
+): Promise<string[]> {
   let names: string[];
   try {
     names = await fsp.readdir(dirPath);
   } catch {
-    return null;
+    return [];
   }
   names.sort((a, b) => a.localeCompare(b));
+  const found: string[] = [];
   for (const name of names) {
     if (name === META_DIR) continue;
     if (!isThumbnailable(name)) continue;
     const fullPath = path.join(dirPath, name);
     try {
       const st = await fsp.stat(fullPath);
-      if (st.isFile()) return fullPath;
+      if (st.isFile()) {
+        found.push(fullPath);
+        if (found.length === limit) break;
+      }
     } catch {
       continue;
     }
   }
-  return null;
+  return found;
 }
 
 /**
  * Auto-generates a folder thumbnail from the first thumbnailable file in the
- * directory. Falls back to clearing any stale thumbnail if no source exists.
+ * directory that actually encodes. Falls back to clearing any stale thumbnail
+ * if no source exists.
  */
 export async function generateFolderThumbnail(
   dirPath: string
 ): Promise<void> {
-  const sourcePath = await firstThumbnailableFile(dirPath);
+  const failedAt = folderGenerateFailures.get(dirPath);
+  if (failedAt !== undefined && Date.now() - failedAt < FOLDER_FAIL_TTL_MS) {
+    return;
+  }
+  const sourcePaths = await firstThumbnailableFiles(
+    dirPath,
+    FOLDER_SOURCE_CANDIDATES
+  );
   const targetPath = folderThumbPathFor(dirPath);
-  if (!sourcePath) {
+  if (sourcePaths.length === 0) {
     await fsp.rm(targetPath, { force: true }).catch(() => undefined);
     return;
   }
-  // Reuse the file's thumbnail if already generated; otherwise create one.
-  const fileThumb = thumbPathFor(sourcePath);
-  if (!existsSync(fileThumb)) {
-    await generateThumbnail(sourcePath);
+  // One attempt on the alphabetically first file used to throw out of here
+  // for a corrupt or truncated file: the folder never got a thumbnail and
+  // every re-render re-ran the failing encode. Try the candidates in order.
+  for (const sourcePath of sourcePaths) {
+    try {
+      // Reuse the file's thumbnail if already generated; otherwise create one.
+      const fileThumb = thumbPathFor(sourcePath);
+      if (!existsSync(fileThumb)) {
+        await generateThumbnail(sourcePath);
+      }
+      if (!existsSync(fileThumb)) continue;
+      await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+      await fsp.copyFile(fileThumb, targetPath);
+      folderGenerateFailures.delete(dirPath);
+      return;
+    } catch (error) {
+      console.warn(
+        `[thumbnail] folder thumbnail: skipping ${sourcePath}`,
+        error
+      );
+    }
   }
-  if (existsSync(fileThumb)) {
-    await fsp.mkdir(path.dirname(targetPath), { recursive: true });
-    await fsp.copyFile(fileThumb, targetPath);
+  if (folderGenerateFailures.size >= FOLDER_FAIL_MEMO_MAX) {
+    folderGenerateFailures.clear();
   }
+  folderGenerateFailures.set(dirPath, Date.now());
 }
 
 /**
@@ -473,6 +521,9 @@ export async function setFolderThumbnail(
 
 /** Removes a directory's thumbnail image. No-op if absent. */
 export async function clearFolderThumbnail(dirPath: string): Promise<void> {
+  // An explicit clear is a fresh start: a memoised failure must not keep the
+  // folder blank for the rest of the TTL.
+  folderGenerateFailures.delete(dirPath);
   await fsp.rm(folderThumbPathFor(dirPath), { force: true }).catch(() => undefined);
 }
 

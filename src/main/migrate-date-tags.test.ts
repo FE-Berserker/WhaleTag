@@ -11,7 +11,17 @@ import {
   resetStartupMigrationForTests,
 } from './migrate-date-tags';
 import { atomicWriteJson } from './atomic-write';
-import { META_DIR, FOLDER_SIDECAR_FILE, FOLDER_META_FILE } from '../shared/whale-meta';
+import {
+  getAllowedRoots,
+  setAllowedRoots,
+  setReadOnlyRoots,
+} from './allowed-roots';
+import {
+  META_DIR,
+  FOLDER_SIDECAR_FILE,
+  FOLDER_META_FILE,
+  MIGRATION_STATE_FILE,
+} from '../shared/whale-meta';
 
 describe('migrateSidecarTags — pure transform', () => {
   it('strips legacy 7 prefixes (one of each)', () => {
@@ -289,6 +299,54 @@ describe('runMigration — integration over a tmp directory', () => {
     const r = await runMigration([]);
     assert.equal(r.totalScanned, 0);
     assert.equal(r.totalMigrated, 0);
+  });
+
+  it('never writes to a read-only location, not even the migration flag', async () => {
+    const roRoot = await fsp.mkdtemp(path.join(tmpdir(), 'migrate-readonly-'));
+    try {
+      const wsdPath = path.join(roRoot, 'docs', META_DIR, FOLDER_SIDECAR_FILE);
+      await fsp.mkdir(path.dirname(wsdPath), { recursive: true });
+      const data = {
+        version: 1,
+        files: { 'a.txt': { tags: ['today-20260704', 'idea'] } },
+      };
+      await atomicWriteJson(wsdPath, data);
+
+      // Same arguments as the `fs:setAllowedRoots` trigger.
+      setAllowedRoots([roRoot]);
+      setReadOnlyRoots([roRoot]);
+      const r = await runMigration(getAllowedRoots());
+      assert.equal(r.totalScanned, 0, 'a read-only root is skipped whole');
+      assert.equal(r.totalErrors, 0, JSON.stringify(r.errors));
+      assert.deepEqual(JSON.parse(await fsp.readFile(wsdPath, 'utf-8')), data);
+      const flag = path.join(roRoot, META_DIR, MIGRATION_STATE_FILE);
+      assert.equal(await fsp.access(flag).then(() => true, () => false), false);
+
+      // Making the location writable again lets the migration run.
+      setReadOnlyRoots([]);
+      const r2 = await runMigration(getAllowedRoots());
+      assert.ok(r2.totalMigrated >= 1);
+      assert.deepEqual(JSON.parse(await fsp.readFile(wsdPath, 'utf-8')).files['a.txt'].tags, [
+        '20260704',
+        'idea',
+      ]);
+    } finally {
+      setReadOnlyRoots([]);
+      setAllowedRoots([]);
+      await fsp.rm(roRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('does not re-create an unreachable root (offline drive, removed folder)', async () => {
+    const ghost = path.join(root, 'offline-location');
+    const r = await runMigration([ghost]);
+    assert.equal(r.totalErrors, 0, JSON.stringify(r.errors));
+    assert.equal(r.totalScanned, 0);
+    assert.equal(
+      await fsp.access(ghost).then(() => true, () => false),
+      false,
+      'the migration must not resurrect the folder'
+    );
   });
 });
 

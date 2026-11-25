@@ -52,7 +52,8 @@ export function getExifr(): ExifrLib {
 
 type ChardetLib = typeof import('jschardet');
 let _chardet: ChardetLib | undefined;
-/** jschardet (charset detection). Only `readTextFile` uses it. */
+/** jschardet (charset detection). Only the shared text decoder
+ *  (`text-decode.ts`) loads it. */
 export function getChardet(): ChardetLib {
   if (_chardet) return _chardet;
   _chardet = nodeRequire('jschardet') as ChardetLib;
@@ -61,7 +62,8 @@ export function getChardet(): ChardetLib {
 
 type IconvLib = typeof import('iconv-lite');
 let _iconv: IconvLib | undefined;
-/** iconv-lite (legacy charset decoding). Only `readTextFile` uses it. */
+/** iconv-lite (legacy charset decoding). Only the shared text decoder
+ *  (`text-decode.ts`) loads it. */
 export function getIconv(): IconvLib {
   if (_iconv) return _iconv;
   _iconv = nodeRequire('iconv-lite') as IconvLib;

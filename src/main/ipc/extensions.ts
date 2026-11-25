@@ -8,7 +8,8 @@ import {
   cleanupRevisionsForLocation,
   deleteRevision,
 } from '../revisions';
-import { atomicWriteText } from '../atomic-write';
+import { atomicWriteBytes, atomicWriteText } from '../atomic-write';
+import { encodeTextAs, readTextByteFormat } from '../text-decode';
 import {
   assertWritable,
   assertWithinAllowedRoot,
@@ -185,5 +186,14 @@ export async function writeFileWithRevision(
     );
   }
   await backupRevision(filePath);
-  await atomicWriteText(filePath, content);
+  // Editors work on decoded text and never see the BOM (`decodeTextBuffer`
+  // strips it), so they cannot put it back. Return the file to the byte
+  // format it had: a UTF-8-BOM file keeps its marker and a UTF-16 file stays
+  // UTF-16 instead of silently turning into plain UTF-8 on the first save.
+  const format = await readTextByteFormat(filePath);
+  if (format === 'utf8') {
+    await atomicWriteText(filePath, content);
+  } else {
+    await atomicWriteBytes(filePath, encodeTextAs(content, format));
+  }
 }

@@ -2,8 +2,10 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'path';
 import os from 'os';
+import fs from 'fs';
 import { promises as fsp } from 'fs';
 import {
+  assertLexicallyWithinAllowedRoot,
   assertNotLocationRoot,
   assertWithinAllowedRoot,
   assertWritable,
@@ -88,6 +90,70 @@ describe('allowed roots guard', () => {
     } finally {
       await fsp.rm(dir, { recursive: true, force: true });
       await fsp.rm(other, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses an out-of-root target WITHOUT touching the filesystem (UNC / NTLM leak guard)', async () => {
+    // `realpathSync` on an attacker-supplied `\\host\share\x` makes the main
+    // process open an SMB session (Windows authenticates automatically). The
+    // lexical gate must refuse every non-root path before that call happens.
+    const dir = await tmpDir();
+    const sibling = `${dir}-sibling`;
+    const originalRealpath = fs.realpathSync;
+    let realpathCalls = 0;
+    const counting = (...args: unknown[]): string => {
+      realpathCalls += 1;
+      return (originalRealpath as (...a: unknown[]) => string)(...args);
+    };
+    try {
+      setAllowedRoots([dir]);
+      setReadOnlyRoots([dir]);
+      fs.realpathSync = counting as typeof fs.realpathSync;
+
+      const unc = process.platform === 'win32' ? '\\\\attacker.example\\s\\x' : '//attacker.example/s/x';
+      const outside = [
+        unc,
+        sibling,
+        path.join(sibling, 'child.txt'),
+        path.join(dir, '..', 'elsewhere', 'x.txt'),
+        'relative/entry.txt',
+      ];
+      for (const target of outside) {
+        assert.throws(
+          () => assertWithinAllowedRoot(target),
+          /Refused: path is outside any configured location/,
+          `expected refusal for ${target}`
+        );
+        assert.throws(
+          () => assertLexicallyWithinAllowedRoot(target),
+          /Refused: path is outside any configured location/,
+          `expected lexical refusal for ${target}`
+        );
+        assert.equal(isConfiguredRoot(target), false, `isConfiguredRoot(${target})`);
+        assert.equal(isReadOnlyPath(target), false, `isReadOnlyPath(${target})`);
+      }
+      assert.equal(
+        realpathCalls,
+        0,
+        'realpathSync must never run for a path that is not lexically under a root'
+      );
+
+      // In-root targets still go through the realpath stage (symlink escapes).
+      assert.doesNotThrow(() => assertWithinAllowedRoot(path.join(dir, 'child.txt')));
+      assert.ok(realpathCalls >= 1, 'in-root target is resolved through realpathSync');
+      assert.equal(isReadOnlyPath(path.join(dir, 'child.txt')), true);
+
+      // Refuse-all default is unchanged for the lexical stage.
+      setAllowedRoots([]);
+      assert.throws(
+        () => assertLexicallyWithinAllowedRoot(path.join(dir, 'x')),
+        /Refused: no configured locations/
+      );
+    } finally {
+      fs.realpathSync = originalRealpath;
+      setAllowedRoots([]);
+      setReadOnlyRoots([]);
+      await fsp.rm(dir, { recursive: true, force: true });
     }
   });
 

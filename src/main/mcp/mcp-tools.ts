@@ -163,7 +163,15 @@ function serializeLocationAddition<T>(operation: () => Promise<T>): Promise<T> {
  */
 async function approve(tool: string, summary: string, details: string[]): Promise<void> {
   ensureWritable();
-  const allowed = await requestApproval({ tool, summary, details });
+  // The summary and details quote tool arguments, which come from the
+  // (untrusted) MCP client. Strip control and bidi-override characters here,
+  // once for every tool, so nothing a client sends can reorder, hide or
+  // truncate what the approval dialog shows the user.
+  const shown = {
+    summary: visibleApprovalText(summary),
+    details: details.map(visibleApprovalText),
+  };
+  const allowed = await requestApproval({ tool, ...shown });
   if (!allowed) {
     throw new Error('the user denied this operation');
   }
@@ -930,10 +938,16 @@ export function registerMcpTools(server: McpServer): void {
     async ({ path: filePath, content }) => {
       try {
         assertWithinAllowedRoot(filePath);
+        // An approval is only informed when the user can see what gets
+        // written: show the beginning of the content (whitespace collapsed,
+        // the rest of approve() makes it safe to display).
+        const head = content.slice(0, 200).replace(/\s+/g, ' ').trim();
         await approve(
           'whale_create_text_file',
           `Create file ${filePath} (${Buffer.byteLength(content, 'utf8')} bytes)`,
-          [filePath]
+          head
+            ? [filePath, `Starts with: ${head}${content.length > 200 ? '…' : ''}`]
+            : [filePath, 'The file is empty']
         );
         await createTextFile(filePath, content);
         return ok({ created: filePath, bytes: Buffer.byteLength(content, 'utf8') });
