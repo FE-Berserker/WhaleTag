@@ -754,12 +754,16 @@ export default function DirectoryTree({ embedded = false }: { embedded?: boolean
             // remaining, non-reserved props) needs this cast. The contents
             // are typed: nodes is TreeNode[], the renderers take the typed
             // node variants.
-            rowProps={{
-              nodes: visibleNodes,
-              renderFolder: (n: TreeFolderNode) => renderNode(n.name, n.path, n.depth),
-              renderFile: (n: TreeFileNode) => renderFileNode(n.entry, n.depth),
-              renderError: (n: TreeErrorNode) => renderErrorNode(n),
-            } as any}
+            rowProps={
+              /* eslint-disable @typescript-eslint/no-explicit-any -- react-window v2 derives `rowProps` from the row component's FULL props and then demands the reserved `index`/`style` it injects itself; the bag we pass is everything else (see the comment above) */
+              {
+                nodes: visibleNodes,
+                renderFolder: (n: TreeFolderNode) => renderNode(n.name, n.path, n.depth),
+                renderFile: (n: TreeFileNode) => renderFileNode(n.entry, n.depth),
+                renderError: (n: TreeErrorNode) => renderErrorNode(n),
+              } as any
+              /* eslint-enable @typescript-eslint/no-explicit-any */
+            }
             style={{ height: '100%' }}
           />
         ) : null}

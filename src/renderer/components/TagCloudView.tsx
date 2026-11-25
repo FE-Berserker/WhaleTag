@@ -401,10 +401,17 @@ export default function TagCloudView({ data }: TagCloudViewProps) {
     }
     return {
       tooltip: {
-        formatter: (params: any) => {
-          const i = params.data[0] as number;
-          const j = params.data[1] as number;
-          const count = params.data[2] as number;
+        // ECharts passes the raw series datum of the hovered cell. Read it
+        // defensively: the formatter signature is a union of every series
+        // shape, and only the `[x, y, value]` triple matters here.
+        formatter: (params: unknown) => {
+          const datum = (params as { data?: unknown }).data;
+          if (!Array.isArray(datum) || datum.length < 3) {
+            return '';
+          }
+          const i = Number(datum[0]);
+          const j = Number(datum[1]);
+          const count = Number(datum[2]);
           if (i === j) {
             return `${escapeHtml(matrixLabels[i])}<br/>${t('tagCloudCount', { count })}`;
           }

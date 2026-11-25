@@ -12,7 +12,10 @@ export type DrawioTheme = 'kennedy' | 'min' | 'atlas' | 'dark' | 'sketch';
 export interface DrawioMessage {
   event?: string;
   action?: string;
-  [key: string]: any;
+  /** Every other field depends on the event / action (`xml`, `message`,
+   *  `href`, `target`, `format`, `theme`, …) and comes straight from
+   *  `JSON.parse` of an iframe message, so it is untrusted until narrowed. */
+  [key: string]: unknown;
 }
 
 export interface DrawioBridge {
@@ -80,7 +83,8 @@ export function dispatchDrawioMessage(
     data.event === 'save' ||
     data.event === 'export'
   ) {
-    const xml = data.xml as string | undefined;
+    // The payload is parsed JSON from the embed: only a string can be XML.
+    const xml = typeof data.xml === 'string' ? data.xml : undefined;
     if (xml) return { kind: 'xml', xml, source: data.event };
     return null;
   }

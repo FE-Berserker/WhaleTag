@@ -35,7 +35,7 @@ export default class ErrorBoundary extends Component<
     return { error };
   }
 
-  componentDidCatch(error: Error, info: ErrorInfo): void {
+  override componentDidCatch(error: Error, info: ErrorInfo): void {
     // Surface to the DevTools console for debugging.
     console.error('Uncaught render error:', error, info.componentStack);
 
@@ -54,7 +54,7 @@ export default class ErrorBoundary extends Component<
     this.props.onError?.(error, info);
   }
 
-  componentDidUpdate(previousProps: ErrorBoundaryProps): void {
+  override componentDidUpdate(previousProps: ErrorBoundaryProps): void {
     if (
       this.state.error &&
       !Object.is(previousProps.resetKey, this.props.resetKey)
@@ -67,7 +67,7 @@ export default class ErrorBoundary extends Component<
     window.location.reload();
   };
 
-  render(): ReactNode {
+  override render(): ReactNode {
     const { error } = this.state;
     if (!error) return this.props.children;
     if (this.props.fallback !== undefined) return this.props.fallback;

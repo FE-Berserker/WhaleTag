@@ -180,17 +180,16 @@ export default function Root() {
     });
   }, [locationItems.length]);
 
-  // Pin the react-dnd HTML5 backend to a singleton via useMemo so React 18
-  // StrictMode's dev-mode double-invoke doesn't try to register the same
-  // backend twice (the symptom is "Cannot have two HTML5 backends at the
+  // Pin the react-dnd HTML5 backend to a stable props object via useMemo so
+  // React 18 StrictMode's dev-mode double-invoke doesn't try to register the
+  // same backend twice (the symptom is "Cannot have two HTML5 backends at the
   // same time."). See https://github.com/react-dnd/react-dnd/issues/3623.
-  const DndAny: any = DndProvider;
-  const dndBackend = useMemo(() => ({ backend: HTML5Backend }), []);
+  const dndProps = useMemo(() => ({ backend: HTML5Backend }), []);
 
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <DndAny {...dndBackend}>
+      <DndProvider {...dndProps}>
         <CurrentLocationContextProvider>
           <DirectoryContentContextProvider>
             <DirectoryTreeRefreshContextProvider>
@@ -214,7 +213,7 @@ export default function Root() {
             </DirectoryTreeRefreshContextProvider>
           </DirectoryContentContextProvider>
         </CurrentLocationContextProvider>
-      </DndAny>
+      </DndProvider>
     </ThemeProvider>
   );
 }

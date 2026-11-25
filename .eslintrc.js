@@ -55,6 +55,13 @@ module.exports = {
       files: ['scripts/**/*.js', 'scripts/**/*.cjs', 'scripts/**/*.ts'],
       rules: { 'no-console': 'off' },
     },
+    {
+      // Test doubles and harness glue lean on `any` by nature (module stubs,
+      // half-typed fixtures, internal fields of a module under test).
+      // Production sources are held to `no-explicit-any` (rule below).
+      files: ['**/*.test.ts', '**/*.test.tsx'],
+      rules: { '@typescript-eslint/no-explicit-any': 'off' },
+    },
   ],
   rules: {
     'react/react-in-jsx-scope': 'off',
@@ -63,7 +70,9 @@ module.exports = {
     // / `debug` are the ones that leaked into production. Informational lines
     // go through `src/main/log.ts` so this rule catches future strays.
     'no-console': ['error', { allow: ['warn', 'error'] }],
-    '@typescript-eslint/no-explicit-any': 'off',
+    // On for production sources since the 2026-11 audit round: every `any`
+    // was either typed away or carries an explicit, reasoned disable comment.
+    '@typescript-eslint/no-explicit-any': 'error',
     '@typescript-eslint/no-unused-vars': [
       'warn',
       { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },

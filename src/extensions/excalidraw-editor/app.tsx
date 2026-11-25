@@ -27,6 +27,9 @@ import { detectInitialTheme, type ThemeMode } from '../shared/theme';
 // Excalidraw's imperative API is typed in a deep subpath that doesn't resolve
 // cleanly under this project's `moduleResolution: node`; this is glue code in a
 // sandboxed iframe, so a loose type here is acceptable.
+// The `any` below is the ONE declared escape hatch of this file (the casts on
+// the library calls follow from it); every other non-test source is checked.
+/* eslint-disable @typescript-eslint/no-explicit-any -- see the comment above `AnyApi` */
 type AnyApi = any;
 
 export default function App() {
