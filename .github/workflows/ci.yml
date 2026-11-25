@@ -11,7 +11,7 @@ permissions:
 jobs:
   lint-type-check-test:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -19,7 +19,16 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # better-sqlite3 is the one V8-bound (non-N-API) addon: `npm ci` installs
+      # the build for the Node that ran the install, which Electron cannot
+      # load (NODE_MODULE_VERSION). Align it with the Electron in node_modules
+      # before anything runs inside Electron. `npm test` and `npm run dev`
+      # refuse to start with the same message if this step is missing.
+      - run: npx electron-rebuild -f -o better-sqlite3
       - run: npm run lint
-      - run: npm run type-check
+      # `npm test` runs `type-check` itself (pretest).
       - run: npm test
-      - run: npm run build:mobile
+      # Every bundle is compiled here, not only the mobile one: the test suite
+      # never loads the renderer or extension builds, so a broken webpack
+      # config would otherwise surface only in the manual packaged smoke.
+      - run: npm run build

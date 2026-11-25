@@ -392,9 +392,12 @@ function configureDrawioPreConfig(source) {
 }
 
 /**
- * Copies runtime assets pulled from node_modules. Excalidraw tries these fonts
- * from window.EXCALIDRAW_ASSET_PATH first; the current custom protocol cannot
- * satisfy its fetch(), so the documented system-font fallback still applies.
+ * Copies runtime assets pulled from node_modules. Excalidraw registers every
+ * font in dist/prod/fonts as a FontFace under window.EXCALIDRAW_ASSET_PATH and
+ * loads the unicode-range subsets its canvas text needs through url() — the
+ * handwritten (incl. Chinese Xiaolai) fonts render from these bundled copies
+ * (verified in the packaged build, 2026-11-25). Only fetch() is unavailable on
+ * the extension scheme, which affects the font inlining of SVG export alone.
  */
 function copyExtensionRuntimeAssets(id) {
   if (id === 'excalidraw-editor') {
@@ -527,7 +530,9 @@ function main() {
   const webpackConfig = path.join(ROOT, '.erb', 'configs', 'webpack.config.extensions.ts');
   try {
     execSync(
-      `npx cross-env NODE_ENV=production TS_NODE_TRANSPILE_ONLY=true webpack --config ${webpackConfig}`,
+      // The config path is quoted: a checkout under a directory with spaces
+      // ("C:\My Projects\WhaleTag") would otherwise split into two arguments.
+      `npx cross-env NODE_ENV=production TS_NODE_TRANSPILE_ONLY=true webpack --config "${webpackConfig}"`,
       { cwd: ROOT, stdio: 'inherit' }
     );
   } catch {
