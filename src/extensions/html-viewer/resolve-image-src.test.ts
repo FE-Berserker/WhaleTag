@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveRelativeImageSrc } from './resolve-image-src';
+import { fileURLToPath } from 'node:url';
+import { resolveRelativeHref, resolveRelativeImageSrc } from './resolve-image-src';
 
 // Windows paths are used throughout: the HTML file's dirPath comes from the
 // host's path utilities, which are Windows-style on the primary target.
@@ -126,5 +127,44 @@ describe('resolveRelativeImageSrc', () => {
       resolveRelativeImageSrc('pic.png', 'C:\\'),
       'whale-file:///C:/pic.png'
     );
+  });
+});
+
+describe('resolveRelativeHref', () => {
+  it('turns a document-relative link into a file URL under dirPath', () => {
+    assert.equal(resolveRelativeHref('./notes.pdf', DIR), 'file:///C:/Users/me/docs/notes.pdf');
+    assert.equal(resolveRelativeHref('sub/page.html', DIR), 'file:///C:/Users/me/docs/sub/page.html');
+    assert.equal(resolveRelativeHref('./notes.pdf#chapter', DIR), 'file:///C:/Users/me/docs/notes.pdf');
+    // Percent-decoded, then re-encoded per segment — a literal `#` or `%`
+    // cannot smuggle a fragment or a traversal into the URL.
+    assert.equal(resolveRelativeHref('my%20notes.pdf', DIR), 'file:///C:/Users/me/docs/my%20notes.pdf');
+    assert.equal(resolveRelativeHref('a%23b.pdf', DIR), 'file:///C:/Users/me/docs/a%23b.pdf');
+    // Main converts the URL back with `fileURLToPath` before the location
+    // check (`openTargetPath` in src/main/ipc/fs-write.ts) — the round trip
+    // must yield the native path of the referenced file.
+    const roundTrip = fileURLToPath(resolveRelativeHref('./my notes.pdf', DIR) ?? '');
+    assert.equal(
+      roundTrip.replace(/\\/g, '/').replace(/^\/(?=[A-Za-z]:)/, ''),
+      'C:/Users/me/docs/my notes.pdf'
+    );
+  });
+
+  it('encodes the drive colon as structural, POSIX paths without a host', () => {
+    assert.equal(resolveRelativeHref('a.pdf', 'C:\\'), 'file:///C:/a.pdf');
+    assert.equal(resolveRelativeHref('a.pdf', '/home/me/docs/'), 'file:///home/me/docs/a.pdf');
+  });
+
+  it('leaves absolute paths, URLs and traversal to the caller (forwarded as written)', () => {
+    for (const href of [
+      'https://example.com/page',
+      'mailto:someone@example.com',
+      'C:/Windows/win.ini',
+      '/etc/hosts',
+      '../outside.pdf',
+      'javascript:alert(1)',
+    ]) {
+      assert.equal(resolveRelativeHref(href, DIR), null, `must not rewrite: ${href}`);
+    }
+    assert.equal(resolveRelativeHref('a.pdf', undefined), null);
   });
 });

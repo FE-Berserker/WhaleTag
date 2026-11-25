@@ -43,7 +43,7 @@ import {
  ZOOM_MIN,
  ZOOM_MAX,
 } from './html-stats';
-import { resolveRelativeImageSrc } from './resolve-image-src';
+import { resolveRelativeHref, resolveRelativeImageSrc } from './resolve-image-src';
 
 // --- DOM refs -------------------------------------------------------------
 const contentEl = document.getElementById('content') as HTMLDivElement;
@@ -314,7 +314,11 @@ function scopeRules(rules: CSSRuleList): void {
 }
 
 function injectUserStyle(css: string) {
- if (!css) return;
+ if (!css) {
+ // A document without a stylesheet must not keep the previous document's.
+ document.getElementById('whale-user-style')?.remove();
+ return;
+ }
  let el = document.getElementById('whale-user-style') as HTMLStyleElement | null;
  if (!el) {
   el = document.createElement('style');
@@ -431,9 +435,18 @@ function renderPreview(raw: string) {
  contentEl.querySelectorAll('a').forEach((a) => {
  a.addEventListener('click', (e) => {
  const href = a.getAttribute('href');
- if (!href) return;
+ // `#section` is an in-page anchor: let the preview scroll instead of
+ // handing a bare fragment to the host (which can only refuse it).
+ if (!href || href.startsWith('#')) return;
  e.preventDefault();
- window.whaleExt.postMessage({ type: 'openLinkExternally', url: href });
+ // A document-relative link (`./notes.pdf`) becomes a `file://` URL under the
+ // document's directory, exactly like relative images. Everything else is
+ // forwarded as written: http(s) is opened by the host, and main checks any
+ // other path against the configured locations.
+ window.whaleExt.postMessage({
+ type: 'openLinkExternally',
+ url: resolveRelativeHref(href, state.dirPath) ?? href,
+ });
  });
  });
 }

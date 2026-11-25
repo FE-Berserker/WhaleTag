@@ -45,15 +45,20 @@ export default function App() {
   const dropIndexRef = useRef(0);
   // Safety timer to clear a stale `externalDragRef` if no drop happens.
   const dragTimerRef = useRef<number | null>(null);
-  // Guards the initial file-load useEffect so it only fires once per file
-  // path. Without this, every re-render (where `bridge` ref may change
-  // even after the memo in `useDrawioBridge`) would re-post the original
-  // `file.content` to drawio's `load` action, wiping the cell the user
-  // just inserted via drag-drop. We key on `file.path` (not a boolean) so
-  // switching from file A → file B re-loads B — a previous version used a
-  // separate "reset" effect that ran AFTER the load check, leaving the
-  // new file un-loadable on a switch.
-  const lastLoadedPathRef = useRef<string | null>(null);
+  // Guards the file-load useEffect so a re-render with the SAME document
+  // (path + content) does not re-post the original `file.content` to drawio's
+  // `load` action, wiping the cell the user just inserted via drag-drop
+  // (every re-render may bring a fresh `bridge` identity). Switching from
+  // file A → B re-loads B — a previous version used a separate "reset"
+  // effect that ran AFTER the load check, leaving the new file un-loadable
+  // on a switch.
+  //
+  // The key is path AND content, not the path alone: the host re-sends the
+  // SAME path when the file changed on disk (fs.watch → external edit) or
+  // with `force` after a revision restore. Keying on the path dropped those,
+  // so the editor kept the stale diagram and the next save wrote it back
+  // over the external change / the restored revision.
+  const lastLoadedRef = useRef<{ path: string; content: string } | null>(null);
   const currentFilePathRef = useRef<string | null>(null);
   useLayoutEffect(() => {
     currentFilePathRef.current = file?.path ?? null;
@@ -147,8 +152,16 @@ export default function App() {
   // (not a boolean) means switching files A → B naturally re-loads B.
   useEffect(() => {
     if (!file || !bridge.loaded) return;
-    if (lastLoadedPathRef.current === file.path) return;
-    lastLoadedPathRef.current = file.path;
+    const last = lastLoadedRef.current;
+    if (
+      last &&
+      last.path === file.path &&
+      last.content === file.content &&
+      !file.force
+    ) {
+      return;
+    }
+    lastLoadedRef.current = { path: file.path, content: file.content };
     const raw = file.content || '<mxfile></mxfile>';
     // docs/20: stored cell links are relative to the .drawio file's directory
     // (so a folder move keeps links intact). Rewrite them back to absolute

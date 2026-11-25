@@ -144,6 +144,105 @@ describe('text-editor revision-aware saves', () => {
     });
   });
 
+  it('reports the revision reset of a same-path reload (clean buffer)', () => {
+    const path = '/tmp/reload.txt';
+    emitHost({
+      type: 'fileContent',
+      path,
+      content: 'v1',
+      encoding: 'utf8',
+      readOnly: false,
+    });
+    const container = document.getElementById('editor');
+    assert.ok(container);
+    const editor = EditorView.findFromDOM(container);
+    assert.ok(editor);
+
+    // Edit + save: the buffer is clean again but the revision stays at 1 —
+    // this is what the host remembers until told otherwise.
+    editor.dispatch({ changes: { from: 2, insert: '!' } });
+    assert.equal(contentChangedMessages().at(-1)?.revision, 1);
+    emitHost({ type: 'savingFile', path, revision: 1 });
+    assert.deepEqual(contentChangedMessages().at(-1), {
+      type: 'contentChangedInEditor',
+      path,
+      dirty: false,
+      revision: 1,
+    });
+
+    // External change on disk: the host re-sends the same path. The buffer
+    // is clean, so the text is replaced and the revision starts over at 0.
+    // The host MUST learn that (dirty does not change, so an edge-triggered
+    // report would stay silent and the host kept revision 1).
+    emitHost({
+      type: 'fileContent',
+      path,
+      content: 'v2',
+      encoding: 'utf8',
+      readOnly: false,
+    });
+    assert.equal(editor.state.doc.toString(), 'v2');
+    assert.deepEqual(posted.at(-1), {
+      type: 'contentChangedInEditor',
+      path,
+      dirty: false,
+      revision: 0,
+    });
+
+    // The next edit is revision 1 again and its save carries that revision.
+    editor.dispatch({ changes: { from: 2, insert: '?' } });
+    assert.deepEqual(contentChangedMessages().at(-1), {
+      type: 'contentChangedInEditor',
+      path,
+      dirty: true,
+      revision: 1,
+    });
+    emitHost({ type: 'requestSave', path });
+    assert.deepEqual(posted.at(-1), {
+      type: 'parentSaveDocument',
+      path,
+      content: 'v2?',
+      revision: 1,
+    });
+  });
+
+  it('saves with the line endings the file came with (CRLF stays CRLF)', () => {
+    const path = '/tmp/eol.txt';
+    const container = document.getElementById('editor');
+    assert.ok(container);
+    const open = (content: string) => {
+      emitHost({ type: 'fileContent', path, content, encoding: 'utf8', readOnly: false });
+      const opened = EditorView.findFromDOM(container);
+      assert.ok(opened);
+      return opened;
+    };
+
+    // CodeMirror normalizes the buffer; the file must not notice.
+    let editor = open('a\r\nb\r\n');
+    assert.equal(editor.state.doc.toString(), 'a\nb\n');
+    emitHost({ type: 'requestSave', path });
+    assert.equal(posted.at(-1)?.type, 'parentSaveDocument');
+    assert.equal(posted.at(-1)?.content, 'a\r\nb\r\n', 'unchanged CRLF file round-trips');
+    editor.dispatch({ changes: { from: editor.state.doc.length, insert: 'c' } });
+    emitHost({ type: 'requestSave', path });
+    assert.equal(posted.at(-1)?.type, 'parentSaveDocument');
+    assert.equal(posted.at(-1)?.content, 'a\r\nb\r\nc', 'new lines use the same separator');
+    // The host acknowledges the save (buffer clean again, so a reload wins).
+    emitHost({ type: 'savingFile', path, revision: 1 });
+
+    // LF files keep LF — also when the odd CRLF is the minority.
+    editor = open('x\ny\r\nz\n');
+    assert.equal(editor.state.doc.toString(), 'x\ny\nz\n');
+    emitHost({ type: 'requestSave', path });
+    assert.equal(posted.at(-1)?.content, 'x\ny\nz\n');
+
+    // A single-line file has no separator to inherit: LF.
+    editor = open('only line');
+    assert.equal(editor.state.doc.toString(), 'only line');
+    emitHost({ type: 'requestSave', path });
+    assert.equal(posted.at(-1)?.content, 'only line');
+  });
+
   it('posts dirty only on transitions and debounces the match count', async () => {
     emitHost({
       type: 'fileContent',

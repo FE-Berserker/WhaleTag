@@ -252,14 +252,17 @@ async function decodeAndShow(content: string, token: number): Promise<void> {
 
  const decoder = new libheif.HeifDecoder();
  const images = decoder.decode(bytes);
- if (token !== loadToken) return;
+ // From here on every decoded image must be freed, whichever way we leave.
+ // A HEIC regularly carries more than one (thumbnail overlay, burst) while
+ // only the primary is shown: the others used to stay in the wasm heap for
+ // as long as the viewer lived.
+ try {
  if (!images || images.length === 0) {
  throw new Error('no decodable image found in this file');
  }
  // MVP: only the primary image is shown. A HEIC can hold a burst / derived-
  // image chain (images.length > 1); a thumbnail strip is a future enhancement.
  const image = images[0];
- try {
  const width = image.get_width();
  const height = image.get_height();
  if (!width || !height) throw new Error('image has no dimensions');
@@ -309,7 +312,7 @@ async function decodeAndShow(content: string, token: number): Promise<void> {
  };
  imageEl.src = currentObjectUrl;
  } finally {
- image.free();
+ for (const decodedImage of images ?? []) decodedImage.free();
  }
 }
 

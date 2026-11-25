@@ -47,11 +47,24 @@ export function resolveRelativeImageSrc(
   src: string | null | undefined,
   dirPath: string | null | undefined
 ): string | null {
+  const resolved = resolveRelativeRefPath(src, dirPath);
+  return resolved === null ? null : encodeWhaleFileUrl(resolved);
+}
+
+/**
+ * The absolute path behind a document-relative reference (same input rules
+ * and traversal rejection as `resolveRelativeImageSrc`), or `null`. Shared by
+ * the image rewrite (→ `whale-file://`) and the link rewrite (→ `file://`).
+ */
+export function resolveRelativeRefPath(
+  ref: string | null | undefined,
+  dirPath: string | null | undefined
+): string | null {
   if (!dirPath) return null;
-  const raw = (src ?? '').trim();
-  if (!raw) return null;
+  const src = (ref ?? '').trim();
+  if (!src) return null;
   // Drop query / fragment: they belong to the URL, not the file path.
-  const pathPart = raw.split(/[?#]/, 1)[0];
+  const pathPart = src.split(/[?#]/, 1)[0];
   if (!pathPart) return null;
   if (
     HAS_SCHEME_RE.test(pathPart) ||
@@ -80,5 +93,40 @@ export function resolveRelativeImageSrc(
 
   const base = dirPath.replace(/[\\/]+$/, '');
   if (!base) return null;
-  return encodeWhaleFileUrl(`${base}/${segments.join('/')}`);
+  return `${base}/${segments.join('/')}`;
+}
+
+/**
+ * Resolve a document-relative `<a href>` to a `file://` URL under `dirPath`, so
+ * a link such as `./notes.pdf` reaches the host as a real file reference.
+ * Without this the host received the bare relative text, could not turn it
+ * into a path, and refused it — the click did nothing. Main converts the URL
+ * back to a path and applies the configured-location check before opening.
+ *
+ * Absolute paths, URLs (`http:`, `mailto:`, …), drive letters, UNC paths and
+ * `..` traversal above `dirPath` are returned as `null`: the caller forwards
+ * those unchanged (the host opens `http(s)` itself, everything else is
+ * checked by main).
+ */
+export function resolveRelativeHref(
+  href: string | null | undefined,
+  dirPath: string | null | undefined
+): string | null {
+  const resolved = resolveRelativeRefPath(href, dirPath);
+  if (resolved === null) return null;
+  const encodeRest = (rest: string) =>
+    rest
+      .split('/')
+      .map(encodeURIComponent)
+      .join('/');
+  if (/^[\\/]{2}/.test(resolved)) {
+    // UNC location: `\\server\share\doc.pdf` → `file://server/share/doc.pdf`.
+    return `file://${encodeRest(resolved.replace(/\\/g, '/').slice(2))}`;
+  }
+  const forward = resolved.replace(/\\/g, '/');
+  const drive = /^[a-zA-Z]:/.exec(forward)?.[0] ?? '';
+  // `file:///C:/…` (drive colon stays a colon: it is structural) or
+  // `file:///home/…` on POSIX.
+  const rest = forward.slice(drive.length).replace(/^\//, '');
+  return `file:///${drive}${drive ? '/' : ''}${encodeRest(rest)}`;
 }

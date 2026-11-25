@@ -9,6 +9,10 @@ export interface WhaleFile {
   path: string;
   content: string;
   readOnly: boolean;
+  /** The host deliberately replaced the document (revision restore) and wants
+   *  the editor to drop its buffer — even when the content is the same as what
+   *  the editor already holds. See `FileContentMessage.force`. */
+  force?: boolean;
 }
 
 /** Snapshot of an in-flight external drag — the iframe receives this from
@@ -48,6 +52,7 @@ export function useWhaleBridge() {
             path: msg.path,
             content: msg.content,
             readOnly: msg.readOnly,
+            force: msg.force,
           });
           setReadOnly(msg.readOnly);
           break;

@@ -254,7 +254,9 @@ describe('drawio App in-flight lifecycle', () => {
       });
       assert.equal(images.length, 1);
 
-      loadFile('<mxfile><diagram>refresh</diagram></mxfile>');
+      // A same-path re-send with IDENTICAL bytes (readOnly / theme refresh):
+      // a plain props refresh must not disturb the in-flight embed.
+      loadFile();
       await act(async () => {
         images[0].onload?.();
         await Promise.resolve();
@@ -326,7 +328,9 @@ describe('drawio App in-flight lifecycle', () => {
       });
       assert.equal(images.length, 1);
 
-      loadFile('<mxfile><diagram>refresh</diagram></mxfile>');
+      // A same-path re-send with IDENTICAL bytes: a plain props refresh must
+      // not disturb the in-flight embed.
+      loadFile();
       await act(async () => {
         images[0].onload?.();
         await Promise.resolve();
@@ -352,6 +356,74 @@ describe('drawio App in-flight lifecycle', () => {
       if (originalAlert) {
         Object.defineProperty(window, 'alert', originalAlert);
       }
+    }
+  });
+
+  it('reloads an external change that lands mid-embed, then the embed lands on top', async () => {
+    const originalImage = Object.getOwnPropertyDescriptor(globalThis, 'Image');
+    const images: Array<{
+      onload: (() => void) | null;
+      onerror: (() => void) | null;
+      naturalWidth: number;
+      naturalHeight: number;
+      src: string;
+    }> = [];
+    class FakeImage {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      naturalWidth = 800;
+      naturalHeight = 600;
+      private _src = '';
+      set src(value: string) {
+        this._src = value;
+        images.push(this);
+      }
+      get src() {
+        return this._src;
+      }
+    }
+    Object.defineProperty(globalThis, 'Image', { configurable: true, value: FakeImage });
+
+    try {
+      const { drawioActions, emitHost, emitDrawio, loadFile } = setup();
+      const initialLoads = drawioActions.filter((msg) => msg.action === 'load').length;
+      emitHost({
+        type: 'externalDrag',
+        active: true,
+        path: '/tmp/picture.png',
+        name: 'picture.png',
+        isImage: true,
+      });
+      emitHost({
+        type: 'fileEmbed',
+        path: '/tmp/picture.png',
+        name: 'picture.png',
+        thumbnailDataUrl: 'data:image/png;base64,AA==',
+      });
+      assert.equal(images.length, 1);
+
+      // The file changed on disk while the image dimensions were decoding:
+      // same path, different bytes.
+      loadFile('<mxfile><diagram>external edit</diagram></mxfile>');
+      await act(async () => {
+        images[0].onload?.();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        emitDrawio({
+          event: 'export',
+          xml: '<mxfile><diagram id="page" name="Page-1"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>',
+        });
+        await Promise.resolve();
+      });
+
+      const loads = drawioActions.filter((msg) => msg.action === 'load');
+      // One load for the external change, then the embed on top of it.
+      assert.equal(loads.length, initialLoads + 2);
+      assert.match(String(loads[initialLoads].xml), /external edit/);
+      assert.match(String(loads.at(-1)?.xml), /picture\.png/);
+    } finally {
+      if (originalImage) Object.defineProperty(globalThis, 'Image', originalImage);
     }
   });
 
@@ -413,6 +485,48 @@ describe('drawio App in-flight lifecycle', () => {
       if (originalImage) Object.defineProperty(globalThis, 'Image', originalImage);
       else Reflect.deleteProperty(globalThis, 'Image');
     }
+  });
+
+  it('reloads the same path when the host sends new content (external edit)', () => {
+    const { drawioActions, loadFile } = setup();
+    const loads = () => drawioActions.filter((msg) => msg.action === 'load');
+    assert.equal(loads().length, 1, 'initial load');
+
+    // fs.watch saw the file change on disk: the host re-posts the SAME path
+    // with the new bytes. A path-only guard dropped this envelope, so the
+    // editor kept the stale diagram and the next save wrote it back over
+    // the external change.
+    loadFile('<mxfile><diagram>external edit</diagram></mxfile>');
+    assert.equal(loads().length, 2);
+    assert.match(String(loads()[1].xml), /external edit/);
+
+    // The identical envelope again is a plain re-render, not a new document:
+    // reloading here would wipe a cell the user just inserted by drag-drop.
+    loadFile('<mxfile><diagram>external edit</diagram></mxfile>');
+    assert.equal(loads().length, 2);
+  });
+
+  it('honours force: identical bytes still reload and clear dirty (revision restore)', () => {
+    const { drawioActions, posted, emitHost, emitDrawio } = setup();
+    const loads = () => drawioActions.filter((msg) => msg.action === 'load');
+    act(() =>
+      emitDrawio({ event: 'autosave', xml: '<mxfile><diagram>unsaved</diagram></mxfile>' })
+    );
+    assert.equal(posted.at(-1)?.dirty, true);
+
+    // The user restored a revision whose bytes equal the ones the editor
+    // started from. The content matches, so only `force` carries the intent.
+    emitHost({
+      type: 'fileContent',
+      path: '/tmp/lifecycle.drawio',
+      content: '<mxfile></mxfile>',
+      encoding: 'utf8',
+      readOnly: false,
+      force: true,
+    });
+    assert.equal(loads().length, 2, 'a forced reload reaches drawio');
+    assert.equal(posted.at(-1)?.type, 'contentChangedInEditor');
+    assert.equal(posted.at(-1)?.dirty, false);
   });
 
   it('does not save when export resolves in the same tick as unmount', async () => {

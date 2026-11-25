@@ -73,6 +73,14 @@ let applyingFileContent = false;
 // window dirty reports are edge-triggered (see postDirty), so typing does not
 // post a message per keystroke.
 let saveInFlight = false;
+/**
+ * Line separator to write back. CodeMirror 6 stores the document with `\n`
+ * (`EditorState` splits on /\r\n?|\n/ and `Text.toString()` joins with "\n"),
+ * so before 2026-11 every save of a CRLF file silently converted it to LF.
+ * Taken from the content the host delivered: whichever style the file uses
+ * more. A tie, a single-line or an empty file → LF.
+ */
+let lineBreak = '\n';
 
 /** Post the current dirty flag + revision. */
 function sendDirtySnapshot() {
@@ -569,6 +577,29 @@ function makeUpdateListener() {
  });
 }
 
+/** The separator the given text uses more (lone CR is not counted: CodeMirror treats it as a line break too). */
+function detectLineBreak(text: string): string {
+ let crlf = 0;
+ let lf = 0;
+ for (let i = 0; i < text.length; i++) {
+  if (text.charCodeAt(i) !== 10) continue;
+  if (i > 0 && text.charCodeAt(i - 1) === 13) crlf += 1;
+  else lf += 1;
+ }
+ return crlf > lf ? '\r\n' : '\n';
+}
+
+/**
+ * The document as it must be written to disk: CodeMirror's `\n` joined back
+ * with the file's own separator. The buffer never holds a CR (CodeMirror
+ * splits every line break on input), so replacing LF is lossless.
+ */
+function documentText(): string {
+ if (!view) return '';
+ const text = view.state.doc.toString();
+ return lineBreak === '\n' ? text : text.replace(/\n/g, '\r\n');
+}
+
 const saveKeymap = keymap.of([
  {
  key: 'Mod-s',
@@ -579,7 +610,7 @@ const saveKeymap = keymap.of([
  window.whaleExt.postMessage({
  type: 'parentSaveDocument',
  path: currentPath,
- content: view.state.doc.toString(),
+ content: documentText(),
  revision,
  });
  return true;
@@ -700,6 +731,9 @@ function setReadOnly(readOnly: boolean) {
 
 function setContent(content: string) {
  if (!view) return;
+ // Every load re-measures the file's line endings (an external change or a
+ // revision restore may have converted the file).
+ lineBreak = detectLineBreak(content);
  applyingFileContent = true;
  try {
  view.dispatch({
@@ -805,8 +839,18 @@ function handleMessage(msg: HostMessage) {
  });
  }
  if (shouldLoadContent) {
+ // A reload counts from 0 again. If the previous incarnation of this
+ // buffer had edits, the host is still holding that older revision and
+ // would judge the next save ack against it (`isSaveAckCurrent`): a clean
+ // buffer's reload changes no dirty flag, so the edge-triggered report
+ // below would stay silent and the next save was reported "outdated".
+ const reloadResetsRevision = revision !== 0;
  revision = 0;
  setContent(msg.content);
+ if (reloadResetsRevision) {
+  dirty = false;
+  sendDirtySnapshot();
+ }
  postDirty(false);
  }
  setReadOnly(msg.readOnly);
@@ -841,7 +885,7 @@ function handleMessage(msg: HostMessage) {
  window.whaleExt.postMessage({
  type: 'parentSaveDocument',
  path: currentPath,
- content: view.state.doc.toString(),
+ content: documentText(),
  revision,
  });
  }
