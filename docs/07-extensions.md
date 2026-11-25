@@ -157,20 +157,26 @@ CSP 不手抄在 8 份 `index.html` 里,而是由 [src/extensions/shared/csp-pol
 
 **跨文件切换要重置 undo**:text-editor 复用同一个 CodeMirror `view`。`fileContent` 消息换文件时若不清历史,`Ctrl+Z` 会把上一个文件的内容写进当前文件(保存即串写);程序化 `setContent` 还会把"加载"记成一笔可撤销编辑。现在 history 放进独立 `Compartment`,换文件时 `reconfigure` 成新历史,`setContent` 用 `Transaction.addToHistory.of(false)` 排除出撤销栈。顺带修正了 `switchedFile` 的判断顺序——原代码先赋值再比较,语言切换分支永远不执行。
 
+**行尾与字节格式原样回写**:text-editor 在 `setContent` 时按内容判定行尾(CRLF 比 LF 多则 CRLF,否则 LF),内部统一用 `\n` 编辑,`documentText()` 再用文件的原始分隔符拼回去——保存不再把 CRLF 文件整篇改成 LF。主进程按文件现有 BOM 决定写盘编码:`readTextByteFormat` 读出 `utf8` / `utf8-bom` / `utf16le` / `utf16be`,`ext:writeFile` 对非纯 UTF-8 走 `encodeTextAs` + `atomicWriteBytes`(否则带 BOM 的文件存一次就丢 BOM,UTF-16 文件被写成 UTF-8);GBK 等 legacy 编码仍按解码后的文本存成 UTF-8。干净缓冲区被重载后编辑器把 revision 归 0 上报宿主,下一次保存不会被误判成"基于过期版本"。
+
+**解码器共用**:查看器读盘、`ext:writeFile` 的字节格式判定与全文索引抽取都走 [src/main/text-decode.ts](../src/main/text-decode.ts) 的 `decodeTextBuffer`(UTF-8 BOM → 合法 UTF-8 快路径 → jschardet + iconv-lite 兜底),所以查看器里看到的 GBK / Shift-JIS 文本与索引里的是同一份解码结果。
+
 **用户 CSS 不得绕过图片开关**:html-viewer 的图片开关同时约束 `<style>` 里的外链——关掉远程图片时,`url(https://…)`(background / cursor / `@font-face` 都会触发)与 `@import` 仍会发请求并拉取任意 CSS。现在 `stripRemoteCssRefs` 移除 `@import` 并把非 `data:` 的 `url()` 替成 `none`,开图片时才原样注入。DOMPurify 只管 HTML,管不到 `<style>` 文本,这是它之外必须单独做的一层。正文元素上的行内 `style` 走同一条清理:关图时对 sanitize 后的 `[style]` 元素逐个剥掉远程 `url()`/`@import`,local 声明(颜色、字号)保留。
 
-**用户 CSS 作用域**:`<style>` 挂在扩展页面 `document.head`,不作用域会命中工具栏与弹窗(`body{display:none}` 曾把整个 UI 一起干掉)。注入后按 `CSSStyleSheet.cssRules` 改写选择器:按 `,` 拆分,`html`/`body`/`:root` 映射为 `#content`、以其开头的选择器换前缀,其余统一前置 `#content `;`@media`/`@supports` 递归处理,非 `CSSStyleRule` 分组(如 `@keyframes`)原样跳过;访问 `cssRules` 被浏览器拒绝时保留未作用域文本而不是丢掉整张表。
+**用户 CSS 作用域**:`<style>` 挂在扩展页面 `document.head`,不作用域会命中工具栏与弹窗(`body{display:none}` 曾把整个 UI 一起干掉)。注入后按 `CSSStyleSheet.cssRules` 改写选择器:按 `,` 拆分,`html`/`body`/`:root` 映射为 `#content`、以其开头的选择器换前缀,其余统一前置 `#content `;`@media`/`@supports` 递归处理,非 `CSSStyleRule` 分组(如 `@keyframes`)原样跳过;访问 `cssRules` 被浏览器拒绝时保留未作用域文本而不是丢掉整张表。切到没有 `<style>` 的文档时注入空串会把 `#whale-user-style` 整条移除,上一份文档的样式不会跟着新文档继续生效。
 
 各查看器/编辑器共享 `src/extensions/shared/zoom.ts` 与 `keymap.ts`。
 
 **相对图片解析**:html-viewer 把 sanitize 后的 HTML 直接注入自身 `document` 的 `#content`(不是 iframe);host 在 `fileContent` 里带 `dirPath`(文件所在目录),viewer 在注入后把 `img[src]` 的相对路径解析到 `dirPath` 下,再经 `encodeWhaleFileUrl` 生成 `whale-file://`,因此 CSP 的 `img-src` 增加 `whale-file:`。解析只接受 `dirPath` 内的相对路径:绝对路径、`//` / `\\` 前缀、带 scheme 的 URL、`..` 以及 `%2e%2e` 等编码后的越界一律返回 null 并保持原 src;图片开关关闭时不解析。`whale-file://` 请求由主进程 `assertWithinAllowedRoot` 守卫,只服务已配置 location roots 内的文件。
+
+**文档相对链接**:同一套越界判定(`resolveRelativeHref`)也用于 `<a href>`:`./notes.pdf` 这类相对引用按文档目录解析成 `file://` URL(UNC 形如 `file://server/share/…`,否则 `file:///C:/…`)再交给宿主 `openNative`;绝对路径、带 scheme 的 URL 与 `..` 越界原样转发,`#anchor` 留在预览内滚动。
 
 ## 5. 媒体与文档类
 
 | 扩展 | 后端 |
 |---|---|
 | image-viewer | 原生 `<img>` + Lightbox 缩放 / pan / 旋转 / `flipH` / `flipV`;`<` `>` `Space` 等快捷键。图像经 Blob URL 挂到 `<img>`(`object-url.ts` 跟踪当前 URL),换文件/出错/iframe 卸载时 `revokeObjectURL`:早先直接用 `data:` URL 且从不释放,一个目录里看过的每张图都会在 iframe 生命周期内常驻内存。CSP `img-src` 已含 `blob:` |
-| heic-viewer | libheif-js wasm 解码;大文件同步阻塞 → iframe 显示 "Decoding…" |
+| heic-viewer | libheif-js wasm 解码;大文件同步阻塞 → iframe 显示 "Decoding…"。每次解码出的 `Image` 都在 `finally` 里 `free()`(被后续加载顶掉、主图解码失败时同样释放),反复切换 HEIC 不会把 wasm 堆越吃越大 |
 
 ✅ **pdf-viewer 已随 0.4.9 瘦身移除**(2026-09,连同 `shared/pdfjs-in-iframe.ts` 会话工厂、AI 框选提问管线 `askAi`/marquee/`aiDraftBus`/`AskQuestionDialog`、`requestFileBytes`/`fs:readFileRange` 字节桥、`requestPdfAsset` 资产服务)。PDF 文件本身仍受完整支持:**主进程**缩略图(`thumb-render.ts`,pdfjs 页 1 渲染)与全文索引(`fulltext.ts`)不依赖该扩展;`pdfjs-dist` 依赖与 `builder.json` asarUnpack 因此保留。
 
@@ -187,7 +193,7 @@ CSP 不手抄在 8 份 `index.html` 里,而是由 [src/extensions/shared/csp-pol
 
 Draw.io 的本地 Link/Lightbox 会请求 `drawio-assets` 目录 URL。`extension-protocol.ts` 仅把 `drawio-editor/drawio-assets` 精确根路径（含尾斜杠变体）映射到该目录的 `index.html`,其他扩展目录仍保持 EISDIR/404,不开放通用目录索引。构建时 base/lightbox 使用无尾斜杠 URL,viewer/base/lightbox 都由独立赋值固定到本地,避免 vendor `PreConfig.js` 重置与赋值顺序影响。
 
-**Excalidraw 字体降级边界**:`whale-extension://` 可用于文档、script 与 chunk,但当前 Electron 的 `supportFetchAPI` 未开启;Excalidraw 的字体加载器先尝试随包 `EXCALIDRAW_ASSET_PATH`,本地 `fetch` 失败后还会尝试上游 esm.sh URL,随后被扩展 CSP 的 `font-src 'self' data: whale-extension://*` 阻止并回退系统字体。这是既有离线/字体取舍,不是 async chunk 失败。打包冒烟应单独归类这组精确匹配的字体 CSP 错误,继续对其它 console error、pageerror、requestfailed 和 404 零容忍,不能用全局忽略字体或全部 console 来掩盖 chunk 回归。
+**Excalidraw 字体**:随包分发的 234 个字体文件(`dist/prod/fonts`,12.5 MB;中文手写体 Xiaolai 按 unicode-range 拆成 209 个子集)在打包版里**正常加载**:Excalidraw 用 `FontFace` + `url()` 从 `whale-extension://excalidraw-editor/fonts/…` 取字体,`document.fonts` 只拉 unicode-range 命中文档字符的子集。2026-11-25 在打包版实测:英文手写体(Excalifont / Virgil)与中文手写体(Xiaolai,默认手写体遇到汉字时的回退)都从本地加载成功,响应 `200 application/octet-stream`,`document.fonts.check` 为真。两个容易误判的现象:`whale-extension://` 不支持 `fetch()`(`supportFetchAPI` 未开启),bundle 里用 `fetch()` 取字体的只有导出 SVG 时内嵌字体那一条路径(`generateFontFaceDeclarations`;按 bundle 代码,这条路在本 scheme 上拿不到字体字节),不影响画布渲染;每个字体的源列表是「本地 URL,上游 esm.sh 回退 URL」,注册时浏览器对回退 URL 做策略求值,每个字体文件各报一次 `Loading the font 'https://esm.sh/…' violates … "font-src …"` 并记为 `csp` 失败请求(约 230 条),与该字体是否被用到无关,本地加载不受影响。打包冒烟按消息形状归类这组 CSP 错误(不把源列表写死,免得 CSP 一改脚本就过期),继续对其它 console error、pageerror、requestfailed 和 404 零容忍,不能用全局忽略字体或全部 console 来掩盖 chunk 回归。
 
 上游 `drawio-offline` 包不包含 `embed-static.min.js` 或 `embed.js`(只有 `embed.dev.js`),所以 `EditorUi.getHtml` 的 HTML-embed 仍有上游资源缺口；本地 Link/Lightbox 与 viewer-static 可服务不等于 HTML-embed 已修复。不要简单把 `embed.dev.js` 改名冒充正式 bundle。
 
@@ -200,6 +206,7 @@ Draw.io 的本地 Link/Lightbox 会请求 `drawio-assets` 目录 URL。`extensio
 - Drawio 保存实测走 `export` action event(不是 `autosave`/`save`);bridge 只对 `export` 调用 `getXml` 并映射为 `{kind:'xml',xml}`，`autosave`/`save` 仅触发 `onChange`，不额外生成 XML 保存消息
 - drawio `editor.modified` 默认 false(画了 shape + 1.5s autosave timer 后才翻 true),工具栏 Save 不依赖 dirty 直接允许(未修改 = no-op 写盘)
 - unmount 会注销 save/message handler、清 XML timer 并 reject pending requests；销毁后不再 postMessage，异步保存与图片插入也不得继续更新已卸载组件。`fileContent` 刷新只重绑 handler，不取消已经开始的保存或图片插入；若切换到另一文档，尚未完成的图片插入会在写 XML 前中止，避免把旧文档的拖入内容写进新文档。图片插入是 read→append→loadXml 的读改写：**读不到当前图表时中止并提示，不加载任何替换文档**（旧兜底会用一个单 cell 文档覆盖整张图）。并发拖入改走 promise 链**串行**：旧实现的 in-flight 早退会静默丢掉第二个文件（调用方收不到错误，文件就是不出现）。非图片 drop 的标签在 `html=1` 下按 HTML 渲染，文件名先做 HTML 转义再做 XML 转义（双层是刻意的：XML 解码后仍是 `&lt;…&gt;` 文本），否则名为 `<img src=x onerror=…>` 的文件会被 drawio 当标记渲染。
+- 同路径 `fileContent` 带**新内容**会重载图表(外部编辑 / 文件夹监听的刷新路径):旧实现只记 `lastLoadedPath`,同路径的新内容被当成"还是这个文件"直接忽略;`file.force`(revision 恢复)连逐字相同的字节也重载并清 dirty,而相同字节且无 `force` 不重载——否则每次保存后的回读都会把图表重灌一遍、丢掉刚拖进来的编辑状态。
 
 ## 7. 扩展 i18n 与主题
 

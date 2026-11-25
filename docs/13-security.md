@@ -17,21 +17,25 @@
 
 - `setAllowedRoots(roots)` 注册可写根目录(只有这些目录里的文件可被修改)
 - `assertWithinAllowedRoot(filePath)` 校验路径是否落在某个 root 下
+- `assertLexicallyWithinAllowedRoot(filePath)` 是**任何系统调用之前**的纯字符串闸:`path.resolve` + 前缀比较,不碰磁盘。位置外的路径直接拒,连 `stat` / `realpath` 都不会发生——对 `\\attacker.example\s\x` 这类 UNC 路径,`realpathSync` 本身就会让 Windows 发起 SMB 认证(NetNTLMv2 哈希外泄),`\\host@port\s\` 形式在 WebDAV 客户端服务运行时还能经它连到任意 host:port,错误文本与延迟都是内网探测口。`assertWithinAllowedRoot` / `isConfiguredRoot` / `isReadOnlyPath` 都以它为先手;`whale-file://` 协议处理器在 `stat` 前过它,`shell:revealPath` / `shell:revealAndSelect` 也过它(这两个"只读手势"此前完全没有闸)。
 - **空集合 = 拒绝所有写**(fail-closed)
 - `fs.realpathSync` 解析目标(不存在递归父目录再拼尾部),防 symlink 逃逸
 - 大小写按平台归一:win32/darwin 折叠、linux 精确(与 [path-fold.ts](../src/main/path-fold.ts) 一致)
+- 目录锁与原子写的键共用 `canonicalPathKey`([path-fold.ts](../src/main/path-fold.ts):`path.resolve` → `realpathSync` → 大小写折叠,失败时退回父目录 realpath + 文件名,永不抛),所以 junction / symlink 别名指向同一目录时仍只有一条写队列,不会两条队列各自"独占"却交错写同一批文件
 
 **位置来历(provenance)**:`fs:setAllowedRoots` 只接受主进程记录在案的目录——用户在原生文件夹对话框里选过的(处理器在返回路径前用 [known-roots.ts](../src/main/known-roots.ts) 的 `rememberPickedRoot` 记录,持久化到 `<userData>/known-roots.json`),或升级/首装后第一次推送时的一次性种子(TOFU,写入记录后再以记录为准)。未知目录记 `console.warn` 后丢弃,不进入 `allowedRoots`——渲染层即使被注入,也无法把 `/` 注册成位置。记录文件损坏或不可读时按"未 seed"重来,而不是把用户锁在门外(若该路径被目录占用,先把目录改名为 `known-roots.json.corrupt-<时间戳>` 再重新记录,否则之后每次写入都会失败);位置目录改名后旧路径不再是已知目录,需重新添加。
 
-**只读位置**:仍会注册进 `allowedRoots` 以允许读取；`allowedRoots` 只界定“哪些位置可访问”，不等同于只读权限。**只读权限现在也由主进程强制**：`Root.tsx` 推送 `setAllowedRoots(roots, readOnlyRoots)`，`allowed-roots.ts` 的 `isReadOnlyPath` / `assertWritable` 在文件写入、建目录、删除、移动/复制目的端、打包、sidecar 写入与删除、目录元数据、标签库描述、修订备份/恢复/清理、目录缩略图与背景的设置/清除等入口统一抛 ``Refused: the location containing this path is read-only``；MCP 变更工具复用同一批函数，因此同样被拒。渲染层 IOActions / FileList / useListCommands 守卫仍是第一道闸。**例外**：索引缓存(`.whale/index.db`)与缩略图缓存属可重建缓存，仍可写；legacy sidecar 迁移在只读位置直接跳过且不改名(`migrateLegacySidecars` 早返回)，避免"读一下就写盘"。
+**只读位置**:仍会注册进 `allowedRoots` 以允许读取；`allowedRoots` 只界定“哪些位置可访问”，不等同于只读权限。**只读权限现在也由主进程强制**：`Root.tsx` 推送 `setAllowedRoots(roots, readOnlyRoots)`，`allowed-roots.ts` 的 `isReadOnlyPath` / `assertWritable` 在文件写入、建目录、删除、移动/复制目的端、打包、sidecar 写入与删除、目录元数据、标签库描述、修订备份/恢复/清理、目录缩略图与背景的设置/清除等入口统一抛 ``Refused: the location containing this path is read-only``；MCP 变更工具复用同一批函数，因此同样被拒。渲染层 IOActions / FileList / useListCommands 守卫仍是第一道闸。**例外**：索引缓存(`.whale/index.db`)与缩略图缓存属可重建缓存，仍可写；legacy sidecar 迁移在只读位置直接跳过且不改名(`migrateLegacySidecars` 早返回)，避免"读一下就写盘"；日期标签迁移同样跳过只读根，不在那里写 `_migration-state.json` 标记，根目录不可读时也不重建文件夹(`migrate-date-tags.ts` 只在 `readdir` 成功后才把根算作走过)；lat/lng 旧 sidecar 的原地迁移在只读目录只在内存里返回结果(`sidecar.ts` 的 `migrateLatLngInPlace`)。
 
 修订历史 IPC(`ext:listRevisions` / `ext:restoreRevision` / `ext:deleteRevision`)过同一闸;`deleteRevision` 额外把 revision 路径绑定到所属文件的 `<dir>/.whale/revisions/` 前缀(与 restore 相同)——`rm --force` 不进回收站,不做绑定就是任意路径强删。`ext:cleanupRevisions` 只接受有限、非负的 number，非法天数在删除前 reject。详见 [docs/07-extensions.md](./07-extensions.md)。
 
-读取入口也遵守同一位置边界：`fs:readFile` / `fs:readTextFile` / `fs:readFileBase64` / `fs:listDirectory` / `fs:listDirectoryRecursive` / `folderMeta:read` 都过 `assertWithinAllowedRoot`——目录枚举同样能揭示位置外路径，递归扫描还会写 `<dir>/.whale/` 缓存，所以不能只防"读内容"；`fs:pathExists` 这个无校验的死通道已删除。目录缩略图与背景加载都会校验目录（缩略图缺图时可能自动生成并写 `.whale`），设置/清除目录缩略图与背景会校验目标目录并拒绝只读位置；原生对话框自选的 source 图片可以位于位置外，但服务只读取源、只在目标目录 `.whale/` 写入。单文件缩略图读取(`thumbnail:load`)同样先校验文件路径；`fs:zipEntries` 的归档目标也校验(名字是渲染层拼的用户输入，`..\..\x.zip` 不得越界)，`fs:zipDirectory` 的目标由主进程从源路径推导、保持豁免。`index:query` / `index:advanced` / `index:tags` / `index:status` / `fulltext:search` / `fulltext:has` 均在访问索引前校验 root。侧车批量读（`sidecar:readManyDetailed` / `sidecar:readForPathsDetailed`）同样校验——目录参数过 `assertWithinAllowedRoot`，路径列表逐个校验，任一路径越界整批拒绝。
+读取入口也遵守同一位置边界：`fs:readFile` / `fs:readTextFile` / `fs:readFileBase64` / `fs:listDirectory` / `fs:listDirectoryRecursive` / `folderMeta:read` 都过 `assertWithinAllowedRoot`——目录枚举同样能揭示位置外路径，递归扫描还会写 `<dir>/.whale/` 缓存，所以不能只防"读内容"；`fs:pathExists` 这个无校验的死通道已删除。目录缩略图与背景加载都会校验目录（缩略图缺图时可能自动生成并写 `.whale`），设置/清除目录缩略图与背景会校验目标目录并拒绝只读位置；原生对话框自选的 source 图片可以位于位置外，但服务只读取源、只在目标目录 `.whale/` 写入。单文件缩略图读取(`thumbnail:load`)同样先校验文件路径；`fs:zipEntries` 的归档目标也校验(名字是渲染层拼的用户输入，`..\..\x.zip` 不得越界)，`fs:zipDirectory` 的目标由主进程从源路径推导、保持豁免。调系统 `zip` 时以 `-` 开头的源名一律传成 `./-name`——直接传 `-name` 会被 zip 当成命令行选项(option injection)。`index:query` / `index:advanced` / `index:tags` / `index:status` / `fulltext:search` / `fulltext:has` 均在访问索引前校验 root。侧车批量读（`sidecar:readManyDetailed` / `sidecar:readForPathsDetailed`）同样校验——目录参数过 `assertWithinAllowedRoot`，路径列表逐个校验，任一路径越界整批拒绝。
 
 `fs:importExternal`(从系统拖入文件)的**源路径**不做位置校验：拖拽 API 只给路径字符串，主进程无法验证"这确实是一次用户拖拽"，而要求源在位置内会直接废掉"从资源管理器拖进来"这个功能。**目标目录**仍过 `assertWithinAllowedRoot`。残余风险如实记录：被注入的渲染层可以把任意可读文件复制进某个位置，再经 `fs:readFile` 读回——消除它只能取消位置外拖入，属已知取舍。
 
 写入侧还有一条同等重要的边界：`fs:move` / `fs:copy` 的**目的地**此前只校验源路径（代码注释称"目的地可以是用户选的任意目录"），等于给注入的渲染层留了一条"把任意内容搬进 Startup / `~/.ssh`"的写逃逸；现在两端都过 `assertWithinAllowedRoot`（[fs-write.ts](../src/main/ipc/fs-write.ts)），与 `fs:rename` 对齐。`fs:importExternal` 的 `cp` 同时补 `force: false`——Node 默认 `force: true` 会静默覆盖 readdir 快照之后才出现的同名文件。
+
+`assertNotOwnSubtree(sourcePath, destPath)` 另拒"把文件夹搬进 / 复制进自己":`dest` 落在 `source` 子树内直接抛(`fs:rename` / `fs:move` / `fs:copy`,MCP 的 `whale_move` / `whale_copy` 共用同一检查)。否则会先建目标目录再搬源,留下一半副本或无限递归;`a` → `A` 这种同条目大小写改名仍交给原有的"目标已存在"检查。
 
 **位置根本身不是条目**：[allowed-roots.ts](../src/main/allowed-roots.ts) 的 `assertNotLocationRoot` 拒绝把已配置的位置根当成待操作对象，IPC（`fs:delete` / `fs:rename` / `fs:move` / `fs:copy` / `sidecar:write`）与 MCP 工具共用这一检查——删除/移动/改名整块位置是界面从不提供的"整套工作区"动作，且根的 sidecar 会写到 `dirname(root)/.whale/`（边界外）。`fs:zipDirectory` 保持豁免：它把归档放在源的兄弟目录，正是"打包整个位置"的正常语义（见 [fs-write.ts](../src/main/ipc/fs-write.ts) 注释）。
 
@@ -118,7 +122,7 @@
 
 - 只监听 `127.0.0.1`,默认关闭;每个请求必须携带 Bearer token(`timingSafeEqual` 比较,设置页可再生成);token 优先经 OS 密钥库(`safeStorage`)加密落盘,无可用密钥库时回退明文并在配置里标记(`tokenStorage`),旧明文配置下次写入自动迁移;Host 头必须是回环自身(先于 401 返回 403,防 DNS rebinding)。
 - 所有工具路径过 `assertWithinAllowedRoot`;且比渲染层 IPC 更严——move/copy 的**目的地**也必须在 roots 内。
-- 写操作分级:sidecar 级(标签/描述)免审批;文件级(move/copy/delete/zip/create)推送审批弹窗,**无窗口 / 60s 超时 / 拒绝一律视为拒绝**(fail-closed)。
+- 写操作分级:sidecar 级(标签/描述)免审批;文件级(move/copy/delete/zip/create)推送审批弹窗,**无窗口 / 60s 超时 / 拒绝一律视为拒绝**(fail-closed)。弹窗里展示的 `summary` 与每条 `details` 都先过 `visibleApprovalText`(控制字符与 bidi 覆盖字符换成 U+FFFD)——否则文件名里的双向覆盖符能把"允许 / 拒绝"的显示顺序翻过来;`whale_create_text_file` 还展示正文前 200 字符,空文件明确写 `The file is empty`。
 - 只读模式(默认开)拒绝一切变更工具;删除仅回收站,不提供永久删除。
 - JSON-RPC batch 元素数上限 32(`MAX_BATCH_ELEMENTS`,[mcp-http.ts](../src/main/mcp/mcp-http.ts)):4 MiB body 上限单独不足以阻止单请求塞入十万条小调用串行占用主线程;超限 413。
 - MCP 配置在 POSIX 上以 `0o600` 落盘(见 §12):无可用密钥库时该文件含明文 bearer token,不能让同机其他用户读到。
@@ -128,7 +132,7 @@
 - **权限默认拒绝、按真实用途精确放行**:[main.ts](../src/main/main.ts) 的 permission request / check 共用 fail-closed 策略。只有主界面与 `json-viewer` 的 `clipboard-sanitized-write`、`image-viewer` 的 `fullscreen` 可放行,而且必须同时满足:请求来自当前主窗口的 `webContents`、顶层页面是开发服务器或打包后的精确 renderer URL、frame URL / origin 与主界面或对应扩展精确匹配;扩展 iframe 还校验 `embeddingOrigin`。摄像头 / 麦克风 / 定位 / 通知 / MIDI、外站与相似域、任意 `file://`、其他扩展及异常路径一律拒绝。
 - **敏感文件 0600 与日志保留上界**:`<userData>/crash.log` 与 MCP 配置(`mcp-config.json`,可能含明文 bearer token)在 POSIX 上以 `0o600` 落盘([crash-guard.ts](../src/main/crash-guard.ts)、[mcp-config.ts](../src/main/mcp/mcp-config.ts) 经 [atomic-write.ts](../src/main/atomic-write.ts) 新增的 `AtomicWriteOptions.mode`)。crash.log 先打开 fd,**写前** `fchmodSync(fd, 0o600)` 修正历史 0644 文件,再追加并关闭;chmod 失败时不写入本次敏感内容,外层 best-effort 崩溃处理仍继续。活动日志追加后若将超过 1 MiB 会先轮换为唯一 `crash.log.1`,不截断单条记录;轮换失败会警告并继续保留当前记录。MCP 配置经 atomic-write 在同一 fd 上 `chmod(mode)`,并于 datasync、close 与 rename 前完成;权限强化失败会上抛、清理 tmp 且不替换原文件,不再静默以宽权限发布。Windows 跳过 POSIX mode。
 - **崩溃日志脱敏**:主进程致命异常与 renderer 上报都先过 `sanitizeErrorDetail` 再写盘 / 弹窗:任意详情归一为字符串、去控制字符、截断到 4000 字符,并把 home 目录前缀替换成 `~`——崩溃报告常被贴进 issue,原始 stack 的绝对路径会把账号名一起带出去。
-- **已接受取舍**:① CSP `img-src` 保留 `http(s)`(§3)——Mapique 地图瓦片从 OSM / 用户自建瓦片服务器加载,去掉即废地图;HTML 仍过 DOMPurify,扩展 iframe 另受自身 CSP 约束。② 目录缩略图 / 背景的 source 图片可位于位置外(§2 末)——来自原生选择框,服务只读源、只写目标 `.whale/`;残余风险是被注入的渲染层可绕过对话框把任意图片路径当 source(结果只落成缩略图 jpg),随"位置外选图"能力接受,记录于 [boundary-guards.test.ts](../src/main/ipc/boundary-guards.test.ts)。
+- **已接受取舍**:① CSP `img-src` 保留 `http(s)`(§3)——Mapique 地图瓦片从 OSM / 用户自建瓦片服务器加载,去掉即废地图;HTML 仍过 DOMPurify,扩展 iframe 另受自身 CSP 约束。② 目录缩略图 / 背景的 source 图片可位于位置外(§2 末)——来自原生选择框,服务只读源、只写目标 `.whale/`;残余风险是被注入的渲染层可绕过对话框把任意图片路径当 source(结果只落成缩略图 jpg),随"位置外选图"能力接受,记录于 [boundary-guards.test.ts](../src/main/ipc/boundary-guards.test.ts)。③ `whale-file://` 里**单字母 host 按盘符解**:Chromium 会把 `whale-file:///C:/…` 归一成 `whale-file://c/…`,所以 [whale-file-url.ts](../src/shared/whale-file-url.ts) 把 `/^[a-zA-Z]$/` 的 host 重建为 `C:/…`,只有多字母 host 才当 UNC 服务器名。歧义来自 URL 空间本身(单字母 SMB 服务器名罕见):`\\w\share\a.mp4` 会解成 `W:/share/a.mp4`,既读不到原文件,解出的路径也仍要过位置闸。
 
 ## 13. 第三方依赖审计与残余告示(2026-11)
 

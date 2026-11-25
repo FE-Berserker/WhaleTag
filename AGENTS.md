@@ -14,7 +14,8 @@ Whale：本地优先、离线、隐私安全的 Electron 文件管理与打标�
 | `npm run dev` | 开发模式（webpack watch + electronmon） | 环境残留 `ELECTRON_RUN_AS_NODE` 会让 Electron 退化成 Node，见 plan.md §C.1 |
 | `npm run lint` | ESLint 全量（js/jsx/ts/tsx） | |
 | `npm run type-check` | `tsc --noEmit` | **注意脚本名是 `type-check` 不是 `typecheck`** |
-| `npm test` | 全量测试 | `pretest` 自动先跑 type-check；测试失败先看是类型错还是断言错 |
+| `npm test` | 全量测试（默认并行，约 1 分钟） | `pretest` 自动先跑 type-check；`WHALE_TEST_CONCURRENCY=1` 强制串行；测试失败先看是类型错还是断言错 |
+| `npx electron-rebuild -f -o better-sqlite3` | 把原生模块重编译到当前 Electron 的 ABI | `npm ci` 之后必跑一次（见"已知坑"第 7 条） |
 | `npm run build` | 产出 main + extensions + renderer | |
 | `npm run package:win` | Windows 打包（electron-builder） | 打包排坑见 docs/14 |
 
@@ -24,12 +25,13 @@ Whale：本地优先、离线、隐私安全的 Electron 文件管理与打标�
 
 - 框架：Node 内建 `node:test`（`import { describe, it } from 'node:test'`），断言用 `node:assert/strict`，经 Electron `--test` 执行。
 - **共置**：测试文件 `foo.test.ts` 放在被测文件旁边，不集中建 tests/ 目录。
-- **自动发现**：`scripts/run-tests.cjs` 扫描 `src/` 与 `scripts/` 下所有 `*.test.ts(x)`，新增测试文件**无需登记清单**（旧的手工清单曾漏 8 个文件，勿走回头路）。
-- 现状约 200 个测试文件（2026-11 为 205 个），覆盖 main/renderer/shared/extensions/mobile/scripts 六层；具体 suites / tests 数以 `npm test` 输出为准。
+- **自动发现 + 并行**：`scripts/run-tests.cjs` 扫描 `src/` 与 `scripts/` 下所有 `*.test.ts(x)`，新增测试文件**无需登记清单**（旧的手工清单曾漏 8 个文件，勿走回头路）。runner 默认 `--test-concurrency = min(6, ceil(cpu/2))`，4 分钟无输出即树杀并自动改串行重跑（30 分钟硬上限）；测试之间不要共享进程级状态（端口用 `listen(0)`，临时目录用 `mkdtemp`）。
+- 现状约 210 个测试文件（2026-11 为 214 个），覆盖 main/renderer/shared/extensions/mobile/scripts 六层；具体 suites / tests 数以 `npm test` 输出为准。
+- **renderer 测试**：jsdom 在 `before` 里用 `globalJsdom()` 创建的测试文件，必须在其后**动态** `await import('@testing-library/react')`（静态 import 会让 react-dom 在 DOM 出现前加载，按键事件走 IE8 兼容分支并报 `attachEvent is not a function`）。
 
 ## 目录职责
 
-- `src/main/`：Electron 主进程——FS IO、SQLite FTS5 索引（utilityProcess worker）、缩略图 worker、自定义协议（`whale-file/audio/extension`）、IPC handlers、原子写盘。
+- `src/main/`：Electron 主进程——FS IO、SQLite FTS5 索引（utilityProcess worker）、缩略图 worker、自定义协议（`whale-file://` 文件流、`whale-extension://` 扩展）、IPC handlers、原子写盘。
 - `src/renderer/`：React 渲染层——components、redux、domain（**纯前端域逻辑放这里**）、hooks、services、theme、locales（i18n 5 语言）。
 - `src/shared/`：main + renderer 双方引用的契约层（ipc-types、tags、extension-types 等类型与纯函数）。
 - `src/extensions/`：8 个内置扩展查看器/编辑器（双层 iframe 拓扑），由 `scripts/build-extensions.js` 独立构建。
@@ -61,7 +63,7 @@ Whale：本地优先、离线、隐私安全的 Electron 文件管理与打标�
 
 ## 已知坑速查（进新模块前必读）
 
-权威列表在 [plan.md §C](plan.md) 与 [docs/09-known-issues.md](docs/09-known-issues.md)，最常踩的六条：
+权威列表在 [plan.md §C](plan.md) 与 [docs/09-known-issues.md](docs/09-known-issues.md)，最常踩的七条：
 
 1. `unset ELECTRON_RUN_AS_NODE` 是 dev 启动硬约束。
 2. `autoMergeLevel1` reconciler 比较引用——返回新对象的纯函数会跳过 slice rehydration。
@@ -69,6 +71,7 @@ Whale：本地优先、离线、隐私安全的 Electron 文件管理与打标�
 4. `'system'` 主题模式绝不能直接流入 `createTheme.palette.mode`。
 5. drawio/excalidraw 双层 iframe：扩展协议 + CSP + 协议注册三件套缺一不可。
 6. redux-persist 写盘必须 tmp+rename 原子操作。
+7. `better-sqlite3` 是 V8/ABI 绑定模块（不是 N-API）：`npm ci` 装的是纯 Node 版，Electron 加载会报 `NODE_MODULE_VERSION` 不匹配——跑 `npx electron-rebuild -f -o better-sqlite3`；`npm run dev` 与 `npm test` 开头会自动做这项检查（`scripts/check-native-abi.cjs`）。
 
 ## 平台备注
 

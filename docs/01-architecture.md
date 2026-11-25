@@ -107,7 +107,7 @@ CurrentLocation → DirectoryContent → DirectoryTreeRefresh → IOActions
 ## 8. 构建 / 打包
 
 ```bash
-npm install          # 含原生模块(better-sqlite3 / sharp / @napi-rs/canvas)需 @electron/rebuild
+npm install          # 原生模块还需 npx electron-rebuild -f -o better-sqlite3(见 docs/09 §4)
 npm run dev          # main watch + 渲染层 dev server(:4002) + mobile watch + electronmon
 npm run build        # 生产构建 → release/app/dist/{main,renderer,extensions,mobile}
 npm start            # 跑生产构建
@@ -172,7 +172,11 @@ try {
 `electron --test`(Node test runner,经 ts-node)跑 `src` + `scripts` 下所有 `*.test.ts(x)`;规模随迭代增长,以 `npm test` 输出的 suites / tests 计数为准(不在此处写死数字,免得过期)。
 
 - **自动发现**:[scripts/run-tests.cjs](../scripts/run-tests.cjs) 用 glob 枚举全部测试文件交给 `electron --test`——**新增测试无需改 package.json**。
+- **默认并行**:`--test-concurrency = min(6, ceil(cpu/2))`(留一半 CPU 给机器,套件里相当一部分用例在等定时器,2 个 worker 也有收益);`WHALE_TEST_CONCURRENCY` 覆盖(上限 64,`1` = 严格串行)。并行意味着**测试之间不得共享进程级状态**:端口用 `listen(0)`,临时目录用 `mkdtemp`。
+- **看门狗兜底**:某个 worker 4 分钟无输出(`WHALE_TEST_STALL_MS` 可调)即杀掉整棵进程树,并自动按 `WHALE_TEST_CONCURRENCY=1` 串行重跑一次——早期的 node:test 死锁曾靠钉死 `--test-concurrency=1` 绕过,现在由看门狗接住;整套另有 30 分钟硬上限,reporter 用 `spec`。
+- **ABI 前置检查**:runner 启动前先调 `scripts/check-native-abi.cjs`,`better-sqlite3` 无法被当前 Electron 加载就直接退出并打印修法(见 [docs/09 §4](./09-known-issues.md)),不让几十个索引用例各报一次 `NODE_MODULE_VERSION`。
 - **`pretest` 闸门**:`npm test` 先跑 `tsc --noEmit`;类型回归当场红。`build:*` 都带 `transpileOnly`,pretest 是唯一的类型校验点。
+- **静态检查口径**:除 `strict` 外,`tsconfig.json` 还开 `noImplicitReturns` / `noFallthroughCasesInSwitch` / `forceConsistentCasingInFileNames` / `noImplicitOverride`;ESLint 的 `@typescript-eslint/no-explicit-any` 对**生产源码**报错(测试文件豁免,只剩带注释说明的显式 disable)。`scripts/check-version-sync.test.ts` 守住 `package.json` 与 `release/app/package.json` 的版本号一致。
 
 ## 11. 设置面板
 

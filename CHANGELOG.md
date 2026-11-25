@@ -9,6 +9,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **并行测试运行器与原生模块 ABI 检查**:`npm test` 默认按 CPU 并行(`min(6, ceil(cpu/2))` 个 worker,本机约 4 分钟 → 1 分钟),某个 worker 4 分钟无输出即树杀并自动改串行重跑,`WHALE_TEST_CONCURRENCY=1` 强制串行。新增 `scripts/check-native-abi.cjs`:`npm run dev` 与测试开始前确认 `better-sqlite3` 能被 Electron 加载,不匹配时提示 `npx electron-rebuild -f -o better-sqlite3`。CI 在 `npm ci` 后执行该 rebuild、跑完整 `npm run build`,超时放宽到 35 分钟;`engines.node` 改为 `^22.13.0 || >=24.0.0`。
+  **Parallel test runner and native-ABI check**: `npm test` now runs the suite in parallel (`min(6, ceil(cpu/2))` workers — roughly 4 minutes down to 1 on the dev machine), tree-kills and re-runs serially when a worker produces no output for 4 minutes, and `WHALE_TEST_CONCURRENCY=1` forces the old serial mode. The new `scripts/check-native-abi.cjs` verifies before `npm run dev` and before the tests that `better-sqlite3` loads inside Electron and points at `npx electron-rebuild -f -o better-sqlite3` when it does not. CI runs that rebuild after `npm ci`, builds every bundle with `npm run build` and allows 35 minutes; `engines.node` is now `^22.13.0 || >=24.0.0`.
+- **全文搜索片段高亮**:搜索结果列表把 FTS5 片段里的 `<mark>` 标记渲染成高亮,不再显示原始标签文本。
+  **Full-text snippet highlighting**: the search result list renders the `<mark>` markers of FTS5 snippets as highlights instead of showing the literal tags.
+- **更严格的静态检查**:`@typescript-eslint/no-explicit-any` 对生产源码报错(测试文件除外,仅保留两处带注释说明的豁免);tsconfig 开启 `noImplicitReturns` / `noFallthroughCasesInSwitch` / `forceConsistentCasingInFileNames` / `noImplicitOverride`;新增 `scripts/check-version-sync.test.ts` 守住 `package.json` 与 `release/app/package.json` 的版本号一致;`@types/node` 升级到 24。
+  **Stricter static checks**: `@typescript-eslint/no-explicit-any` is now an error for production sources (tests stay exempt; two documented exemptions remain); tsconfig enables `noImplicitReturns`, `noFallthroughCasesInSwitch`, `forceConsistentCasingInFileNames` and `noImplicitOverride`; the new `scripts/check-version-sync.test.ts` keeps `package.json` and `release/app/package.json` in sync; `@types/node` moves to 24.
+
+### Changed
+
+- **安装包体积**:安装包 196.85 MB → 182.6 MB(−14.2 MB,−7.2%),`app.asar` 161.5 MB → 132.2 MB,解压后目录 668.4 MB → 585.2 MB。`resources/builder.json` 的 `files` 从整包通配改为按文件放回运行时真正加载的内容(`better-sqlite3` 不再带 SQLite C 源码,`pdfjs-dist` 只带 legacy 构建与 cmaps / standard_fonts / wasm / iccs,移除从未被加载的 `ajv` / `ajv-formats` 与全部嵌套 `node_modules`),并用 `electronLanguages` 只保留与应用 i18n 一致的 5 个语言包。已对 asar 里的每个运行时包做真实加载验证,六条打包冒烟全部通过。
+  **Smaller installer**: 196.85 MB → 182.6 MB (−14.2 MB, −7.2%); `app.asar` 161.5 MB → 132.2 MB, the unpacked directory 668.4 MB → 585.2 MB. The `files` whitelist in `resources/builder.json` now restores individual runtime files instead of whole packages (`better-sqlite3` no longer ships the SQLite C sources, `pdfjs-dist` ships only the legacy build plus cmaps / standard_fonts / wasm / iccs, the never-loaded `ajv` / `ajv-formats` and all nested `node_modules` copies are gone), and `electronLanguages` keeps only the five locale packs that match the app's i18n. Every runtime package was loaded from the asar as verification and all six packaged smokes pass.
+
+### Removed
+
+- **清理一次性脚本**:删除 `scripts/` 下 7 个无引用的一次性调试 / 迁移脚本及仅被它们使用的 `ws` 开发依赖;其中 `verify-settings-persist.ts` 会强杀本机全部 electron.exe。
+  **Removed one-off scripts**: deletes seven unreferenced one-off debug / migration scripts under `scripts/` together with the `ws` dev dependency only they used; one of them (`verify-settings-persist.ts`) force-killed every electron.exe on the machine.
+
+### Fixed
+
+- **过期的打包冒烟脚本**:设置页重建之后,GUI 回归脚本仍按旧的下拉框选主题、按 heading 找对话框标题,LAN 冒烟按一整句找 Base URL,三条打包冒烟在未改动的代码上也失败。现按当前界面定位(主题 tile 单选组、`#settings-dialog-title`、整行文本);Excalidraw 字体的 CSP 提示改为按消息形状匹配,LAN 停止后移动端 list / tags 请求一起失败都算预期的离线上报。
+  **Stale packaged smoke scripts**: after the settings dialog rebuild the GUI regression script still picked the theme from a dropdown that no longer exists and looked for a heading, and the LAN smoke looked for a single "Base URL: …" sentence, so three packaged smokes failed on untouched code. They now target the current UI (theme tile radio group, `#settings-dialog-title`, the whole settings row); the Excalidraw font CSP message is matched by shape, and the mobile list / tags requests refused after Stop are both the expected offline report.
+- **中日韩文本的全文搜索**:`fulltext_fts` 使用的 unicode61 分词器把连续 CJK 文本当作一个词,句中的短语永远搜不到(只有与整段相等才命中)。包含 CJK 的查询现在额外做子串扫描并与 MATCH 结果合并去重,支持两个汉字的查询;三字符以下的 ASCII 查询保持拒绝。
+  **Full-text search for Chinese, Japanese and Korean text**: the unicode61 tokenizer behind `fulltext_fts` treats a contiguous CJK run as a single token, so a phrase inside a sentence never matched (only an identical whole run did). Queries containing CJK now also run a substring scan that is merged and de-duplicated with the MATCH hits, and two-character CJK queries are accepted; ASCII queries shorter than three characters stay refused.
+- **高级搜索输入 1–2 个字符必然报错**:`advancedQuery` 短文本分支的 `ESCAPE` 字符写成了双引号标识符(SQL 报 `no such column`),改为单引号字面量。
+  **Advanced search failed for 1–2 character queries**: the short-text branch of `advancedQuery` spelled the `ESCAPE` character as a double-quoted identifier (SQLite reported `no such column`); it is now a single-quoted literal.
+- **旧编码文本文件可以全文检索**:索引抽取与文本查看器共用 `src/main/text-decode.ts`(UTF-8 BOM、合法 UTF-8 快速路径、jschardet + iconv-lite 兜底),GBK / Shift-JIS / Windows-1252 文本按显示内容建索引;截断读取不再留下被切开的半个字符。
+  **Legacy-encoded text files are indexed**: index extraction and the text viewer share `src/main/text-decode.ts` (UTF-8 BOM, a fast path for valid UTF-8, jschardet + iconv-lite fallback), so GBK / Shift-JIS / Windows-1252 files are indexed as displayed; a capped read no longer leaves half a character behind.
+- **位置之外的路径不再被触碰**:新增纯词法的 `assertLexicallyWithinAllowedRoot`,在 `realpath` / `stat` 之前拒绝位置之外的路径(例如会触发 SMB / NTLM 认证的 UNC 路径);`shell:revealPath` / `revealAndSelect` 此前完全没有位置校验,现已补上。
+  **Paths outside every location are never touched**: the new lexical `assertLexicallyWithinAllowedRoot` rejects such paths before any `realpath` or `stat` (for example UNC paths that would trigger an SMB / NTLM authentication attempt); `shell:revealPath` / `revealAndSelect`, which had no location check at all, are now gated too.
+- **只读位置不再被数据迁移写入**:日期标签迁移跳过只读位置、不写迁移标记文件,也不会重建离线或已删除的位置目录;旧经纬度 sidecar 迁移在只读位置只做内存换算。
+  **Migrations never write to read-only locations**: the date-tag migration skips read-only locations, writes no marker file there and no longer re-creates an offline or removed location folder; the legacy lat/lng sidecar migration stays in memory inside them.
+- **文件夹不能移动或复制到自身**:主进程在 rename / move / copy 中增加自身子树检查(MCP 的 `whale_move` / `whale_copy` 同样受限)。
+  **A folder can no longer be moved or copied into itself**: the main process guards rename / move / copy against their own subtree (MCP `whale_move` / `whale_copy` included).
+- **zip 导出与 MCP 审批文本**:以 `-` 开头的源名称改为 `./-name` 传给 zip 命令行(选项注入);MCP 审批对话框对每个工具的说明与明细做控制字符 / 双向覆盖字符归一化,`whale_create_text_file` 的审批显示正文开头 200 字符。
+  **zip export and MCP approval text**: source names starting with `-` are passed to the zip CLI as `./-name` (option injection); the MCP approval dialog normalizes control and bidi-override characters for every tool, and `whale_create_text_file` approvals show the first 200 characters of the content.
+- **Gantt 条拖拽的位移被重复计算**:跨过拖拽阈值的首段位移被记两次,周 / 月视图下日期会偏移;右缘拉伸还会多出一天。位移现在始终从未改动的起始周期计算。
+  **Gantt bar drag counted the first displacement twice**: the move that crossed the drag threshold was applied twice, shifting dates at week / month zoom; a right-edge resize also added an extra day. Displacement is now always computed from the unchanged start period.
+- **扩展编辑器与查看器**:drawio 收到同路径的新内容(外部修改、目录监听)现在会重载,`force` 重载会清掉 dirty 状态;文本编辑器保存时保留文件原有的 CRLF / LF,重载后向宿主上报版本号归零(消除误报的"保存已过期");主进程在编辑器保存时保留文件的 UTF-8 BOM / UTF-16 字节格式;HEIC 查看器释放全部解码图像(此前只释放第一张);HTML 查看器不再沿用上一份文档的样式表,文档相对链接按文档目录解析后再转交宿主。
+  **Extension editors and viewers**: drawio now reloads when new content arrives for the same path (external edit, folder watcher) and a `force` reload clears the dirty state; the text editor keeps the file's CRLF / LF line endings and reports the revision reset after a reload (removing the bogus "save outdated" toast); the main process preserves a file's UTF-8 BOM / UTF-16 byte format when an editor saves; the HEIC viewer frees every decoded image (previously only the first); the HTML viewer no longer keeps the previous document's stylesheet and resolves document-relative links under the document's directory before forwarding them.
+- **文件列表**:Shift 范围选择的锚点改为按路径记录,锚点被筛掉时退化为普通点击(此前会越界抛错并留下半应用的选区);灯箱或对话框打开时文件列表快捷键暂停,灯箱自身消费的方向 / 缩放键不再漏到列表(此前 `←` 会在灯箱后面切目录);拖放导入使用当前视图模式(任务视图的拖放重新获得周期标签)。
+  **File list**: the shift-range anchor is stored by path and a shift-click degrades to a plain click when the anchor is filtered out (previously it read past the end, threw and left a half-applied selection); file-list shortcuts are suspended while the lightbox or a dialog is open and the lightbox's own arrow / zoom keys no longer leak to the list (`←` used to change folder behind the lightbox); external file drops use the current view mode (task-view drops get their period tag again).
+- **各视图的若干缺陷**:地图视图的 sidecar 查找改为按路径(不同文件夹的同名文件不再串用地理标签);年视图热力图在 1 月 1 日落在周末的闰年补足第 54 周(此前丢失 12 月 31 日);知识图谱拖动节点不再重跑力导向布局;标签云的自适应 ResizeObserver 跟随当前显示的容器,偏好设置每次变更只写一次。
+  **Several view defects**: the map view looks sidecars up by path (same-named files in different folders no longer share geo tags); the year heatmap grows to 54 weeks in leap years that start late in the week (December 31 used to be dropped); dragging a node in the knowledge graph no longer re-runs the force layout; the tag cloud's auto-fit ResizeObserver follows the container actually shown and preference changes are written once.
+- **缩略图、目录监听与写锁**:目录缩略图遇到损坏的首个候选文件时继续尝试(最多 8 个),全部失败的目录 30 秒内不再重复编码;失败重建的退避期间新到的变更不再把退避重置回 1.5 秒;目录锁与原子写的键统一为 `canonicalPathKey`,位置的 junction / 符号链接别名不会再开出第二条写队列。
+  **Thumbnails, directory watcher and write locks**: folder thumbnails skip a corrupt first candidate and try up to eight files, remembering folders whose candidates all fail for 30 seconds; a change arriving during a failing rebuild's backoff no longer resets it to 1.5 seconds; directory locks and atomic writes share the realpath-based `canonicalPathKey`, so a junction / symlink alias of a location cannot open a second write queue.
+- **设置对话框**:搜索框内的 Escape 先清空查询(再按一次才关闭对话框);搜索跳转的定时器被持有并在跳转 / 卸载时清理;全文索引设置新增路径后保留"构建中"状态;MCP 设置在状态加载完成前禁用复制按钮,剪贴板失败会提示。
+  **Settings dialog**: Escape inside the search box clears the query first (a second Escape closes the dialog); the search-jump timers are owned and cleared on jump / unmount; adding a full-text path keeps its "building" status; the MCP settings disable Copy until the status is loaded and surface clipboard failures.
+- **构建脚本**:`scripts/build-extensions.js` 给 webpack 配置路径加引号,检出目录含空格时也能构建。
+  **Build scripts**: `scripts/build-extensions.js` quotes the webpack config path so checkouts with spaces build correctly.
+
 ## [0.6.0] - 2026-11-24
 
 ### Added

@@ -19,8 +19,8 @@
 | `calendar` | active | CalendarView | 5 档子视图:month / week / year / agenda / week-timeline(year 另有 tiles / heatmap 两种变体) |
 | `mapique` | active | MapiqueView | Leaflet 地图 + 右侧详情托盘 |
 | `folderviz` | active | FolderVizView | 4 图:tree / radial / treemap / sunburst(复用 Provider 递归结果,前端重建嵌套树) |
-| `tagcloud` | active | TagCloudView | echarts-wordcloud,字号按文件数 sqrt |
-| `knowledge-graph` | active | KnowledgeGraphView | xyflow(react-flow v12)标签↔文件二部图;导出三件套(save / save-as / copy,2026-07-22 补齐 copy);节点拖拽位置按 location 持久化(`whale.kg.<id>` prefs,2026-07-22);只存被拖动的那几个节点,其余节点继续跟随自动布局 |
+| `tagcloud` | active | TagCloudView | echarts-wordcloud,字号按文件数 sqrt;字号自适应跟随**当前**图表容器(回调 ref + `ResizeObserver`,加载 / 空态 / matrix 互换时重新挂到新元素),prefs 每次变化只写一次(200ms 防抖),切位置 / 卸载时立即 flush |
+| `knowledge-graph` | active | KnowledgeGraphView | xyflow(react-flow v12)标签↔文件二部图;导出三件套(save / save-as / copy,2026-07-22 补齐 copy);节点拖拽位置按 location 持久化(`whale.kg.<id>` prefs,2026-07-22);只存被拖动的那几个节点,其余节点继续跟随自动布局;拖拽只重算节点位置、不重跑力导向布局(布局按图缓存,被拖位置叠在上面) |
 | `mindmap` | **legacy** | (无对应视图) | 旧 `ViewMode = 'mindmap'` 迁移为 `knowledge-graph` |
 | `kanban` / `matrix` | **legacy 字面量** | (无对应视图) | 通过 `migrateViewMode` 映射为 `task` |
 
@@ -65,7 +65,7 @@ Eisenhower 2×2 四象限 + 底部未分类托盘(**常显**,2026-07-22:空了�
 - **缩放方式**:**浏览器原生水平滚动**(无 dataZoom 滑块)
 - **缩放档位**:工具栏 `Select`(Day / Week / Month),`useGanttZoom` hook,持久化 `whale-task-gantt-zoom` localStorage
 - **快捷区间**:工具栏 `ToggleButtonGroup`(`1w / 2w / 1m / 1q`,再次点击已选项清除),[useGanttRange.ts](../src/renderer/components/gantt/useGanttRange.ts);`GanttRangePreset = '1w' | '2w' | '1m' | '1q'`,`ganttRangeToBounds(range, anchorKey=today)` 以锚点日期(默认今天)为中心生成 `[startKey, endKey]`;持久化 `whale-task-gantt-range` localStorage,shape `{ range?: GanttRangePreset }`,清空写 `{}`,非法 localStorage 值有 sanitize 不崩。选中时固定跨度,未选中回退自然任务区间;range(可见跨度)与 zoom(px-per-day)正交
-- **拖拽改时间**:整体平移 + 左右边缘 resize(`useBarDrag` hook;pending→dragging 转换 bug 已修,见 hook 文件头)
+- **拖拽改时间**:整体平移 + 左右边缘 resize(`useBarDrag` hook;pending→dragging 转换 bug 已修,见 hook 文件头)。位移一律以按下时那份未变的起始 period 为基准算一次——周 / 月档位下旧实现按"上次落点"累加,把第一次移动算了两遍;右边缘 resize 用独占边界,不再多出一天
 - **键盘导航**:[useGanttKeyboardNavigation.ts](../src/renderer/components/gantt/useGanttKeyboardNavigation.ts) 持有 `focusedPath` + `tabIndexFor` + scroller-level keydown(scroller `tabIndex={-1}` + `outline: none`,集中处理避免 per-bar listener thrash);`↑↓` 切柱(跨 swim lane,环回)/ `← →` 移柱 ±1 天(走 `onCommit` 持久化,同拖拽)/ `Space` 弹 PeriodTagDialog / `T` 跳 today / `Esc` 清 focus。只有 focused bar 可 tab(其余 `tabIndex={-1}`);focus ring = `outline: 2px solid #1976d2; outline-offset: 2px; box-shadow: 0 0 0 4px rgba(25,118,210,0.25)`(a11y 底线,Chrome 默认 1px dotted 在 28px bar 上看不清);Ctrl/Meta/Alt + 任意键 no-op(不抢浏览器快捷键);readOnly 下焦点仍可移动,但 ← → / Space / commit 全跳过。`Shift+←→` 调长度**不做**(双轴反馈与单轴 ±1 天混在同一 hook 会让 state machine 复杂化)
 - **泳道分组**:`groupRowsByWorkflow`([gantt.ts:248-290](../src/renderer/domain/gantt.ts))按 workflow stage 分 lane;每 lane 第一行上方有 18px header(stage 颜色圆点 + `tagDisplayLabel` 本地化名,`gantt-lane-divider-<i>` / `gantt-lane-chip-<i>` testid,**每个 lane 都画含第一个**——曾只在 laneIndex 变化处画,第一个 lane 没标记);无 stage 行落入"未分类" lane(`ganttNoStageLane`);行底色 = stage 色 10% alpha(`#XXXXXX1A`,经 `GanttRow.laneTintColor` prop 只改 `bgcolor`);日期 tick 行 `zIndex: 3` > lane header `zIndex: 2`(否则 header 的 top 定位遮挡日期);整 lane 全被过滤时显示 `gantt-hidden-lane-placeholder`("已隐藏 N 个阶段",`ganttLaneHidden`)。边界:`stages = []` → 全部行落入唯一 "no stage" lane、无分隔线;单 lane → 无分隔线;仅 1 行 → 走原 vertical windowing slice
 - **筛选器**:工具栏两个多选 `Select`(workflow / quadrant),默认全选(=不过滤,不破坏老用户路径);未选中的行 `opacity: 0.3` + `pointer-events: none`(比 `display: none` 保留空间感)。共用 [useGanttTagFilter.ts](../src/renderer/components/gantt/useGanttTagFilter.ts)(generic over `T extends string`,quadrant 侧为 `useGanttTagFilter<string>('quadrant', QUADRANT_VALUES)`,两筛选器独立、交集生效);状态存 localStorage `whale-task-gantt-filter`,shape `{ workflow: string[]; quadrant: string[] }`,per-字段独立:写盘只改被改动的那个字段——`writePrefs` 是整键覆盖,所以 `persistSelection` 先读出同一键下另一字段已有的值合并再写,动 workflow 不会抹掉 quadrant 的持久化。**`passes` 语义**(2026-07-05 用户修订):有已知 tag 的行须该 tag ∈ `selected` 才通过;无相关 tag 的行仅当中性状态(`isSelectionNeutral(selected, knownValues)`:`knownValues` 里每个值都在 `selected` 里)时通过——用户一旦 un-select 任何值,tag-less 行立即隐藏(否则"只看 in-progress"会把没在任何阶段的行也露出来);stale / 已删除的值(`knownValues` 不含)忽略,残留在 `selected` 里的旧值也不参与中性判断(按集合大小比较会把这种残留永远算成「已收窄」:无 tag 行隐藏、Reset 提示常驻)。`seenValuesRef` 区分"新出现的值"(auto-include)与"用户主动 un-select"(保持),避免 `useEffect([knownValues])` 重渲染把 un-selected 塞回。菜单项文本经 `tagDisplayLabel(value, t)` 本地化(直接 `{value}` 会显示 `not-started` 等原始英文 token)。多选含被过滤项时 `hasFilteredSource` prop 传入 menu,所有写动作(Move to stage / Set priority / Set period / Clear period / Delete / Edit tags)统一 `writesDisabled = readOnly || hasFilteredSource`,**Open 与 More actions 保持可用**;多选 toggle 用 `setAll` 一次写(避免逐值触发 localStorage 写入)。所有 scheduled 行都被过滤时,toolbar 下方显示橙色 Alert `ganttFilteredEmpty` + "Reset" 按钮(`gantt-filtered-empty`)
@@ -123,6 +123,8 @@ Eisenhower 2×2 四象限 + 底部未分类托盘(**常显**,2026-07-22:空了�
 
 `CalendarView.tsx` 仍持有:状态与派生数据(`bucketsAll` / range 过滤 `buckets` / `hourBuckets` / `entryTimeLabel`)、prefs hydrate/persist、`shouldJumpCursor`(命名导出,测试依赖)、工具栏接线、视图切换、`CalendarEntryMenu` 与 Snackbar。测试:`calendar/DayCell.test.tsx`(7 例)+ 原 `CalendarView.test.tsx`(40 例)全部保持通过。
 
+年热力图为 53 列;闰年 1 月 1 日落在周尾时是 **54** 列(`yearHeatmapGrid` 用 `Math.ceil((offset + 当年天数) / 7)` 算列数,否则 12 月 31 日会被丢掉),`YearCharts` 里所有网格都从 `grid.length / 7` 推出列数,不写死 53。
+
 ## 4. 全局递归深度 `viewDepth`
 
 **所有 9 个有效视角受 `viewDepth ∈ [1, 5]` 控制**,默认 1(等同"只看当前目录")。`settings.viewDepth` 走 redux-persist,**全局不 per-folder**。
@@ -130,7 +132,7 @@ Eisenhower 2×2 四象限 + 底部未分类托盘(**常显**,2026-07-22:空了�
 - 深度 1 = 当前目录(等同历史行为)
 - 深度 5 = 递归纳入 5 层子目录文件;`MAX_RECURSIVE_ENTRIES = 10000` 截断
 
-**实现层**:由 [DirectoryContentContextProvider](../src/renderer/hooks/DirectoryContentContextProvider.tsx) 处理,**单一数据源**;所有视角从 context 拿全部所需数据。Map 全部以 **`entry.path` 为 key**(`tagsByName.get(e.name)` 改成 `tagsByName.get(e.path)`,修复同名跨目录文件互不污染)。
+**实现层**:由 [DirectoryContentContextProvider](../src/renderer/hooks/DirectoryContentContextProvider.tsx) 处理,**单一数据源**;所有视角从 context 拿全部所需数据。Map 全部以 **`entry.path` 为 key**(`tagsByName.get(e.name)` 改成 `tagsByName.get(e.path)`,修复同名跨目录文件互不污染)。Mapique 的 sidecar 查询同样按 path:`tray-data.ts` 的 `buildSidecars` 以 `e.path` 建表,`domain/mapique.ts` 的 geo 候选 / 已定位集合 / 待抽 EXIF 判断都用 `sidecars[entry.path]`——不同目录下的同名文件不会互相继承经纬度。
 
 **工具栏**深度 Slider(70px,无 marks,1–5):`FileToolbar.tsx` 直接 dispatch `setViewDepth`(无 marks、`valueLabelDisplay="auto"`、70px);**200ms 防抖在 `DirectoryContentContextProvider` 内**(`useEffect` + `setTimeout` 守卫 `debouncedDepth`),拖动 1→5 只触发 1 次递归 IPC。
 

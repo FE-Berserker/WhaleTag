@@ -38,7 +38,7 @@ type ThumbKind = 'image' | 'svg' | 'video' | 'pdf' | 'font';
 - `setFolderThumbnail(dir, srcPath)` 手动设置；srcPath 可以是原生对话框从位置外选择的图片、SVG、视频、PDF 或字体，服务只读取源文件；已有缓存仅在不旧于源文件时复用，过期则直接重新编码到目标 `wst.jpg`，绝不创建或更新源目录的 `.whale/`
 - `clearFolderThumbnail(dir)` 清除
 - 右键菜单的封面/背景设置与清除统一捕获同步/异步错误并交给 `showError`；失败时不清空缩略图缓存
-- `generateFolderThumbnail` 取目录内首张可缩略文件(`firstThumbnailableFile` 不递归子目录,只看直接子文件)
+- `generateFolderThumbnail` 取目录内首张可缩略文件(`firstThumbnailableFiles` 不递归子目录,只看直接子文件),按文件名顺序最多试 `FOLDER_SOURCE_CANDIDATES = 8` 张:第一张损坏不再让整个文件夹失败,逐张跳过并 `console.warn`;全部失败时把该目录记入失败备忘 `FOLDER_FAIL_TTL_MS = 30s`,这 30 秒内不再重扫(上限 1000 条),成功生成或 `clearFolderThumbnail` 都会清掉这条记忆
 
 `ThumbIcon.tsx` 是所有视图里文件夹缩略图的**唯一渲染路径**,守卫逻辑避免提前 return 跳过目录(`isDirectory && !canThumb` 当前正确短路)
 

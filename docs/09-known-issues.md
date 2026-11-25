@@ -62,14 +62,14 @@ npm run dev
 
 ---
 
-## 4. 原生模块 ABI
+## 4. 原生模块 ABI(better-sqlite3 不是 N-API)
 
-better-sqlite3 / sharp / ffmpeg-static / @napi-rs/canvas 均为 N-API / 预编译:
+依赖树里只有 **better-sqlite3** 是 V8/ABI 绑定模块,其余(`sharp` / `@napi-rs/canvas` / `ffmpeg-static`)是 N-API 或纯二进制,不受运行时 ABI 影响。所以:
 
-- `@electron/rebuild` 针对 Electron ABI
-- webpack externals(主进程)需要标注
-- `builder.json` `asarUnpack` 含二进制
-- Electron ABI 探针防 node_modules ABI 与 Electron 不匹配
+- `npm ci` / `npm install` 装的是**跑 npm 的那个 Node** 的 prebuilt 二进制——Electron 42 的模块 ABI 是 146,Node 24 是 137、Node 22 是 127。直接拿去跑 Electron,首次用到索引就报 `NODE_MODULE_VERSION` 不匹配,`npm test` 里所有索引相关用例会一起失败,而纯前端测试照旧通过(容易误判成"只有索引坏了")。
+- 修法:`npx electron-rebuild -f -o better-sqlite3`,把二进制重编译到当前 Electron 的 ABI。
+- 门禁:[scripts/check-native-abi.cjs](../scripts/check-native-abi.cjs) 在 Electron 里真实 `require('better-sqlite3')` 探一次模块 ABI,失败时打印一条错误与上面的修法;它挂在 `predev`(`npm run dev` 前)与 `scripts/run-tests.cjs` 开头,所以不匹配只在入口报一次且带修法,不会散落到几十个用例里。CI 在 `npm ci` 之后同样先跑 rebuild。
+- webpack externals(主进程)需要标注;`builder.json` 的 `asarUnpack` 含二进制。
 
 ---
 

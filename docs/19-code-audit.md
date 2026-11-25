@@ -140,7 +140,7 @@ ExtensionHost 单点通知写异常、动态 readOnly、15s 无响应、并发�
 `allowed-roots.ts` 增 `readOnlyRoots`/`setReadOnlyRoots`/`isReadOnlyPath`/`assertWritable`，`fs:setAllowedRoots` 收第二参（只接受已认可 root 的子集）；`assertWritable` 接入 fs-write（含 zipEntries、importExternal 目的目录）、meta、extensions、sidecar 的全部写入口，MCP 走同一批函数；`migrateLegacySidecars` 在只读位置直接返回 legacy 标签、不写盘也不改名——此前「只打开看一眼」就会触发迁移写盘。
 
 ### P1-40. P1-B 功能缺陷批次 ✅
-DirectoryTree 的 `ctxMenu` 增 `isDirectory`（文件行不再出现「新建文件夹/新建文件/打包」，「打开」改走 `openEntryInTab`）；`ingestFiles` 接受 `{complete:false, unreadable}`，只冻结不可读子树、其余照删（此前一个永久 EPERM 目录让删除 pass 永远跳过）；`editState` 键改 `makeTabId(filePath, extensionId)`（同一文件两个扩展不再互清 dirty）；macOS 开终端等真实 `exit` 并带 stderr（Windows `/k` 仍只等 spawn）；新增 `app:update-set-auto-check` 下发；text-editor 同路径外部刷新也重建 undo 历史；html-viewer 关图时剥行内 `style` 的远程引用；FileList 加 `listRef`/`gridRef` 让键盘焦点自动滚动。复核为误报：Gantt 拖拽阈值双计数（两个监听器都按绝对位移、且状态互斥）。
+DirectoryTree 的 `ctxMenu` 增 `isDirectory`（文件行不再出现「新建文件夹/新建文件/打包」，「打开」改走 `openEntryInTab`）；`ingestFiles` 接受 `{complete:false, unreadable}`，只冻结不可读子树、其余照删（此前一个永久 EPERM 目录让删除 pass 永远跳过）；`editState` 键改 `makeTabId(filePath, extensionId)`（同一文件两个扩展不再互清 dirty）；macOS 开终端等真实 `exit` 并带 stderr（Windows `/k` 仍只等 spawn）；新增 `app:update-set-auto-check` 下发；text-editor 同路径外部刷新也重建 undo 历史；html-viewer 关图时剥行内 `style` 的远程引用；FileList 加 `listRef`/`gridRef` 让键盘焦点自动滚动。复核为误报：Gantt 拖拽阈值双计数（两个监听器都按绝对位移、且状态互斥）——**2026-11-24 第 44 轮更正：属实**，dragging 监听器的基准是 pending 监听器已经位移过的 `lastPeriodRef`，见 P1-44。
 
 ### P1-41. P2 批次（24 条）✅
 缩略图渲染层缓存加 `THUMB_CACHE_LIMIT = 800`、ffmpeg 加 10s SIGKILL、复用判据改 `{mtimeMs,size}`；生产构建隐藏 reload/DevTools、bootstrap 失败弹 `showErrorBox`；whale-file 改先 `await fsp.stat`；`shell:openTrash`/`drag:startFile` 错误不再吞；`whale_list_directory` 加 `limit`；`run-tests.cjs` 加 30 分钟上限；`recent` 按 `(path, locationId)` 去重且只记当前 location 下目录；`dateTagDayKey` 认 `week-YYYYMMDD`；扩展 `case 'error'` 走 `notifyApp` 并对 5 条消息补 payload 形状守卫；sidecar 读失败报 `unreadable` issue；新增 `TAG_COLOR_CLEARED` 修「清色被立刻重新染色」；全文索引路径校验绝对路径与重复；Mapique `FitBounds` 比对坐标集合。暂缓：win32 打包入口不走 `commonParentDir`。
@@ -150,6 +150,12 @@ DirectoryTree 的 `ctxMenu` 增 `isDirectory`（文件行不再出现「新建�
 
 ### P1-43. 无障碍、主题健壮性与选择计数（2026-11）✅
 主题：新增 `theme/mode.ts` 的 `isThemeMode` 做唯一校验（只认 11 个自身键，`__proto__` / `constructor` 不算合法），`useResolvedTheme` 对损坏值回落 `{light, whale}`、`migrateAppearance` 归一成 `light` 且只在非法时分配；13 套预设的浅色主色与次要文字压暗到 WCAG AA（`primary` / `textSecondary` 对两个背景均 ≥4.5:1，focus outline 取 `primary` ≥3:1，`presets.test.ts` 逐变体断言）；`ThemeQuickToggle` 切回经典模式显式重置 `whale`。交互：选择计数拆成可见批量目标 + 被筛选隐藏（`SelectionSummary` + 五语言 `nSelectedHidden`，隐藏项永不进批量命令）；PropertiesTray 分隔条补 `role=separator` / `aria-value*` 与 `←`/`→` ±10 px 键盘拖宽；IME 组合期 Enter 语义统一由 `ime-guard.ts` 早退（7 处调用点）；设置页去掉恒显 "Enabled" 文案、快捷键搜索框补名字与主题色 focus ring；图标按钮补 `aria-label`，"新建图表 / 在文件管理器中显示"与重命名失败改走 notice 通道；`html lang` 与绝对日期跟随 `i18n.language`。
+
+### P1-44. 全仓并行复审第 44 轮（2026-11-24）✅
+检索：`advancedQuery` 短文本分支把 `ESCAPE` 写成双引号标识符（`SQLITE_DQS=0` 下 1–2 字符查询必然抛 `no such column`）；`fulltext_fts` 的 unicode61 分词把连续 CJK 当作一个词，句中短语永远搜不到——含 CJK 的查询补 `content LIKE` 子串扫描并与 MATCH 结果合并去重、放开两字查询（trigram 方案需重建全部索引且索引体积 3.5×，取舍见 [docs/04](./04-search-index.md) §9）；索引抽取与查看器共用 `text-decode.ts`，GBK / Shift-JIS / CP1252 文本按显示内容建索引。交互：Shift 范围选择改按路径记锚点（锚点被筛掉时退化为普通点击，此前越界抛错并留下半应用的选区）；灯箱或对话框打开时列表快捷键暂停、灯箱自身的方向 / 缩放键不再漏到列表（`←` 曾在灯箱后面切目录）；拖放导入取当前视图模式（`useDrop` 闭包过期，任务视角丢的文件拿不到周期标签）；Gantt 拖拽跨过阈值的首段位移被记两次（周 / 月视图下日期偏移）、右缘拉伸多出一天；设置搜索框里的 Escape 直接关掉整个对话框；drawio 对同路径的新内容不重载（外部修改 / 修订恢复后，下一次保存把旧图写回去）；text-editor 保存把 CRLF 改写成 LF 并丢掉 UTF-8 BOM（主进程现按原字节格式回写 BOM / UTF-16）、干净缓冲区同路径重载后误报「保存已过期」。
+
+### P1-45. 边界加固：词法闸门与只读位置（2026-11-24）✅
+新增 `assertLexicallyWithinAllowedRoot`：先做纯 `path.resolve` + 前缀判断再 `realpath`，位置之外的路径（含会触发 SMB / NTLM 认证的 UNC 路径）不再被触碰；`shell:revealPath` / `revealAndSelect` 此前零校验，现已补上（[docs/13](./13-security.md) §2）。只读位置不再被数据迁移写入：日期标签迁移跳过只读根、不写标记文件、不重建离线或已删除的根目录，经纬度迁移只做内存换算。同批：rename / move / copy 的自身子树守卫（MCP 的 move / copy 同受限）、zip 源名 `-` 前缀的 `./` 转义、MCP 审批文本的控制字符 / 双向覆盖字符归一化、`canonicalPathKey` 统一目录锁与原子写的键（junction / 符号链接别名不再开出第二条写队列）。
 
 ---
 
@@ -162,6 +168,12 @@ DirectoryTree 的 `ctxMenu` 增 `isDirectory`（文件行不再出现「新建�
 定义 `TreeFolderNode`/`TreeFileNode`/`TreeNode` 判别联合，`nodes`/`renderFolder`/`renderFile` 全类型化、去掉 3 个 eslint-disable；仅 react-window v2 的 `rowProps` 保留一处 `as any`（库类型 `ExcludeForbiddenKeys` 反向要求 index/style）。
 
 > **类型现状**：`src/shared`、`src/main/ipc`、`allowed-roots.ts`、`shell-quote.ts` 严密；主进程生产代码零 `: any`；`as unknown as` 集中在 worker 消息与 canvas 互操作边界（主进程另有 `auto-update.ts` / `desktop-linux.ts` / `thumbnail.ts` 各 1 处），范围窄且不暴露不可信输入。全仓零 `@ts-ignore` / `@ts-nocheck`。
+
+### P2-3. 第 44 轮 P2 批次（2026-11-24）✅
+目录缩略图跳过损坏的候选文件（最多 8 个，全部失败的目录记 30 s，[docs/06](./06-thumbnails.md) §2）；失败重建的退避期间新到的变更不再把退避重置回 1.5 s（[docs/04](./04-search-index.md) §10）；Mapique 的 sidecar 查找改按路径、年视图热力图补足第 54 周、知识图谱拖动不再重跑力导向布局（[docs/05](./05-perspectives.md)）；HEIC 查看器释放全部解码图像、html-viewer 不再沿用上一份样式表并把文档相对链接解析成 `file://`（[docs/07](./07-extensions.md)）；`closeIndexDb` 失败不再静默。评估后**不做**：`thumbnail:setFolderThumbnail` / `setFolderBackground` 的 `sourcePath` 位于位置外（见文末取舍表）。
+
+### P2-4. `no-explicit-any` 转为 error（2026-11-24）✅
+`.eslintrc.js` 对生产源码开启 `@typescript-eslint/no-explicit-any`（测试文件保持关闭）。剩余 10 处清理：Root 的 `DndAny` 改回带类型的 `DndProvider`，TagCloud tooltip 回调改 `unknown` + 收窄，drawio-bridge 的消息索引签名改 `unknown`（解析自 iframe 的 JSON 在收窄前不可信），Excalidraw 的 5 处集中在文件级 disable（imperative API 类型在 `moduleResolution: node` 下解析不出），DirectoryTree 的 react-window `rowProps` 保留一处块级 disable（理由同 P2-2）。
 
 ---
 
@@ -208,6 +220,24 @@ FileList 的 visible 标签过滤抽为 `file-list-filter.ts` 纯函数（6 条�
 - 构建验证：前两轮的 7 个提交在隔离 worktree 中逐个通过 type-check；最终树通过 lint、2478 个测试（2475 pass / 3 skipped / 0 fail）与 `npm run build`，main / extensions / renderer / mobile 四路产物均成功生成。
 - 扫描版 PDF：`renderPdfThumb` 补上 `wasmUrl`，修复 JPEG 2000 / JBIG2 / CCITT 图像被 pdfjs 丢弃后仍返回全白缩略图的问题；新增 JPEG 2000 与 CCITT G4 两个二进制样本及 2 个回归测试，并验证移除该配置后两例都会失败。
 
+### P3-10. 第 44 轮 P3 批次与工程化（2026-11-24）✅
+
+- 运行器：`run-tests.cjs` 默认并行（`min(6, ceil(cpu/2))`，本机 252 s → 64 s；并发 2 / 4 / 6 / 8 / 12 五档全绿，原注释所称的「并行死锁」未能复现），4 分钟无输出树杀并自动改串行重跑；新增 `check-native-abi.cjs` 在 `npm run dev` 与测试前验证 `better-sqlite3`（V8 / ABI 绑定，不是 N-API）能被 Electron 加载；CI 增 electron-rebuild 与完整 `npm run build`、超时 35 分钟；`engines.node` → `^22.13.0 || >=24.0.0`；`@types/node` 20.6 → 24.19（20.6 配 TS 5.9 会把 `Buffer` 判成不兼容 `Uint8Array`）；tsconfig 开启 `noImplicitReturns` / `noFallthroughCasesInSwitch` / `forceConsistentCasingInFileNames` / `noImplicitOverride`；`build-extensions.js` 给配置路径加引号；新增版本同步守卫测试（[docs/01](./01-architecture.md) §10、[docs/09](./09-known-issues.md) §4）。
+- 缺陷：标签云的 ResizeObserver 跟随当前显示的容器、偏好不再每次写两遍；设置页全文索引新增路径后保留「构建中」、MCP 复制按钮在状态加载前禁用、搜索跳转的定时器归组件所有；全文搜索片段里的 `<mark>` 渲染为高亮；设置搜索框的 Escape 语义与搜索跳转定时器（[docs/10](./10-ui.md) §15）。
+- 测试基建：`SettingsDialog.test.tsx` 静态引入 `@testing-library/react`，react-dom 在 jsdom 建好前加载并按 IE8 分支处理按键事件（`attachEvent is not a function`）；约定改为在 `globalJsdom()` 之后动态引入。
+- 未做（已登记）：`index.db` 无 schema 版本（表结构从未变过，[docs/04](./04-search-index.md) §9）；`builder.json` 无用负载已于 P3-12 清理；仓库根目录缺 LICENSE 文件（见文末取舍表）。
+
+### P3-11. 清理一次性脚本（2026-11-25）✅
+
+- 删除 `scripts/` 下 7 个无引用的一次性脚本：`cdp-inspect.js`、`cdp-test-drawio.js`、`gen-bigfile-test.cjs`、`gen-image-fixture.cjs`、`generate-exif-samples.js`、`migrate-localstorage-persist.ts`、`verify-settings-persist.ts`（最后一个会强杀本机全部 electron.exe，并在仓库根写未忽略的临时目录）。删除前逐个 grep 确认没有 package.json 脚本、文档、工作流或测试引用；连带移除仅被它们引用的 `ws` 开发依赖（仍是 jsdom / webpack-dev-server 的传递依赖）。`piexifjs` 被 `exif.test.ts` 使用，保留。
+
+### P3-12. 安装包体积：文件级白名单与语言包（2026-11-25）✅
+
+- `resources/builder.json` 的 `files` 从整包通配改为按文件放回运行时真正加载的那部分：`better-sqlite3` 只留 `lib/` 与 `.node`（C 源码 `deps/` 不带）；`pdfjs-dist` 只留 legacy 的 `pdf.mjs` / `pdf.worker.mjs` 与 `cmaps` / `standard_fonts` / `wasm` / `iccs`（非 legacy 构建、viewer、source map 不带）；`jschardet` / `exifr` / `iconv-lite` / `semver` / `sharp` 只留入口与实现；去掉 `ajv` / `ajv-formats`（`main.js` 打进去的是 `@modelcontextprotocol/sdk` 依赖链里的 ajv 8.20，asar 里那份是从 eslint 提升上来的 ajv 6.15，运行时无人加载）；末尾的 `!**/node_modules/*/node_modules/**` 清掉嵌套残留。新增 `electronLanguages`，只保留与应用 i18n 一致的 5 个 `.pak`。
+- 验证：对 `app.asar` 里每个运行时包做真实 `require`（Electron 自带 Node 24.19，含扫描版 PDF 走 wasm 渲染），六条打包冒烟全绿。效果：安装包 196.85 MB → 182.6 MB（−14.2 MB，−7.2%），`app.asar` 161.5 MB / 4,731 文件 → 132.2 MB / 4,003 文件，`win-unpacked` 668.4 MB → 585.2 MB（逐包表与维护规则见 [docs/14](./14-packaging.md) §5）。
+- 顺带修复三条过期的打包冒烟脚本（设置页重建后主题改成 tile 单选、标题不再是 heading、LAN Base URL 拆成两个文本节点；Excalidraw 字体 CSP 提示的源列表多了 `blob:`；LAN 停止后移动端的 list / tags 请求一起失败）。先在 HEAD 的干净工作树上复现同样的三条失败再修，确认不是白名单改动引起的。
+- 安装包剩余体积以 Electron 本体（压缩后约 80 MB）为主，其次 drawio 资源约 24 MB（其中厂商 stencils / 侧栏图 / 模板约 12 MB）与 `ffmpeg.exe` 约 19 MB；这两项所有者已决定保留（见文末取舍表）。Excalidraw 手写字体 12.5 MB 属于正常功能体积：打包版实测中英文手写体都从本地按 unicode-range 子集按需加载（[docs/07](./07-extensions.md) §6）；本轮评估时「运行时加载不到」的说法被实测推翻，相应注释与文档已更正。
+
 ---
 
 ## ✅ 已记录在 docs、不在本篇重复
@@ -227,3 +257,8 @@ FileList 的 visible 标签过滤抽为 `file-list-filter.ts` 纯函数（6 条�
 | 项 | 出处 | 理由 |
 |---|---|---|
 | 抽 `execFileBuffer` / `onUtilityProcessError` 消除主进程 `as unknown as` | 本篇 P2-2（2026-07-28 评估） | 会牵连 ffmpeg 的 10s 超时 fallback 重试路径，风险 > 收益；helper 只能消 2 处 cast，ROI 低 |
+| `thumbnail:setFolderThumbnail` / `setFolderBackground` 的 `sourcePath` 可位于位置外，不加来源凭据 | 本篇 P2-3（2026-11-24 评估） | 调用方只走原生「打开图片」对话框；被攻破的渲染层本就能通过 `fs:importExternal` 把任意文件拷进位置，缩略图栅格化这条「探针」严格更弱，加闸无净收益（[docs/13](./13-security.md) §12 ②） |
+| 单字母 UNC 服务器名的 `whale-file://` URL 解成盘符（`\\w\share\a.mp4` → `W:/share/a.mp4`） | 2026-11-24 第 44 轮评估 | URL 空间本身歧义（`whale-file://w/…` 与盘符 `w:` 无法区分），单字母 SMB 服务器名罕见；收窄需要改 URL 编码格式并迁移已保存的链接（[docs/13](./13-security.md) §12 ③） |
+| drawio 的厂商 stencils、侧栏图与模板全量随包（压缩后约 12 MB） | 2026-11-25 第 45 轮评估（P3-12）；所有者决定全部保留 | 删掉就少掉对应的图形库 / 模板（AWS、Cisco、网络设备等），离线场景没有别的来源；保留哪些是产品决定（`math/` 与核心 js 必须保留，`App.main()` 启动即依赖） |
+| `ffmpeg-static` 整包 77.4 MB（压缩后约 19 MB）只用于视频缩略图抽帧 | 2026-11-25 第 45 轮评估（P3-12）；所有者决定保留 | 换成渲染层 `<video>` 抓帧要改缩略图架构；没有明显更小的现成分发 |
+| 仓库根目录没有 LICENSE 文件（README 声明 MIT，仓库内只有 `LICENSES/ffmpeg.md` 与两个扩展的 NOTICE） | 2026-11-24 第 44 轮评估 | 许可证文本应由所有者确认后添加 |

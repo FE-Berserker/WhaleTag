@@ -2,11 +2,12 @@
 
 This product bundles **FFmpeg** (the gyan.dev `essentials` build, distributed
 via the npm package `ffmpeg-static` and invoked as a separate OS process), used
-by Whale for:
+by Whale for exactly one thing:
 
 - video thumbnail extraction — `src/main/thumbnail.ts` (`encodeVideoThumb`)
-- audio transcoding of formats Chromium can't decode (APE / WMA / AIFF / AMR /
-  AC-3 / DTS / MusePack / WavPack / DSD → Opus) — `src/main/audio-convert.ts`
+
+Audio is **not** transcoded: there is no audio-conversion module in the code
+base, so FFmpeg is never invoked for audio files.
 
 FFmpeg is licensed under the **GNU General Public License v3.0 or later**
 (GPL-3.0-or-later). This build is configured `--enable-gpl --enable-version3`
@@ -25,6 +26,7 @@ binary — a "mere aggregation" of two separate programs (the same arrangement
 countless MIT/BSD-licensed apps use to bundle ffmpeg). The corresponding FFmpeg
 source code is available at the URLs above.
 
-This file satisfies the GPLv3 §5(c) attribution / "prominent notices"requirement. The binary's own license and readme also ship alongside the
+This file satisfies the GPLv3 §5(c) attribution / "prominent notices"
+requirement. The binary's own license and readme also ship alongside the
 executable (`ffmpeg.exe.LICENSE` / `ffmpeg.exe.README`), unpacked from the asar
 archive via `asarUnpack` (see `resources/builder.json`).

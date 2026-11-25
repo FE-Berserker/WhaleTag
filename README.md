@@ -147,7 +147,7 @@ for the complete tool reference, approval rules and lifecycle details.
 
 ### Prerequisites
 
-- **Node.js** ≥ 18
+- **Node.js** ≥ 22.13 (`^22.13.0 || >=24.0.0`)
 - **npm**
 
 ### Install
@@ -155,9 +155,16 @@ for the complete tool reference, approval rules and lifecycle details.
 ```bash
 cd WhaleTag
 npm install
+npx electron-rebuild -f -o better-sqlite3
 ```
 
 > The first install also downloads the Electron binary (large).
+>
+> `better-sqlite3` is a V8-bound (not N-API) addon: `npm install` fetches the
+> prebuilt binary for the Node that ran npm, which Electron cannot load
+> (`NODE_MODULE_VERSION` mismatch). Re-run the `electron-rebuild` line once per
+> install and after every Electron upgrade; `npm run dev` and the test runner
+> check it for you. See [docs/09-known-issues.md](docs/09-known-issues.md) §4.
 
 ### Run in development (hot reload)
 
@@ -199,7 +206,7 @@ Output lands in `release/build/`.
 | `npm run build` | Production build (main + extensions + renderer) |
 | `npm start` | Run the production build |
 | `npm run package` | Build + electron-builder installer |
-| `npm test` | Full test suite (`pretest` runs `type-check` first) |
+| `npm test` | Full test suite, parallel by default (`WHALE_TEST_CONCURRENCY=1` for serial); `pretest` runs `type-check` first |
 | `npm run lint` | ESLint |
 | `npm run type-check` | `tsc --noEmit` |
 | `npm run clean` | Remove build output |
@@ -298,7 +305,7 @@ Agent 应先调用 `whale_roots` 获取位置与索引状态,语义打标前调�
 
 ### 前置要求
 
-- **Node.js** ≥ 18
+- **Node.js** ≥ 22.13(`^22.13.0 || >=24.0.0`)
 - **npm**
 
 ### 安装
@@ -306,9 +313,15 @@ Agent 应先调用 `whale_roots` 获取位置与索引状态,语义打标前调�
 ```bash
 cd WhaleTag
 npm install
+npx electron-rebuild -f -o better-sqlite3
 ```
 
 > 首次安装会下载 Electron 二进制(体积较大)。
+>
+> `better-sqlite3` 是 V8/ABI 绑定模块(不是 N-API):`npm install` 装的是跑 npm 的那个
+> Node 的 prebuilt 二进制,Electron 加载会报 `NODE_MODULE_VERSION` 不匹配。每次安装后
+> (以及每次升级 Electron 后)重跑上面那行 `electron-rebuild`;`npm run dev` 与测试
+> 运行器会自动检查。详见 [docs/09-known-issues.md](docs/09-known-issues.md) §4。
 
 ### 开发模式(热重载)
 

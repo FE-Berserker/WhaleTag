@@ -48,7 +48,7 @@
 ## 4. 安全模型(与 docs/13 §11 对应)
 
 1. **只监听 127.0.0.1**,永不暴露局域网;默认关闭,需在设置里显式开启。
-2. **Bearer token**:每次请求必带 `Authorization: Bearer <token>`,`timingSafeEqual` 比较;token 本地生成、**加密落盘**(见 §7),设置页可显隐 / 复制 / 再生成。
+2. **Bearer token**:每次请求必带 `Authorization: Bearer <token>`,`timingSafeEqual` 比较;token 本地生成、**加密落盘**(见 §7),设置页可显隐 / 复制 / 再生成。复制按钮在状态加载完成前 `disabled`(此时面板显示的是 `…` 占位,复制占位值等于骗人);剪贴板被拒(权限策略 / 文档未聚焦)时把 `errorMessage` 显示在面板里,不假装复制成功。
 3. **allowedRoots 硬约束**:所有工具的路径先过 `assertWithinAllowedRoot`;且 MCP 比渲染层 IPC **更严**——move/copy 的**目的地也必须在 roots 内**(`assertBothEndsInside`,渲染层的拖拽豁免不适用于外部客户端)。
 4. **写分级**:sidecar 级(标签/描述)免审批;文件级(move/copy/delete/zip/create)与**扩大可读范围的添加位置**推 `mcp:approvalRequest` 到窗口,用户明确点"允许"才执行;无窗口 / 60s 超时 / 拒绝一律 fail-closed。审批**一次只弹一条**(FIFO):只有队首会被广播并开始计时,排队请求的 60s **从它被显示时**才开始(旧实现让第二条在看不见的队列里烧完超时 → 用户从未见过的对话框被自动拒绝);队列上限 `MAX_PENDING_APPROVALS = 8`,超出立即拒绝而不是无限堆积。
 5. **只读模式**(默认开):所有变更工具直接拒绝(含打标、描述、添加位置、以及会写索引的 `whale_build_fulltext`),搜索与读取不受影响。闸门是两道:调用开始前查一次,审批等待(最长 60s)返回后**再查一次**——等待期间用户打开只读,已点过的"允许"也不能放行;切换只读为开时立即 `denyAllPending()`,不让无效对话框继续挂在屏幕上。**位置的只读标记同样生效**:MCP 的写入工具复用主进程 `fs-write` / `sidecar` 函数，其中已接入 `assertWritable`，目标落在用户标记为只读的位置时直接拒绝（即使 MCP 的全局只读开关是关的）。

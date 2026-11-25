@@ -53,6 +53,10 @@ loadExifProcessed(rootPath)                 // 查询(IPC `exif:load-processed`)
 
 - `searchFulltext(rootPath, query)`(IPC `fulltext:search`):snippet 形式展示匹配上下文
 - 大目录下流式返回,不爆内存
+- `fulltext_fts` 保持默认 unicode61 分词器。查询里含 CJK 时额外跑一遍 `content LIKE '%…%'` 子串扫描(unicode61 把一整段连续 CJK 当成**一个** token,句子里的词 MATCH 不到),与 MATCH 命中按 path 去重合并(MATCH 命中在前),上限 `FULLTEXT_LIMIT = 100` 条。两字 CJK 查询放行;单字 CJK 与不足 3 字符的 ASCII 查询仍然拒绝。
+- LIKE 命中由主进程手写 snippet(`SNIPPET_RADIUS = 60`,命中处包 `<mark>`,两端超出加 `…`),因为 FTS5 的 `snippet()` 只服务 MATCH。
+- **片段里的 `<mark>` 按高亮渲染**:[SearchBar.tsx](../src/renderer/components/SearchBar.tsx) 的 `SnippetWithMarks` 只按 `<mark>` / `</mark>` 切分文本并为区间套高亮样式,不走 `dangerouslySetInnerHTML` —— 文件正文中的 HTML 标签仍按纯文本显示。
+- **设置页新增路径保持「构建中」**:全文路径清单刷新状态时只丢弃已不在列表里的条目,仍存在的条目原样保留;刚加入的路径在构建返回前不会被刷新抹掉状态(见 [advanced.tsx](../src/renderer/components/settings/advanced.tsx) 的 `FulltextSettings`)。
 
 ## 5. 高级查询
 
@@ -64,7 +68,7 @@ loadExifProcessed(rootPath)                 // 查询(IPC `exif:load-processed`)
 
 `SearchQuery` 字段(`search-query.ts:17-35`):`text, tags, tagMatch, excludeTags, type, extensions, sizeMinBytes, sizeMaxBytes, modifiedAfter, modifiedBefore`(共 10 字段)。renderer 经 `-/services/search-filter` 薄 shim (`src/renderer/services/search-filter.ts`) 转发到 `src/shared/search-query.ts`,shim 不再加工。
 
-结果在主进程拼 SQL → 返回带 snippet 的条目列表。
+结果在主进程拼 SQL → 返回带 snippet 的条目列表。`text` 不足 3 字符时不走 `files_fts`(trigram 至少要 3 字符),改用 `name LIKE ? ESCAPE '\'` 的子串扫描 —— 转义符必须是单引号字面量,写成 `ESCAPE "\\"` 会被 SQLite 当标识符解析,每个 1–2 字符的查询都会抛 `no such column`。
 
 **只读副本**:同一套 SQL 有两条入口——`advancedQuery(rootPath, q)`(桌面,`getDb()`)与 `advancedQueryReadOnly(rootPath, q)`(LAN,`getReadOnlyDb()` + 立即关闭);标签同理 `distinctTags` / `distinctTagsReadOnly`。worker 侧对应 op 是 `index:readonly-advanced` / `index:readonly-tags`,结果都带 `indexUnavailable` 标记(索引库不存在时为 `true`,查询返回空集而不报错)。
 
@@ -87,6 +91,8 @@ loadExifProcessed(rootPath)                 // 查询(IPC `exif:load-processed`)
 
 媒体(binary)不参与全文索引。
 
+**解码与截断**:抽取正文统一走 [src/main/text-decode.ts](../src/main/text-decode.ts) 的 `decodeTextBuffer`(UTF-8 BOM → 合法 UTF-8 快路径 → jschardet + iconv-lite 兜底),与文本查看器、MCP `whale_extract_text` 是同一个解码器,所以 GBK / Shift-JIS / Windows-1252 文本按查看器里显示的样子进索引。`readCappedText` 只读前 `MAX_FULLTEXT_BYTES = 2 MiB`,截断点落在多字节字符中间时丢掉那个残字,不会把半个字符当成 U+FFFD 索引进去。
+
 ## 8. EXIF / GPS
 
 [src/main/exif.ts](../src/main/exif.ts):
@@ -99,6 +105,8 @@ loadExifProcessed(rootPath)                 // 查询(IPC `exif:load-processed`)
 
 - 首次索引大目录(数 GB / 数十万文件)虽已分批 yield,但仍耗时 —— UI 用 loading + spinner 反馈
 - 索引丢失单事务原子性(可接受,缓存可重建)
+- **`fulltext_fts` 不换 trigram 分词器(已知取舍)**:trigram 能让 CJK 子串查询走索引,但每份已有索引都要重建一次、索引体积约 3.5×,而且它同样答不了 2 字查询;现在的 `content LIKE` 扫描在索引 worker 里约 1 ms/MB 正文,凑满 100 条即提前收手。
+- **`index.db` 还没有 schema 版本号 / 迁移(已知取舍)**:至今 schema 未变过,改表结构时需要靠"索引可重建"这条兜底(删 `.whale/index.db` 重建),没有版本检测。
 - 主进程 SQLite 阻塞**已解决**:索引 / 全文 / EXIF 管线迁入 `utilityProcess` 子进程(`serviceName: 'whale-index'`,入口 `src/main/index-worker.ts`,宿主 `index-worker-host.ts`)。better-sqlite3 的 `openDbs` 缓存 scoped 到该子进程,主进程事件循环不再被同步 DB 调用阻塞;批让步(`INGEST_BATCH=1000` / `setImmediate` / `mapWithConcurrency`)在子进程内沿用。设计 / 排坑见 [docs/15 P0-2](./15-perf-audit.md);`assertWithinAllowedRoot` 仍在主进程校验,不信任 renderer、不下游重复。
 
 ## 10. 架构审阅遗留(2026-07-18,已闭环)
@@ -106,6 +114,6 @@ loadExifProcessed(rootPath)                 // 查询(IPC `exif:load-processed`)
 > 本节只留"当前形态下仍会踩的坑";实现细节见 §1 / §2 / §3,逐轮证据见 [docs/19](./19-code-audit.md)。
 
 - **DB 连接生命周期**：`index:close` 关连接、`index:shutdown` 干净 close（WAL checkpoint）;`before-quit` 两段式先 `shutdownIndexWorker()`（1s 超时兜底）。
-- **变更 → 重建**：仅当 `index:status.exists` 为真才增量 `index:build`（1.5s 去抖、per-root in-flight、dirty 补跑、失败按 1.5s 起翻倍到 60s 退避）;fulltext 仅当 `fulltext:has` 为真;`.whale/**` 回声过滤;Linux 无 recursive 时 per-dir 监听（上限 4096）。
+- **变更 → 重建**：仅当 `index:status.exists` 为真才增量 `index:build`（1.5s 去抖、per-root in-flight、dirty 补跑、失败按 1.5s 起翻倍到 60s 退避）;fulltext 仅当 `fulltext:has` 为真;`.whale/**` 回声过滤;Linux 无 recursive 时 per-dir 监听（上限 4096）。退避期间持续到来的变更不会把定时器重置回 1.5s 去抖 —— 已排队的重试按原退避继续,反复抖动的目录不会把退避永久压平。
 - **静默失效防线**：worker 请求看门狗（`WorkerRequestTimeout`，60s / 30s / 5s）、watcher 自愈退避、走查不完整只冻结不可读子树。
 - **并发与遍历边界**：`index:build` / `fulltext:build` 按 root 串行;符号链接文件跟随、目录不下降;500 条/批突发改「下一 tick 续 drain」+ 5s 强制 flush。
