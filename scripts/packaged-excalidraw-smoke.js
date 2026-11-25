@@ -22,32 +22,28 @@ function errorText(error) {
   return String((error && error.stack) || error);
 }
 
-// Excalidraw 0.18.1 attempts these remote fonts after the deliberately
-// non-fetchable whale-extension local font path fails. Chromium blocks the CDN
-// request under the extension CSP and Excalidraw falls back to system fonts.
-// Keep this documented fallback separate from real async-chunk request errors.
+// Every Excalidraw font is registered as a FontFace whose source list is the
+// bundled whale-extension URL followed by the upstream esm.sh URL. The bundled
+// fonts load from the extension scheme (canvas text renders with them), but the
+// browser evaluates the policy for the upstream URL of every font file at
+// registration and reports one CSP violation per file, whether or not that font
+// is used. Keep that documented noise separate from real async-chunk errors.
 const EXCALIDRAW_FONT_URL =
   /^https:\/\/esm\.sh\/@excalidraw\/excalidraw@0\.18\.1\/dist\/prod\/fonts\/[^/'?#]+\/[^/'?#]+\.woff2$/;
 const EXCALIDRAW_SOURCE_URL =
   /^whale-extension:\/\/excalidraw-editor\/(?:bundle\.js|chunks\/[^/'?#]+\.js)$/;
-const EXCALIDRAW_FONT_CONSOLE_PREFIX = "Loading the font '";
-const EXCALIDRAW_FONT_CONSOLE_SUFFIX =
-  '\' violates the following Content Security Policy directive: "font-src \'self\' data: whale-extension://*". The action has been blocked.';
+// Chromium quotes the extension CSP's `font-src` source list verbatim, so match
+// the shape of the message instead of one exact source list: adding a source
+// to the policy must not turn this documented fallback into a smoke failure.
+const EXCALIDRAW_FONT_CONSOLE_PATTERN =
+  /^Loading the font '(https:\/\/esm\.sh\/@excalidraw\/excalidraw@0\.18\.1\/dist\/prod\/fonts\/[^/'?#]+\/[^/'?#]+\.woff2)' violates the following Content Security Policy directive: "font-src [^"]*\bwhale-extension:\/\/\*[^"]*"\. The action has been blocked\.$/;
 
 function isKnownExcalidrawFontConsole(message) {
-  if (
-    message.type !== 'error' ||
-    !EXCALIDRAW_SOURCE_URL.test(message.location?.url || '') ||
-    !message.text.startsWith(EXCALIDRAW_FONT_CONSOLE_PREFIX) ||
-    !message.text.endsWith(EXCALIDRAW_FONT_CONSOLE_SUFFIX)
-  ) {
-    return false;
-  }
-  const url = message.text.slice(
-    EXCALIDRAW_FONT_CONSOLE_PREFIX.length,
-    -EXCALIDRAW_FONT_CONSOLE_SUFFIX.length
+  return (
+    message.type === 'error' &&
+    EXCALIDRAW_SOURCE_URL.test(message.location?.url || '') &&
+    EXCALIDRAW_FONT_CONSOLE_PATTERN.test(message.text)
   );
-  return EXCALIDRAW_FONT_URL.test(url);
 }
 
 function isKnownExcalidrawFontRequest(request) {

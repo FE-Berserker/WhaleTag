@@ -370,10 +370,35 @@ async function main() {
   let pairingToken = null;
   let baseUrl = null;
 
+  // After Stop, one Refresh makes the mobile client's list and tags requests
+  // fail together. Each surfaces as one refused request, one Chromium resource
+  // error and one client warning: all of them are the expected offline report.
+  const STOPPED_REFRESH_PATHS = new Set(['/api/list', '/api/tags']);
+  const STOP_FAILURE_REASON = 'The refresh after Stop must fail at the closed LAN transport.';
+  const STOP_WARNING_REASON = 'The mobile client reports the refused request that Stop must cause.';
+  const countExpected = (reason) => report.expectedConsole.filter((entry) => entry.reason === reason).length;
+  /** Resolve once no console / request diagnostics arrived for 600 ms (max 5 s). */
+  async function settleDiagnostics() {
+    const signature = () =>
+      report.console.length +
+      report.expectedConsole.length +
+      report.requestFailed.length +
+      report.expectedDisconnects.length +
+      report.abortedRequests.length;
+    let stable = 0;
+    const startedAt = Date.now();
+    while (stable < 3 && Date.now() - startedAt < 5_000) {
+      const before = signature();
+      await delay(200);
+      stable = signature() === before ? stable + 1 : 0;
+    }
+  }
+
   function attachDiagnostics(page, owner) {
     page.on('console', (message) => {
       if (message.type() !== 'warning' && message.type() !== 'error') return;
       const item = { owner, type: message.type(), text: redact(message.text()) };
+      const warningSource = (text) => text.split(' TypeError')[0];
       const expectedReason = owner === 'mobile' &&
         message.type() === 'warning' &&
         item.text.includes('Electron Security Warning (Insecure Resources)')
@@ -386,9 +411,19 @@ async function main() {
               allowStoppedListDisconnect &&
               message.type() === 'error' &&
               /^Failed to load resource: net::ERR_(?:CONNECTION_REFUSED|EMPTY_RESPONSE)$/.test(item.text) &&
-              !report.expectedConsole.some((entry) => entry.reason === 'The single refresh after Stop must fail at the closed LAN transport.')
-            ? 'The single refresh after Stop must fail at the closed LAN transport.'
-            : null;
+              countExpected(STOP_FAILURE_REASON) < STOPPED_REFRESH_PATHS.size
+            ? STOP_FAILURE_REASON
+            : owner === 'mobile' &&
+                allowStoppedListDisconnect &&
+                message.type() === 'warning' &&
+                /^\[mobile\] (?:content|tags) request failed\b/.test(item.text) &&
+                !report.expectedConsole.some(
+                  (entry) =>
+                    entry.reason === STOP_WARNING_REASON &&
+                    warningSource(entry.text) === warningSource(item.text)
+                )
+              ? STOP_WARNING_REASON
+              : null;
       if (expectedReason) report.expectedConsole.push({ ...item, reason: expectedReason });
       else report.console.push(item);
       saveReport();
@@ -407,11 +442,11 @@ async function main() {
       };
       const expectedOffline =
         allowStoppedListDisconnect &&
-        report.expectedDisconnects.length === 0 &&
         owner === 'mobile' &&
         item.method === 'GET' &&
-        item.path === '/api/list' &&
-        ['net::ERR_CONNECTION_REFUSED', 'net::ERR_EMPTY_RESPONSE'].includes(item.errorText);
+        STOPPED_REFRESH_PATHS.has(item.path) &&
+        ['net::ERR_CONNECTION_REFUSED', 'net::ERR_EMPTY_RESPONSE'].includes(item.errorText) &&
+        !report.expectedDisconnects.some((entry) => entry.path === item.path);
       if (expectedOffline) {
         report.expectedDisconnects.push({
           ...item,
@@ -683,7 +718,13 @@ async function main() {
       const selectorCount = await selector.count();
       assert.ok(selectorCount <= 1, 'Expected at most one LAN Base URL selector');
       if (selectorCount === 1) assert.ok((await selector.innerText()).includes(baseUrl));
-      else await expect(dialog.getByText(`Base URL: ${baseUrl}`, { exact: true })).toHaveCount(1);
+      else {
+        // One adapter: a plain settings row whose label and URL are separate
+        // text nodes (the row primitives render label + hint), so read the row.
+        const row = dialog.getByText('Base URL', { exact: true });
+        await expect(row).toHaveCount(1);
+        await expect(row.locator('..').locator('..')).toContainText(baseUrl);
+      }
       const desktopText = await desktop.locator('body').innerText();
       assert.ok(!desktopText.includes(pairingToken), 'Pairing token must never be page text');
       assert.ok(!desktopText.includes(pairingUrl), 'Full pairing URL must never be page text');
@@ -1038,11 +1079,22 @@ app.whenReady().then(() => {
       });
       await expect(mobile.getByRole('heading', { name: 'Connect to WhaleTag', exact: true })).toHaveCount(0);
       await expect(mobile.getByRole('combobox', { name: 'Select a location', exact: true })).toHaveCount(1);
-      assert.equal(report.expectedDisconnects.length, 1, 'Stop must cause exactly one expected mobile /api/list disconnect');
-      assert.equal(report.expectedDisconnects[0].owner, 'mobile');
-      assert.equal(report.expectedDisconnects[0].method, 'GET');
-      assert.equal(report.expectedDisconnects[0].path, '/api/list');
-      allowStoppedListDisconnect = false;
+      // The stopped-state classification stays active to the end of the run:
+      // the tags refresh and its console lines can trail the list failure.
+      await settleDiagnostics();
+      const refusedPaths = report.expectedDisconnects.map((entry) => entry.path);
+      assert.ok(
+        refusedPaths.includes('/api/list'),
+        'Stop must make the mobile /api/list refresh fail at the closed LAN transport'
+      );
+      assert.ok(
+        refusedPaths.every((path) => path === '/api/list' || path === '/api/tags'),
+        `Unexpected mobile requests after Stop: ${refusedPaths.join(', ')}`
+      );
+      assert.ok(
+        report.expectedDisconnects.every((entry) => entry.owner === 'mobile' && entry.method === 'GET'),
+        'Only mobile GET requests may be refused after Stop'
+      );
       await closeSettings(dialog);
       const afterStop = snapshotWhale(fixtureRoot);
       const diff = snapshotDiff(beforeLan, afterStop);

@@ -377,6 +377,19 @@ async function main() {
     await optionLocator.click();
   }
 
+  /**
+   * The theme picker is a tile radio group, not an MUI Select: a dropdown of
+   * eleven theme names gave no hint of what a theme looks like.
+   */
+  async function selectTheme(dialog, option) {
+    const group = dialog.getByRole('radiogroup', { name: 'Theme', exact: true });
+    await expect(group).toHaveCount(1);
+    const tile = group.getByRole('radio', { name: option, exact: true });
+    await expect(tile).toHaveCount(1);
+    await tile.click();
+    await expect(tile).toHaveAttribute('aria-checked', 'true');
+  }
+
   async function assertFocus(locator, label) {
     assert.equal(
       await locator.evaluate((element) => element === document.activeElement),
@@ -705,7 +718,7 @@ async function main() {
       const observed = [];
       for (const expected of expectedThemes) {
         const dialog = await openSettings();
-        await selectSettingsOption(dialog, 'Theme', expected.option);
+        await selectTheme(dialog, expected.option);
         const theme = await poll(
           async () => {
             const value = await page.evaluate(() => ({
@@ -799,9 +812,9 @@ async function main() {
         5_000,
         'Simplified Chinese html lang'
       );
-      await dialog.getByRole('heading', { name: '设置', exact: true }).waitFor({
-        state: 'visible',
-      });
+      // The rebuilt dialog titles itself with a styled span (no heading role):
+      // the title element is addressed by the id the dialog's label points at.
+      await expect(dialog.locator('#settings-dialog-title')).toHaveText('设置');
       await capture('settings-simplified-chinese');
       await closeSettings(dialog);
 
