@@ -3,7 +3,10 @@ import globalJsdom from 'global-jsdom';
 import { after, afterEach, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'module';
-import { cleanup, fireEvent, render } from '@testing-library/react';
+type TestingLibrary = typeof import('@testing-library/react');
+let cleanup: TestingLibrary['cleanup'];
+let fireEvent: TestingLibrary['fireEvent'];
+let render: TestingLibrary['render'];
 import i18next from 'i18next';
 import { I18nextProvider, initReactI18next } from 'react-i18next';
 import { setThemeMode, setThemePreset } from '-/reducers/settings';
@@ -79,6 +82,12 @@ function emittedCss(): string {
 
 before(async () => {
   cleanupDom = globalJsdom();
+  // Load the renderer only once the document exists (same pattern as
+  // SearchBar.test.tsx): react-dom probes the environment at import time, and
+  // without a DOM it decides it runs in IE8 and installs the `attachEvent`
+  // input polyfill, which jsdom cannot satisfy — keydown events on text inputs
+  // then throw inside React before reaching any handler.
+  ({ cleanup, fireEvent, render } = await import('@testing-library/react'));
   await i18next.use(initReactI18next).init({
     lng: 'en',
     fallbackLng: 'en',
@@ -279,6 +288,26 @@ describe('SettingsDialog sections and search', () => {
 
     fireEvent.click(view.getByRole('button', { name: 'Close' }));
     assert.equal(closed, true);
+  });
+
+  it('Escape in the search box clears the query without closing the dialog; on an empty box it closes', () => {
+    let closed = 0;
+    const view = renderDialog('general', () => {
+      closed += 1;
+    });
+    const search = view.getByRole('textbox', {
+      name: 'Search settings…',
+    }) as HTMLInputElement;
+
+    fireEvent.input(search, { target: { value: 'shortcut' } });
+    fireEvent.keyDown(search, { key: 'Escape' });
+    // The keydown bubbles to the Modal root, whose handler closes the dialog
+    // on `escapeKeyDown` — the search box has to stop it while it has text.
+    assert.equal(search.value, '');
+    assert.equal(closed, 0, 'clearing the search must not close the dialog');
+
+    fireEvent.keyDown(search, { key: 'Escape' });
+    assert.equal(closed, 1, 'Escape on an empty search box closes the dialog');
   });
 
   it('filters settings by keyword and shows the matching section', () => {

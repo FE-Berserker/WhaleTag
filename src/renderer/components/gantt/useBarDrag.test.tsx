@@ -277,6 +277,49 @@ describe('useBarDrag state machine', () => {
     assert.equal(handle.isDragging, false);
   });
 
+  it('#2b a drag that keeps moving commits the TOTAL displacement, counted once', () => {
+    // Month zoom: 5 px per day, so a move that only just crosses the 4 px
+    // threshold already shifts the bar by a whole day.
+    const { handle } = renderProbe({ pxPerDay: 5 });
+    const el = handle.el!;
+    act(() => {
+      fireEvent.pointerDown(el, { button: 0, clientX: 100, clientY: 10 });
+    });
+    // +10 px = +2 days. The pending handler previews it and flips to
+    // dragging.
+    dispatchPointerMove(el, 110);
+    assert.equal(handle.isDragging, true);
+    assert.equal(
+      handle.previewStyle?.left,
+      32 * 5,
+      'preview after the first move: start day 30 + 2, at 5 px per day'
+    );
+    // +20 px = +4 days in total. The second listener must measure from the
+    // pointerdown position against the UNCHANGED period — not add its delta
+    // on top of the first move's already-shifted preview (that committed
+    // +6 days here).
+    dispatchPointerMove(el, 120);
+    assert.equal(handle.previewStyle?.left, 34 * 5);
+    dispatchWindowPointerUp();
+    assert.equal(handle.commits.length, 1);
+    assert.equal(handle.commits[0].next.startKey, '2026-07-05');
+    assert.equal(handle.commits[0].next.endKey, '2026-07-09');
+  });
+
+  it('#2c an edge resize that keeps moving resizes from the unchanged period', () => {
+    const { handle } = renderProbe({ pxPerDay: 5, zone: 'right' });
+    const el = handle.el!;
+    act(() => {
+      fireEvent.pointerDown(el, { button: 0, clientX: 100, clientY: 10 });
+    });
+    dispatchPointerMove(el, 110); // +2 days
+    dispatchPointerMove(el, 120); // +4 days in total
+    dispatchWindowPointerUp();
+    assert.equal(handle.commits.length, 1);
+    assert.equal(handle.commits[0].next.startKey, '2026-07-01', 'left edge untouched');
+    assert.equal(handle.commits[0].next.endKey, '2026-07-09');
+  });
+
   it('#2b drag stays committed after preview is cleared (post-commit idle)', () => {
     const { handle } = renderProbe();
     const el = handle.el!;

@@ -179,7 +179,7 @@ export default function TagCloudView({ data }: TagCloudViewProps) {
   const theme = useTheme();
   const { currentLocation } = useCurrentLocationContext();
   const chartRef = useRef<ReactECharts>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
   // P0-3: fallback word color follows theme so uncolored tags stay legible in
   // both modes (plan §H.22). Recomputed per-render because theme is reactive.
   const FALLBACK_COLOR =
@@ -246,20 +246,25 @@ export default function TagCloudView({ data }: TagCloudViewProps) {
   }, [currentLocation?.id]);
 
   // P2-2: persist prefs 200ms after the last change (debounced so dragging the
-  // depth / max-words sliders doesn't hammer localStorage). The cleanup flushes
-  // the latest prefs on unmount so quick perspective switches don't lose the
-  // most recent filter toggle.
+  // depth / max-words sliders doesn't hammer localStorage). Only the unmount /
+  // location switch flushes immediately, so a quick perspective switch doesn't
+  // lose the most recent filter toggle. (The cleanup used to flush on EVERY
+  // change as well, so each toggle wrote the prefs twice.)
   useEffect(() => {
     const id = currentLocation?.id;
     if (!id) return undefined;
     const handle = window.setTimeout(() => {
       writePrefs<TagCloudPrefs>(PREFS_KEY_PREFIX + id, prefsRef.current);
     }, 200);
+    return () => window.clearTimeout(handle);
+  }, [currentLocation?.id, shown, shape, maxWordsIdx, layoutAnimation, view]);
+  useEffect(() => {
+    const id = currentLocation?.id;
+    if (!id) return undefined;
     return () => {
-      window.clearTimeout(handle);
       writePrefs<TagCloudPrefs>(PREFS_KEY_PREFIX + id, prefsRef.current);
     };
-  }, [currentLocation?.id, shown, shape, maxWordsIdx, layoutAnimation, view]);
+  }, [currentLocation?.id]);
 
   // P1-1: defer the search filter so each keystroke doesn't force a re-render
   // of the cloud. Cheap relative to the echarts layout, but keeps the toolbar
@@ -314,24 +319,34 @@ export default function TagCloudView({ data }: TagCloudViewProps) {
   // words stay readable when the panel is small (and don't grow past 72px on a
   // 4K monitor — `Math.min(width, height) / 12` caps the band reasonably).
   const [sizeRange, setSizeRange] = useState<[number, number]>(SIZE_RANGE_DEFAULT);
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const recompute = () => {
-      const { width, height } = el.getBoundingClientRect();
-      const base = Math.min(width, height);
-      if (base <= 0) return;
-      // Headline size scales linearly with the shorter edge; clamp so a tiny
-      // panel still gives the smallest word a fighting chance to render.
-      const headline = Math.max(14, Math.min(72, Math.round(base / 12)));
-      const tail = Math.max(10, Math.round(headline * 0.4));
-      setSizeRange([tail, headline]);
-    };
-    recompute();
-    const ro = new ResizeObserver(recompute);
-    ro.observe(el);
-    return () => ro.disconnect();
+  // The measured element is NOT stable: it only exists while a chart is shown
+  // (the loading / empty states render something else, and matrix and cloud
+  // are different nodes). A one-shot effect with `[]` deps could therefore run
+  // against nothing and never attach, or keep observing an unmounted node. A
+  // callback ref follows whichever element is current instead.
+  const measure = useCallback((el: HTMLElement) => {
+    const { width, height } = el.getBoundingClientRect();
+    const base = Math.min(width, height);
+    if (base <= 0) return;
+    // Headline size scales linearly with the shorter edge; clamp so a tiny
+    // panel still gives the smallest word a fighting chance to render.
+    const headline = Math.max(14, Math.min(72, Math.round(base / 12)));
+    const tail = Math.max(10, Math.round(headline * 0.4));
+    setSizeRange([tail, headline]);
   }, []);
+  const containerRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      resizeObserverRef.current?.disconnect();
+      resizeObserverRef.current = null;
+      if (!el) return;
+      measure(el);
+      const ro = new ResizeObserver(() => measure(el));
+      ro.observe(el);
+      resizeObserverRef.current = ro;
+    },
+    [measure]
+  );
+  useEffect(() => () => resizeObserverRef.current?.disconnect(), []);
 
   const option = useMemo(
     () => ({

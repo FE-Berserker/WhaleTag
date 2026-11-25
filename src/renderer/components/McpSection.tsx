@@ -61,7 +61,9 @@ export default function McpSection(): JSX.Element {
         setCopied(label);
         setTimeout(() => setCopied(null), 1500);
       })
-      .catch(() => undefined);
+      // A refused clipboard (permissions policy, no focused document) used to
+      // be swallowed: the tooltip simply never changed and the user re-tried.
+      .catch((e) => setError(errorMessage(e)));
   };
 
   const apply = (fn: () => Promise<McpStatus>) => {
@@ -161,6 +163,9 @@ export default function McpSection(): JSX.Element {
                       <IconButton
                         size="small"
                         edge="end"
+                        // Before the first status arrives the field only shows
+                        // the "…" placeholder — copying it would be a lie.
+                        disabled={!status}
                         onClick={() => copy('token', token)}
                         aria-label={t('mcpCopy')}
                       >

@@ -143,6 +143,36 @@ describe('useFileListSelection — gestures', () => {
     act(() => selection().selectRow(1, { shift: true, toggle: false }));
     assert.deepEqual(selectedNames(selection), ['b.txt']);
   });
+
+  it('shift-range follows the anchor PATH across a filter change (the anchor moves index)', () => {
+    const { view, seen, selection } = mount();
+    act(() => selection().selectRow(2, { shift: false, toggle: false })); // C at index 2
+    assert.deepEqual(selectedNames(selection), ['c.txt']);
+
+    // B is filtered out: C now sits at index 1. A shift-click on A (index 0)
+    // must extend from C's NEW position, not from stale index 2 (B).
+    view.rerender(<Probe visible={[A, C]} seen={seen} />);
+    act(() => seen.current!.selectRow(0, { shift: true, toggle: false }));
+
+    assert.deepEqual(selectedNames(() => seen.current!), ['a.txt', 'c.txt']);
+  });
+
+  it('shift-click with a stale anchor (no longer visible) degrades to a plain click', () => {
+    const { view, seen, selection } = mount();
+    act(() => selection().selectRow(2, { shift: false, toggle: false })); // C
+
+    // C itself is filtered out — the stored index 2 is past the end of the
+    // new list. Previously the range loop threw (visible[2] undefined) before
+    // bumpSelection, leaving a half-applied selection in the Set.
+    view.rerender(<Probe visible={[A, B]} seen={seen} />);
+    assert.doesNotThrow(() => {
+      act(() => seen.current!.selectRow(1, { shift: true, toggle: false }));
+    });
+
+    assert.deepEqual(selectedNames(() => seen.current!), ['b.txt']);
+    assert.equal(seen.current!.selectedPathsRef.current.has(C.path), false);
+    assert.equal(seen.current!.focusIndex, 1);
+  });
 });
 
 describe('useFileListSelection — select all', () => {

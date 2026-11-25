@@ -1,3 +1,4 @@
+import { useCallback, useRef } from 'react';
 import { useDrop } from 'react-dnd';
 import { NativeTypes } from 'react-dnd-html5-backend';
 import type { TFunction } from 'i18next';
@@ -15,11 +16,15 @@ import { todayKey, periodTagFromRange } from '../../domain/gantt';
  *  - the `react-dnd` native FILE drop target + the `isFileOver` overlay flag
  *    the surrounding Box renders.
  *
- * The `useDrop` dependency array intentionally stays
- * `[readOnly, currentDirectoryPath]` — exactly the pre-extraction array. It
- * does NOT include `viewMode` / `showNotice` / `t`; preserving that means the
- * drop spec keeps the same closure lifetime it had inline. Do not "fix" this
- * without a behaviour change review.
+ * react-dnd memoizes the drop spec by its dependency array and invokes
+ * `drop` / `canDrop` from THAT closure. The array used to be
+ * `[readOnly, currentDirectoryPath]` ("exactly the pre-extraction array"),
+ * which silently froze `viewMode` / `importExternalFiles` / `showNotice` /
+ * `t` at the render where those two last changed: after a list ↔ task switch
+ * a drop went through a stale `viewMode`, so drops in task view were not
+ * stamped with the today period — and list-view drops after a visit to task
+ * view were. Every input is now read through a latest-ref, so the spec
+ * closure is always correct regardless of its own lifetime.
  */
 export interface UseExternalFileDropOptions {
   viewMode: ViewMode;
@@ -52,6 +57,25 @@ export function useExternalFileDrop({
   showNotice,
   t,
 }: UseExternalFileDropOptions): ExternalFileDrop {
+  // Latest-ref: react-dnd's spec closure reads everything from here at event
+  // time, so it never observes a stale `viewMode` after a view switch.
+  const latest = useRef({
+    viewMode,
+    currentDirectoryPath,
+    readOnly,
+    importExternalFiles,
+    showNotice,
+    t,
+  });
+  latest.current = {
+    viewMode,
+    currentDirectoryPath,
+    readOnly,
+    importExternalFiles,
+    showNotice,
+    t,
+  };
+
   // Drop one or more entries onto a folder cell to move them inside it.
   // External files dragged in from outside the app (OS file manager): copy them
   // into the current directory. Never overwrites (main auto-renames on clash).
@@ -64,24 +88,29 @@ export function useExternalFileDrop({
   // the toggle row, the PropertiesTray gutter, or the empty space in
   // list / grid view. The today-period auto-tag is still applied for
   // task view so an imported file appears on the Gantt timeline.
-  const handleExternalDrop = async (files: File[]) => {
-    if (!files?.length || !currentDirectoryPath) return;
+  const handleExternalDrop = useCallback(async (files: File[]) => {
+    const {
+      viewMode: mode,
+      currentDirectoryPath: dir,
+      importExternalFiles: doImport,
+      showNotice: notify,
+      t: translate,
+    } = latest.current;
+    if (!files?.length || !dir) return;
     let tagToApply: string | null = null;
-    if (viewMode === 'task') {
+    if (mode === 'task') {
       const today = todayKey();
       tagToApply = periodTagFromRange({ startKey: today, endKey: today });
     }
     try {
-      const { copied, errors } = await importExternalFiles(files, {
-        tagToApply,
-      });
+      const { copied, errors } = await doImport(files, { tagToApply });
       if (copied > 0) {
-        showNotice(t('importedItems', { count: copied }), 'success');
-      } else if (errors.length) showNotice(errors[0]);
+        notify(translate('importedItems', { count: copied }), 'success');
+      } else if (errors.length) notify(errors[0]);
     } catch (e) {
-      showNotice(e instanceof Error ? e.message : String(e));
+      notify(e instanceof Error ? e.message : String(e));
     }
-  };
+  }, []);
 
   // Drop target for OS files dragged into the file area (NativeTypes.FILE).
   const [{ isFileOver }, nativeDropRef] = useDrop<
@@ -91,7 +120,7 @@ export function useExternalFileDrop({
   >(
     () => ({
       accept: [NativeTypes.FILE],
-      canDrop: () => !readOnly,
+      canDrop: () => !latest.current.readOnly,
       drop: (item) => {
         void handleExternalDrop(item.files);
       },
@@ -99,6 +128,9 @@ export function useExternalFileDrop({
         isFileOver: monitor.isOver() && monitor.canDrop(),
       }),
     }),
+    // The spec reads everything through `latest`, so its memo lifetime no
+    // longer affects correctness. Kept as the pre-extraction array purely to
+    // keep the target registration from churning on unrelated renders.
     [readOnly, currentDirectoryPath]
   );
 

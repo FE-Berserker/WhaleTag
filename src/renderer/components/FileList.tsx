@@ -537,11 +537,12 @@ export default function FileList() {
       // P1-1: index is resolved by path (mirrors how list/grid Rows already
       // pass their own index); the same `selectRow` that powers Row clicks
       // now also powers GalleryView tile clicks, so Shift range / Ctrl
-      // toggle behave identically across perspectives.
-      const index = visible.findIndex((e) => e.path === entry.path);
+      // toggle behave identically across perspectives. `entryIndex` is the
+      // O(1) path → index map built next to `visibleByPath` above.
+      const index = entryIndex(entry.path);
       if (index >= 0) selectRow(index, mods);
     },
-    [visible, selectRow]
+    [entryIndex, selectRow]
   );
 
   const { openWithExtension, registry, userDefaults, enabledOverrides } =
@@ -749,6 +750,8 @@ export default function FileList() {
     goBack,
     viewMode,
     setViewMode,
+    // While the lightbox is open it owns the keyboard (see isWithinDialog).
+    modalOpen: lightboxEntry !== null,
   });
 
   // react-window v2 already wraps `rowComponent`/`cellComponent` in its OWN

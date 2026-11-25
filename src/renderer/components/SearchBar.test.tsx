@@ -159,6 +159,47 @@ describe('SearchBar advanced dialog recovery', () => {
   });
 });
 
+describe('SearchBar full-text snippet markup', () => {
+  it('turns the literal <mark> tags of a snippet into highlights', async () => {
+    fulltextResult = {
+      hits: [
+        {
+          path: '/b/notes.md',
+          name: 'notes.md',
+          snippet: '…a <mark>note</mark> body with two <mark>note</mark>s…',
+        },
+      ],
+      failedRoots: [],
+    };
+    const store = createStore(() => ({
+      settings: { fulltextPaths: ['/b'] },
+      locations: { items: [] },
+    }));
+    const view = render(
+      <Provider store={store}>
+        <I18nextProvider i18n={i18next}>
+          <SearchBarComponent />
+        </I18nextProvider>
+      </Provider>
+    );
+    const input = view.getByRole('textbox');
+    fireEvent.click(view.getByRole('button', { name: 'searchContents' }));
+    fireEvent.change(input, { target: { value: 'note' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    // The popover renders in a portal, so look at <body>, not the container.
+    await waitFor(() => assert.ok(document.querySelector('mark')));
+    // The FTS5 markup never reaches the screen as literal text …
+    assert.ok(!document.body.textContent.includes('<mark>'));
+    // … only the matched words are highlighted, the rest stays plain text.
+    assert.ok(document.body.textContent.includes('a note body with two notes'));
+    assert.deepEqual(
+      [...document.querySelectorAll('mark')].map((m) => m.textContent),
+      ['note', 'note'],
+    );
+  });
+});
+
 describe('SearchBar full-text partial failure', () => {
   it('keeps the hits from healthy roots and warns that some roots failed', async () => {
     fulltextResult = {

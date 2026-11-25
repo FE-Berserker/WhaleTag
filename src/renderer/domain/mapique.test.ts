@@ -10,12 +10,15 @@ import {
 import type { DirEntry } from '../../shared/ipc-types';
 import type { SidecarMeta } from '../../shared/whale-meta';
 
+/** Sidecar-map key for an `entry(name)` fixture: sidecar maps are PATH-keyed. */
+const key = (name: string) => `/root/${name}`;
+
 /** Minimal DirEntry factory for mapique tests. */
-function entry(name: string, isFile = true): DirEntry {
+function entry(name: string, isFile = true, dir = '/root'): DirEntry {
   const dot = name.lastIndexOf('.');
   return {
     name,
-    path: `/root/${name}`,
+    path: `${dir}/${name}`,
     isFile,
     isDirectory: !isFile,
     size: 0,
@@ -47,7 +50,7 @@ describe('mapique isGeoCandidate', () => {
   it('accepts non-media files that already carry a geo tag', () => {
     assert.ok(
       isGeoCandidate(entry('report.pdf'), {
-        'report.pdf': { tags: ['geo:31.2304,121.4737'] },
+        [key('report.pdf')]: { tags: ['geo:31.2304,121.4737'] },
       })
     );
   });
@@ -57,9 +60,9 @@ describe('mapique geoEntries', () => {
   it('returns only entries with a geo: tag', () => {
     const entries = [entry('a.jpg'), entry('b.jpg'), entry('c.jpg')];
     const sidecars: Record<string, SidecarMeta> = {
-      'a.jpg': { tags: ['geo:48.8566,2.352200'] },
-      'b.jpg': {},
-      'c.jpg': { tags: ['geo:40.712800,-74.006000'] },
+      [key('a.jpg')]: { tags: ['geo:48.8566,2.352200'] },
+      [key('b.jpg')]: {},
+      [key('c.jpg')]: { tags: ['geo:40.712800,-74.006000'] },
     };
     const geo = geoEntries(entries, sidecars);
     assert.equal(geo.length, 2);
@@ -71,7 +74,7 @@ describe('mapique geoEntries', () => {
   it('ignores invalid geo tags', () => {
     const entries = [entry('bad.jpg')];
     const sidecars: Record<string, SidecarMeta> = {
-      'bad.jpg': { tags: ['geo:not-a-coord'] },
+      [key('bad.jpg')]: { tags: ['geo:not-a-coord'] },
     };
     assert.deepEqual(geoEntries(entries, sidecars), []);
   });
@@ -86,7 +89,7 @@ describe('mapique geoEntries', () => {
   it('reads coordinates from a single geo tag', () => {
     const entries = [entry('a.txt')];
     const sidecars: Record<string, SidecarMeta> = {
-      'a.txt': { tags: ['geo:31.2304,121.4737'] },
+      [key('a.txt')]: { tags: ['geo:31.2304,121.4737'] },
     };
     const geo = geoEntries(entries, sidecars);
     assert.equal(geo.length, 1);
@@ -107,12 +110,26 @@ describe('mapique geoEntries', () => {
       entry('untouched.jpg'),
     ];
     const sidecars: Record<string, SidecarMeta> = {
-      'from-tag.txt': { tags: ['geo:1.5,2.5'] },
-      'untouched.jpg': {},
+      [key('from-tag.txt')]: { tags: ['geo:1.5,2.5'] },
+      [key('untouched.jpg')]: {},
     };
     const sources = new Set(geoEntries(entries, sidecars).map((g) => g.source));
     assert.equal(sources.size, 1);
     assert.ok(sources.has('tag'));
+  });
+
+  it('does not let a same-named file in another folder inherit a geo tag', () => {
+    // Regression: sidecars were looked up by NAME, so at viewDepth > 1 (tree
+    // folded into one list) every `photo.jpg` shared the first one's tags.
+    const paris = entry('photo.jpg', true, '/root/paris');
+    const tokyo = entry('photo.jpg', true, '/root/tokyo');
+    const sidecars: Record<string, SidecarMeta> = {
+      [paris.path]: { tags: ['geo:48.8566,2.3522'] },
+    };
+
+    const geo = geoEntries([paris, tokyo], sidecars);
+    assert.deepEqual(geo.map((g) => g.entry.path), [paris.path]);
+    assert.deepEqual(entriesNeedingExif([paris, tokyo], sidecars), [tokyo]);
   });
 });
 
@@ -120,7 +137,7 @@ describe('mapique entriesNeedingExif', () => {
   it('returns media files without a geo: tag', () => {
     const entries = [entry('has.jpg'), entry('missing.jpg'), entry('doc.pdf')];
     const sidecars: Record<string, SidecarMeta> = {
-      'has.jpg': { tags: ['geo:1.000000,2.000000'] },
+      [key('has.jpg')]: { tags: ['geo:1.000000,2.000000'] },
     };
     const missing = entriesNeedingExif(entries, sidecars);
     assert.deepEqual(
@@ -132,7 +149,7 @@ describe('mapique entriesNeedingExif', () => {
   it('returns empty when all media files have a geo: tag', () => {
     const entries = [entry('a.jpg')];
     const sidecars: Record<string, SidecarMeta> = {
-      'a.jpg': { tags: ['geo:1.000000,2.000000'] },
+      [key('a.jpg')]: { tags: ['geo:1.000000,2.000000'] },
     };
     assert.deepEqual(entriesNeedingExif(entries, sidecars), []);
   });

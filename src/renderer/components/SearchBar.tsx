@@ -63,6 +63,23 @@ function hasCjk(s: string): boolean {
   return false;
 }
 
+/** Highlight style shared by filename matches and content-snippet matches. */
+function Mark({ children }: { children: ReactNode }): ReactNode {
+  return (
+    <Box
+      component="mark"
+      sx={{
+        bgcolor: 'warning.main',
+        color: '#1f2937',
+        borderRadius: 0.5,
+        px: '2px',
+      }}
+    >
+      {children}
+    </Box>
+  );
+}
+
 /**
  * Wraps every case-insensitive occurrence of `query` in `text` with <mark>.
  * Computed client-side from the hit name + the query (SQLite FTS5 returns hits
@@ -84,25 +101,32 @@ function Highlighted({
   let idx = lower.indexOf(needle, cursor);
   while (idx !== -1) {
     if (idx > cursor) nodes.push(text.slice(cursor, idx));
-    nodes.push(
-      <Box
-        component="mark"
-        key={i}
-        sx={{
-          bgcolor: 'warning.main',
-          color: '#1f2937',
-          borderRadius: 0.5,
-          px: '2px',
-        }}
-      >
-        {text.slice(idx, idx + needle.length)}
-      </Box>
-    );
+    nodes.push(<Mark key={i}>{text.slice(idx, idx + needle.length)}</Mark>);
     i += 1;
     cursor = idx + needle.length;
     idx = lower.indexOf(needle, cursor);
   }
   if (cursor < text.length) nodes.push(text.slice(cursor));
+  return <>{nodes}</>;
+}
+
+const SNIPPET_MARK_SPLIT = /(<\/?mark>)/g;
+
+/**
+ * A content snippet is plain text in which the matched words are wrapped in
+ * literal `<mark>…</mark>` (FTS5 `snippet()` markup, and the same markup for
+ * the CJK substring fallback). The markers become highlights here; the rest is
+ * rendered as React text nodes, never as HTML.
+ */
+function SnippetWithMarks({ snippet }: { snippet: string }): ReactNode {
+  if (!snippet.includes('<mark>')) return snippet;
+  const nodes: ReactNode[] = [];
+  let inMark = false;
+  snippet.split(SNIPPET_MARK_SPLIT).forEach((part, i) => {
+    if (part === '<mark>') inMark = true;
+    else if (part === '</mark>') inMark = false;
+    else if (part) nodes.push(inMark ? <Mark key={i}>{part}</Mark> : part);
+  });
   return <>{nodes}</>;
 }
 
@@ -435,7 +459,7 @@ export default function SearchBar() {
                       </ListItemIcon>
                       <ListItemText
                         primary={hit.name}
-                        secondary={hit.snippet}
+                        secondary={<SnippetWithMarks snippet={hit.snippet} />}
                         slotProps={{
                           primary: { noWrap: true },
                           secondary: { sx: { fontSize: 11 } },

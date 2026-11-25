@@ -658,7 +658,9 @@ describe('mobile read-only app', () => {
       },
     });
     await renderPaired(client);
-    rtl.screen.getByText('Search and tags are unavailable until the desktop app builds its index.');
+    // The notice appears once the tags request settles, which is a separate
+    // effect from the location list the pairing helper waits for.
+    await rtl.screen.findByText('Search and tags are unavailable until the desktop app builds its index.');
     rtl.fireEvent.change(rtl.screen.getByLabelText('Search files and folders'), { target: { value: 'report' } });
     await rtl.waitFor(() => assert.equal(searchCalls, 1), { timeout: 1500 });
     assert.equal(rtl.screen.queryByText('No matching files or tags.'), null);

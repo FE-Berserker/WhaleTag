@@ -452,9 +452,43 @@ describe('entryDateTagRange', () => {
 });
 
 describe('yearHeatmapGrid', () => {
-  it('returns exactly 53 * 7 = 371 days', () => {
+  it('returns exactly 53 * 7 = 371 days for an ordinary layout', () => {
     const grid = yearHeatmapGrid(2026, 0);
     assert.equal(grid.length, 371);
+    assert.equal(yearHeatmapGrid(2026, 1).length, 371);
+  });
+
+  it('grows to 54 weeks (378 cells) when a leap year starts late in the week', () => {
+    // 2028-01-01 is a Saturday: the Sunday-start week begins 2027-12-26 and
+    // the 366 days run 6 days further — 54 columns. With the former
+    // hard-coded 53 columns the grid stopped at 2028-12-30 and Dec 31 was
+    // silently missing from the heatmap.
+    const grid = yearHeatmapGrid(2028, 0);
+    assert.equal(grid.length, 54 * 7);
+    assert.equal(grid[grid.length - 1].key, '2029-01-06');
+    assert.ok(grid.some((d) => d.key === '2028-12-31'), 'Dec 31 is on the grid');
+
+    // Monday-start (zh locale): 2012-01-01 is a Sunday → also 54 weeks.
+    const monday = yearHeatmapGrid(2012, 1);
+    assert.equal(monday.length, 54 * 7);
+    assert.ok(monday.some((d) => d.key === '2012-12-31'));
+  });
+
+  it('covers every day of every year for both week starts (2000–2100)', () => {
+    for (let year = 2000; year <= 2100; year += 1) {
+      const isLeap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+      for (const weekStartsOn of [0, 1] as const) {
+        const grid = yearHeatmapGrid(year, weekStartsOn);
+        assert.ok(
+          grid.length === 53 * 7 || grid.length === 54 * 7,
+          `${year}/${weekStartsOn}: ${grid.length} cells`
+        );
+        const inYear = grid.filter((d) => d.inCurrentMonth);
+        assert.equal(inYear.length, isLeap ? 366 : 365, `${year}/${weekStartsOn}: every day present`);
+        assert.equal(inYear[0].key, `${year}-01-01`);
+        assert.equal(inYear[inYear.length - 1].key, `${year}-12-31`);
+      }
+    }
   });
 
   it('starts on the week-start day containing Jan 1 (Sunday-start)', () => {

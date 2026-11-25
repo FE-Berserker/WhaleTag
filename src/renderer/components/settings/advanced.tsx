@@ -73,10 +73,22 @@ export function FulltextSettings() {
     }
   }, []);
 
-  // Reset status when the path list changes (e.g. add/remove) so we don't
-  // show stale counts from a previous session.
+  // Drop the status of paths that were REMOVED so we don't show counts from
+  // a previous session. A path that was just added keeps the `building` state
+  // `build` sets: the old "reset everything" erased it on the same render,
+  // which made the row look idle (rebuild button enabled) while a build was
+  // still running.
   useEffect(() => {
-    setStatus({});
+    setStatus((prev) => {
+      const live = new Set(paths.map((p) => normalizeFsPath(p)));
+      const kept: Record<string, FtStatus> = {};
+      let removed = false;
+      for (const [key, value] of Object.entries(prev)) {
+        if (live.has(key)) kept[key] = value;
+        else removed = true;
+      }
+      return removed ? kept : prev;
+    });
   }, [paths]);
 
   // docs/04 §10: live extraction progress for in-flight fulltext builds.

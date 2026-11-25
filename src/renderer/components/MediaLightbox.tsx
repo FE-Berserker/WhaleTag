@@ -398,8 +398,18 @@ export default function MediaLightbox({
   // every wheel notch (which changes `zoom`) tore the capture-phase listener
   // off `document` and put a new one back — churn during the exact gesture the
   // shortcut exists for. The handler body itself still sees fresh state.
+  //
+  // Every key consumed here is ALSO stopped from propagating (`preventDefault`
+  // + `stopPropagation` in the capture phase, so it never reaches the React
+  // root). React bubbles synthetic events through the React tree — portals
+  // included — so without this, ← / → reached FileList's container handler
+  // behind the lightbox: ← stepped the folder history back and → opened the
+  // focused row, under an open viewer.
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      // Chords with Ctrl / Meta / Alt are NOT the lightbox's: Ctrl+0 / Ctrl+= /
+      // Ctrl+- are the app's zoom-in/out shortcuts and must keep working.
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.key === 'Escape') {
         // Own the key: MUI's Dialog closes on Escape on its own, which made
         // "step back out of zoom" impossible — the box closed instead. Capture
@@ -416,24 +426,41 @@ export default function MediaLightbox({
           return;
         }
         onClose();
-      } else if (e.key === 'ArrowLeft') goPrev();
-      else if (e.key === 'ArrowRight') goNext();
-      else if (e.key === ' ') {
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        e.stopPropagation();
+        goPrev();
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        e.stopPropagation();
+        goNext();
+      } else if (e.key === ' ') {
         // Space toggles play/pause when the current item is a video.
         const video = videoRef.current;
         if (video) {
           e.preventDefault();
+          e.stopPropagation();
           if (video.paused) void video.play();
           else video.pause();
         }
       } else if (e.key === '+' || e.key === '=') {
         // '+' / '=' zoom in, '-' / '_' zoom out (keyboard parity with wheel).
-        if (!isVideo) setZoom((z) => Math.min(8, z * 1.25));
+        if (!isVideo) {
+          e.preventDefault();
+          e.stopPropagation();
+          setZoom((z) => Math.min(8, z * 1.25));
+        }
       } else if (e.key === '-' || e.key === '_') {
-        if (!isVideo) setZoom((z) => Math.max(0.5, z / 1.25));
+        if (!isVideo) {
+          e.preventDefault();
+          e.stopPropagation();
+          setZoom((z) => Math.max(0.5, z / 1.25));
+        }
       } else if (e.key === '0') {
         // '0' resets to fit — matches the browser-default zoom-reset key.
         if (!isVideo) {
+          e.preventDefault();
+          e.stopPropagation();
           setZoom(1);
           setPan({ x: 0, y: 0 });
         }

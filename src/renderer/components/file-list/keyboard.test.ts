@@ -20,6 +20,7 @@ import { DEFAULT_KEYBINDINGS, type KeyAction } from '../../domain/keybindings';
 import {
   createKeyDownHandler,
   isInputLike,
+  isWithinDialog,
   type FileListKeyDownDeps,
 } from './keyboard';
 
@@ -322,5 +323,57 @@ describe('createKeyDownHandler — input-like targets', () => {
     assert.equal(prevented, false);
     assert.equal(calls.deleted, 0);
     assert.deepEqual(calls.select, []);
+  });
+});
+
+describe('createKeyDownHandler — modal over the list', () => {
+  it('isWithinDialog recognises targets inside a role="dialog" subtree only', () => {
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    const button = document.createElement('button');
+    dialog.appendChild(button);
+    const outside = document.createElement('button');
+
+    assert.equal(isWithinDialog(button), true);
+    assert.equal(isWithinDialog(dialog), true);
+    assert.equal(isWithinDialog(outside), false);
+    assert.equal(isWithinDialog(null), false);
+  });
+
+  it('suspends every list shortcut while the media lightbox is open (modalOpen)', () => {
+    // Regression: React bubbles synthetic events through the React tree,
+    // portals included, so Delete / F2 / Space / ← reached this handler
+    // BEHIND the lightbox — ← even stepped the folder history back.
+    const { deps, calls } = makeDeps({
+      focusIndex: 1,
+      canGoBack: true,
+      modalOpen: true,
+    });
+    const handler = createKeyDownHandler(deps);
+    for (const key of ['Delete', 'F2', 'Space', 'ArrowLeft', 'ArrowRight', 'Tab']) {
+      const { prevented } = fire(handler, key);
+      assert.equal(prevented, false, `${key} must not be swallowed`);
+    }
+
+    assert.equal(calls.deleted, 0);
+    assert.equal(calls.back, 0);
+    assert.deepEqual(calls.open, []);
+    assert.deepEqual(calls.rename, []);
+    assert.deepEqual(calls.select, []);
+    assert.deepEqual(calls.view, []);
+  });
+
+  it('ignores keys whose target lives inside a dialog even without the flag', () => {
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    const button = document.createElement('button');
+    dialog.appendChild(button);
+
+    const { deps, calls } = makeDeps({ focusIndex: 1, canGoBack: true });
+    fire(createKeyDownHandler(deps), 'Delete', { target: button });
+    fire(createKeyDownHandler(deps), 'ArrowLeft', { target: button });
+
+    assert.equal(calls.deleted, 0);
+    assert.equal(calls.back, 0);
   });
 });

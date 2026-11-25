@@ -169,7 +169,10 @@ export default function Root() {
     });
   }, [fulltextPaths]);
 
-  // Clean up stale extension revisions once on startup.
+  // Clean up stale extension revisions. Runs again whenever the number of
+  // locations changes: the first render may precede the persisted location
+  // list (empty → the early return below), so this cannot be a mount-only
+  // effect.
   useEffect(() => {
     if (locationItems.length === 0) return;
     void ipcApi.cleanupRevisions(30).catch((e) => {

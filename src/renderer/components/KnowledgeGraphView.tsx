@@ -323,16 +323,24 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
   // exactly once, at unmount.
   useEffect(() => () => flushPrefs(), [flushPrefs]);
 
-  const { rfNodes, rfEdges, tagCount, fileCount } = useMemo(() => {
+  // The layout depends on the graph alone. Pinned (user-dragged) positions are
+  // applied in a second, cheap memo below: with `storedPositions` in the deps
+  // of the layout memo, every drag-stop re-ran the force layout (two collision
+  // passes) and rebuilt every node and edge.
+  const layout = useMemo(() => {
     const exclude = FILTERABLE_CATEGORIES.filter((c) => !shown.includes(c));
     const graph = buildGraph(entries, tagsByName, { exclude });
-    const pos = layoutGraph(graph);
+    return { graph, positions: layoutGraph(graph) };
+  }, [entries, tagsByName, shown]);
+
+  const { rfNodes, rfEdges, tagCount, fileCount } = useMemo(() => {
+    const { graph, positions } = layout;
     const nodes: Node[] = graph.nodes.map((n) =>
       n.kind === 'tag'
         ? {
             id: n.id,
             type: 'tag',
-            position: storedPositions[n.id] ?? pos.get(n.id) ?? { x: 0, y: 0 },
+            position: storedPositions[n.id] ?? positions.get(n.id) ?? { x: 0, y: 0 },
             data: {
               label: tagDisplayLabel(n.tag, t),
               color: getTagColor(n.tag, tagColors, groups) ?? TAG_FALLBACK,
@@ -344,13 +352,13 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
           ? {
               id: n.id,
               type: 'directory',
-              position: storedPositions[n.id] ?? pos.get(n.id) ?? { x: 0, y: 0 },
+              position: storedPositions[n.id] ?? positions.get(n.id) ?? { x: 0, y: 0 },
               data: { name: n.name, path: n.path, color: DIR_COLOR } satisfies DirectoryNodeData,
             }
           : {
               id: n.id,
               type: 'file',
-              position: storedPositions[n.id] ?? pos.get(n.id) ?? { x: 0, y: 0 },
+              position: storedPositions[n.id] ?? positions.get(n.id) ?? { x: 0, y: 0 },
               data: { name: n.name, ext: n.ext, path: n.path, color: extColor(n.ext) } satisfies FileNodeData,
             }
     );
@@ -369,7 +377,7 @@ export default function KnowledgeGraphView({ data }: KnowledgeGraphViewProps) {
       tagCount: graph.nodes.filter((n) => n.kind === 'tag').length,
       fileCount: graph.nodes.filter((n) => n.kind === 'file' || n.kind === 'directory').length,
     };
-  }, [entries, tagsByName, tagColors, groups, shown, storedPositions, t]);
+  }, [layout, storedPositions, tagColors, groups, t]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(rfNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(rfEdges);

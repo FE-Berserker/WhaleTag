@@ -156,6 +156,19 @@ export default function SettingsDialog({
     );
   }, [results]);
 
+  // Timers of the last search jump. Tracked so that a second jump inside the
+  // highlight window cancels the first one's cleanup (the first jump's timer
+  // used to clear the NEW highlight 1.8 s after the FIRST click), and so
+  // closing the dialog cannot fire them into an unmounted tree.
+  const jumpTimersRef = useRef<{ scroll?: number; highlight?: number }>({});
+  useEffect(
+    () => () => {
+      window.clearTimeout(jumpTimersRef.current.scroll);
+      window.clearTimeout(jumpTimersRef.current.highlight);
+    },
+    []
+  );
+
   const handleJump = useCallback((entry: SettingsSearchEntry) => {
     setQuery('');
     setActive(entry.section);
@@ -163,12 +176,19 @@ export default function SettingsDialog({
     if (!entry.anchor) return;
     const anchor = entry.anchor;
     setHighlightAnchor(anchor);
-    window.setTimeout(() => {
-      document
-        .querySelector<HTMLElement>(`[data-settings-row="${anchor}"]`)
+    window.clearTimeout(jumpTimersRef.current.scroll);
+    window.clearTimeout(jumpTimersRef.current.highlight);
+    jumpTimersRef.current.scroll = window.setTimeout(() => {
+      // Scoped to the settings panel: a document-wide query could match a row
+      // of another (not yet unmounted) section.
+      panelRef.current
+        ?.querySelector<HTMLElement>(`[data-settings-row="${anchor}"]`)
         ?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
     }, 40);
-    window.setTimeout(() => setHighlightAnchor(null), 1800);
+    jumpTimersRef.current.highlight = window.setTimeout(
+      () => setHighlightAnchor(null),
+      1800
+    );
   }, []);
 
   const activeMeta = SECTION_BY_ID[active];
@@ -281,8 +301,13 @@ export default function SettingsDialog({
                 onInput={(e) => setQuery((e.target as HTMLInputElement).value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Escape') {
+                    // With text in the box, Escape only clears the search.
+                    // The keydown must not reach the Modal root: MUI closes
+                    // the whole dialog on `escapeKeyDown`. On an empty box it
+                    // is left alone and closes the dialog as usual.
+                    if (query === '') return;
+                    e.stopPropagation();
                     setQuery('');
-                    (e.target as HTMLInputElement).blur();
                   }
                 }}
                 placeholder={t('settingsSearchPlaceholder')}

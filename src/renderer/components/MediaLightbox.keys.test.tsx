@@ -218,4 +218,43 @@ describe('MediaLightbox keyboard wiring', () => {
     fireEvent.keyDown(document, { key: 'ArrowLeft' });
     await waitFor(() => assert.ok(document.body.textContent?.includes('(1 / 2)')));
   });
+
+  it('consumed keys are stopped before handlers behind the lightbox; Ctrl chords pass through', async () => {
+    render(
+      <I18nextProvider i18n={i18next}>
+        <MediaLightbox
+          open
+          entries={[image('a.jpg'), image('b.jpg')]}
+          initialIndex={0}
+          onClose={() => undefined}
+        />
+      </I18nextProvider>
+    );
+    await waitFor(() => assert.ok(document.querySelector('img')));
+
+    // A bubble-phase listener on `document` stands in for everything behind
+    // the lightbox (FileList binds ← to "history back" and → to "open" there).
+    // Events are dispatched on a node INSIDE the dialog so the lightbox's
+    // capture-phase listener runs first; its stopPropagation must keep the
+    // bubble listener from ever firing.
+    const seen: string[] = [];
+    const behind = (e: KeyboardEvent) => {
+      seen.push(e.key);
+    };
+    document.addEventListener('keydown', behind);
+    try {
+      const target = document.querySelector('[role="dialog"]') ?? document.body;
+      for (const key of ['ArrowRight', 'ArrowLeft', '+', '-', '0']) {
+        fireEvent.keyDown(target, { key });
+      }
+      assert.deepEqual(seen, [], 'lightbox keys must not leak to the list behind it');
+
+      // Ctrl+= / Ctrl+0 are the app's zoom chords — not the lightbox's.
+      fireEvent.keyDown(target, { key: '=', ctrlKey: true });
+      fireEvent.keyDown(target, { key: '0', ctrlKey: true });
+      assert.deepEqual(seen, ['=', '0']);
+    } finally {
+      document.removeEventListener('keydown', behind);
+    }
+  });
 });

@@ -51,13 +51,29 @@ describe('haversineKm', () => {
 });
 
 describe('buildSidecars', () => {
-  it('keys sidecars by entry name (tagsByName is path-keyed)', () => {
+  it('keys sidecars by entry PATH (same key as tagsByName)', () => {
     const file = entry('a.jpg');
     const sidecars = buildSidecars(
       [file],
       new Map([[file.path, ['geo:1,2', 'trip']]])
     );
-    assert.deepEqual(sidecars, { 'a.jpg': { tags: ['geo:1,2', 'trip'] } });
+    assert.deepEqual(sidecars, { '/root/a.jpg': { tags: ['geo:1,2', 'trip'] } });
+  });
+
+  it('keeps same-named files in different folders apart (viewDepth > 1 fold)', () => {
+    // Regression: the map was re-keyed to entry NAME, so two `photo.jpg`
+    // collapsed into one record and the first one's geo tag bled onto the
+    // other — the copy without GPS showed up "located" on the map.
+    const shot = { ...entry('photo.jpg'), path: '/root/paris/photo.jpg' };
+    const other = { ...entry('photo.jpg'), path: '/root/tokyo/photo.jpg' };
+    const sidecars = buildSidecars(
+      [shot, other],
+      new Map([[shot.path, ['geo:48.85,2.35']]])
+    );
+    assert.deepEqual(Object.keys(sidecars).sort(), [
+      '/root/paris/photo.jpg',
+    ]);
+    assert.equal(sidecars[other.path], undefined);
   });
 
   it('skips entries without tags and empty tag arrays', () => {
@@ -70,7 +86,7 @@ describe('buildSidecars', () => {
         [b.path, ['geo:1,2']],
       ])
     );
-    assert.deepEqual(Object.keys(sidecars), ['b.jpg']);
+    assert.deepEqual(Object.keys(sidecars), ['/root/b.jpg']);
   });
 
   it('returns an empty record when tagsByName is empty', () => {

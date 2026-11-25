@@ -28,11 +28,14 @@ export interface GeoTagSidecar {
 }
 
 /**
- * Builds the `name → sidecar` map from the merged tag list. The `geo:lat,lng`
- * tag is the single source of truth (no parallel sidecar lat/lng field); the
- * map is keyed by entry NAME because `mapique.ts` looks sidecars up by
- * `entry.name`, while `tagsByName` is path-keyed — re-keying via `entries`
- * bridges the two.
+ * Builds the `path → sidecar` map from the merged tag list. The `geo:lat,lng`
+ * tag is the single source of truth (no parallel sidecar lat/lng field).
+ *
+ * Keyed by PATH, exactly like `tagsByName` and the lookups in
+ * `domain/mapique` (`sidecars[entry.path]`). It used to be re-keyed to entry
+ * NAME, which collapsed same-named files from different folders into one
+ * record as soon as the perspective folded a tree at viewDepth > 1 — the
+ * first `photo.jpg` then donated its geo tag to every other `photo.jpg`.
  */
 export function buildSidecars(
   entries: DirEntry[],
@@ -42,7 +45,7 @@ export function buildSidecars(
   for (const e of entries) {
     const tags = tagsByName.get(e.path);
     if (!tags || tags.length === 0) continue;
-    map[e.name] = { tags };
+    map[e.path] = { tags };
   }
   return map;
 }

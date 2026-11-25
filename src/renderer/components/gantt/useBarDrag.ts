@@ -29,8 +29,9 @@
  *
  * The hook MUST NOT mutate any value-identity-changing state per move.
  * `entries` / `period` are accepted as args, copied once on down into
- * `lastPeriodRef`, and re-applied on every move via
- * `periodWithShift` / `periodWithResize` (pure functions).
+ * `lastPeriodRef` (the running preview), and re-applied on every move via
+ * `periodWithShift` / `periodWithResize` (pure functions) — always from the
+ * unchanged start `period`, with the displacement measured from pointerdown.
  */
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 
@@ -150,24 +151,6 @@ export function useBarDrag(args: UseBarDragArgs): UseBarDragResult {
     [scaleStartKey, pxPerDay]
   );
 
-  /** Reset to idle, releasing pointer capture if any. Unused in the
-   *  present flow but kept exported for symmetry with potential future
-   *  keyboard / programmatic cancellation paths. */
-  const _reset = useCallback(() => {
-    stateRef.current = 'idle';
-    kindRef.current = null;
-    const c = capturedRef.current;
-    if (c) {
-      try {
-        c.el.releasePointerCapture(c.pointerId);
-      } catch {
-        /* element may have unmounted mid-drag */
-      }
-      capturedRef.current = null;
-    }
-    setPreview(null);
-  }, []);
-
   // ─── Element-level pointerdown (the public entry point) ────────────
   const onPointerDown = useCallback(
     (e: React.PointerEvent, zone: DragKind) => {
@@ -286,7 +269,15 @@ export function useBarDrag(args: UseBarDragArgs): UseBarDragResult {
   useEffect(() => {
     if (!isDragging) return undefined;
     const kind = kindRef.current!;
-    const periodAtStart = lastPeriodRef.current;
+    // The UNCHANGED start period — not `lastPeriodRef.current`. The pending
+    // handler already wrote the first shifted period into `lastPeriodRef`
+    // (round(dx / pxPerDay) with the very same absolute dx this listener
+    // measures from pointerdown). Using it as the base here applied the
+    // first move twice: invisible at day zoom (32 px/day rounds a
+    // sub-threshold move to 0 days), but 1–4 days off at week / month zoom,
+    // and the wrong period went into `onCommit`. `lastPeriodRef` is only the
+    // running preview.
+    const periodAtStart = period;
 
     const onMove = (ev: PointerEvent) => {
       const dx = ev.clientX - downXRef.current;
@@ -395,8 +386,9 @@ function dayKeyFromOffset(
  *    - left edge: bar's start sits at `(daysSince(start, period.start)) * pxPerDay`
  *      px from the scale origin; dragging dx px moves that anchor to
  *      `(period.start + dx/pxPerDay)` days from the scale origin.
- *    - right edge: same idea anchored on `period.end` (+1 to put the day
- *      boundary on the right side of the bar).
+ *    - right edge: same idea anchored on the bar's EXCLUSIVE boundary
+ *      (`period.end + 1`, which is where the handle sits: width spans
+ *      start … end inclusive, so the right border is one day past `end`).
  *  Clamping is delegated to `periodWithResize`, which also guarantees
  *  no inversion.
  */
@@ -414,10 +406,15 @@ function computeEdgeResize(
       : daysSince(scaleStartKey, base.endKey) + 1;
   const deltaDays = Math.round(dx / pxPerDay);
   const targetOffset = baseDayOffset + deltaDays;
+  // `periodWithResize` takes the INCLUSIVE last day. The right handle lands
+  // on the exclusive boundary, so convert back — handing it the boundary key
+  // extended the period by one day more than the pointer moved, and the
+  // bar's right border ran one day ahead of the cursor.
+  const edgeOffset = kind === 'left' ? targetOffset : targetOffset - 1;
   const candidateKey = dayKeyFromOffset(
     scaleStartKey,
     scaleTotalDays,
-    targetOffset
+    edgeOffset
   );
   return periodWithResize(base, kind === 'left' ? 'left' : 'right', candidateKey);
 }

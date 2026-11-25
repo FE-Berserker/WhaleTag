@@ -24,14 +24,24 @@ export interface GeoEntry {
   source: 'tag';
 }
 
-/** True if the entry is a file that might carry GPS metadata or already has a geo tag. */
+/**
+ * Sidecar lookup key: the entry PATH. At viewDepth > 1 the map perspective
+ * folds a whole tree into one flat entry list, so two directories can each
+ * contain a `photo.jpg` — a name-keyed map made the first one's geo tag bleed
+ * onto the other (same-named file in another folder "located" at the wrong
+ * coordinates). Paths are unique per entry by construction.
+ *
+ * `sidecars` is the map built by `mapique/tray-data.ts#buildSidecars`, which
+ * re-keys the path-keyed `tagsByName` — it stays path-keyed, so no bridging
+ * happens there at all.
+ */
 export function isGeoCandidate(
   entry: DirEntry,
   sidecars?: Record<string, SidecarMeta>
 ): boolean {
   if (!entry.isFile) return false;
   if (isImageFile(entry.name) || isVideoFile(entry.name)) return true;
-  const meta = sidecars?.[entry.name];
+  const meta = sidecars?.[entry.path];
   if (meta?.tags?.some(isGeoTag)) return true;
   return false;
 }
@@ -48,7 +58,7 @@ export function geoEntries(
 ): GeoEntry[] {
   const result: GeoEntry[] = [];
   for (const entry of entries) {
-    const tags = sidecars[entry.name]?.tags;
+    const tags = sidecars[entry.path]?.tags;
     if (!tags) continue;
     const point = geoPointFromTags(tags);
     if (point) {
@@ -68,7 +78,7 @@ export function entriesNeedingExif(
 ): DirEntry[] {
   return entries.filter((entry) => {
     if (!isGeoCandidate(entry)) return false;
-    const tags = sidecars[entry.name]?.tags;
+    const tags = sidecars[entry.path]?.tags;
     if (tags && geoPointFromTags(tags)) return false;
     return true;
   });

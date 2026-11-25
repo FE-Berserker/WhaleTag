@@ -120,7 +120,14 @@ export function useFileListSelection({
   );
 
   // Anchor row for Shift range-selection (the last row toggled without Shift).
-  const selectAnchorRef = useRef<number | null>(null);
+  // Keyed by PATH, not by index: `visible` is re-sorted / filtered between
+  // clicks, so a stored index addresses a different row afterwards — or none
+  // at all once the filter shrank the list, which made the range loop read
+  // PAST the end of `visible` (TypeError before `bumpSelection`, leaving a
+  // half-applied invisible selection behind). The path is looked up in the
+  // CURRENT list on every Shift click; an anchor that is no longer visible
+  // degrades to a plain click instead.
+  const selectAnchorPathRef = useRef<string | null>(null);
 
   /**
    * P0-3: the Set is mutated in place; rerender is triggered by
@@ -144,9 +151,15 @@ export function useFileListSelection({
       ensureTrayVisible();
       const set = selectedPathsRef.current;
       let mutated = false;
-      if (mods.shift && selectAnchorRef.current !== null) {
-        const a = selectAnchorRef.current;
-        const [lo, hi] = a < index ? [a, index] : [index, a];
+      const anchorPath = selectAnchorPathRef.current;
+      const anchorIndex =
+        anchorPath === null
+          ? -1
+          : visible.findIndex((e) => e.path === anchorPath);
+      if (mods.shift && anchorIndex >= 0) {
+        // Both bounds are valid indices of the CURRENT `visible` list.
+        const [lo, hi] =
+          anchorIndex < index ? [anchorIndex, index] : [index, anchorIndex];
         for (let i = lo; i <= hi; i += 1) {
           const p = visible[i].path;
           if (!set.has(p)) {
@@ -158,7 +171,7 @@ export function useFileListSelection({
       } else if (mods.toggle) {
         if (set.has(entry.path)) set.delete(entry.path);
         else set.add(entry.path);
-        selectAnchorRef.current = index;
+        selectAnchorPathRef.current = entry.path;
         mutated = true;
       } else {
         // Plain click: single-select the row.
@@ -167,7 +180,7 @@ export function useFileListSelection({
           set.add(entry.path);
           mutated = true;
         }
-        selectAnchorRef.current = index;
+        selectAnchorPathRef.current = entry.path;
       }
       if (mutated) bumpSelection();
     },
@@ -178,7 +191,7 @@ export function useFileListSelection({
     const set = selectedPathsRef.current;
     if (set.size === 0) return;
     set.clear();
-    selectAnchorRef.current = null;
+    selectAnchorPathRef.current = null;
     bumpSelection();
   }, [bumpSelection]);
 
@@ -223,7 +236,7 @@ export function useFileListSelection({
       }
     }
     // After a fill, the shift-range anchor no longer points at a sensible row.
-    selectAnchorRef.current = null;
+    selectAnchorPathRef.current = null;
     if (mutated) bumpSelection();
   }, [selectAllState, visible, clearSelection, bumpSelection]);
 

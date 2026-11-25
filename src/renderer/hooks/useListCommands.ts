@@ -683,18 +683,15 @@ export function useListCommands(deps: ListCommandsDeps): ListCommands {
     ) => {
       if (visibleToToggle.length === 0) return;
       const set = d.selectedPathsRef.current;
-      let mutated = false;
       for (const entry of visibleToToggle) {
         if (set.has(entry.path)) {
           set.delete(entry.path);
         } else {
           set.add(entry.path);
         }
-        mutated = true;
       }
-      if (mutated) {
-        d.bumpSelection();
-      }
+      // Every entry flips exactly one membership, so the set always changed.
+      d.bumpSelection();
     };
 
     const handleBulkMove: ListCommands['handleBulkMove'] = async () => {

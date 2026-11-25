@@ -9,7 +9,8 @@ import { escapeHtml } from '-/services/escape-html';
 import { echarts } from '../../services/echarts-setup';
 
 /**
- * H.24 P2-2: GitHub-style year heatmap — 53 week-columns × 7 weekday-rows,
+ * H.24 P2-2: GitHub-style year heatmap — 53 week-columns (54 when Jan 1 falls
+ * late in the week of a leap year, see `yearHeatmapGrid`) × 7 weekday-rows,
  * each cell colored by file count (sqrt-compressed intensity via heatIntensity).
  * Click a cell → jump to that day in month view. Out-of-year padding days are
  * dimmed; today gets a primary outline.
@@ -42,6 +43,9 @@ export function YearHeatmap({
     () => yearHeatmapGrid(year, weekStartsOn),
     [year, weekStartsOn]
   );
+  // 53 most years, 54 in late-start leap years (see yearHeatmapGrid) — every
+  // grid below is sized from this, never from a literal column count.
+  const weeks = grid.length / 7;
   const maxCount = useMemo(() => {
     let m = 0;
     for (const d of grid) {
@@ -64,10 +68,10 @@ export function YearHeatmap({
         label: new Intl.DateTimeFormat(locale, { month: 'short' }).format(
           firstDay
         ),
-        week: Math.max(0, Math.min(52, week)),
+        week: Math.max(0, Math.min(weeks - 1, week)),
       };
     });
-  }, [grid, year, locale]);
+  }, [grid, weeks, year, locale]);
 
   // Weekday labels for the left axis. Show Mon/Wed/Fri to match GitHub spacing.
   const weekdayLabels = useMemo(() => {
@@ -113,12 +117,19 @@ export function YearHeatmap({
     // got narrower than ~11px.
     <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Month label row — same column template as the heatmap below
-          (36px Y-axis stub + 53-col grid) so labels sit exactly above the
+          (36px Y-axis stub + weeks-col grid) so labels sit exactly above the
           column of each month's first day. columnGap matches the main grid
           below so each label aligns to the column its first day lands in. */}
       <Box sx={{ display: 'grid', gridTemplateColumns: '36px 1fr', columnGap: 2, mb: 0.5 }}>
         <Box />
-        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(53, 1fr)', columnGap: 2, height: 14 }}>
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: `repeat(${weeks}, 1fr)`,
+            columnGap: 2,
+            height: 14,
+          }}
+        >
           {monthPositions.map((m, i) => (
             <Typography
               key={i}
@@ -138,7 +149,7 @@ export function YearHeatmap({
       </Box>
 
       {/* Main heatmap grid: 2 columns (Y-axis | cells) × 7 rows. Each row
-          pairs one weekday label with one row of 53 square cells. Fragment
+          pairs one weekday label with one row of `weeks` square cells. Fragment
           lets us place two children per row without an extra wrapper.
           Tight columnGap (2 ≈ 8px) makes the cells wider; with aspectRatio
           1/1 they grow in both dimensions, which lifts the whole heatmap's
@@ -165,8 +176,14 @@ export function YearHeatmap({
                   {showLabel ? weekdayLabels[dow] : ''}
                 </Typography>
               </Box>
-              <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(53, 1fr)', columnGap: 2 }}>
-                {Array.from({ length: 53 }, (_, week) => {
+              <Box
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: `repeat(${weeks}, 1fr)`,
+                  columnGap: 2,
+                }}
+              >
+                {Array.from({ length: weeks }, (_, week) => {
                   const day = grid[week * 7 + dow];
                   if (!day) {
                     return <Box key={week} sx={{ width: '100%', aspectRatio: '1 / 1' }} />;

@@ -34,6 +34,22 @@ export function isInputLike(target: EventTarget | null): boolean {
 }
 
 /**
+ * Returns true when the event originates inside a modal dialog. MUI puts
+ * `role="dialog"` on the Dialog paper and traps focus inside it, so every
+ * keydown while the media lightbox (or any other dialog rendered inside the
+ * list container) is open targets the dialog — but React synthetic events
+ * bubble through the REACT tree, portals included, so they still arrived at
+ * the outer container's `onKeyDown`. That made Delete / F2 / Space fire on the
+ * list BEHIND the lightbox, and ← even navigated the folder history. A modal
+ * owns the keyboard while it is open; the list's shortcuts stay suspended.
+ */
+export function isWithinDialog(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element && target.closest('[role="dialog"]') !== null
+  );
+}
+
+/**
  * Everything `createKeyDownHandler` reads, injected by `FileList` so the
  * handler itself stays a pure function of its call-time inputs (no hooks, no
  * state of its own). Every field is read at event time, so passing fresh
@@ -68,6 +84,14 @@ export interface FileListKeyDownDeps {
   goBack: () => void;
   viewMode: ViewMode;
   setViewMode: (mode: ViewMode) => void;
+  /**
+   * True while a modal (the media lightbox) is open over the list. Every list
+   * shortcut is suspended then — `isWithinDialog` already covers the steady
+   * state (focus trapped inside the dialog); this flag also covers the frames
+   * between "open" and the focus trap grabbing focus, where the keydown
+   * target is still the backdrop or `body`.
+   */
+  modalOpen?: boolean;
 }
 
 /**
@@ -111,10 +135,13 @@ export function createKeyDownHandler(deps: FileListKeyDownDeps) {
     goBack,
     viewMode,
     setViewMode,
+    modalOpen = false,
   } = deps;
 
   return (e: KeyboardEvent<HTMLDivElement>) => {
     if (isInputLike(e.target)) return;
+    // A modal over the list owns the keyboard (see `isWithinDialog`).
+    if (modalOpen || isWithinDialog(e.target)) return;
 
     const action = resolveAction(keybindings, e);
 

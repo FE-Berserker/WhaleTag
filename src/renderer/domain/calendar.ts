@@ -370,12 +370,18 @@ export function weekdayLabels(
 }
 
 /**
- * 53-week × 7-day grid for the year heatmap (GitHub-style). Returns exactly
- * 371 {@link CalendarDay}s starting from the first day of the week containing
- * Jan 1 of `year`. Days falling outside `year` carry `inCurrentMonth: false`
- * (the field is reused as "in the focused year" — same shape, different
- * period). 53 weeks always covers a full year (a 52-week year + the partial
- * week at either end), matching GitHub's contribution graph.
+ * Week × 7-day grid for the year heatmap (GitHub-style), starting from the
+ * first day of the week containing Jan 1 of `year`. Days falling outside
+ * `year` carry `inCurrentMonth: false` (the field is reused as "in the focused
+ * year" — same shape, different period).
+ *
+ * The column count is 53 or 54, computed from the layout — NOT a fixed 53.
+ * A year spans 371 (common) or 372 (leap) days-plus-offset, and
+ * `ceil((offset + daysInYear) / 7)` is 54 whenever Jan 1 falls late in the
+ * week: a leap year starting on Saturday with `weekStartsOn: 0` (2028 / 2056 /
+ * 2084) or on Sunday with `weekStartsOn: 1` (2012 / 2040 / 2068 — zh locales
+ * start the week on Monday). With a hard-coded 53 columns those years were
+ * truncated at Dec 30 and Dec 31 silently vanished from the heatmap.
  */
 export function yearHeatmapGrid(
   year: number,
@@ -383,8 +389,12 @@ export function yearHeatmapGrid(
 ): CalendarDay[] {
   const jan1 = new Date(year, 0, 1);
   const start = startOfWeek(jan1, weekStartsOn);
+  const offset = (jan1.getDay() - weekStartsOn + 7) % 7;
+  const isLeap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInYear = isLeap ? 366 : 365;
+  const weeks = Math.ceil((offset + daysInYear) / 7);
   const days: CalendarDay[] = [];
-  for (let i = 0; i < 53 * 7; i++) {
+  for (let i = 0; i < weeks * 7; i++) {
     const d = addDays(start, i);
     days.push({
       date: startOfDay(d),
