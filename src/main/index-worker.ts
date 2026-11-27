@@ -219,32 +219,38 @@ async function dispatch(req: IndexWorkerRequest): Promise<void> {
 
     // -------- reads --------
     case 'index:query': {
-      const { rootPath, q } = req.arg as { rootPath: string; q: string };
+      const { rootPath, q, pathPrefix } = req.arg as {
+        rootPath: string;
+        q: string;
+        pathPrefix?: string;
+      };
       post({
         reqId: req.reqId,
         ok: true,
-        result: db.queryFiles(rootPath, q),
+        result: db.queryFiles(rootPath, q, pathPrefix),
       });
       return;
     }
     case 'index:advanced': {
-      const { rootPath, q } = req.arg as {
+      const { rootPath, q, pathPrefix } = req.arg as {
         rootPath: string;
         q: SearchQuery;
+        pathPrefix?: string;
       };
       post({
         reqId: req.reqId,
         ok: true,
-        result: db.advancedQuery(rootPath, q),
+        result: db.advancedQuery(rootPath, q, pathPrefix),
       });
       return;
     }
     case 'index:readonly-advanced': {
-      const { rootPath, q } = req.arg as {
+      const { rootPath, q, pathPrefix } = req.arg as {
         rootPath: string;
         q: SearchQuery;
+        pathPrefix?: string;
       };
-      const entries = db.advancedQueryReadOnly(rootPath, q);
+      const entries = db.advancedQueryReadOnly(rootPath, q, pathPrefix);
       post({
         reqId: req.reqId,
         ok: true,
@@ -301,8 +307,12 @@ async function dispatch(req: IndexWorkerRequest): Promise<void> {
       return;
     }
     case 'fulltext:search': {
-      const { rootPath, q } = req.arg as { rootPath: string; q: string };
-      const hits = await fulltext.searchFulltext(rootPath, q);
+      const { rootPath, q, pathPrefix } = req.arg as {
+        rootPath: string;
+        q: string;
+        pathPrefix?: string;
+      };
+      const hits = await fulltext.searchFulltext(rootPath, q, pathPrefix);
       post({ reqId: req.reqId, ok: true, result: hits });
       return;
     }

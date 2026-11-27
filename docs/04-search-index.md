@@ -19,6 +19,8 @@
 
 **分批提交**:文件名索引 `INGEST_BATCH = 1000`,批间 `setImmediate` yield;全文新增 / 改动另按 `FULLTEXT_UPSERT_BATCH = 100` 批写,避免首建把所有抽取正文同时驻留内存。每批在一个事务里先 delete 本批路径再 insert;只有完整 walk 且末批成功后才删除消失路径。中途失败时当前批回滚,已成功的前批保留,`upsertFailure` 阻止残余抽取 worker 继续提交;下一次增量重建按 prior mtime 重试未落盘项,不伪造完整构建。`QUERY_LIMIT = 50` / `ADV_LIMIT = 300`。
 
+**MCP 子目录范围**:`queryFiles`、`advancedQuery` / `advancedQueryReadOnly` 与 `queryFulltext` 可接收独立的可选 `pathPrefix`(不属于 renderer 的 `SearchQuery`)。反斜杠先归一为索引使用的 `/`;SQL 以 `path = prefix OR (path >= prefix/ AND path < prefix0)` 匹配目录自身与后代,边界区分 `project` 和 `project-old`,范围条件位于 `LIMIT` 之前。范围使用 BINARY 比较,大小写敏感。普通 FTS、短关键词 LIKE、高级过滤、全文 MATCH 与 CJK LIKE 分支使用同一语义;高级查询还可利用 `files(path)` 索引。绝对路径、`.` / `..` 段和 NUL 会被拒绝。
+
 ## 2. 索引构建 / 重建
 
 ```ts
@@ -51,7 +53,7 @@ loadExifProcessed(rootPath)                 // 查询(IPC `exif:load-processed`)
 
 ## 4. 全文搜索
 
-- `searchFulltext(rootPath, query)`(IPC `fulltext:search`):snippet 形式展示匹配上下文
+- `searchFulltext(rootPath, query, pathPrefix = '')`(IPC `fulltext:search`):snippet 形式展示匹配上下文;MCP 可用第三个参数限定子目录
 - 大目录下流式返回,不爆内存
 - `fulltext_fts` 保持默认 unicode61 分词器。查询里含 CJK 时额外跑一遍 `content LIKE '%…%'` 子串扫描(unicode61 把一整段连续 CJK 当成**一个** token,句子里的词 MATCH 不到),与 MATCH 命中按 path 去重合并(MATCH 命中在前),上限 `FULLTEXT_LIMIT = 100` 条。两字 CJK 查询放行;单字 CJK 与不足 3 字符的 ASCII 查询仍然拒绝。
 - LIKE 命中由主进程手写 snippet(`SNIPPET_RADIUS = 60`,命中处包 `<mark>`,两端超出加 `…`),因为 FTS5 的 `snippet()` 只服务 MATCH。
@@ -70,7 +72,7 @@ loadExifProcessed(rootPath)                 // 查询(IPC `exif:load-processed`)
 
 结果在主进程拼 SQL → 返回带 snippet 的条目列表。`text` 不足 3 字符时不走 `files_fts`(trigram 至少要 3 字符),改用 `name LIKE ? ESCAPE '\'` 的子串扫描 —— 转义符必须是单引号字面量,写成 `ESCAPE "\\"` 会被 SQLite 当标识符解析,每个 1–2 字符的查询都会抛 `no such column`。
 
-**只读副本**:同一套 SQL 有两条入口——`advancedQuery(rootPath, q)`(桌面,`getDb()`)与 `advancedQueryReadOnly(rootPath, q)`(LAN,`getReadOnlyDb()` + 立即关闭);标签同理 `distinctTags` / `distinctTagsReadOnly`。worker 侧对应 op 是 `index:readonly-advanced` / `index:readonly-tags`,结果都带 `indexUnavailable` 标记(索引库不存在时为 `true`,查询返回空集而不报错)。
+**只读副本**:同一套 SQL 有两条入口——`advancedQuery(rootPath, q, pathPrefix = '')`(桌面,`getDb()`)与 `advancedQueryReadOnly(rootPath, q, pathPrefix = '')`(LAN,`getReadOnlyDb()` + 立即关闭);标签同理 `distinctTags` / `distinctTagsReadOnly`。worker 侧对应 op 是 `index:readonly-advanced` / `index:readonly-tags`,结果都带 `indexUnavailable` 标记(索引库不存在时为 `true`,查询返回空集而不报错)。
 
 **局域网查询的约束**(详见 [docs/22 §5](./22-lan-access.md)):Web 端只发 `text` + `tags`,固定 `tagMatch: 'all'`、`type: 'any'`,其余字段留空;`q` ≤ 512 字符,标签 ≤ 16 个且每个 ≤ 128 字符。命中结果会再逐个落盘复核(必须在 root 内、`.whale` 之外、仍然存在),已删除或越界的条目丢弃。
 

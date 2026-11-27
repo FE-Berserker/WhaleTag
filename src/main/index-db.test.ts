@@ -81,6 +81,148 @@ describe('index-db (SQLite + FTS5 trigram)', () => {
     }
   });
 
+  it('scopes filename, advanced and both fulltext matchers to a directory subtree', async () => {
+    const root = await tmpRoot();
+    try {
+      await setup(root);
+      const rows = [
+        entry({ path: 'project', name: 'project', isDir: true, tags: ['needle', 'xy'] }),
+        entry({ path: 'project/inside.md', tags: ['needle', 'xy'] }),
+        entry({ path: 'project/nested/deep.md', tags: ['needle', 'xy'] }),
+        entry({ path: 'project-old/outside.md', tags: ['needle', 'xy'] }),
+        entry({ path: 'other/inside.md', tags: ['needle', 'xy'] }),
+      ];
+      await ingestFiles(root, rows);
+      await insertFulltext(
+        root,
+        rows.filter((row) => !row.isDir).map((row, index) => ({
+          path: row.path,
+          name: row.name,
+          mtime: index,
+          content: 'shared needle 目标关键词',
+        }))
+      );
+
+      assert.deepEqual(
+        queryFiles(root, 'needle', 'project').map((hit) => hit.path).sort(),
+        ['project', 'project/inside.md', 'project/nested/deep.md']
+      );
+      // The short-query LIKE branch and Windows-style separators use the same scope.
+      assert.deepEqual(
+        queryFiles(root, 'x', 'project\\nested\\').map((hit) => hit.path),
+        ['project/nested/deep.md']
+      );
+      assert.deepEqual(
+        advancedQuery(root, emptyQ(), 'project').map((hit) => hit.path).sort(),
+        ['project', 'project/inside.md', 'project/nested/deep.md'],
+        'the directory row itself is included, but project-old and other are not'
+      );
+      assert.deepEqual(
+        advancedQuery(root, { ...emptyQ(), text: 'needle' }, 'project/nested').map((hit) => hit.path),
+        ['project/nested/deep.md']
+      );
+      assert.deepEqual(
+        queryFulltext(root, 'needle', 'project').map((hit) => hit.name).sort(),
+        ['deep.md', 'inside.md']
+      );
+      assert.deepEqual(
+        queryFulltext(root, '目标关键词', 'project/nested').map((hit) => hit.name),
+        ['deep.md'],
+        'the CJK substring fallback is scoped too'
+      );
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects absolute paths and traversal in pathPrefix even for short-circuit queries', async () => {
+    const root = await tmpRoot();
+    try {
+      await setup(root);
+      for (const prefix of ['/absolute', 'C:\\absolute', '../outside', 'a/./b', 'a/../b', 'a\0b']) {
+        assert.throws(() => queryFiles(root, 'needle', prefix), /pathPrefix/);
+        assert.throws(() => queryFiles(root, ' ', prefix), /pathPrefix/);
+        assert.throws(() => queryFulltext(root, 'x', prefix), /pathPrefix/);
+        assert.throws(() => advancedQuery(root, emptyQ(), prefix), /pathPrefix/);
+      }
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('applies pathPrefix before filename, advanced and fulltext result limits', async () => {
+    const root = await tmpRoot();
+    try {
+      await setup(root);
+      const outside = Array.from({ length: 301 }, (_, index) =>
+        entry({
+          path: `outside/${String(index).padStart(3, '0')}-needle.md`,
+          tags: ['needle'],
+        })
+      );
+      await ingestFiles(root, [
+        ...outside,
+        entry({ path: 'target/zz-needle-target-with-a-deliberately-much-longer-name.md', tags: ['needle'] }),
+      ]);
+      assert.equal(
+        queryFiles(root, 'needle').some((hit) => hit.path === 'target/zz-needle-target-with-a-deliberately-much-longer-name.md'),
+        false,
+        'the unscoped fixture must exhaust the filename limit before reaching the target'
+      );
+      assert.equal(
+        advancedQuery(root, { ...emptyQ(), text: 'needle' }).some(
+          (hit) => hit.path === 'target/zz-needle-target-with-a-deliberately-much-longer-name.md'
+        ),
+        false,
+        'the unscoped fixture must exhaust the advanced limit before reaching the target'
+      );
+      assert.deepEqual(
+        queryFiles(root, 'needle', 'target').map((hit) => hit.path),
+        ['target/zz-needle-target-with-a-deliberately-much-longer-name.md']
+      );
+      assert.deepEqual(
+        advancedQuery(root, { ...emptyQ(), text: 'needle' }, 'target').map((hit) => hit.path),
+        ['target/zz-needle-target-with-a-deliberately-much-longer-name.md']
+      );
+
+      const textRows = (prefix: string, count: number, content: string) =>
+        Array.from({ length: count }, (_, index) => ({
+          path: `${prefix}/${String(index).padStart(3, '0')}.md`,
+          name: `${index}.md`,
+          mtime: index,
+          content,
+        }));
+      await insertFulltext(root, [
+        ...textRows('ranked-outside', 101, 'shared needle'),
+        { path: 'target/ranked-target-with-a-deliberately-much-longer-name.md', name: 'ranked-target-with-a-deliberately-much-longer-name.md', mtime: 1, content: 'shared needle' },
+        ...textRows('cjk-outside', 101, '包含目标关键词'),
+        { path: 'target/cjk.md', name: 'cjk.md', mtime: 1, content: '包含目标关键词' },
+      ]);
+      assert.equal(
+        queryFulltext(root, 'needle').some((hit) => hit.name === 'ranked-target-with-a-deliberately-much-longer-name.md'),
+        false,
+        'the unscoped fixture must exhaust the ranked fulltext limit before reaching the target'
+      );
+      assert.equal(
+        queryFulltext(root, '目标关键词').some((hit) => hit.name === 'cjk.md'),
+        false,
+        'the unscoped fixture must exhaust the CJK fulltext limit before reaching the target'
+      );
+      assert.deepEqual(
+        queryFulltext(root, 'needle', 'target').map((hit) => hit.name),
+        ['ranked-target-with-a-deliberately-much-longer-name.md']
+      );
+      assert.deepEqual(
+        queryFulltext(root, '目标关键词', 'target').map((hit) => hit.name),
+        ['cjk.md']
+      );
+    } finally {
+      closeDb(root);
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
   it('drops entries for deleted files on re-ingest', async () => {
     const root = await tmpRoot();
     try {

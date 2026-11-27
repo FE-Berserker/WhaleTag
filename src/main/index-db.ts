@@ -418,36 +418,89 @@ export async function ingestFiles(
   ).run(fileCount);
 }
 
+/**
+ * Normalize an MCP-supplied, root-relative directory scope to the `/` form
+ * stored in the index. Absolute paths and traversal are rejected even though
+ * this value is only a SQL filter: accepting them would make the tool contract
+ * ambiguous and could silently select a different subtree than the caller meant.
+ */
+function normalizePathPrefix(raw = ''): string {
+  if (raw.includes('\0')) throw new Error('pathPrefix must not contain NUL');
+  const value = raw.replace(/\\/g, '/');
+  if (!value) return '';
+  if (value.startsWith('/') || /^[A-Za-z]:/.test(value)) {
+    throw new Error('pathPrefix must be relative to the location root');
+  }
+  const parts = value.split('/').filter(Boolean);
+  if (parts.some((part) => part === '.' || part === '..')) {
+    throw new Error('pathPrefix must not contain . or .. segments');
+  }
+  return parts.join('/');
+}
+
+interface PathScope {
+  clause: string;
+  params: string[];
+}
+
+/**
+ * Match the directory row itself plus everything below `prefix/`. The upper
+ * bound `prefix + "0"` works because `0` is the next ASCII character after
+ * `/`. A BINARY range keeps the scope case-sensitive on every platform and
+ * lets SQLite use the files(path) index instead of a post-LIMIT JS filter.
+ */
+function pathScope(column: string, rawPrefix = ''): PathScope | null {
+  const prefix = normalizePathPrefix(rawPrefix);
+  if (!prefix) return null;
+  return {
+    clause: `(${column} = ? OR (${column} >= ? AND ${column} < ?))`,
+    params: [prefix, `${prefix}/`, `${prefix}0`],
+  };
+}
+
 /** Filename/path/tags fuzzy search via FTS5 trigram (>=3 chars) or LIKE (<3). */
-export function queryFiles(rootPath: string, q: string): IndexEntry[] {
+export function queryFiles(rootPath: string, q: string, pathPrefix = ''): IndexEntry[] {
+  // Validate before the empty-query short-circuit or opening/creating the DB.
+  normalizePathPrefix(pathPrefix);
   const term = q.trim();
   if (!term) return [];
   const db = getDb(rootPath);
   let rows: FileRow[];
   if (term.length >= 3) {
+    const scope = pathScope('f.path', pathPrefix);
     rows = prepareCached(
       db,
       `SELECT f.* FROM files_fts
          JOIN files f ON f.rowid = files_fts.rowid
-         WHERE files_fts MATCH ? ORDER BY rank LIMIT ?`
-    ).all(ftsPhrase(term), QUERY_LIMIT) as FileRow[];
+         WHERE files_fts MATCH ? ${scope ? `AND ${scope.clause}` : ''}
+         ORDER BY rank LIMIT ?`
+    ).all(ftsPhrase(term), ...(scope?.params ?? []), QUERY_LIMIT) as FileRow[];
   } else {
     // Escape the LIKE wildcards too: without this a one/two-character term
     // like `%`, `_` or a path fragment containing them matched every row.
     const like = `%${escapeLike(term)}%`;
+    const scope = pathScope('path', pathPrefix);
     rows = prepareCached(
       db,
-      `SELECT * FROM files WHERE name LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\'
+      `SELECT * FROM files
+         WHERE (name LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\')
+         ${scope ? `AND ${scope.clause}` : ''}
          ORDER BY is_dir DESC, name LIMIT ?`
-    ).all(like, like, QUERY_LIMIT) as FileRow[];
+    ).all(like, like, ...(scope?.params ?? []), QUERY_LIMIT) as FileRow[];
   }
   return rows.map(rowToEntry);
 }
 
 /** Structured (advanced) search — the SearchQuery compiled to SQL WHERE. */
-function advancedQueryWithDb(db: DB, q: SearchQuery): IndexEntry[] {
+function advancedQueryWithDb(db: DB, q: SearchQuery, pathPrefix = ''): IndexEntry[] {
   const where: string[] = [];
   const params: unknown[] = [];
+
+  const scope = pathScope('path', pathPrefix);
+  if (scope) {
+    where.push(scope.clause);
+    params.push(...scope.params);
+  }
 
   const text = q.text.trim();
   if (text) {
@@ -505,19 +558,26 @@ function advancedQueryWithDb(db: DB, q: SearchQuery): IndexEntry[] {
 }
 
 /** Advanced query over the writable application connection. */
-export function advancedQuery(rootPath: string, q: SearchQuery): IndexEntry[] {
-  return advancedQueryWithDb(getDb(rootPath), q);
+export function advancedQuery(
+  rootPath: string,
+  q: SearchQuery,
+  pathPrefix = ''
+): IndexEntry[] {
+  normalizePathPrefix(pathPrefix);
+  return advancedQueryWithDb(getDb(rootPath), q, pathPrefix);
 }
 
 /** Advanced query over an existing index, or null when no index exists. */
 export function advancedQueryReadOnly(
   rootPath: string,
-  q: SearchQuery
+  q: SearchQuery,
+  pathPrefix = ''
 ): IndexEntry[] | null {
+  normalizePathPrefix(pathPrefix);
   const db = getReadOnlyDb(rootPath);
   if (!db) return null;
   try {
-    return advancedQueryWithDb(db, q);
+    return advancedQueryWithDb(db, q, pathPrefix);
   } finally {
     db.close();
   }
@@ -699,11 +759,14 @@ function makeLikeSnippet(content: string, term: string): string {
  *    index-backed but needs a one-time rebuild of every existing index and
  *    still cannot answer 2-character queries (docs/04 已知取舍).
  */
-export function queryFulltext(rootPath: string, q: string): FulltextHit[] {
+export function queryFulltext(rootPath: string, q: string, pathPrefix = ''): FulltextHit[] {
+  // Reject an invalid scope even when a short query would otherwise return [].
+  normalizePathPrefix(pathPrefix);
   const term = q.trim();
   const cjk = CJK_RE.test(term);
   if (term.length < 3 && !(cjk && term.length >= 2)) return [];
   const db = getDb(rootPath);
+  const scope = pathScope('path', pathPrefix);
 
   const hits = new Map<string, FulltextHit>();
   const add = (r: { path: string; name: string; snippet: string }): void => {
@@ -724,8 +787,9 @@ export function queryFulltext(rootPath: string, q: string): FulltextHit[] {
       `SELECT path, name,
           snippet(fulltext_fts, 3, '<mark>', '</mark>', '…', 12) AS snippet
        FROM fulltext_fts WHERE fulltext_fts MATCH ?
+       ${scope ? `AND ${scope.clause}` : ''}
        ORDER BY rank LIMIT ?`
-    ).all(ftsPhrase(term), FULLTEXT_LIMIT) as {
+    ).all(ftsPhrase(term), ...(scope?.params ?? []), FULLTEXT_LIMIT) as {
       path: string;
       name: string;
       snippet: string;
@@ -739,8 +803,9 @@ export function queryFulltext(rootPath: string, q: string): FulltextHit[] {
       db,
       `SELECT path, name, content FROM fulltext_fts
        WHERE content LIKE ? ESCAPE '\\'
+       ${scope ? `AND ${scope.clause}` : ''}
        ORDER BY instr(content, ?), rowid LIMIT ?`
-    ).all(like, term, FULLTEXT_LIMIT) as {
+    ).all(like, ...(scope?.params ?? []), term, FULLTEXT_LIMIT) as {
       path: string;
       name: string;
       content: string;

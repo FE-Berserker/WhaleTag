@@ -47,16 +47,22 @@ export type IndexWorkerOp =
  */
 export type IndexWorkerArg =
   | { op: 'index:build'; arg: { rootPath: string } }
-  | { op: 'index:query'; arg: { rootPath: string; q: string } }
-  | { op: 'index:advanced'; arg: { rootPath: string; q: SearchQuery } }
-  | { op: 'index:readonly-advanced'; arg: { rootPath: string; q: SearchQuery } }
+  | { op: 'index:query'; arg: { rootPath: string; q: string; pathPrefix?: string } }
+  | {
+      op: 'index:advanced';
+      arg: { rootPath: string; q: SearchQuery; pathPrefix?: string };
+    }
+  | {
+      op: 'index:readonly-advanced';
+      arg: { rootPath: string; q: SearchQuery; pathPrefix?: string };
+    }
   | { op: 'index:tags'; arg: { rootPath: string } }
   | { op: 'index:readonly-tags'; arg: { rootPath: string } }
   | { op: 'index:status'; arg: { rootPath: string } }
   | { op: 'index:close'; arg: { rootPath: string } }
   | { op: 'index:shutdown'; arg: Record<string, never> }
   | { op: 'fulltext:build'; arg: { rootPath: string } }
-  | { op: 'fulltext:search'; arg: { rootPath: string; q: string } }
+  | { op: 'fulltext:search'; arg: { rootPath: string; q: string; pathPrefix?: string } }
   | { op: 'fulltext:has'; arg: { rootPath: string } }
   | {
       op: 'fulltext:extract';

@@ -534,9 +534,10 @@ export function selectRemoved(
 /** Full-text search via SQLite FTS5 (returns snippet excerpts). Empty if none. */
 export async function searchFulltext(
   rootPath: string,
-  query: string
+  query: string,
+  pathPrefix = ''
 ): Promise<FulltextHit[]> {
-  return queryFulltext(rootPath, query);
+  return queryFulltext(rootPath, query, pathPrefix);
 }
 
 /** True if the root has any full-text content indexed. */

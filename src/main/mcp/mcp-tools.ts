@@ -9,6 +9,7 @@ import {
   assertNotLocationRoot,
   assertWithinAllowedRoot,
   getRawAllowedRoots,
+  isConfiguredRoot,
   onAllowedRootsChanged,
 } from '../allowed-roots';
 import { readSidecardsForPaths, updateFileTags, mutateSidecar } from '../sidecar';
@@ -66,6 +67,14 @@ function assertBothEndsInside(source: string, dest: string): void {
   assertWithinAllowedRoot(dest);
 }
 
+/** Search indexes live at configured location roots, never in arbitrary subdirectories. */
+function assertLocationRoot(rootPath: string): void {
+  assertWithinAllowedRoot(rootPath);
+  if (!isConfiguredRoot(rootPath)) {
+    throw new Error('rootPath must be a configured location root returned by whale_roots');
+  }
+}
+
 // A location root is a container, not an entry: `assertNotLocationRoot` (from
 // ../allowed-roots, shared with the IPC entry points) refuses it, because an
 // external client could otherwise tag/describe a root — the sidecar would land
@@ -74,6 +83,12 @@ function assertBothEndsInside(source: string, dest: string): void {
 
 /** whale_read_text decodes the whole file, so refuse absurd sizes up front. */
 const MAX_TEXT_READ_BYTES = 16 * 1024 * 1024;
+
+const PATH_PREFIX_DESCRIPTION =
+  "Optional root-relative directory scope (for example 'Projects/2026'). " +
+  "Includes that directory and its descendants, never similarly-prefixed siblings; " +
+  "filtering happens before result limits. Matching is case-sensitive. " +
+  "Empty searches the whole location.";
 
 /** A batch where every item failed must not be reported as a successful call. */
 function batchResult<T extends { errors: { path: string; error: string }[] }>(
@@ -350,13 +365,14 @@ export function registerMcpTools(server: McpServer): void {
       inputSchema: {
         rootPath: z.string().describe('Location root from whale_roots'),
         q: z.string().min(1).describe('Search text (matches name/path/tags)'),
+        pathPrefix: z.string().default('').describe(PATH_PREFIX_DESCRIPTION),
         limit: z.number().int().min(1).max(50).default(25).describe('Max results (server caps at 50)'),
       },
     },
-    async ({ rootPath, q, limit }) => {
+    async ({ rootPath, q, pathPrefix, limit }) => {
       try {
-        assertWithinAllowedRoot(rootPath);
-        const hits = await request('index:query', { rootPath, q });
+        assertLocationRoot(rootPath);
+        const hits = await request('index:query', { rootPath, q, pathPrefix });
         return ok({ count: hits.length, results: hits.slice(0, limit) });
       } catch (e) {
         return fail('whale_search', e);
@@ -374,6 +390,7 @@ export function registerMcpTools(server: McpServer): void {
         '(see whale_list_tags). Sizes in bytes, times in epoch ms.',
       inputSchema: {
         rootPath: z.string(),
+        pathPrefix: z.string().default('').describe(PATH_PREFIX_DESCRIPTION),
         text: z.string().default(''),
         tags: z.array(z.string()).default([]),
         tagMatch: z.enum(['all', 'any']).default('all'),
@@ -387,11 +404,12 @@ export function registerMcpTools(server: McpServer): void {
         limit: z.number().int().min(1).max(300).default(50),
       },
     },
-    async ({ rootPath, limit, ...query }) => {
+    async ({ rootPath, pathPrefix, limit, ...query }) => {
       try {
-        assertWithinAllowedRoot(rootPath);
+        assertLocationRoot(rootPath);
         const hits = await request('index:advanced', {
           rootPath,
+          pathPrefix,
           q: {
             text: query.text ?? '',
             tags: query.tags ?? [],
@@ -423,13 +441,14 @@ export function registerMcpTools(server: McpServer): void {
       inputSchema: {
         rootPath: z.string(),
         q: z.string().min(1),
+        pathPrefix: z.string().default('').describe(PATH_PREFIX_DESCRIPTION),
         limit: z.number().int().min(1).max(100).default(25),
       },
     },
-    async ({ rootPath, q, limit }) => {
+    async ({ rootPath, q, pathPrefix, limit }) => {
       try {
-        assertWithinAllowedRoot(rootPath);
-        const hits = await request('fulltext:search', { rootPath, q });
+        assertLocationRoot(rootPath);
+        const hits = await request('fulltext:search', { rootPath, q, pathPrefix });
         return ok({ count: hits.length, results: hits.slice(0, limit) });
       } catch (e) {
         return fail('whale_fulltext_search', e);
@@ -452,7 +471,7 @@ export function registerMcpTools(server: McpServer): void {
         // Writes the fulltext DB — a mutating tool, so read-only mode applies
         // (docs/21 §4: read-only refuses every mutating tool).
         ensureWritable();
-        assertWithinAllowedRoot(rootPath);
+        assertLocationRoot(rootPath);
         const res = await request('fulltext:build', { rootPath });
         return ok({ indexed: res.count });
       } catch (e) {
@@ -473,7 +492,7 @@ export function registerMcpTools(server: McpServer): void {
     },
     async ({ rootPath }) => {
       try {
-        assertWithinAllowedRoot(rootPath);
+        assertLocationRoot(rootPath);
         const [tags, library] = await Promise.all([
           request('index:tags', { rootPath }),
           readTagLibrary(rootPath),

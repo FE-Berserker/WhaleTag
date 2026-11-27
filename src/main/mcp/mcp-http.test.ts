@@ -31,6 +31,7 @@ import type { McpAddLocationRequest } from '../../shared/mcp-types';
 const TMP_USER_DATA = path.join(os.tmpdir(), 'whaletag-mcp-test');
 const STARTUP_ROOT = path.join(TMP_USER_DATA, 'startup-root');
 fs.mkdirSync(STARTUP_ROOT, { recursive: true });
+const workerRequests: { op: string; arg: unknown }[] = [];
 
 const electronStub: any = {
   app: {
@@ -58,6 +59,7 @@ const electronStub: any = {
       (worker as any).postMessage = (msg: unknown) => {
         const req = msg as { reqId?: string; op?: string; arg?: unknown };
         if (!req || typeof req.reqId !== 'string') return;
+        workerRequests.push({ op: req.op ?? '', arg: req.arg });
         void (async () => {
           let result: unknown = undefined;
           if (req.op === 'fulltext:extract') {
@@ -75,6 +77,8 @@ const electronStub: any = {
             result = false;
           } else if (req.op === 'index:status') {
             result = { count: 0, ready: false };
+          } else if (['index:query', 'index:advanced', 'fulltext:search'].includes(req.op ?? '')) {
+            result = [];
           }
           worker.emit('message', { reqId: req.reqId, ok: true, result });
         })();
@@ -213,6 +217,48 @@ describe('mcp http core (official client SDK)', () => {
     assert.equal(core.sessionCount(), 0);
   });
 
+  it('forwards pathPrefix to all search indexes and rejects non-root search paths', async () => {
+    const { client } = await connectClient();
+    const firstRequest = workerRequests.length;
+    const searches = ['whale_search', 'whale_advanced_search', 'whale_fulltext_search'];
+    for (const name of searches) {
+      const res = await client.callTool({
+        name,
+        arguments: { rootPath: STARTUP_ROOT, q: 'needle', pathPrefix: 'project/nested' },
+      });
+      assert.notEqual(res.isError, true, `${name} should accept pathPrefix`);
+    }
+    const forwarded = workerRequests.slice(firstRequest);
+    assert.deepEqual(
+      forwarded.map((req) => req.op),
+      ['index:query', 'index:advanced', 'fulltext:search']
+    );
+    for (const req of forwarded) {
+      assert.equal((req.arg as { pathPrefix?: string }).pathPrefix, 'project/nested');
+    }
+
+    const nestedRoot = path.join(STARTUP_ROOT, 'not-a-location-root');
+    fs.mkdirSync(nestedRoot, { recursive: true });
+    const rejectedFrom = workerRequests.length;
+    for (const name of searches) {
+      const res = await client.callTool({
+        name,
+        arguments: { rootPath: nestedRoot, q: 'needle' },
+      });
+      assert.equal(res.isError, true);
+      const text = ((res.content as any[]) ?? [])
+        .filter((item) => item.type === 'text')
+        .map((item) => item.text)
+        .join('');
+      assert.match(text, /configured location root/);
+    }
+    assert.equal(
+      workerRequests.length,
+      rejectedFrom,
+      'a subdirectory must not open a separate index database'
+    );
+    await client.close();
+  });
   it('calls a read-only tool end-to-end (whale_roots)', async () => {
     const { client } = await connectClient();
     const res = await client.callTool({ name: 'whale_roots', arguments: {} });

@@ -30,6 +30,8 @@
 
 **发现(只读)**:`whale_roots`(位置 + 索引状态,客户端第一个该调的)、`whale_search`(FTS trigram 名/路径/标签)、`whale_advanced_search`(SearchQuery 结构化过滤)、`whale_fulltext_search`(正文搜索 + snippet)、`whale_build_fulltext`(增量建正文索引)、`whale_list_tags`(位置中已有标签 + 标签库描述)、`whale_smart_tag_catalog`(完整内置智能标签语义,无需位置或索引)、`whale_list_directory`。
 
+三个搜索工具都接受可选 `pathPrefix`:它是相对 `rootPath` 的目录路径(例如 `Projects/2026`,也接受 `\` 分隔符),匹配该目录自身及所有后代,不匹配 `Projects/2026-old` 这类相似前缀兄弟。路径比较大小写敏感,调用方应使用索引中的实际目录大小写。过滤编译进 SQLite 查询并发生在 50 / 300 / 100 条结果上限之前,不是拿到一页结果后再过滤;空串搜索整个位置。绝对路径、`.`、`..` 与 NUL 被拒绝。`pathPrefix` 只缩小范围,不会触发索引构建。示例参数:`{"rootPath":"D:\\Archive","q":"report","pathPrefix":"Projects/2026","limit":25}`。三个搜索及 `whale_build_fulltext` / `whale_list_tags` 的 `rootPath` 必须是 `whale_roots` 返回的配置位置根本身;子目录只能放在 `pathPrefix`,不能拿子目录当 root 打开另一个索引库。
+
 **读取(归纳的输入)**:`whale_read_text`(编码自适应读文本,offset/limit 分页)、`whale_extract_text`(单文件抽取:经 `fulltext:extract` RPC 在 index worker 里调 `fulltext.ts` 的 `extractText`(pdfjs 解析不占主进程;主进程侧勿直接 import `fulltext.ts`,会连带 `index-db.ts` 触发 worker 守卫),支持 PDF/HTML/文本类;**office 不支持**;PDF 超过 128 MiB(常量在 `fulltext-limits.ts`)直接报错,不再整文件读进内存)、`whale_get_meta`(≤200 路径批量读 sidecar)。
 
 **位置(需审批)**:`whale_add_location`(绝对路径指向已存在目录,`realpath` 规范化;允许自定义名称与位置只读标记,名称中的控制字符与 bidi 控制符会被替换,避免伪造审批文案)。用户批准后先等待 `known-roots.json` 授权记录落盘,再由渲染层走标准 `addLocation` → 从 dispatch 后的 Redux 最新状态同步 allowed roots → `persistor.flush()`,确认后才返回 `persisted: true`;不需要退出或重启 WhaleTag。任一步失败会撤销刚添加的位置并重新同步、落盘,避免重试产生同路径重复项。同一规范化 root 重复添加是幂等操作,不再次弹审批,也不改名称或只读设置。文件/标签工具在确认后即可使用;**此工具不构建搜索索引**,结果的 `indexing.triggered` 为 `false` 并带提示:文件/标签搜索需在界面选中位置后,在搜索栏点击 **Build index**(仅激活位置不会自动建立索引),正文搜索另调 `whale_build_fulltext`,实际状态以 `whale_roots` 为准。
